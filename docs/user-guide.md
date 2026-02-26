@@ -53,13 +53,27 @@ cloudstic restore -encryption-password "my secret passphrase" -target ./restored
 ### Homebrew (macOS / Linux)
 
 ```bash
+# Install
 brew install cloudstic/tap/cloudstic
+
+# Upgrade to the latest version
+brew upgrade cloudstic
+
+# Uninstall
+brew uninstall cloudstic
 ```
 
 ### Winget (Windows)
 
-```bash
+```powershell
+# Install
 winget install Cloudstic.CLI
+
+# Upgrade to the latest version
+winget upgrade Cloudstic.CLI
+
+# Uninstall
+winget uninstall Cloudstic.CLI
 ```
 
 ### Pre-built binaries

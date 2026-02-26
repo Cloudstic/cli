@@ -376,12 +376,12 @@ A **source** is where Cloudstic reads files from during a backup. Each source ty
 
 ### Source overview
 
-| Source | `-source` flag | What it backs up | Auth required |
-|--------|---------------|------------------|---------------|
+| Source | `-source` flag | What it backs up | Auth |
+|--------|---------------|------------------|------|
 | [Local directory](#local-directory) | `local` | Files on your local filesystem | None |
-| [Google Drive](#google-drive) | `gdrive` | Full scan of Google Drive (My Drive or Shared Drive) | Google OAuth |
-| [Google Drive (Changes API)](#google-drive-changes-api) | `gdrive-changes` | Incremental changes since last backup (recommended) | Google OAuth |
-| [OneDrive](#onedrive) | `onedrive` | Full scan of Microsoft OneDrive | Microsoft OAuth |
+| [Google Drive](#google-drive) | `gdrive` | Full scan of Google Drive (My Drive or Shared Drive) | Automatic (browser) |
+| [Google Drive (Changes API)](#google-drive-changes-api) | `gdrive-changes` | Incremental changes since last backup (recommended) | Automatic (browser) |
+| [OneDrive](#onedrive) | `onedrive` | Full scan of Microsoft OneDrive | Automatic (browser) |
 
 All sources produce the same snapshot format. You can back up different sources into the same repository, and snapshots are tagged with source metadata so retention policies can be applied per-source.
 
@@ -409,14 +409,9 @@ Full scan of a Google Drive account. On each backup, Cloudstic lists every file 
 
 **Setup:**
 
-1. Create a Google Cloud project and enable the Google Drive API
-2. Create OAuth 2.0 credentials (Desktop app type) and download the JSON file
-3. Set the `GOOGLE_APPLICATION_CREDENTIALS` environment variable to the path of that file
-4. On first run, Cloudstic opens a URL for you to authorize access. The resulting token is cached in the [config directory](#config-directory)
+No configuration is required — Cloudstic ships with built-in OAuth credentials. On first run, your default browser opens automatically for you to authorize access. The resulting token is cached in the [config directory](#config-directory).
 
 ```bash
-export GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json
-
 # Back up entire My Drive
 cloudstic backup -source gdrive
 
@@ -432,11 +427,11 @@ cloudstic backup -source gdrive -root-folder <folder-id>
 | `-drive-id` | Shared Drive ID (omit for personal My Drive) |
 | `-root-folder` | Restrict backup to a specific folder by ID |
 
-**Environment variables:**
+**Environment variables (optional overrides):**
 
 | Variable | Description |
 |----------|-------------|
-| `GOOGLE_APPLICATION_CREDENTIALS` | Path to Google OAuth credentials JSON file |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Path to your own Google OAuth credentials JSON file (overrides built-in credentials) |
 | `GOOGLE_TOKEN_FILE` | Override token cache path (default: `<config-dir>/google_token.json`) |
 
 ### Google Drive (Changes API)
@@ -455,7 +450,7 @@ cloudstic backup -source gdrive-changes
 cloudstic backup -source gdrive-changes
 ```
 
-Uses the same authentication and flags as [Google Drive](#google-drive) (`-drive-id`, `-root-folder`).
+Uses the same authentication and flags as [Google Drive](#google-drive) (`-drive-id`, `-root-folder`). No setup required — just run the command and authorize in the browser.
 
 > **Tip:** You can use `-source gdrive-changes` from day one — the first run performs a full scan just like `gdrive`. Only fall back to `-source gdrive` if you need to force a complete rescan.
 
@@ -465,12 +460,19 @@ Full scan of a Microsoft OneDrive account. Works the same way as the `gdrive` so
 
 **Setup:**
 
+No configuration is required — Cloudstic ships with built-in OAuth credentials. On first run, your default browser opens automatically for you to authorize access. The resulting token is cached in the [config directory](#config-directory).
+
+```bash
+cloudstic backup -source onedrive
+```
+
+If you prefer to use your own Azure app registration instead of the built-in credentials:
+
 1. Go to the [Azure App Registrations](https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade) portal
-2. Register a new application (set redirect URI to `http://localhost`)
+2. Register a new application (platform: **Mobile and desktop applications**, redirect URI: `http://localhost`)
 3. Under **Certificates & secrets**, create a new client secret
 4. Under **API permissions**, add `Files.Read.All` (Microsoft Graph, Delegated)
 5. Set the environment variables below
-6. On first run, Cloudstic opens a URL for you to authorize access. The resulting token is cached in the [config directory](#config-directory)
 
 ```bash
 export ONEDRIVE_CLIENT_ID=your-client-id
@@ -479,12 +481,12 @@ export ONEDRIVE_CLIENT_SECRET=your-client-secret
 cloudstic backup -source onedrive
 ```
 
-**Environment variables:**
+**Environment variables (optional overrides):**
 
 | Variable | Description |
 |----------|-------------|
-| `ONEDRIVE_CLIENT_ID` | Azure app client ID |
-| `ONEDRIVE_CLIENT_SECRET` | Azure app client secret |
+| `ONEDRIVE_CLIENT_ID` | Azure app client ID (overrides built-in credentials) |
+| `ONEDRIVE_CLIENT_SECRET` | Azure app client secret (overrides built-in credentials) |
 | `ONEDRIVE_TOKEN_FILE` | Override token cache path (default: `<config-dir>/onedrive_token.json`) |
 
 ### Source metadata in snapshots
@@ -626,10 +628,10 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 | `CLOUDSTIC_ENCRYPTION_PASSWORD` | `-encryption-password` | Encryption password |
 | `CLOUDSTIC_RECOVERY_KEY` | `-recovery-key` | Recovery seed phrase |
 | `CLOUDSTIC_CONFIG_DIR` | — | Override config directory path |
-| `GOOGLE_APPLICATION_CREDENTIALS` | — | Path to Google OAuth credentials file |
+| `GOOGLE_APPLICATION_CREDENTIALS` | — | Path to your own Google OAuth credentials file (optional, overrides built-in) |
 | `GOOGLE_TOKEN_FILE` | — | Override Google OAuth token path |
-| `ONEDRIVE_CLIENT_ID` | — | Microsoft app client ID |
-| `ONEDRIVE_CLIENT_SECRET` | — | Microsoft app client secret |
+| `ONEDRIVE_CLIENT_ID` | — | Microsoft app client ID (optional, overrides built-in) |
+| `ONEDRIVE_CLIENT_SECRET` | — | Microsoft app client secret (optional, overrides built-in) |
 | `ONEDRIVE_TOKEN_FILE` | — | Override OneDrive token path |
 | `B2_KEY_ID` | — | Backblaze B2 key ID |
 | `B2_APP_KEY` | — | Backblaze B2 application key |

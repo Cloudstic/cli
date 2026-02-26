@@ -126,9 +126,9 @@ Command Specifics:
     -tag <tag>            Tag to apply to the snapshot (can be specified multiple times)
     -verbose              Enable verbose output
 
-    Environment Variables:
-      gdrive:   GOOGLE_APPLICATION_CREDENTIALS, GOOGLE_TOKEN_FILE
-      onedrive: ONEDRIVE_CLIENT_ID, ONEDRIVE_CLIENT_SECRET, ONEDRIVE_TOKEN_FILE
+    Environment Variables (all optional – built-in OAuth credentials are used by default):
+      gdrive:   GOOGLE_APPLICATION_CREDENTIALS (override), GOOGLE_TOKEN_FILE
+      onedrive: ONEDRIVE_CLIENT_ID (override), ONEDRIVE_CLIENT_SECRET (override), ONEDRIVE_TOKEN_FILE
       b2:       B2_KEY_ID, B2_APP_KEY
 
     Token files are stored in the cloudstic config directory by default:
@@ -575,10 +575,7 @@ func initSource(sourceType, sourcePath, driveID, rootFolder string) (store.Sourc
 	case "local":
 		return store.NewLocalSource(sourcePath), nil
 	case "gdrive":
-		creds := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
-		if creds == "" {
-			return nil, fmt.Errorf("GOOGLE_APPLICATION_CREDENTIALS env var required for gdrive source")
-		}
+		creds := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") // optional; uses built-in OAuth client when empty
 		tokenPath, err := resolveTokenPath("GOOGLE_TOKEN_FILE", "google_token.json")
 		if err != nil {
 			return nil, err
@@ -591,10 +588,7 @@ func initSource(sourceType, sourcePath, driveID, rootFolder string) (store.Sourc
 		src.RootFolderID = rootFolder
 		return src, nil
 	case "gdrive-changes":
-		creds := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
-		if creds == "" {
-			return nil, fmt.Errorf("GOOGLE_APPLICATION_CREDENTIALS env var required for gdrive-changes source")
-		}
+		creds := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") // optional; uses built-in OAuth client when empty
 		tokenPath, err := resolveTokenPath("GOOGLE_TOKEN_FILE", "google_token.json")
 		if err != nil {
 			return nil, err
@@ -607,11 +601,8 @@ func initSource(sourceType, sourcePath, driveID, rootFolder string) (store.Sourc
 		src.RootFolderID = rootFolder
 		return src, nil
 	case "onedrive":
-		clientID := os.Getenv("ONEDRIVE_CLIENT_ID")
-		clientSecret := os.Getenv("ONEDRIVE_CLIENT_SECRET")
-		if clientID == "" || clientSecret == "" {
-			return nil, fmt.Errorf("ONEDRIVE_CLIENT_ID and ONEDRIVE_CLIENT_SECRET env vars required")
-		}
+		clientID := os.Getenv("ONEDRIVE_CLIENT_ID")     // optional; uses built-in OAuth client when empty
+		clientSecret := os.Getenv("ONEDRIVE_CLIENT_SECRET") // optional; uses built-in OAuth client when empty
 		tokenPath, err := resolveTokenPath("ONEDRIVE_TOKEN_FILE", "onedrive_token.json")
 		if err != nil {
 			return nil, err

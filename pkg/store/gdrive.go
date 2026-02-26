@@ -27,31 +27,48 @@ type GDriveSource struct {
 	Account      string // Google account email; populated automatically if empty
 }
 
-// NewGDriveSource creates a new GDriveSource. credsPath is the path to the
-// Google credentials JSON file, and tokenPath is where the OAuth token will
-// be cached (e.g. "~/.config/cloudstic/google_token.json").
+// NewGDriveSource creates a new GDriveSource. If credsPath is non-empty it is
+// used as a Google credentials JSON file (user OAuth or service-account). When
+// credsPath is empty the built-in OAuth client credentials are used instead.
+// tokenPath is where the OAuth token will be cached.
 func NewGDriveSource(credsPath, tokenPath string) (*GDriveSource, error) {
 	ctx := context.Background()
 
-	b, err := os.ReadFile(credsPath)
-	if err != nil {
-		return nil, fmt.Errorf("read credentials file: %w", err)
-	}
-
 	var srv *drive.Service
 
-	config, err := google.ConfigFromJSON(b, drive.DriveReadonlyScope)
-	if err == nil {
+	if credsPath != "" {
+		b, err := os.ReadFile(credsPath)
+		if err != nil {
+			return nil, fmt.Errorf("read credentials file: %w", err)
+		}
+		config, err := google.ConfigFromJSON(b, drive.DriveReadonlyScope)
+		if err == nil {
+			client, err := oauthClient(config, tokenPath)
+			if err != nil {
+				return nil, err
+			}
+			srv, err = drive.NewService(ctx, option.WithHTTPClient(client))
+			if err != nil {
+				return nil, fmt.Errorf("create drive client (user auth): %w", err)
+			}
+		} else {
+			srv, err = drive.NewService(ctx, option.WithCredentialsFile(credsPath))
+			if err != nil {
+				return nil, fmt.Errorf("create drive client: %w", err)
+			}
+		}
+	} else {
+		config := &oauth2.Config{
+			ClientID:     defaultGoogleClientID,
+			ClientSecret: defaultGoogleClientSecret,
+			Scopes:       []string{drive.DriveReadonlyScope},
+			Endpoint:     google.Endpoint,
+		}
 		client, err := oauthClient(config, tokenPath)
 		if err != nil {
 			return nil, err
 		}
 		srv, err = drive.NewService(ctx, option.WithHTTPClient(client))
-		if err != nil {
-			return nil, fmt.Errorf("create drive client (user auth): %w", err)
-		}
-	} else {
-		srv, err = drive.NewService(ctx, option.WithCredentialsFile(credsPath))
 		if err != nil {
 			return nil, fmt.Errorf("create drive client: %w", err)
 		}

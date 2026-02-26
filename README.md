@@ -21,7 +21,7 @@ Content-addressable, encrypted backup tool for Google Drive, OneDrive, and local
 | Google Drive (Changes) | `-source gdrive-changes` | **Recommended.** Fast incremental backup via the Changes API |
 | OneDrive | `-source onedrive` | Full scan of a Microsoft OneDrive account |
 
-See the [User Guide — Sources](docs/user-guide.md#sources) for setup instructions and authentication details.
+Google Drive and OneDrive work out of the box — no API keys or credentials setup needed. On first run, Cloudstic opens your browser for authorization and caches the token locally. See the [User Guide — Sources](docs/user-guide.md#sources) for details.
 
 ## Install
 
@@ -43,8 +43,7 @@ cloudstic init -encryption-password "my passphrase"
 # Back up a local directory
 cloudstic backup -source local -source-path ~/Documents -encryption-password "my passphrase"
 
-# Back up Google Drive (recommended: uses Changes API for fast incremental backups)
-export GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json
+# Back up Google Drive (opens browser for auth on first run)
 cloudstic backup -source gdrive-changes -encryption-password "my passphrase"
 
 # List snapshots

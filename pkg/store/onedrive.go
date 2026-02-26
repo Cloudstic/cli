@@ -20,6 +20,13 @@ type OneDriveSource struct {
 }
 
 func NewOneDriveSource(clientID, clientSecret, tokenPath string) (*OneDriveSource, error) {
+	if clientID == "" {
+		clientID = defaultOneDriveClientID
+	}
+	if clientSecret == "" {
+		clientSecret = defaultOneDriveClientSecret
+	}
+
 	ctx := context.Background()
 	conf := &oauth2.Config{
 		ClientID:     clientID,

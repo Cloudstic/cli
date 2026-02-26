@@ -87,6 +87,12 @@ func UnwrapCompressedStore(s ObjectStore) (*CompressedStore, bool) {
 	switch v := s.(type) {
 	case *CompressedStore:
 		return v, true
+	case *KeyCacheStore:
+		return UnwrapCompressedStore(v.inner)
+	case *MeteredStore:
+		return UnwrapCompressedStore(v.ObjectStore)
+	case *EncryptedStore:
+		return UnwrapCompressedStore(v.ObjectStore)
 	default:
 		return nil, false
 	}

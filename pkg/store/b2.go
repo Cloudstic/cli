@@ -54,7 +54,7 @@ func (s *B2Store) Put(key string, data []byte) error {
 	obj := s.Bucket.Object(s.key(key))
 	w := obj.NewWriter(ctx)
 	if _, err := w.Write(data); err != nil {
-		w.Close()
+		_ = w.Close()
 		return err
 	}
 	return w.Close()
@@ -65,7 +65,7 @@ func (s *B2Store) Get(key string) ([]byte, error) {
 
 	obj := s.Bucket.Object(s.key(key))
 	r := obj.NewReader(ctx)
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	return io.ReadAll(r)
 }

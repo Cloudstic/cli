@@ -127,7 +127,7 @@ func tokenFromFile(file string) (*oauth2.Token, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	tok := &oauth2.Token{}
 	err = json.NewDecoder(f).Decode(tok)
 	return tok, err
@@ -138,20 +138,13 @@ func saveToken(path string, token *oauth2.Token) error {
 	if err != nil {
 		return fmt.Errorf("create token file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return json.NewEncoder(f).Encode(token)
 }
 
 // ---------------------------------------------------------------------------
 // Walk
 // ---------------------------------------------------------------------------
-
-func (s *GDriveSource) rootFolder() string {
-	if s.RootFolderID != "" {
-		return s.RootFolderID
-	}
-	return "root"
-}
 
 func (s *GDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) error) error {
 	var folders, files []*drive.File

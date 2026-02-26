@@ -115,7 +115,9 @@ func TestCLI_EndToEnd_Encrypted(t *testing.T) {
 
 	writeFile(t, srcDir, "secret.txt", "classified data")
 	writeFile(t, srcDir, "notes.txt", "some notes")
-	os.MkdirAll(filepath.Join(srcDir, "subdir"), 0755)
+	if err := os.MkdirAll(filepath.Join(srcDir, "subdir"), 0755); err != nil {
+		t.Fatal(err)
+	}
 	writeFile(t, srcDir, "subdir/nested.txt", "nested content")
 
 	// Init with password encryption

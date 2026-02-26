@@ -16,19 +16,19 @@ func TestPruneManager_Run(t *testing.T) {
 
 	// 1. Setup Valid Chain
 	chunkRef := "chunk/valid"
-	mockStore.Put(chunkRef, []byte("data"))
+	_ = mockStore.Put(chunkRef, []byte("data"))
 
 	content := core.Content{Chunks: []string{chunkRef}}
 	fileContentHash := "valid-content-hash"
 	contentRef := "content/" + fileContentHash
 
 	_, contentData, _ := core.ComputeJSONHash(&content)
-	mockStore.Put(contentRef, contentData)
+	_ = mockStore.Put(contentRef, contentData)
 
 	meta := core.FileMeta{ContentHash: fileContentHash, Name: "valid.txt"}
 	metaHash, metaData, _ := core.ComputeJSONHash(&meta)
 	metaRef := "filemeta/" + metaHash
-	mockStore.Put(metaRef, metaData)
+	_ = mockStore.Put(metaRef, metaData)
 
 	// HAMT Construction using BackupManager's tree for flushing.
 	src := NewMockSource()
@@ -52,17 +52,17 @@ func TestPruneManager_Run(t *testing.T) {
 	snap := core.Snapshot{Root: rootRef, Seq: 1}
 	snapHash, snapData, _ := core.ComputeJSONHash(&snap)
 	snapRef := "snapshot/" + snapHash
-	mockStore.Put(snapRef, snapData)
+	_ = mockStore.Put(snapRef, snapData)
 
 	// Index
 	idx := core.Index{LatestSnapshot: snapRef, Seq: 1}
 	idxData, _ := json.Marshal(idx)
-	mockStore.Put("index/latest", idxData)
+	_ = mockStore.Put("index/latest", idxData)
 
 	// 2. Create Garbage (unreachable objects not referenced by any snapshot)
-	mockStore.Put("chunk/garbage", []byte("trash"))
-	mockStore.Put("filemeta/garbage", []byte("{}"))
-	mockStore.Put("content/garbage", []byte("{}"))
+	_ = mockStore.Put("chunk/garbage", []byte("trash"))
+	_ = mockStore.Put("filemeta/garbage", []byte("{}"))
+	_ = mockStore.Put("content/garbage", []byte("{}"))
 
 	// 3. Run Prune
 	metered := store.NewMeteredStore(mockStore)

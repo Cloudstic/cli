@@ -324,7 +324,7 @@ func runInit() {
 	g := addGlobalFlags(initCmd)
 	recovery := initCmd.Bool("recovery", false, "Generate a recovery key (24-word seed phrase) during init")
 	noEncryption := initCmd.Bool("no-encryption", false, "Create an unencrypted repository (NOT recommended)")
-	initCmd.Parse(os.Args[2:])
+	_ = initCmd.Parse(os.Args[2:])
 
 	raw, err := g.initObjectStore()
 	if err != nil {
@@ -430,7 +430,7 @@ func printRecoveryKey(mnemonic string) {
 func runAddRecoveryKey() {
 	addCmd := flag.NewFlagSet("add-recovery-key", flag.ExitOnError)
 	g := addGlobalFlags(addCmd)
-	addCmd.Parse(os.Args[2:])
+	_ = addCmd.Parse(os.Args[2:])
 
 	raw, err := g.initObjectStore()
 	if err != nil {
@@ -636,7 +636,7 @@ func runDiff() {
 	diffCmd := flag.NewFlagSet("diff", flag.ExitOnError)
 	g := addGlobalFlags(diffCmd)
 
-	diffCmd.Parse(reorderArgs(diffCmd, os.Args[2:]))
+	_ = diffCmd.Parse(reorderArgs(diffCmd, os.Args[2:]))
 
 	if diffCmd.NArg() < 2 {
 		fmt.Println("Usage: cloudstic diff [options] <snapshot_id1> <snapshot_id2>")
@@ -688,7 +688,7 @@ func runForget() {
 
 	groupBy := forgetCmd.String("group-by", "source,account,path", "Group snapshots by fields (comma-separated)")
 
-	forgetCmd.Parse(reorderArgs(forgetCmd, os.Args[2:]))
+	_ = forgetCmd.Parse(reorderArgs(forgetCmd, os.Args[2:]))
 
 	hasPolicy := *keepLast > 0 || *keepHourly > 0 || *keepDaily > 0 ||
 		*keepWeekly > 0 || *keepMonthly > 0 || *keepYearly > 0
@@ -893,7 +893,7 @@ func runPrune() {
 	pruneCmd := flag.NewFlagSet("prune", flag.ExitOnError)
 	g := addGlobalFlags(pruneCmd)
 
-	pruneCmd.Parse(os.Args[2:])
+	_ = pruneCmd.Parse(os.Args[2:])
 
 	ctx := context.Background()
 
@@ -969,7 +969,7 @@ func runBackup() {
 	var tags stringArrayFlags
 	bkCmd.Var(&tags, "tag", "Tag to apply to the snapshot (can be specified multiple times)")
 
-	bkCmd.Parse(os.Args[2:])
+	_ = bkCmd.Parse(os.Args[2:])
 
 	ctx := context.Background()
 
@@ -1007,7 +1007,7 @@ func runRestore() {
 	targetPath := rsCmd.String("target", "./restore_out", "Target directory for restore")
 	snapshot := rsCmd.String("snapshot", "", "Snapshot hash (optional, defaults to latest)")
 
-	rsCmd.Parse(os.Args[2:])
+	_ = rsCmd.Parse(os.Args[2:])
 
 	ctx := context.Background()
 
@@ -1035,7 +1035,7 @@ func runList() {
 	lsCmd := flag.NewFlagSet("list", flag.ExitOnError)
 	g := addGlobalFlags(lsCmd)
 
-	lsCmd.Parse(os.Args[2:])
+	_ = lsCmd.Parse(os.Args[2:])
 
 	ctx := context.Background()
 
@@ -1060,7 +1060,7 @@ func runLsSnapshot() {
 	lsCmd := flag.NewFlagSet("ls", flag.ExitOnError)
 	g := addGlobalFlags(lsCmd)
 
-	lsCmd.Parse(reorderArgs(lsCmd, os.Args[2:]))
+	_ = lsCmd.Parse(reorderArgs(lsCmd, os.Args[2:]))
 
 	snapshotID := "latest"
 	if lsCmd.NArg() > 0 {

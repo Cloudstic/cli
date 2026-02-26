@@ -156,9 +156,9 @@ func TestEncryptedStore_PassthroughOps(t *testing.T) {
 	key := testKey(t)
 	store := NewEncryptedStore(inner, key)
 
-	store.Put("a/1", []byte("one"))
-	store.Put("a/2", []byte("two"))
-	store.Put("b/1", []byte("three"))
+	_ = store.Put("a/1", []byte("one"))
+	_ = store.Put("a/2", []byte("two"))
+	_ = store.Put("b/1", []byte("three"))
 
 	exists, _ := store.Exists("a/1")
 	if !exists {
@@ -174,7 +174,7 @@ func TestEncryptedStore_PassthroughOps(t *testing.T) {
 		t.Fatalf("List(a/) = %d keys, want 2", len(keys))
 	}
 
-	store.Delete("a/1")
+	_ = store.Delete("a/1")
 	exists, _ = store.Exists("a/1")
 	if exists {
 		t.Fatal("key should be deleted")

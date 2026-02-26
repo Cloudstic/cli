@@ -238,7 +238,7 @@ func TestOpenWithWrongRecoveryKey(t *testing.T) {
 func TestExtractMasterKey_Platform(t *testing.T) {
 	inner := newMemStore()
 	platformKey, _ := crypto.GenerateKey()
-	InitEncryptionKey(inner, platformKey, "")
+	_, _ = InitEncryptionKey(inner, platformKey, "")
 
 	slots, _ := LoadKeySlots(inner)
 	mk, err := ExtractMasterKey(slots, platformKey, "")
@@ -253,7 +253,7 @@ func TestExtractMasterKey_Platform(t *testing.T) {
 func TestExtractMasterKey_Password(t *testing.T) {
 	inner := newMemStore()
 	password := "test-pass"
-	InitEncryptionKey(inner, nil, password)
+	_, _ = InitEncryptionKey(inner, nil, password)
 
 	slots, _ := LoadKeySlots(inner)
 	mk, err := ExtractMasterKey(slots, nil, password)
@@ -268,7 +268,7 @@ func TestExtractMasterKey_Password(t *testing.T) {
 func TestExtractMasterKey_NoMatch(t *testing.T) {
 	inner := newMemStore()
 	key, _ := crypto.GenerateKey()
-	InitEncryptionKey(inner, key, "")
+	_, _ = InitEncryptionKey(inner, key, "")
 
 	slots, _ := LoadKeySlots(inner)
 	wrongKey, _ := crypto.GenerateKey()
@@ -283,7 +283,7 @@ func TestHasKeySlots(t *testing.T) {
 		t.Fatal("empty store should not have key slots")
 	}
 	key, _ := crypto.GenerateKey()
-	InitEncryptionKey(inner, key, "")
+	_, _ = InitEncryptionKey(inner, key, "")
 	if !HasKeySlots(inner) {
 		t.Fatal("store should have key slots after init")
 	}

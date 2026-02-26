@@ -20,7 +20,7 @@ func TestDiffManager_Run(t *testing.T) {
 	meta2Mod := createMeta(store, "file2.txt", 250)
 	root2 := createHamt(t, store, []string{"file1", "file2", "file3"}, []string{meta1, meta2Mod, meta3})
 	snap2Ref := saveSnapshotRef(store, root2, 2)
-	store.Put("index/latest", createIndex(snap2Ref, 2))
+	_ = store.Put("index/latest", createIndex(snap2Ref, 2))
 
 	dm := NewDiffManager(store)
 
@@ -67,7 +67,7 @@ func createMeta(s *MockStore, name string, size int64) string {
 	m := core.FileMeta{Name: name, Size: size}
 	h, d, _ := core.ComputeJSONHash(&m)
 	ref := "filemeta/" + h
-	s.Put(ref, d)
+	_ = s.Put(ref, d)
 	return ref
 }
 
@@ -88,6 +88,6 @@ func saveSnapshotRef(s *MockStore, root string, seq int) string {
 	snap := core.Snapshot{Root: root, Seq: seq}
 	h, d, _ := core.ComputeJSONHash(&snap)
 	ref := "snapshot/" + h
-	s.Put(ref, d)
+	_ = s.Put(ref, d)
 	return ref
 }

@@ -542,7 +542,7 @@ func (bm *BackupManager) uploadContent(meta core.FileMeta, phase ui.Phase) (hash
 	if err != nil {
 		return "", 0, 0, 0, fmt.Errorf("get stream for %s: %w", meta.FileID, err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	chunkRefs, size, newBytes, newBytesCompressed, hash, err := bm.chunker.ProcessStream(rc, func(n int64) {
 		phase.Increment(n)

@@ -36,7 +36,9 @@ func TestBackupManager_Run(t *testing.T) {
 			t.Fatalf("Get %s: %v", ref, err)
 		}
 		var fm core.FileMeta
-		json.Unmarshal(data, &fm)
+		if err := json.Unmarshal(data, &fm); err != nil {
+			t.Fatalf("Unmarshal filemeta: %v", err)
+		}
 		return &fm
 	}
 
@@ -50,7 +52,9 @@ func TestBackupManager_Run(t *testing.T) {
 		t.Fatal("index/latest not found")
 	}
 	var idx core.Index
-	json.Unmarshal(idxData, &idx)
+	if err := json.Unmarshal(idxData, &idx); err != nil {
+		t.Fatalf("Unmarshal index: %v", err)
+	}
 	if idx.Seq != 1 {
 		t.Errorf("Expected Seq 1, got %d", idx.Seq)
 	}
@@ -60,7 +64,9 @@ func TestBackupManager_Run(t *testing.T) {
 		t.Fatal("Snapshot not found")
 	}
 	var snap core.Snapshot
-	json.Unmarshal(snapData, &snap)
+	if err := json.Unmarshal(snapData, &snap); err != nil {
+		t.Fatalf("Unmarshal snapshot: %v", err)
+	}
 
 	meta1 := lookupMeta(snap.Root, "id1")
 	if meta1 == nil {
@@ -79,14 +85,18 @@ func TestBackupManager_Run(t *testing.T) {
 
 	idxData2, _ := dest.Get("index/latest")
 	var idx2 core.Index
-	json.Unmarshal(idxData2, &idx2)
+	if err := json.Unmarshal(idxData2, &idx2); err != nil {
+		t.Fatalf("Unmarshal index: %v", err)
+	}
 	if idx2.Seq != 2 {
 		t.Errorf("Expected Seq 2, got %d", idx2.Seq)
 	}
 
 	snapData2, _ := dest.Get(idx2.LatestSnapshot)
 	var snap2 core.Snapshot
-	json.Unmarshal(snapData2, &snap2)
+	if err := json.Unmarshal(snapData2, &snap2); err != nil {
+		t.Fatalf("Unmarshal snapshot: %v", err)
+	}
 
 	meta2v2 := lookupMeta(snap2.Root, "id2")
 	if meta2v2.Size != int64(len("modified content")) {
@@ -95,7 +105,7 @@ func TestBackupManager_Run(t *testing.T) {
 
 	meta1v2 := lookupMeta(snap2.Root, "id1")
 	if meta1v2 == nil {
-		t.Error("id1 missing in second snapshot")
+		t.Fatal("id1 missing in second snapshot")
 	}
 
 	if meta1v2.ContentHash != meta1.ContentHash {
@@ -111,14 +121,18 @@ func TestBackupManager_Run(t *testing.T) {
 
 	idxData3, _ := dest.Get("index/latest")
 	var idx3 core.Index
-	json.Unmarshal(idxData3, &idx3)
+	if err := json.Unmarshal(idxData3, &idx3); err != nil {
+		t.Fatalf("Unmarshal index: %v", err)
+	}
 	if idx3.Seq != 3 {
 		t.Errorf("Expected Seq 3, got %d", idx3.Seq)
 	}
 
 	snapData3, _ := dest.Get(idx3.LatestSnapshot)
 	var snap3 core.Snapshot
-	json.Unmarshal(snapData3, &snap3)
+	if err := json.Unmarshal(snapData3, &snap3); err != nil {
+		t.Fatalf("Unmarshal snapshot: %v", err)
+	}
 
 	meta1v3 := lookupMeta(snap3.Root, "id1")
 	if meta1v3 != nil {

@@ -22,7 +22,7 @@ func TestForgetManager_Run(t *testing.T) {
 	snap3 := core.Snapshot{Seq: 3, Root: "node/3"}
 	snap3Ref := saveSnapshot(store, &snap3)
 
-	store.Put("index/latest", createIndex(snap3Ref, 3))
+	_ = store.Put("index/latest", createIndex(snap3Ref, 3))
 
 	fm := NewForgetManager(store, ui.NewNoOpReporter())
 
@@ -38,7 +38,9 @@ func TestForgetManager_Run(t *testing.T) {
 
 	idxData, _ := store.Get("index/latest")
 	var idx core.Index
-	json.Unmarshal(idxData, &idx)
+	if err := json.Unmarshal(idxData, &idx); err != nil {
+		t.Fatalf("Unmarshal index: %v", err)
+	}
 	if idx.LatestSnapshot != snap3Ref {
 		t.Errorf("Latest snapshot changed unexpectedly: %s", idx.LatestSnapshot)
 	}
@@ -51,7 +53,9 @@ func TestForgetManager_Run(t *testing.T) {
 	assertNotExists(t, store, snap3Ref)
 
 	idxData, _ = store.Get("index/latest")
-	json.Unmarshal(idxData, &idx)
+	if err := json.Unmarshal(idxData, &idx); err != nil {
+		t.Fatalf("Unmarshal index: %v", err)
+	}
 	if idx.LatestSnapshot != snap1Ref {
 		t.Errorf("Latest snapshot should be snap1, got %s", idx.LatestSnapshot)
 	}
@@ -63,7 +67,7 @@ func TestForgetManager_Run(t *testing.T) {
 func saveSnapshot(s *MockStore, snap *core.Snapshot) string {
 	hash, data, _ := core.ComputeJSONHash(snap)
 	ref := "snapshot/" + hash
-	s.Put(ref, data)
+	_ = s.Put(ref, data)
 	return ref
 }
 

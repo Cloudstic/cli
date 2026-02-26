@@ -56,7 +56,7 @@ func ListAllSnapshots(s store.ObjectStore) ([]SnapshotEntry, error) {
 	}
 
 	if dirty {
-		saveCatalog(s, indexed)
+		_ = saveCatalog(s, indexed)
 	}
 
 	entries := make([]SnapshotEntry, 0, len(indexed))

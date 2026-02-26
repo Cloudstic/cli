@@ -59,7 +59,7 @@ func putMeta(t *testing.T, s *inMemoryStore, m *core.FileMeta) string {
 		t.Fatal(err)
 	}
 	ref := "filemeta/" + h
-	s.Put(ref, d)
+	_ = s.Put(ref, d)
 	return ref
 }
 
@@ -222,7 +222,7 @@ func TestTree_Diff(t *testing.T) {
 
 	// Reverse: root2 vs root1
 	revChanges := make(map[string]DiffEntry)
-	tree.Diff(root2, root1, func(d DiffEntry) error {
+	_ = tree.Diff(root2, root1, func(d DiffEntry) error {
 		revChanges[d.Key] = d
 		return nil
 	})
@@ -338,7 +338,7 @@ func TestTree_DeleteAll(t *testing.T) {
 	}
 
 	collected := 0
-	tree.Walk(root, func(k, v string) error {
+	_ = tree.Walk(root, func(k, v string) error {
 		collected++
 		return nil
 	})

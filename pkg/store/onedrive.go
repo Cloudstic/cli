@@ -48,7 +48,7 @@ func NewOneDriveSource(clientID, clientSecret, tokenPath string) (*OneDriveSourc
 		if err != nil {
 			return nil, fmt.Errorf("failed to exchange token: %w", err)
 		}
-		saveTokenJSON(tokenPath, token)
+		_ = saveTokenJSON(tokenPath, token)
 	}
 
 	client := conf.Client(ctx, token)
@@ -64,7 +64,7 @@ func loadToken(file string) (*oauth2.Token, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var tok oauth2.Token
 	err = json.NewDecoder(f).Decode(&tok)
 	return &tok, err
@@ -75,7 +75,7 @@ func saveTokenJSON(file string, token *oauth2.Token) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return json.NewEncoder(f).Encode(token)
 }
 
@@ -153,7 +153,7 @@ func (s *OneDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) 
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -209,7 +209,7 @@ func (s *OneDriveSource) fetchPage(ctx context.Context, url string) (*graphListR
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -234,7 +234,7 @@ func (s *OneDriveSource) Size(ctx context.Context) (*SourceSize, error) {
 	if err != nil {
 		return nil, fmt.Errorf("graph drive request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -266,7 +266,7 @@ func (s *OneDriveSource) GetFileStream(fileID string) (io.ReadCloser, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, fmt.Errorf("failed to download file: %s", resp.Status)
 	}
 

@@ -304,7 +304,7 @@ func (fm *ForgetManager) forgetBatch(entries []SnapshotEntry) error {
 	}
 
 	for _, e := range entries {
-		fm.store.Delete(e.Ref)
+		_ = fm.store.Delete(e.Ref)
 		_ = RemoveSnapshotFromIndex(fm.store, e.Ref)
 	}
 

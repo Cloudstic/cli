@@ -102,7 +102,7 @@ func (rm *RestoreManager) RestoreToZip(ctx context.Context, w io.Writer, snapsho
 	}
 
 	zw := zip.NewWriter(w)
-	defer zw.Close()
+	defer func() { _ = zw.Close() }()
 
 	sorted := topoSort(byID)
 	for _, meta := range sorted {
@@ -324,7 +324,7 @@ func (rm *RestoreManager) restoreFile(meta core.FileMeta, target string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	for _, chunkRef := range content.Chunks {
 		if err := rm.writeChunk(f, chunkRef); err != nil {
@@ -363,7 +363,7 @@ func (rm *RestoreManager) writeChunk(w io.Writer, ref string) error {
 	if err != nil {
 		return fmt.Errorf("decompress chunk %s: %w", ref, err)
 	}
-	defer zr.Close()
+	defer func() { _ = zr.Close() }()
 
 	_, err = io.Copy(w, zr)
 	return err
@@ -374,5 +374,5 @@ func setMtime(path string, mtime int64) {
 		return
 	}
 	t := time.Unix(mtime, 0)
-	os.Chtimes(path, t, t)
+	_ = os.Chtimes(path, t, t)
 }

@@ -42,7 +42,7 @@ func TestChunker_ProcessStream(t *testing.T) {
 	compressedData, _ := store.Get(ref)
 	gr, _ := gzip.NewReader(bytes.NewReader(compressedData))
 	uncompressed, _ := io.ReadAll(gr)
-	gr.Close()
+	_ = gr.Close()
 
 	if string(uncompressed) != data {
 		t.Errorf("Chunk content mismatch")

@@ -36,10 +36,10 @@ func (c *ConsoleReporter) StartPhase(name string, total int64, isBytes bool) Pha
 	pw.SetOutputWriter(os.Stdout)
 	pw.SetAutoStop(true)
 	pw.SetTrackerLength(25)
-	pw.ShowOverallTracker(false)
-	pw.ShowTime(true)
-	pw.ShowTracker(true)
-	pw.SetMessageWidth(20)
+	pw.Style().Visibility.TrackerOverall = false
+	pw.Style().Visibility.Time = true
+	pw.Style().Visibility.Tracker = true
+	pw.SetMessageLength(20)
 	pw.SetNumTrackersExpected(1)
 	pw.SetStyle(progress.StyleDefault)
 	pw.SetTrackerPosition(progress.PositionRight)

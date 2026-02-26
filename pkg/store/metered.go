@@ -25,7 +25,7 @@ func (m *MeteredStore) DeleteReturnSize(key string) (int64, error) {
 
 	size := int64(0)
 	if !strings.HasPrefix(key, "index/") {
-		s, err := m.ObjectStore.Size(key)
+		s, err := m.Size(key)
 		if err != nil {
 			return 0, err
 		}
@@ -47,7 +47,7 @@ func (m *MeteredStore) Put(key string, data []byte) error {
 	if strings.HasPrefix(key, "index/") {
 		return nil
 	}
-	size, err := m.ObjectStore.Size(key)
+	size, err := m.Size(key)
 	if err != nil {
 		return err
 	}

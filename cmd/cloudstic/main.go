@@ -25,6 +25,12 @@ import (
 	"github.com/jedib0t/go-pretty/v6/table"
 )
 
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -34,6 +40,9 @@ func main() {
 	cmd := os.Args[1]
 
 	switch cmd {
+	case "version", "--version", "-v":
+		fmt.Printf("cloudstic %s (commit %s, built %s)\n", version, commit, date)
+		return
 	case "init":
 		runInit()
 	case "backup":

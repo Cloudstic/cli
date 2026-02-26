@@ -6,3 +6,4 @@ restore_out/
 .envrc
 .idea/
 cloudstic
+dist/

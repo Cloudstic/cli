@@ -41,18 +41,12 @@ func (m *MeteredStore) DeleteReturnSize(ctx context.Context, key string) (int64,
 }
 
 func (m *MeteredStore) Put(ctx context.Context, key string, data []byte) error {
-
 	if err := m.ObjectStore.Put(ctx, key, data); err != nil {
 		return err
 	}
-	if strings.HasPrefix(key, "index/") {
-		return nil
+	if !strings.HasPrefix(key, "index/") {
+		m.bytesWritten.Add(int64(len(data)))
 	}
-	size, err := m.Size(ctx, key)
-	if err != nil {
-		return err
-	}
-	m.bytesWritten.Add(size)
 	return nil
 }
 

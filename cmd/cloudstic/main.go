@@ -212,7 +212,7 @@ func (g *globalFlags) openStore() (store.ObjectStore, error) {
 	}
 
 	if !cfg.Encrypted {
-		return raw, nil
+		return store.NewCompressedStore(raw), nil
 	}
 
 	platformKey, err := g.parsePlatformKey()
@@ -235,7 +235,7 @@ func (g *globalFlags) openStore() (store.ObjectStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return store.NewEncryptedStore(raw, encKey), nil
+	return store.NewCompressedStore(store.NewEncryptedStore(raw, encKey)), nil
 }
 
 func loadRepoConfig(s store.ObjectStore) (*core.RepoConfig, error) {
@@ -948,7 +948,7 @@ func printBackupSummary(r *engine.RunResult) {
 	fmt.Printf("Dirs:   %d new,  %d changed,  %d unmodified,  %d removed\n",
 		r.DirsNew, r.DirsChanged, r.DirsUnmodified, r.DirsRemoved)
 	fmt.Printf("Added to the repository: %s (%s compressed)\n",
-		formatBytes(r.BytesAddedRaw), formatBytes(r.BytesAdded))
+		formatBytes(r.BytesAddedRaw), formatBytes(r.BytesAddedStored))
 	fmt.Printf("Processed %d entries in %s\n",
 		total, r.Duration.Round(time.Second))
 	fmt.Printf("Snapshot %s saved\n", r.SnapshotHash)
@@ -1073,6 +1073,7 @@ func runLsSnapshot() {
 	}
 
 	client := cloudstic.NewClient(s, cloudstic.WithReporter(ui.NewConsoleReporter()))
+	start := time.Now()
 	result, err := client.LsSnapshot(ctx, snapshotID)
 	if err != nil {
 		fmt.Printf("Ls failed: %v\n", err)
@@ -1081,6 +1082,7 @@ func runLsSnapshot() {
 
 	fmt.Printf("Listing files for snapshot: %s (Created: %s)\n", result.Ref, result.Snapshot.Created)
 	renderSnapshotTree(result)
+	fmt.Printf("\n%d entries listed in %s\n", len(result.RefToMeta), time.Since(start).Round(time.Millisecond))
 }
 
 // reorderArgs moves flag arguments before positional arguments so that Go's

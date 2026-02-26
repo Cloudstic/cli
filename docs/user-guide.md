@@ -21,6 +21,7 @@ Cloudstic is a content-addressable backup tool that creates encrypted, deduplica
 - [Sources](#sources)
   - [Local Directory](#local-directory)
   - [Google Drive](#google-drive)
+  - [Google Drive (Changes API)](#google-drive-changes-api)
   - [OneDrive](#onedrive)
 - [Storage Backends](#storage-backends)
   - [Local](#local-storage)
@@ -325,25 +326,47 @@ The recovery key is displayed once. Write it down immediately.
 
 ## Sources
 
+A **source** is where Cloudstic reads files from during a backup. Each source type connects to a different storage provider and walks its file tree to detect new, changed, or deleted files.
+
+### Source overview
+
+| Source | `-source` flag | What it backs up | Auth required |
+|--------|---------------|------------------|---------------|
+| [Local directory](#local-directory) | `local` | Files on your local filesystem | None |
+| [Google Drive](#google-drive) | `gdrive` | Full scan of Google Drive (My Drive or Shared Drive) | Google OAuth |
+| [Google Drive (Changes API)](#google-drive-changes-api) | `gdrive-changes` | Incremental changes since last backup (recommended) | Google OAuth |
+| [OneDrive](#onedrive) | `onedrive` | Full scan of Microsoft OneDrive | Microsoft OAuth |
+
+All sources produce the same snapshot format. You can back up different sources into the same repository, and snapshots are tagged with source metadata so retention policies can be applied per-source.
+
 ### Local Directory
 
-Back up files from a local filesystem path.
+Back up files from a local filesystem path. No authentication or environment variables required.
 
 ```bash
 cloudstic backup -source local -source-path /path/to/directory
 ```
 
-No additional environment variables or authentication required.
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-source-path` | `.` | Root directory to back up |
+
+Cloudstic walks the directory recursively. Symbolic links are not followed. File permissions are not preserved — only name, size, modification time, and content are captured.
 
 ### Google Drive
 
-Back up files from Google Drive. Requires a Google OAuth credentials file.
+Full scan of a Google Drive account. On each backup, Cloudstic lists every file and folder, compares metadata against the previous snapshot, and uploads anything new or changed.
+
+> **Note:** For routine backups, prefer [`gdrive-changes`](#google-drive-changes-api) instead — it is significantly faster and makes far fewer API requests.
+
+**When to use:** First backup of a Google Drive, or when you want a guaranteed complete rescan (e.g. after recovering from an error).
 
 **Setup:**
 
-1. Set `GOOGLE_APPLICATION_CREDENTIALS` to the path of your Google OAuth credentials JSON file
-2. On first run, you'll be prompted to open a URL in your browser and paste an authorization code
-3. The OAuth token is cached in the [config directory](#config-directory) as `google_token.json`
+1. Create a Google Cloud project and enable the Google Drive API
+2. Create OAuth 2.0 credentials (Desktop app type) and download the JSON file
+3. Set the `GOOGLE_APPLICATION_CREDENTIALS` environment variable to the path of that file
+4. On first run, Cloudstic opens a URL for you to authorize access. The resulting token is cached in the [config directory](#config-directory)
 
 ```bash
 export GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json
@@ -354,12 +377,14 @@ cloudstic backup -source gdrive
 # Back up a shared drive
 cloudstic backup -source gdrive -drive-id <shared-drive-id>
 
-# Back up a specific folder
+# Back up only a specific folder (by Google Drive folder ID)
 cloudstic backup -source gdrive -root-folder <folder-id>
-
-# Incremental backup using Changes API (faster after first full backup)
-cloudstic backup -source gdrive-changes
 ```
+
+| Flag | Description |
+|------|-------------|
+| `-drive-id` | Shared Drive ID (omit for personal My Drive) |
+| `-root-folder` | Restrict backup to a specific folder by ID |
 
 **Environment variables:**
 
@@ -368,15 +393,38 @@ cloudstic backup -source gdrive-changes
 | `GOOGLE_APPLICATION_CREDENTIALS` | Path to Google OAuth credentials JSON file |
 | `GOOGLE_TOKEN_FILE` | Override token cache path (default: `<config-dir>/google_token.json`) |
 
+### Google Drive (Changes API)
+
+**This is the recommended way to back up Google Drive.** Uses the Google Drive Changes API to fetch only files that changed since the last backup, rather than listing every file on the drive. This dramatically reduces both backup duration and the number of API requests — a drive with 100,000 files but 50 daily changes only needs to process those 50 files instead of listing all 100,000.
+
+**When to use:** All routine Google Drive backups. The first run performs a full scan automatically, so there is no need to start with `gdrive`.
+
+**How it works:** The first run behaves like a full `gdrive` backup and records a change token. Subsequent runs fetch only the changes since that token, making backups much faster for drives with thousands of files but few daily modifications.
+
+```bash
+# First run: full scan + saves change token
+cloudstic backup -source gdrive-changes
+
+# Subsequent runs: only fetches changes since last token
+cloudstic backup -source gdrive-changes
+```
+
+Uses the same authentication and flags as [Google Drive](#google-drive) (`-drive-id`, `-root-folder`).
+
+> **Tip:** You can use `-source gdrive-changes` from day one — the first run performs a full scan just like `gdrive`. Only fall back to `-source gdrive` if you need to force a complete rescan.
+
 ### OneDrive
 
-Back up files from Microsoft OneDrive. Requires a Microsoft OAuth app registration.
+Full scan of a Microsoft OneDrive account. Works the same way as the `gdrive` source — lists all files, compares against the previous snapshot, and uploads changes.
 
 **Setup:**
 
-1. Register an app in Azure Portal and obtain client ID and secret
-2. Set the environment variables below
-3. On first run, you'll be prompted to complete the OAuth flow
+1. Go to the [Azure App Registrations](https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade) portal
+2. Register a new application (set redirect URI to `http://localhost`)
+3. Under **Certificates & secrets**, create a new client secret
+4. Under **API permissions**, add `Files.Read.All` (Microsoft Graph, Delegated)
+5. Set the environment variables below
+6. On first run, Cloudstic opens a URL for you to authorize access. The resulting token is cached in the [config directory](#config-directory)
 
 ```bash
 export ONEDRIVE_CLIENT_ID=your-client-id
@@ -389,9 +437,19 @@ cloudstic backup -source onedrive
 
 | Variable | Description |
 |----------|-------------|
-| `ONEDRIVE_CLIENT_ID` | Microsoft app client ID |
-| `ONEDRIVE_CLIENT_SECRET` | Microsoft app client secret |
+| `ONEDRIVE_CLIENT_ID` | Azure app client ID |
+| `ONEDRIVE_CLIENT_SECRET` | Azure app client secret |
 | `ONEDRIVE_TOKEN_FILE` | Override token cache path (default: `<config-dir>/onedrive_token.json`) |
+
+### Source metadata in snapshots
+
+Each snapshot records which source produced it. This metadata is used by retention policies to group snapshots — for example, you can keep different retention rules for your local backups vs. your Google Drive backups:
+
+```bash
+# Keep 30 daily snapshots for Google Drive, 7 for local
+cloudstic forget -keep-daily 30 -source gdrive -prune
+cloudstic forget -keep-daily 7 -source local -prune
+```
 
 ---
 

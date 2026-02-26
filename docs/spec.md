@@ -166,22 +166,39 @@ Object key: `node/<sha256-of-serialized-json>`
   "created": "2025-12-01T12:00:00Z",
   "root": "node/<sha256>",
   "seq": 42,
-  "meta": {
-    "generator": "cloudstic-cli",
-    "source": "gdrive"
+  "source": {
+    "type": "gdrive",
+    "account": "user@gmail.com",
+    "path": "my-drive://"
   },
-  "tags": ["daily", "important"]
+  "meta": {
+    "generator": "cloudstic-cli"
+  },
+  "tags": ["daily", "important"],
+  "change_token": "12345"
 }
 ```
 
-| Field     | Description                                      |
-|-----------|--------------------------------------------------|
-| `seq`     | Monotonically increasing sequence number         |
-| `meta`    | Free-form key-value metadata (generator, source) |
-| `tags`    | User-defined labels for retention policies       |
+| Field          | Description                                                          |
+|----------------|----------------------------------------------------------------------|
+| `seq`          | Monotonically increasing sequence number                             |
+| `source`       | Origin of the backup (type, account, path) — used for retention grouping |
+| `meta`         | Free-form key-value metadata (generator, etc.)                       |
+| `tags`         | User-defined labels for retention policies                           |
+| `change_token` | Opaque token for incremental sources (omitted when not applicable)   |
 
 * Every snapshot is a **complete checkpoint** — no delta replay needed.
 * Structural sharing via the HAMT minimises the number of new nodes.
+
+#### Change tokens
+
+Incremental sources (`gdrive-changes`) record an opaque `change_token` in each snapshot. On the next backup, the engine reads the token from the previous snapshot and passes it to the source, which returns only the files that changed since that token. If no previous token exists (first backup or after switching from a full-scan source), the source performs a full scan and saves the initial token.
+
+The token format is source-specific:
+
+| Source           | Token type                           |
+|------------------|--------------------------------------|
+| `gdrive-changes` | Google Drive Changes API start page token |
 
 ### 6. Index
 

@@ -12,7 +12,7 @@ stored under a key derived from its hash. Objects are immutable once written.
 | `filemeta/`  | File metadata (name, size, mod time, content hash)    |
 | `node/`      | HAMT tree nodes (directory structure)                 |
 | `snapshot/`  | Root object tying a tree to a point in time           |
-| `index/`     | Mutable pointers (`latest`, `snapshots` catalog)      |
+| `index/`     | Mutable pointers (`latest`, `snapshots` catalog)       |
 
 ## Write Order During Backup
 
@@ -45,7 +45,7 @@ or modify an object that was already stored.
 | HAMT Flush                     | Orphaned node + blob objects          | None        |
 | Snapshot write                 | Orphaned snapshot + all its objects    | None        |
 | `index/latest` update          | New snapshot exists but isn't "latest" | None        |
-| `index/snapshots` catalog      | Catalog stale, snapshot still valid    | None        |
+| `index/snapshots` catalog      | Catalog stale; self-heals on next read | None        |
 
 In every case the previous `index/latest` still points at a fully valid
 snapshot with a complete, consistent tree.
@@ -56,6 +56,28 @@ snapshot with a complete, consistent tree.
   readable after the upload completes successfully.
 - **Local filesystem:** `Put` writes to a `.tmp` file and renames atomically
   (`os.Rename`), which is atomic on POSIX systems.
+
+## Snapshot Catalog (`index/snapshots`)
+
+The `index/snapshots` object is a **best-effort cache** that stores lightweight
+summaries of all snapshots. It exists purely to speed up operations like `list`
+and `forget` — avoiding the need to fetch and deserialize every individual
+`snapshot/*` object.
+
+This catalog is **self-healing**. Every time it is read, the engine reconciles
+it against the live `snapshot/` key listing:
+
+- **Missing entries** (snapshot exists on disk but not in the catalog) are
+  fetched and added automatically.
+- **Stale entries** (entry in catalog but snapshot was deleted) are removed.
+
+If the catalog is lost, corrupted, or out of date — for example because a
+backup was interrupted after writing the snapshot but before updating the
+catalog — it is transparently rebuilt on the next read. No manual intervention
+is required.
+
+The source of truth is always the set of `snapshot/*` keys in the store.
+The catalog is a disposable acceleration layer on top.
 
 ## Garbage Collection (Prune)
 

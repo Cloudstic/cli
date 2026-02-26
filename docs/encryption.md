@@ -1,0 +1,280 @@
+# Encryption Design
+
+## Overview
+
+All backup data (chunks, metadata, snapshots) is encrypted at rest using
+AES-256-GCM. Encryption is transparent at the object store layer — the backup
+engine does not need to be aware of it.
+
+## Threat Model
+
+- **At-rest protection**: if B2 or PostgreSQL storage is compromised, data is
+  unreadable without the encryption key.
+- **Tenant isolation**: even if database RLS is bypassed, each tenant's data is
+  encrypted with a unique key.
+- **Key loss prevention (SaaS)**: the platform always holds a recovery path via
+  the platform key slot.
+
+## Ciphertext Format
+
+Every encrypted value follows the same binary layout:
+
+```
+version (1 byte) || nonce (12 bytes) || ciphertext || GCM tag (16 bytes)
+```
+
+- **Version `0x01`**: AES-256-GCM, 12-byte random nonce
+- Overhead: 29 bytes per object (negligible for chunks at 512 KB–8 MB,
+  small for metadata objects)
+
+On read, if the first byte is not a recognised version, the data is returned
+as-is (plaintext). This allows gradual migration from unencrypted to encrypted
+storage. Existing unencrypted data is safe because it starts with either gzip
+magic bytes (`0x1f 0x8b`) or JSON (`0x7b`), neither of which collides with
+valid version bytes.
+
+## Key Hierarchy
+
+```
+Platform Key (env var / KMS)
+  └─ wraps → Platform Slot ─── unwraps → Tenant Master Key (256-bit)
+                                              │
+User Password (optional)                      │
+  └─ Argon2id derive + wrap → Password Slot ──┘
+                                              │
+Recovery Key (optional, BIP39 mnemonic)       │
+  └─ wraps → Recovery Slot ───────────────────┘
+                                              │
+                                     HKDF-SHA256(master, info="cloudstic-backup-v1")
+                                              │
+                                       Encryption Key (256-bit AES)
+                                              │
+                                      EncryptedStore
+```
+
+### Master key
+
+Each tenant has a 256-bit random master key generated from `crypto/rand` at
+tenant creation. The master key is never stored in plaintext.
+
+### Key slots
+
+A key slot stores the master key encrypted ("wrapped") by a wrapping key.
+Multiple slots can coexist for the same tenant, each using a different wrapping
+key.
+
+| Slot type  | Wrapping key source                  | Purpose                                  |
+|------------|--------------------------------------|------------------------------------------|
+| `platform` | `PLATFORM_ENCRYPTION_KEY` env var    | Always present; platform recovery        |
+| `password` | Argon2id(user password)              | Zero-knowledge; user controls access     |
+| `recovery` | Random 256-bit key (BIP39 mnemonic)  | Offline backup; printed / stored safely  |
+
+### Key slot storage
+
+Key slots are stored in two locations:
+
+1. **PostgreSQL** (`app.encryption_key_slots`): primary source for the web
+   application, fast access during backup/restore setup.
+2. **B2** (`keys/<slot_type>-<label>` objects): best-effort copy written at
+   tenant creation. Enables the CLI to discover and use encryption keys
+   directly from the repository without database access, and serves as
+   disaster recovery if PostgreSQL is lost.
+
+The B2 key slot objects are JSON:
+
+```json
+{
+  "slot_type": "platform",
+  "wrapped_key": "base64(nonce || encrypted_master_key || tag)",
+  "label": "default"
+}
+```
+
+Key slots are **not encrypted** by `EncryptedStore` — they are stored as
+plaintext JSON (containing already-wrapped keys). The `EncryptedStore`
+passes through any object under the `keys/` prefix without encrypting or
+decrypting it, avoiding the chicken-and-egg problem of needing the
+encryption key to read the encryption key.
+
+### Key derivation
+
+The master key is not used directly for encryption. Instead, HKDF-SHA256
+derives a 256-bit AES key:
+
+```
+encryption_key = HKDF-SHA256(
+    secret = master_key,
+    salt   = "",
+    info   = "cloudstic-backup-v1",
+)
+```
+
+This allows deriving additional purpose-specific keys in the future (e.g.,
+per-object-type keys) without re-encrypting existing data.
+
+## Store Stack
+
+Encryption sits in the object store wrapper chain:
+
+```
+Backup Engine → QuotaStore → EncryptedStore → MeteredStore → HybridStore
+                                                                ├─ PostgreSQL (metadata)
+                                                                └─ B2 (chunks + write-through)
+```
+
+- **Put(key, data)**: encrypt `data`, delegate `Put(key, encrypted)` to inner
+  store. Objects under `keys/` are passed through unencrypted.
+- **Get(key)**: delegate to inner store, decrypt result (or return as-is if
+  unencrypted legacy data). Objects under `keys/` are returned as-is.
+- **Exists, List, Delete, Size, TotalSize**: pass through unchanged
+
+Content addressing is preserved: keys remain `chunk/<sha256_of_plaintext>`,
+etc. Deduplication works because the chunker checks `Exists(key)` before
+writing, and the key is derived from plaintext content.
+
+## Content Addressing and Dedup
+
+Encryption uses random nonces, so encrypting the same plaintext twice produces
+different ciphertext. Dedup still works because:
+
+1. Object keys are hashes of **plaintext**, not ciphertext
+2. Before writing, the engine checks `Exists(key)` — if the key exists, the
+   write is skipped entirely
+3. Within a tenant, identical files produce identical chunk hashes and dedup
+   normally
+
+## Key Rotation
+
+### Platform key rotation
+
+When `PLATFORM_ENCRYPTION_KEY` changes (e.g., env var rotation):
+
+1. Unwrap every tenant master key with the **old** platform key
+2. Re-wrap each master key with the **new** platform key
+3. Update the `wrapped_key` column in `encryption_key_slots`
+
+This is cheap — no backup data re-encryption. It touches one row per tenant
+and runs in seconds even at scale.
+
+### Tenant master key rotation (rare)
+
+When a tenant's master key must change (security incident):
+
+1. Generate new master key
+2. Create new key slots with the new master key
+3. Keep old key in memory for dual-key reads
+4. New writes use new key; reads try new key first, fall back to old key on
+   GCM authentication failure
+5. Background job re-encrypts all existing objects
+6. Once complete, retire old key slots
+
+This is expensive (reads + re-encrypts every object) and should only be needed
+for security incidents.
+
+## Database Schema
+
+```sql
+CREATE TABLE app.encryption_key_slots (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id     UUID NOT NULL REFERENCES app.tenants(id) ON DELETE CASCADE,
+    slot_type     TEXT NOT NULL CHECK (slot_type IN ('platform', 'password', 'recovery')),
+    wrapped_key   TEXT NOT NULL,  -- base64(nonce || encrypted_master_key || tag)
+    kdf_params    JSONB,          -- for password slots: {algorithm, salt, n, r, p}
+    label         TEXT NOT NULL DEFAULT '',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, slot_type, label)
+);
+```
+
+This table uses RLS for tenant isolation. Key slots are also written to B2
+as `keys/<slot_type>-<label>` objects (best-effort) to enable CLI access
+and disaster recovery.
+
+## Recovery Key
+
+The recovery key is a 256-bit random key encoded as a **BIP39 24-word
+mnemonic** (seed phrase). It provides an offline backup mechanism: if the
+user loses their password or the platform key is unavailable, the mnemonic
+can unlock the master key.
+
+### How it works
+
+1. A 256-bit random key is generated from `crypto/rand`
+2. The key is encoded as a 24-word BIP39 English mnemonic
+3. The master key is wrapped (AES-256-GCM) using the raw recovery key
+4. The wrapped key is stored as a `recovery` slot (`keys/recovery-default`)
+5. The mnemonic is displayed **once** to the user — it is never stored
+
+To recover:
+
+1. The user provides the 24-word mnemonic
+2. The mnemonic is decoded back to the 256-bit raw key
+3. The raw key unwraps the master key from the recovery slot
+4. HKDF derives the encryption key — same path as platform/password slots
+
+### CLI usage
+
+Generate a recovery key during repository initialization:
+
+```
+cloudstic init --encryption-password <pw> --recovery
+```
+
+Or add a recovery key to an existing repository:
+
+```
+cloudstic add-recovery-key --encryption-password <pw>
+```
+
+Open a repository using the recovery key:
+
+```
+cloudstic backup --recovery-key "word1 word2 ... word24"
+```
+
+The recovery key can also be provided via the `CLOUDSTIC_RECOVERY_KEY`
+environment variable.
+
+### Web (SaaS) usage
+
+The `EncryptionService.CreateRecoverySlot` method generates a recovery key
+for a tenant, stores the slot in PostgreSQL and B2, and returns the mnemonic
+for one-time display. `HasRecoverySlot` checks whether a recovery slot
+already exists.
+
+## CLI Encryption
+
+The `EncryptedStore` and crypto primitives live in `cli/pkg/` and are shared
+by both the CLI tool and the web application. Only key management differs:
+
+| Aspect           | Web (SaaS)                             | CLI                                  |
+|------------------|----------------------------------------|--------------------------------------|
+| Key management   | Platform-managed, stored in DB + B2    | User-managed password or platform key|
+| Key derivation   | Platform key wraps master key          | Argon2id(password) wraps master key  |
+| Key storage      | `encryption_key_slots` table + B2      | `keys/<type>-<label>` in B2          |
+| User experience  | Transparent, no password needed        | Credential per operation             |
+| Key loss risk    | None (platform always has recovery)    | Recovery key mitigates password loss |
+
+Both web and CLI store key slots as `keys/<slot_type>-<label>` objects in B2,
+making repositories self-contained. The ciphertext format is identical, so
+repositories are interoperable if you have the key.
+
+### CLI flow
+
+1. List `keys/*` objects from B2 to discover available slots
+2. Try platform key, password, or recovery key based on provided credentials
+3. Unwrap the master key, derive the encryption key via HKDF
+4. Create `EncryptedStore` with that key — same code path as the web
+
+## Platform Key Management
+
+The `PLATFORM_ENCRYPTION_KEY` environment variable holds a 32-byte
+hex-encoded key. This is the single secret that protects all tenant master
+keys.
+
+- Store in a secrets manager (Vault, AWS Secrets Manager, etc.)
+- Back up securely — losing this key means generating new master keys for all
+  tenants (existing encrypted data becomes unreadable)
+- Rotate with the platform key rotation flow described above
+- For v1, an env var is sufficient. KMS integration can be added later by
+  replacing the unwrap function.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/cloudstic/cli/pkg/core"
 	"github.com/cloudstic/cli/pkg/hamt"
@@ -98,21 +99,64 @@ func (lm *LsSnapshotManager) resolveSnapshot(ctx context.Context, id string) (*c
 // ---------------------------------------------------------------------------
 
 func (lm *LsSnapshotManager) collectMeta(ctx context.Context, root string) (map[string]core.FileMeta, error) {
-	refToMeta := make(map[string]core.FileMeta)
-
+	var refs []string
 	err := lm.tree.Walk(root, func(_, valueRef string) error {
-		data, err := lm.store.Get(ctx, valueRef)
-		if err != nil {
-			return err
-		}
-		var fm core.FileMeta
-		if err := json.Unmarshal(data, &fm); err != nil {
-			return err
-		}
-		refToMeta[valueRef] = fm
+		refs = append(refs, valueRef)
 		return nil
 	})
-	return refToMeta, err
+	if err != nil {
+		return nil, err
+	}
+
+	const workers = 20
+	type result struct {
+		ref  string
+		meta core.FileMeta
+		err  error
+	}
+
+	jobs := make(chan string, len(refs))
+	results := make(chan result, len(refs))
+
+	var wg sync.WaitGroup
+	for range min(workers, len(refs)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for ref := range jobs {
+				data, err := lm.store.Get(ctx, ref)
+				if err != nil {
+					results <- result{err: err}
+					continue
+				}
+				var fm core.FileMeta
+				if err := json.Unmarshal(data, &fm); err != nil {
+					results <- result{err: err}
+					continue
+				}
+				results <- result{ref: ref, meta: fm}
+			}
+		}()
+	}
+
+	for _, ref := range refs {
+		jobs <- ref
+	}
+	close(jobs)
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	refToMeta := make(map[string]core.FileMeta, len(refs))
+	for res := range results {
+		if res.err != nil {
+			return nil, res.err
+		}
+		refToMeta[res.ref] = res.meta
+	}
+	return refToMeta, nil
 }
 
 // buildHierarchy returns sorted root refs and a parent->children map.

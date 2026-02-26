@@ -2,8 +2,6 @@ package engine
 
 import (
 	"archive/zip"
-	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -182,7 +180,7 @@ func buildZipPath(meta core.FileMeta, byID map[string]core.FileMeta) string {
 // ---------------------------------------------------------------------------
 
 func (rm *RestoreManager) resolveSnapshot(ctx context.Context, ref string) (*core.Snapshot, string, error) {
-	if ref == "" {
+	if ref == "" || ref == "latest" {
 		data, err := rm.store.Get(ctx, "index/latest")
 		if err != nil {
 			return nil, "", fmt.Errorf("cannot find latest index: %w", err)
@@ -192,6 +190,8 @@ func (rm *RestoreManager) resolveSnapshot(ctx context.Context, ref string) (*cor
 			return nil, "", err
 		}
 		ref = idx.LatestSnapshot
+	} else if !strings.HasPrefix(ref, "snapshot/") {
+		ref = "snapshot/" + ref
 	}
 
 	data, err := rm.store.Get(ctx, ref)
@@ -359,13 +359,7 @@ func (rm *RestoreManager) writeChunk(ctx context.Context, w io.Writer, ref strin
 	if err != nil {
 		return err
 	}
-	zr, err := gzip.NewReader(bytes.NewReader(data))
-	if err != nil {
-		return fmt.Errorf("decompress chunk %s: %w", ref, err)
-	}
-	defer func() { _ = zr.Close() }()
-
-	_, err = io.Copy(w, zr)
+	_, err = w.Write(data)
 	return err
 }
 

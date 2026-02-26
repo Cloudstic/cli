@@ -20,9 +20,22 @@ func buildBinary(t *testing.T) string {
 	return bin
 }
 
+// cleanEnv returns the current environment with all CLOUDSTIC_ variables removed
+// so that tests don't inherit credentials from the host.
+func cleanEnv() []string {
+	var env []string
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, "CLOUDSTIC_") {
+			env = append(env, e)
+		}
+	}
+	return env
+}
+
 func run(t *testing.T, bin string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command(bin, args...)
+	cmd.Env = cleanEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("Command %v failed: %v\n%s", args, err, out)
@@ -33,6 +46,7 @@ func run(t *testing.T, bin string, args ...string) string {
 func runExpectFail(t *testing.T, bin string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command(bin, args...)
+	cmd.Env = cleanEnv()
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatalf("Expected command %v to fail, but it succeeded:\n%s", args, out)

@@ -7,12 +7,17 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"sync"
 
 	"github.com/cloudstic/cli/pkg/core"
 	"github.com/cloudstic/cli/pkg/store"
 
 	"github.com/jotfs/fastcdc-go"
 )
+
+// fastcdc-go mutates a package-level lookup table inside NewChunker,
+// so concurrent calls race. Serialize creation to avoid this.
+var cdcMu sync.Mutex
 
 // FastCDC boundary sizes.
 const (
@@ -38,11 +43,13 @@ func NewChunker(s store.ObjectStore) *Chunker {
 //
 // onProgress is called after each chunk with the number of raw bytes consumed.
 func (c *Chunker) ProcessStream(r io.Reader, onProgress func(int64)) (refs []string, size int64, newBytes int64, newBytesCompressed int64, hash string, err error) {
+	cdcMu.Lock()
 	cdc, err := fastcdc.NewChunker(r, fastcdc.Options{
 		MinSize:     cdcMinSize,
 		AverageSize: cdcAvgSize,
 		MaxSize:     cdcMaxSize,
 	})
+	cdcMu.Unlock()
 	if err != nil {
 		return nil, 0, 0, 0, "", err
 	}

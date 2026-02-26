@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/cloudstic/cli/pkg/core"
+	"github.com/cloudstic/cli/pkg/retry"
 )
 
 // OneDriveChangeSource is an IncrementalSource backed by the Microsoft Graph
@@ -110,25 +111,24 @@ type graphDeltaResponse struct {
 }
 
 func (s *OneDriveChangeSource) fetchDeltaPage(ctx context.Context, url string) (*graphDeltaResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := s.Client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("graph delta api error: %s %s", resp.Status, string(body))
-	}
-
 	var deltaResp graphDeltaResponse
-	if err := json.NewDecoder(resp.Body).Decode(&deltaResp); err != nil {
-		return nil, err
-	}
-	return &deltaResp, nil
+	err := retry.Do(ctx, retry.DefaultPolicy(), func() error {
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return err
+		}
+
+		resp, err := s.Client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		body, _ := io.ReadAll(resp.Body)
+		if apiErr := retry.ClassifyHTTPResponse(resp, body); apiErr != nil {
+			return apiErr
+		}
+		return json.Unmarshal(body, &deltaResp)
+	})
+	return &deltaResp, err
 }

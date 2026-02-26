@@ -10,6 +10,8 @@ import (
 	"github.com/Backblaze/blazer/b2"
 )
 
+const b2OpTimeout = 5 * time.Minute
+
 type B2Store struct {
 	Client *b2.Client
 	Bucket *b2.Bucket
@@ -48,8 +50,13 @@ func (s *B2Store) key(k string) string {
 	return s.Prefix + k
 }
 
-func (s *B2Store) Put(key string, data []byte) error {
-	ctx := context.Background()
+func (s *B2Store) opCtx(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, b2OpTimeout)
+}
+
+func (s *B2Store) Put(ctx context.Context, key string, data []byte) error {
+	ctx, cancel := s.opCtx(ctx)
+	defer cancel()
 
 	obj := s.Bucket.Object(s.key(key))
 	w := obj.NewWriter(ctx)
@@ -60,8 +67,9 @@ func (s *B2Store) Put(key string, data []byte) error {
 	return w.Close()
 }
 
-func (s *B2Store) Get(key string) ([]byte, error) {
-	ctx := context.Background()
+func (s *B2Store) Get(ctx context.Context, key string) ([]byte, error) {
+	ctx, cancel := s.opCtx(ctx)
+	defer cancel()
 
 	obj := s.Bucket.Object(s.key(key))
 	r := obj.NewReader(ctx)
@@ -70,8 +78,10 @@ func (s *B2Store) Get(key string) ([]byte, error) {
 	return io.ReadAll(r)
 }
 
-func (s *B2Store) Exists(key string) (bool, error) {
-	ctx := context.Background()
+func (s *B2Store) Exists(ctx context.Context, key string) (bool, error) {
+	ctx, cancel := s.opCtx(ctx)
+	defer cancel()
+
 	obj := s.Bucket.Object(s.key(key))
 	attrs, err := obj.Attrs(ctx)
 	if err != nil {
@@ -83,14 +93,18 @@ func (s *B2Store) Exists(key string) (bool, error) {
 	return attrs != nil, nil
 }
 
-func (s *B2Store) Delete(key string) error {
-	ctx := context.Background()
+func (s *B2Store) Delete(ctx context.Context, key string) error {
+	ctx, cancel := s.opCtx(ctx)
+	defer cancel()
+
 	obj := s.Bucket.Object(s.key(key))
 	return obj.Delete(ctx)
 }
 
-func (s *B2Store) Size(key string) (int64, error) {
-	ctx := context.Background()
+func (s *B2Store) Size(ctx context.Context, key string) (int64, error) {
+	ctx, cancel := s.opCtx(ctx)
+	defer cancel()
+
 	obj := s.Bucket.Object(s.key(key))
 	attrs, err := obj.Attrs(ctx)
 	if err != nil {
@@ -101,14 +115,15 @@ func (s *B2Store) Size(key string) (int64, error) {
 
 // NewWriter returns a streaming writer to the given key in B2.
 // The caller must Close the writer to finalize the upload.
-func (s *B2Store) NewWriter(key string) io.WriteCloser {
-	ctx := context.Background()
+func (s *B2Store) NewWriter(ctx context.Context, key string) io.WriteCloser {
 	return s.Bucket.Object(s.key(key)).NewWriter(ctx)
 }
 
 // SignedURL returns a time-limited download URL for the given key.
-func (s *B2Store) SignedURL(key string, validFor time.Duration) (string, error) {
-	ctx := context.Background()
+func (s *B2Store) SignedURL(ctx context.Context, key string, validFor time.Duration) (string, error) {
+	ctx, cancel := s.opCtx(ctx)
+	defer cancel()
+
 	token, err := s.Bucket.AuthToken(ctx, s.key(key), validFor)
 	if err != nil {
 		return "", fmt.Errorf("generate auth token: %w", err)
@@ -117,8 +132,10 @@ func (s *B2Store) SignedURL(key string, validFor time.Duration) (string, error) 
 		s.Bucket.BaseURL(), s.Bucket.Name(), s.key(key), token), nil
 }
 
-func (s *B2Store) TotalSize() (int64, error) {
-	ctx := context.Background()
+func (s *B2Store) TotalSize(ctx context.Context) (int64, error) {
+	ctx, cancel := s.opCtx(ctx)
+	defer cancel()
+
 	var total int64
 	var opts []b2.ListOption
 	if s.Prefix != "" {
@@ -139,8 +156,10 @@ func (s *B2Store) TotalSize() (int64, error) {
 }
 
 // DeletePrefix deletes all objects under the given prefix.
-func (s *B2Store) DeletePrefix(prefix string) error {
-	ctx := context.Background()
+func (s *B2Store) DeletePrefix(ctx context.Context, prefix string) error {
+	ctx, cancel := s.opCtx(ctx)
+	defer cancel()
+
 	fullPrefix := s.key(prefix)
 
 	var opts []b2.ListOption
@@ -157,16 +176,9 @@ func (s *B2Store) DeletePrefix(prefix string) error {
 	return cursor.Err()
 }
 
-func (s *B2Store) List(prefix string) ([]string, error) {
-	ctx := context.Background()
-
-	// Blazer List takes options
-	// We can specify prefix using b2.ListPrefix?
-	// No, bucket.List returns a Cursor.
-	// Wait, ListPrefix is not an option for Bucket.List?
-	// Checking documentation logic or assuming standard B2 SDK patterns.
-	// `Bucket.List` usually takes `...ListOption`.
-	// `b2.ListPrefix(prefix)` is likely the option.
+func (s *B2Store) List(ctx context.Context, prefix string) ([]string, error) {
+	ctx, cancel := s.opCtx(ctx)
+	defer cancel()
 
 	fullPrefix := s.key(prefix)
 

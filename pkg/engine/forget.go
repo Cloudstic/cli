@@ -127,7 +127,7 @@ func (fm *ForgetManager) Run(ctx context.Context, snapshotID string, opts ...For
 	phase := fm.reporter.StartPhase("Forgetting snapshot", 0, false)
 	phase.Log(fmt.Sprintf("Forgetting %s", targetRef))
 
-	if err := fm.store.Delete(targetRef); err != nil {
+	if err := fm.store.Delete(ctx, targetRef); err != nil {
 		phase.Error()
 		return nil, fmt.Errorf("delete snapshot %s: %w", targetRef, err)
 	}
@@ -279,7 +279,7 @@ func (fm *ForgetManager) RunPolicy(ctx context.Context, opts ...ForgetOption) (*
 
 	// Batch-remove all snapshots
 	phase := fm.reporter.StartPhase("Removing snapshots", int64(len(toRemove)), false)
-	if err := fm.forgetBatch(toRemove); err != nil {
+	if err := fm.forgetBatch(ctx, toRemove); err != nil {
 		phase.Error()
 		return nil, err
 	}
@@ -297,14 +297,14 @@ func (fm *ForgetManager) RunPolicy(ctx context.Context, opts ...ForgetOption) (*
 }
 
 // forgetBatch removes multiple snapshots and fixes up index/latest once.
-func (fm *ForgetManager) forgetBatch(entries []SnapshotEntry) error {
+func (fm *ForgetManager) forgetBatch(ctx context.Context, entries []SnapshotEntry) error {
 	toRemove := make(map[string]bool, len(entries))
 	for _, e := range entries {
 		toRemove[e.Ref] = true
 	}
 
 	for _, e := range entries {
-		_ = fm.store.Delete(e.Ref)
+		_ = fm.store.Delete(ctx, e.Ref)
 		_ = RemoveSnapshotFromIndex(fm.store, e.Ref)
 	}
 

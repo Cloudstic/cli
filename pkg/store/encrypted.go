@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"strings"
 
 	"github.com/cloudstic/cli/pkg/crypto"
@@ -29,19 +30,19 @@ func NewEncryptedStore(inner ObjectStore, key []byte) *EncryptedStore {
 	return &EncryptedStore{ObjectStore: inner, key: key}
 }
 
-func (s *EncryptedStore) Put(key string, data []byte) error {
+func (s *EncryptedStore) Put(ctx context.Context, key string, data []byte) error {
 	if strings.HasPrefix(key, KeySlotPrefix) {
-		return s.ObjectStore.Put(key, data)
+		return s.ObjectStore.Put(ctx, key, data)
 	}
 	ct, err := crypto.Encrypt(data, s.key)
 	if err != nil {
 		return err
 	}
-	return s.ObjectStore.Put(key, ct)
+	return s.ObjectStore.Put(ctx, key, ct)
 }
 
-func (s *EncryptedStore) Get(key string) ([]byte, error) {
-	data, err := s.ObjectStore.Get(key)
+func (s *EncryptedStore) Get(ctx context.Context, key string) ([]byte, error) {
+	data, err := s.ObjectStore.Get(ctx, key)
 	if err != nil {
 		return nil, err
 	}

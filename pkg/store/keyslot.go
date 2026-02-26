@@ -33,13 +33,14 @@ type KDFParams struct {
 
 // LoadKeySlots reads all key slot objects from the store.
 func LoadKeySlots(s ObjectStore) ([]KeySlot, error) {
-	keys, err := s.List(KeySlotPrefix)
+	ctx := context.Background()
+	keys, err := s.List(ctx, KeySlotPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("list key slots: %w", err)
 	}
 	var slots []KeySlot
 	for _, key := range keys {
-		data, err := s.Get(key)
+		data, err := s.Get(ctx, key)
 		if err != nil {
 			return nil, fmt.Errorf("read key slot %s: %w", key, err)
 		}
@@ -86,7 +87,7 @@ func writeSlot(s ObjectStore, slot KeySlot) error {
 	if err != nil {
 		return fmt.Errorf("marshal key slot: %w", err)
 	}
-	return s.Put(slotObjectKey(slot.SlotType, slot.Label), data)
+	return s.Put(context.Background(), slotObjectKey(slot.SlotType, slot.Label), data)
 }
 
 // unwrapMasterKey tries to unwrap the master key from a slot using the given
@@ -285,7 +286,7 @@ func SyncKeySlots(s ObjectStore, slots []KeySlot) {
 
 // HasKeySlots reports whether the store contains any encryption key slots.
 func HasKeySlots(s ObjectStore) bool {
-	keys, err := s.List(KeySlotPrefix)
+	keys, err := s.List(context.Background(), KeySlotPrefix)
 	return err == nil && len(keys) > 0
 }
 

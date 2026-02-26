@@ -10,10 +10,12 @@ import (
 	"time"
 
 	"github.com/cloudstic/cli/pkg/core"
+	"github.com/cloudstic/cli/pkg/retry"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/drive/v3"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 )
 
@@ -147,19 +149,47 @@ func saveToken(path string, token *oauth2.Token) error {
 	return json.NewEncoder(f).Encode(token)
 }
 
+// driveCallWithRetry wraps a Google API call with retry logic for transient errors.
+func driveCallWithRetry[T any](ctx context.Context, fn func() (T, error)) (T, error) {
+	var result T
+	err := retry.Do(ctx, retry.DefaultPolicy(), func() error {
+		var err error
+		result, err = fn()
+		if err != nil {
+			if isRetryableGoogleErr(err) {
+				return &retry.RetryableError{Err: err}
+			}
+			return err
+		}
+		return nil
+	})
+	return result, err
+}
+
+func isRetryableGoogleErr(err error) bool {
+	if apiErr, ok := err.(*googleapi.Error); ok {
+		return apiErr.Code == 429 || apiErr.Code >= 500
+	}
+	return false
+}
+
 // ---------------------------------------------------------------------------
 // Walk
 // ---------------------------------------------------------------------------
 
+// Walk lists all files from Drive. Folders are accumulated in memory (necessary
+// for topological sort) but files are streamed page-by-page to avoid holding
+// the full file list in memory.
 func (s *GDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) error) error {
-	var folders, files []*drive.File
+	var folders []*drive.File
 	pageToken := ""
 
 	for {
 		call := s.Service.Files.List().
 			Q("trashed = false").
 			Fields("nextPageToken, files(id, name, parents, mimeType, size, modifiedTime, owners, trashed, sha256Checksum)").
-			PageSize(1000)
+			PageSize(1000).
+			Context(ctx)
 		if s.isSharedDrive() {
 			call.DriveId(s.DriveID).
 				Corpora("drive").
@@ -170,7 +200,7 @@ func (s *GDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) er
 			call.PageToken(pageToken)
 		}
 
-		r, err := call.Do()
+		r, err := driveCallWithRetry(ctx, func() (*drive.FileList, error) { return call.Do() })
 		if err != nil {
 			return fmt.Errorf("list files: %w", err)
 		}
@@ -178,8 +208,6 @@ func (s *GDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) er
 		for _, f := range r.Files {
 			if f.MimeType == "application/vnd.google-apps.folder" {
 				folders = append(folders, f)
-			} else {
-				files = append(files, f)
 			}
 		}
 
@@ -189,17 +217,46 @@ func (s *GDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) er
 		}
 	}
 
-	// Topologically sort folders so parents are always emitted before children.
+	// Emit folders first (topo-sorted so parents before children).
 	folders = topoSortFolders(folders)
-
 	for _, f := range folders {
 		if err := s.visitEntry(f, callback); err != nil {
 			return err
 		}
 	}
-	for _, f := range files {
-		if err := s.visitEntry(f, callback); err != nil {
-			return err
+
+	// Second pass: emit files page-by-page to avoid holding them all in memory.
+	pageToken = ""
+	for {
+		call := s.Service.Files.List().
+			Q("trashed = false AND mimeType != 'application/vnd.google-apps.folder'").
+			Fields("nextPageToken, files(id, name, parents, mimeType, size, modifiedTime, owners, trashed, sha256Checksum)").
+			PageSize(1000).
+			Context(ctx)
+		if s.isSharedDrive() {
+			call.DriveId(s.DriveID).
+				Corpora("drive").
+				SupportsAllDrives(true).
+				IncludeItemsFromAllDrives(true)
+		}
+		if pageToken != "" {
+			call.PageToken(pageToken)
+		}
+
+		r, err := driveCallWithRetry(ctx, func() (*drive.FileList, error) { return call.Do() })
+		if err != nil {
+			return fmt.Errorf("list files: %w", err)
+		}
+
+		for _, f := range r.Files {
+			if err := s.visitEntry(f, callback); err != nil {
+				return err
+			}
+		}
+
+		pageToken = r.NextPageToken
+		if pageToken == "" {
+			break
 		}
 	}
 
@@ -282,7 +339,9 @@ func (s *GDriveSource) toFileMeta(f *drive.File) core.FileMeta {
 // about.get endpoint. For shared drives it lists all files and sums sizes.
 func (s *GDriveSource) Size(ctx context.Context) (*SourceSize, error) {
 	if !s.isSharedDrive() {
-		about, err := s.Service.About.Get().Fields("storageQuota").Do()
+		about, err := driveCallWithRetry(ctx, func() (*drive.About, error) {
+			return s.Service.About.Get().Fields("storageQuota").Context(ctx).Do()
+		})
 		if err != nil {
 			return nil, fmt.Errorf("drive about: %w", err)
 		}
@@ -299,12 +358,13 @@ func (s *GDriveSource) Size(ctx context.Context) (*SourceSize, error) {
 			SupportsAllDrives(true).
 			Q("trashed=false and mimeType!='application/vnd.google-apps.folder'").
 			Fields("nextPageToken,files(size)").
-			PageSize(1000)
+			PageSize(1000).
+			Context(ctx)
 		if pageToken != "" {
 			call = call.PageToken(pageToken)
 		}
 
-		result, err := call.Do()
+		result, err := driveCallWithRetry(ctx, func() (*drive.FileList, error) { return call.Do() })
 		if err != nil {
 			return nil, fmt.Errorf("list files: %w", err)
 		}
@@ -322,8 +382,19 @@ func (s *GDriveSource) Size(ctx context.Context) (*SourceSize, error) {
 }
 
 func (s *GDriveSource) GetFileStream(fileID string) (io.ReadCloser, error) {
-	call := s.Service.Files.Get(fileID).SupportsAllDrives(true)
-	resp, err := call.Download()
+	var resp *http.Response
+	err := retry.Do(context.Background(), retry.DefaultPolicy(), func() error {
+		call := s.Service.Files.Get(fileID).SupportsAllDrives(true)
+		var err error
+		resp, err = call.Download()
+		if err != nil {
+			if isRetryableGoogleErr(err) {
+				return &retry.RetryableError{Err: err}
+			}
+			return err
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}

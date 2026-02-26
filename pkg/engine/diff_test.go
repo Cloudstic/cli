@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"testing"
 
 	"github.com/cloudstic/cli/pkg/core"
@@ -8,19 +9,20 @@ import (
 )
 
 func TestDiffManager_Run(t *testing.T) {
+	ctx := context.Background()
 	store := NewMockStore()
 
-	meta1 := createMeta(store, "file1.txt", 100)
-	meta2 := createMeta(store, "file2.txt", 200)
-	meta3 := createMeta(store, "file3.txt", 300)
+	meta1 := createMeta(ctx, store, "file1.txt", 100)
+	meta2 := createMeta(ctx, store, "file2.txt", 200)
+	meta3 := createMeta(ctx, store, "file3.txt", 300)
 
 	root1 := createHamt(t, store, []string{"file1", "file2"}, []string{meta1, meta2})
-	_ = saveSnapshotRef(store, root1, 1)
+	_ = saveSnapshotRef(ctx, store, root1, 1)
 
-	meta2Mod := createMeta(store, "file2.txt", 250)
+	meta2Mod := createMeta(ctx, store, "file2.txt", 250)
 	root2 := createHamt(t, store, []string{"file1", "file2", "file3"}, []string{meta1, meta2Mod, meta3})
-	snap2Ref := saveSnapshotRef(store, root2, 2)
-	_ = store.Put("index/latest", createIndex(snap2Ref, 2))
+	snap2Ref := saveSnapshotRef(ctx, store, root2, 2)
+	_ = store.Put(ctx, "index/latest", createIndex(snap2Ref, 2))
 
 	dm := NewDiffManager(store)
 
@@ -63,11 +65,11 @@ func TestDiffManager_Run(t *testing.T) {
 	}
 }
 
-func createMeta(s *MockStore, name string, size int64) string {
+func createMeta(ctx context.Context, s *MockStore, name string, size int64) string {
 	m := core.FileMeta{Name: name, Size: size}
 	h, d, _ := core.ComputeJSONHash(&m)
 	ref := "filemeta/" + h
-	_ = s.Put(ref, d)
+	_ = s.Put(ctx, ref, d)
 	return ref
 }
 
@@ -84,10 +86,10 @@ func createHamt(t *testing.T, s *MockStore, ids []string, refs []string) string 
 	return root
 }
 
-func saveSnapshotRef(s *MockStore, root string, seq int) string {
+func saveSnapshotRef(ctx context.Context, s *MockStore, root string, seq int) string {
 	snap := core.Snapshot{Root: root, Seq: seq}
 	h, d, _ := core.ComputeJSONHash(&snap)
 	ref := "snapshot/" + h
-	_ = s.Put(ref, d)
+	_ = s.Put(ctx, ref, d)
 	return ref
 }

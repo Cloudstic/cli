@@ -163,7 +163,7 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 		usedFullScan = true
 	}
 
-	newRoot, err = bm.upload(pending, totalBytes, newRoot)
+	newRoot, err = bm.upload(ctx, pending, totalBytes, newRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +174,7 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 		}
 	}
 
-	snapRef, snapHash, err := bm.saveSnapshot(newRoot, seq+1, newToken)
+	snapRef, snapHash, err := bm.saveSnapshot(ctx, newRoot, seq+1, newToken)
 	if err != nil {
 		return nil, err
 	}
@@ -262,7 +262,7 @@ func (bm *BackupManager) scan(ctx context.Context, oldRoot string) (newRoot stri
 		bm.recordStat(meta.Type, true, oldRef == "")
 
 		if meta.Type == core.FileTypeFolder {
-			newRoot, err = bm.insertFolder(newRoot, &meta, phase)
+			newRoot, err = bm.insertFolder(ctx, newRoot, &meta, phase)
 			return err
 		}
 
@@ -321,7 +321,7 @@ func metadataEqual(a, b core.FileMeta) bool {
 		len(a.Parents) == len(b.Parents)
 }
 
-func (bm *BackupManager) insertFolder(root string, meta *core.FileMeta, phase ui.Phase) (string, error) {
+func (bm *BackupManager) insertFolder(ctx context.Context, root string, meta *core.FileMeta, phase ui.Phase) (string, error) {
 	if bm.cfg.verbose {
 		phase.Log(fmt.Sprintf("Folder: %s (New/Changed)", meta.Name))
 	}
@@ -332,7 +332,7 @@ func (bm *BackupManager) insertFolder(root string, meta *core.FileMeta, phase ui
 	if err != nil {
 		return "", err
 	}
-	if err := bm.store.Put(metaRef, metaData); err != nil {
+	if err := bm.store.Put(ctx, metaRef, metaData); err != nil {
 		return "", err
 	}
 	return bm.tree.Insert(root, meta.FileID, metaRef)
@@ -421,7 +421,7 @@ func (bm *BackupManager) scanIncremental(ctx context.Context, oldRoot string, in
 			bm.recordStat(fc.Meta.Type, true, oldRef == "")
 
 			if fc.Meta.Type == core.FileTypeFolder {
-				newRoot, err = bm.insertFolder(newRoot, &fc.Meta, phase)
+				newRoot, err = bm.insertFolder(ctx, newRoot, &fc.Meta, phase)
 				return err
 			}
 
@@ -458,28 +458,30 @@ type uploadResult struct {
 
 // upload processes the pending file queue with concurrent workers, inserts each
 // result into the HAMT, and returns the updated root.
-func (bm *BackupManager) upload(pending []core.FileMeta, totalBytes int64, root string) (string, error) {
+func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, totalBytes int64, root string) (string, error) {
 	if len(pending) == 0 {
 		return root, nil
 	}
 
 	phase := bm.reporter.StartPhase("Uploading", totalBytes, true)
 
-	jobs := make(chan core.FileMeta, len(pending))
-	results := make(chan uploadResult, len(pending))
+	jobs := make(chan core.FileMeta, min(128, len(pending)))
+	results := make(chan uploadResult, min(128, len(pending)))
 
 	for range min(uploadConcurrency, len(pending)) {
 		go func() {
 			for meta := range jobs {
-				results <- bm.processFile(meta, phase)
+				results <- bm.processFile(ctx, meta, phase)
 			}
 		}()
 	}
 
-	for _, m := range pending {
-		jobs <- m
-	}
-	close(jobs)
+	go func() {
+		for _, m := range pending {
+			jobs <- m
+		}
+		close(jobs)
+	}()
 
 	var err error
 	for range pending {
@@ -502,12 +504,12 @@ func (bm *BackupManager) upload(pending []core.FileMeta, totalBytes int64, root 
 
 // processFile uploads (or deduplicates) a single file's content and persists
 // its FileMeta. It is safe to call from multiple goroutines.
-func (bm *BackupManager) processFile(meta core.FileMeta, phase ui.Phase) uploadResult {
+func (bm *BackupManager) processFile(ctx context.Context, meta core.FileMeta, phase ui.Phase) uploadResult {
 	if bm.cfg.verbose {
 		phase.Log(fmt.Sprintf("Processing: %s", meta.Name))
 	}
 
-	contentHash, size, newBytes, newBytesCompressed, err := bm.uploadContent(meta, phase)
+	contentHash, size, newBytes, newBytesCompressed, err := bm.uploadContent(ctx, meta, phase)
 	if err != nil {
 		return uploadResult{err: err}
 	}
@@ -519,7 +521,7 @@ func (bm *BackupManager) processFile(meta core.FileMeta, phase ui.Phase) uploadR
 	if err != nil {
 		return uploadResult{err: err}
 	}
-	if err := bm.store.Put(metaRef, metaData); err != nil {
+	if err := bm.store.Put(ctx, metaRef, metaData); err != nil {
 		return uploadResult{err: err}
 	}
 	return uploadResult{fileID: meta.FileID, ref: metaRef, size: size, newBytes: newBytes, newBytesCompressed: newBytesCompressed}
@@ -527,9 +529,9 @@ func (bm *BackupManager) processFile(meta core.FileMeta, phase ui.Phase) uploadR
 
 // uploadContent streams, chunks, and stores the file content. If the content
 // already exists (dedup by hash), the upload is skipped and newBytes is zero.
-func (bm *BackupManager) uploadContent(meta core.FileMeta, phase ui.Phase) (hash string, size, newBytes, newBytesCompressed int64, err error) {
+func (bm *BackupManager) uploadContent(ctx context.Context, meta core.FileMeta, phase ui.Phase) (hash string, size, newBytes, newBytesCompressed int64, err error) {
 	if meta.ContentHash != "" {
-		exists, err := bm.store.Exists("content/" + meta.ContentHash)
+		exists, err := bm.store.Exists(ctx, "content/"+meta.ContentHash)
 		if err == nil && exists {
 			if bm.cfg.verbose {
 				phase.Log(fmt.Sprintf("Deduplicated: %s", meta.Name))
@@ -561,7 +563,7 @@ func (bm *BackupManager) uploadContent(meta core.FileMeta, phase ui.Phase) (hash
 // Phase 3: persist snapshot
 // ---------------------------------------------------------------------------
 
-func (bm *BackupManager) saveSnapshot(root string, seq int, changeToken string) (ref, hash string, err error) {
+func (bm *BackupManager) saveSnapshot(ctx context.Context, root string, seq int, changeToken string) (ref, hash string, err error) {
 	meta := make(map[string]string, len(bm.cfg.meta)+1)
 	for k, v := range bm.cfg.meta {
 		meta[k] = v
@@ -585,7 +587,7 @@ func (bm *BackupManager) saveSnapshot(root string, seq int, changeToken string) 
 	}
 
 	ref = "snapshot/" + hash
-	if err := bm.store.Put(ref, snapData); err != nil {
+	if err := bm.store.Put(ctx, ref, snapData); err != nil {
 		return "", "", err
 	}
 
@@ -603,7 +605,7 @@ func (bm *BackupManager) saveSnapshot(root string, seq int, changeToken string) 
 // ---------------------------------------------------------------------------
 
 func (bm *BackupManager) loadMeta(ref string) (*core.FileMeta, error) {
-	data, err := bm.store.Get(ref)
+	data, err := bm.store.Get(context.Background(), ref)
 	if err != nil {
 		return nil, err
 	}

@@ -239,7 +239,7 @@ func (g *globalFlags) openStore() (store.ObjectStore, error) {
 }
 
 func loadRepoConfig(s store.ObjectStore) (*core.RepoConfig, error) {
-	data, err := s.Get(configKey)
+	data, err := s.Get(context.Background(), configKey)
 	if err != nil {
 		return nil, nil
 	}
@@ -260,7 +260,7 @@ func writeRepoConfig(s store.ObjectStore, encrypted bool) error {
 	if err != nil {
 		return fmt.Errorf("marshal repo config: %w", err)
 	}
-	return s.Put(configKey, data)
+	return s.Put(context.Background(), configKey, data)
 }
 
 func (g *globalFlags) parsePlatformKey() ([]byte, error) {

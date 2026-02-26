@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"strings"
 	"sync/atomic"
 )
@@ -16,38 +17,38 @@ func NewMeteredStore(s ObjectStore) *MeteredStore {
 	return &MeteredStore{ObjectStore: s}
 }
 
-func (m *MeteredStore) Delete(key string) error {
-	_, err := m.DeleteReturnSize(key)
+func (m *MeteredStore) Delete(ctx context.Context, key string) error {
+	_, err := m.DeleteReturnSize(ctx, key)
 	return err
 }
 
-func (m *MeteredStore) DeleteReturnSize(key string) (int64, error) {
+func (m *MeteredStore) DeleteReturnSize(ctx context.Context, key string) (int64, error) {
 
 	size := int64(0)
 	if !strings.HasPrefix(key, "index/") {
-		s, err := m.Size(key)
+		s, err := m.Size(ctx, key)
 		if err != nil {
 			return 0, err
 		}
 		size = s
 	}
 
-	if err := m.ObjectStore.Delete(key); err != nil {
+	if err := m.ObjectStore.Delete(ctx, key); err != nil {
 		return 0, err
 	}
 	m.bytesWritten.Add(-size)
 	return size, nil
 }
 
-func (m *MeteredStore) Put(key string, data []byte) error {
+func (m *MeteredStore) Put(ctx context.Context, key string, data []byte) error {
 
-	if err := m.ObjectStore.Put(key, data); err != nil {
+	if err := m.ObjectStore.Put(ctx, key, data); err != nil {
 		return err
 	}
 	if strings.HasPrefix(key, "index/") {
 		return nil
 	}
-	size, err := m.Size(key)
+	size, err := m.Size(ctx, key)
 	if err != nil {
 		return err
 	}

@@ -1,6 +1,7 @@
 package hamt
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -113,7 +114,7 @@ func (t *Tree) loadNode(ref string) (*core.HAMTNode, error) {
 	if ref == "" {
 		return nil, fmt.Errorf("empty node ref")
 	}
-	data, err := t.store.Get(ref)
+	data, err := t.store.Get(context.Background(), ref)
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +131,7 @@ func (t *Tree) saveNode(node *core.HAMTNode) (string, error) {
 		return "", err
 	}
 	key := "node/" + hash
-	if err := t.store.Put(key, data); err != nil {
+	if err := t.store.Put(context.Background(), key, data); err != nil {
 		return "", err
 	}
 	return key, nil

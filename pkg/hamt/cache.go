@@ -1,6 +1,7 @@
 package hamt
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -18,33 +19,33 @@ func newCachingStore() *cachingStore {
 	return &cachingStore{staging: make(map[string][]byte)}
 }
 
-func (cs *cachingStore) Put(key string, data []byte) error {
+func (cs *cachingStore) Put(_ context.Context, key string, data []byte) error {
 	cs.staging[key] = data
 	return nil
 }
 
-func (cs *cachingStore) Get(key string) ([]byte, error) {
+func (cs *cachingStore) Get(_ context.Context, key string) ([]byte, error) {
 	if data, ok := cs.staging[key]; ok {
 		return data, nil
 	}
 	return nil, fmt.Errorf("key %s not found in cache", key)
 }
 
-func (cs *cachingStore) Exists(key string) (bool, error) {
+func (cs *cachingStore) Exists(_ context.Context, key string) (bool, error) {
 	_, ok := cs.staging[key]
 	return ok, nil
 }
 
-func (cs *cachingStore) Delete(key string) error {
+func (cs *cachingStore) Delete(_ context.Context, key string) error {
 	delete(cs.staging, key)
 	return nil
 }
 
-func (cs *cachingStore) List(string) ([]string, error) {
+func (cs *cachingStore) List(_ context.Context, _ string) ([]string, error) {
 	return nil, fmt.Errorf("list not supported on cache")
 }
 
-func (cs *cachingStore) Size(key string) (int64, error) {
+func (cs *cachingStore) Size(_ context.Context, key string) (int64, error) {
 	data, ok := cs.staging[key]
 	if !ok {
 		return 0, fmt.Errorf("key %s not found in cache", key)
@@ -52,7 +53,7 @@ func (cs *cachingStore) Size(key string) (int64, error) {
 	return int64(len(data)), nil
 }
 
-func (cs *cachingStore) TotalSize() (int64, error) {
+func (cs *cachingStore) TotalSize(_ context.Context) (int64, error) {
 	var total int64
 	for _, data := range cs.staging {
 		total += int64(len(data))
@@ -75,41 +76,41 @@ func NewTransactionalStore(persistent store.ObjectStore) *TransactionalStore {
 	}
 }
 
-func (ts *TransactionalStore) Put(key string, data []byte) error {
-	return ts.cache.Put(key, data)
+func (ts *TransactionalStore) Put(ctx context.Context, key string, data []byte) error {
+	return ts.cache.Put(ctx, key, data)
 }
 
-func (ts *TransactionalStore) Get(key string) ([]byte, error) {
-	if data, err := ts.cache.Get(key); err == nil {
+func (ts *TransactionalStore) Get(ctx context.Context, key string) ([]byte, error) {
+	if data, err := ts.cache.Get(ctx, key); err == nil {
 		return data, nil
 	}
-	return ts.persistent.Get(key)
+	return ts.persistent.Get(ctx, key)
 }
 
-func (ts *TransactionalStore) Exists(key string) (bool, error) {
-	if ok, _ := ts.cache.Exists(key); ok {
+func (ts *TransactionalStore) Exists(ctx context.Context, key string) (bool, error) {
+	if ok, _ := ts.cache.Exists(ctx, key); ok {
 		return true, nil
 	}
-	return ts.persistent.Exists(key)
+	return ts.persistent.Exists(ctx, key)
 }
 
-func (ts *TransactionalStore) Delete(key string) error {
-	return ts.cache.Delete(key)
+func (ts *TransactionalStore) Delete(ctx context.Context, key string) error {
+	return ts.cache.Delete(ctx, key)
 }
 
-func (ts *TransactionalStore) List(prefix string) ([]string, error) {
-	return ts.persistent.List(prefix)
+func (ts *TransactionalStore) List(ctx context.Context, prefix string) ([]string, error) {
+	return ts.persistent.List(ctx, prefix)
 }
 
-func (ts *TransactionalStore) Size(key string) (int64, error) {
-	if size, err := ts.cache.Size(key); err == nil {
+func (ts *TransactionalStore) Size(ctx context.Context, key string) (int64, error) {
+	if size, err := ts.cache.Size(ctx, key); err == nil {
 		return size, nil
 	}
-	return ts.persistent.Size(key)
+	return ts.persistent.Size(ctx, key)
 }
 
-func (ts *TransactionalStore) TotalSize() (int64, error) {
-	return ts.persistent.TotalSize()
+func (ts *TransactionalStore) TotalSize(ctx context.Context) (int64, error) {
+	return ts.persistent.TotalSize(ctx)
 }
 
 // Flush writes only the HAMT nodes reachable from rootRef to the persistent
@@ -169,6 +170,8 @@ func (ts *TransactionalStore) writeParallel(toWrite map[string][]byte) error {
 		return nil
 	}
 
+	ctx := context.Background()
+
 	type job struct {
 		key  string
 		data []byte
@@ -181,7 +184,7 @@ func (ts *TransactionalStore) writeParallel(toWrite map[string][]byte) error {
 	for range workers {
 		go func() {
 			for j := range jobs {
-				errs <- ts.persistent.Put(j.key, j.data)
+				errs <- ts.persistent.Put(ctx, j.key, j.data)
 			}
 		}()
 	}

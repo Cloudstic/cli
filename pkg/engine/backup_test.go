@@ -11,6 +11,7 @@ import (
 )
 
 func TestBackupManager_Run(t *testing.T) {
+	ctx := context.Background()
 	src := NewMockSource()
 	dest := NewMockStore()
 	reporter := ui.NewNoOpReporter()
@@ -31,7 +32,7 @@ func TestBackupManager_Run(t *testing.T) {
 		if ref == "" {
 			return nil
 		}
-		data, err := dest.Get(ref)
+		data, err := dest.Get(ctx, ref)
 		if err != nil {
 			t.Fatalf("Get %s: %v", ref, err)
 		}
@@ -43,11 +44,11 @@ func TestBackupManager_Run(t *testing.T) {
 	}
 
 	// 1. Run Initial Backup
-	if _, err := mgr.Run(context.Background()); err != nil {
+	if _, err := mgr.Run(ctx); err != nil {
 		t.Fatalf("First backup failed: %v", err)
 	}
 
-	idxData, err := dest.Get("index/latest")
+	idxData, err := dest.Get(ctx, "index/latest")
 	if err != nil {
 		t.Fatal("index/latest not found")
 	}
@@ -59,7 +60,7 @@ func TestBackupManager_Run(t *testing.T) {
 		t.Errorf("Expected Seq 1, got %d", idx.Seq)
 	}
 
-	snapData, err := dest.Get(idx.LatestSnapshot)
+	snapData, err := dest.Get(ctx, idx.LatestSnapshot)
 	if err != nil {
 		t.Fatal("Snapshot not found")
 	}
@@ -79,11 +80,11 @@ func TestBackupManager_Run(t *testing.T) {
 	// 2. Modify file2 and Run Backup again
 	src.AddFile("file2.txt", "id2", []byte("modified content"))
 
-	if _, err := mgr.Run(context.Background()); err != nil {
+	if _, err := mgr.Run(ctx); err != nil {
 		t.Fatalf("Second backup failed: %v", err)
 	}
 
-	idxData2, _ := dest.Get("index/latest")
+	idxData2, _ := dest.Get(ctx, "index/latest")
 	var idx2 core.Index
 	if err := json.Unmarshal(idxData2, &idx2); err != nil {
 		t.Fatalf("Unmarshal index: %v", err)
@@ -92,7 +93,7 @@ func TestBackupManager_Run(t *testing.T) {
 		t.Errorf("Expected Seq 2, got %d", idx2.Seq)
 	}
 
-	snapData2, _ := dest.Get(idx2.LatestSnapshot)
+	snapData2, _ := dest.Get(ctx, idx2.LatestSnapshot)
 	var snap2 core.Snapshot
 	if err := json.Unmarshal(snapData2, &snap2); err != nil {
 		t.Fatalf("Unmarshal snapshot: %v", err)
@@ -115,11 +116,11 @@ func TestBackupManager_Run(t *testing.T) {
 	// 3. Delete file1 and Run Backup again
 	delete(src.Files, "id1")
 
-	if _, err := mgr.Run(context.Background()); err != nil {
+	if _, err := mgr.Run(ctx); err != nil {
 		t.Fatalf("Third backup failed: %v", err)
 	}
 
-	idxData3, _ := dest.Get("index/latest")
+	idxData3, _ := dest.Get(ctx, "index/latest")
 	var idx3 core.Index
 	if err := json.Unmarshal(idxData3, &idx3); err != nil {
 		t.Fatalf("Unmarshal index: %v", err)
@@ -128,7 +129,7 @@ func TestBackupManager_Run(t *testing.T) {
 		t.Errorf("Expected Seq 3, got %d", idx3.Seq)
 	}
 
-	snapData3, _ := dest.Get(idx3.LatestSnapshot)
+	snapData3, _ := dest.Get(ctx, idx3.LatestSnapshot)
 	var snap3 core.Snapshot
 	if err := json.Unmarshal(snapData3, &snap3); err != nil {
 		t.Fatalf("Unmarshal snapshot: %v", err)

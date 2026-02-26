@@ -201,6 +201,10 @@ func (ts *TransactionalStore) writeParallel(toWrite map[string][]byte) error {
 	for range workers {
 		go func() {
 			for j := range jobs {
+				if exists, _ := ts.persistent.Exists(ctx, j.key); exists {
+					errs <- nil
+					continue
+				}
 				errs <- ts.persistent.Put(ctx, j.key, j.data)
 			}
 		}()

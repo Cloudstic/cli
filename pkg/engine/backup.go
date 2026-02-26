@@ -64,6 +64,7 @@ func WithMeta(key, value string) BackupOption {
 type BackupManager struct {
 	source     store.Source
 	store      store.ObjectStore
+	keyCache   *store.KeyCacheStore
 	tree       *hamt.Tree
 	cache      *hamt.TransactionalStore
 	chunker    *Chunker
@@ -83,13 +84,15 @@ func NewBackupManager(src store.Source, dest store.ObjectStore, reporter ui.Repo
 	}
 
 	sourceInfo := src.Info()
-	cache := hamt.NewTransactionalStore(dest)
+	keyCache := store.NewKeyCacheStore(dest)
+	cache := hamt.NewTransactionalStore(keyCache)
 	return &BackupManager{
 		source:     src,
-		store:      dest,
+		store:      keyCache,
+		keyCache:   keyCache,
 		tree:       hamt.NewTree(cache),
 		cache:      cache,
-		chunker:    NewChunker(dest),
+		chunker:    NewChunker(keyCache),
 		reporter:   reporter,
 		sourceInfo: sourceInfo,
 		cfg:        cfg,
@@ -160,6 +163,10 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 			return nil, err
 		}
 		usedFullScan = true
+	}
+
+	if err := bm.keyCache.PreloadKeys(ctx, "chunk/", "content/", "node/"); err != nil {
+		return nil, fmt.Errorf("preload key cache: %w", err)
 	}
 
 	newRoot, err = bm.upload(ctx, pending, totalBytes, newRoot)

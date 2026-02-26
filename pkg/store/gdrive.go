@@ -186,7 +186,7 @@ func (s *GDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) er
 
 	for {
 		call := s.Service.Files.List().
-			Q("trashed = false").
+			Q("trashed = false AND mimeType = 'application/vnd.google-apps.folder'").
 			Fields("nextPageToken, files(id, name, parents, mimeType, size, modifiedTime, owners, trashed, sha256Checksum)").
 			PageSize(1000).
 			Context(ctx)
@@ -202,14 +202,10 @@ func (s *GDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) er
 
 		r, err := driveCallWithRetry(ctx, func() (*drive.FileList, error) { return call.Do() })
 		if err != nil {
-			return fmt.Errorf("list files: %w", err)
+			return fmt.Errorf("list folders: %w", err)
 		}
 
-		for _, f := range r.Files {
-			if f.MimeType == "application/vnd.google-apps.folder" {
-				folders = append(folders, f)
-			}
-		}
+		folders = append(folders, r.Files...)
 
 		pageToken = r.NextPageToken
 		if pageToken == "" {

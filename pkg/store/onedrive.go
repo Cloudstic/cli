@@ -17,7 +17,8 @@ import (
 )
 
 type OneDriveSource struct {
-	Client *http.Client
+	Client  *http.Client
+	account string // cached user principal name; populated lazily by Info()
 }
 
 func NewOneDriveSource(clientID, tokenPath string) (*OneDriveSource, error) {
@@ -46,7 +47,37 @@ func NewOneDriveSource(clientID, tokenPath string) (*OneDriveSource, error) {
 }
 
 func (s *OneDriveSource) Info() core.SourceInfo {
-	return core.SourceInfo{Type: "onedrive"}
+	if s.account == "" {
+		s.account = s.fetchAccount()
+	}
+	return core.SourceInfo{
+		Type:    "onedrive",
+		Account: s.account,
+		Path:    "onedrive://",
+	}
+}
+
+func (s *OneDriveSource) fetchAccount() string {
+	req, err := http.NewRequestWithContext(context.Background(), "GET",
+		"https://graph.microsoft.com/v1.0/me?$select=userPrincipalName", nil)
+	if err != nil {
+		return ""
+	}
+	resp, err := s.Client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	var me struct {
+		UPN string `json:"userPrincipalName"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&me); err != nil {
+		return ""
+	}
+	return me.UPN
 }
 
 func loadToken(file string) (*oauth2.Token, error) {

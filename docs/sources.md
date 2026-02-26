@@ -141,8 +141,8 @@ Folder changes are topologically sorted before file changes, ensuring parent ref
 | **FileID** | OneDrive item ID |
 | **Parents** | OneDrive parent item ID |
 | **ContentHash** | Not provided (computed by the engine during upload) |
-| **SourceInfo.Account** | Not populated (OneDrive API doesn't expose it cheaply) |
-| **SourceInfo.Path** | Not populated |
+| **SourceInfo.Account** | User principal name from Microsoft Graph `/me` |
+| **SourceInfo.Path** | `onedrive://` |
 
 Walks the drive recursively starting from the root item via the Microsoft Graph API. Folders are visited depth-first, ensuring parents are emitted before children.
 

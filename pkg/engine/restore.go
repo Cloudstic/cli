@@ -51,7 +51,7 @@ func NewRestoreManager(s store.ObjectStore, reporter ui.Reporter) *RestoreManage
 
 // Run restores the given snapshot (or the latest) into targetDir.
 func (rm *RestoreManager) Run(ctx context.Context, targetDir, snapshotRef string, opts ...RestoreOption) (*RestoreResult, error) {
-	snap, snapshotRef, err := rm.resolveSnapshot(snapshotRef)
+	snap, snapshotRef, err := rm.resolveSnapshot(ctx, snapshotRef)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +74,7 @@ func (rm *RestoreManager) Run(ctx context.Context, targetDir, snapshotRef string
 		path := buildPath(meta, byID)
 		target := filepath.Join(targetDir, path)
 
-		if err := rm.restoreEntry(meta, target); err != nil {
+		if err := rm.restoreEntry(ctx, meta, target); err != nil {
 			phase.Log(fmt.Sprintf("Failed: %s: %v", path, err))
 			result.Errors++
 			phase.Increment(1)
@@ -91,7 +91,7 @@ func (rm *RestoreManager) Run(ctx context.Context, targetDir, snapshotRef string
 // RestoreToZip writes the snapshot's file tree as a ZIP archive to w.
 func (rm *RestoreManager) RestoreToZip(ctx context.Context, w io.Writer, snapshotHash string) error {
 	snapshotRef := "snapshot/" + snapshotHash
-	snap, _, err := rm.resolveSnapshot(snapshotRef)
+	snap, _, err := rm.resolveSnapshot(ctx, snapshotRef)
 	if err != nil {
 		return err
 	}
@@ -132,7 +132,7 @@ func (rm *RestoreManager) RestoreToZip(ctx context.Context, w io.Writer, snapsho
 			return fmt.Errorf("create zip entry %s: %w", p, err)
 		}
 
-		if err := rm.writeFileContent(fw, meta.ContentHash); err != nil {
+		if err := rm.writeFileContent(ctx, fw, meta.ContentHash); err != nil {
 			return fmt.Errorf("write zip entry %s: %w", p, err)
 		}
 	}
@@ -140,13 +140,13 @@ func (rm *RestoreManager) RestoreToZip(ctx context.Context, w io.Writer, snapsho
 	return zw.Close()
 }
 
-func (rm *RestoreManager) writeFileContent(w io.Writer, contentHash string) error {
-	content, err := rm.loadContent(contentHash)
+func (rm *RestoreManager) writeFileContent(ctx context.Context, w io.Writer, contentHash string) error {
+	content, err := rm.loadContent(ctx, contentHash)
 	if err != nil {
 		return err
 	}
 	for _, chunkRef := range content.Chunks {
-		if err := rm.writeChunk(w, chunkRef); err != nil {
+		if err := rm.writeChunk(ctx, w, chunkRef); err != nil {
 			return err
 		}
 	}
@@ -181,9 +181,9 @@ func buildZipPath(meta core.FileMeta, byID map[string]core.FileMeta) string {
 // Snapshot resolution
 // ---------------------------------------------------------------------------
 
-func (rm *RestoreManager) resolveSnapshot(ref string) (*core.Snapshot, string, error) {
+func (rm *RestoreManager) resolveSnapshot(ctx context.Context, ref string) (*core.Snapshot, string, error) {
 	if ref == "" {
-		data, err := rm.store.Get("index/latest")
+		data, err := rm.store.Get(ctx, "index/latest")
 		if err != nil {
 			return nil, "", fmt.Errorf("cannot find latest index: %w", err)
 		}
@@ -194,7 +194,7 @@ func (rm *RestoreManager) resolveSnapshot(ref string) (*core.Snapshot, string, e
 		ref = idx.LatestSnapshot
 	}
 
-	data, err := rm.store.Get(ref)
+	data, err := rm.store.Get(ctx, ref)
 	if err != nil {
 		return nil, "", fmt.Errorf("load snapshot %s: %w", ref, err)
 	}
@@ -225,7 +225,7 @@ func (rm *RestoreManager) collectMetadata(root string) (byID map[string]core.Fil
 }
 
 func (rm *RestoreManager) loadMeta(ref string) (*core.FileMeta, error) {
-	data, err := rm.store.Get(ref)
+	data, err := rm.store.Get(context.Background(), ref)
 	if err != nil {
 		return nil, err
 	}
@@ -292,7 +292,7 @@ func buildPath(meta core.FileMeta, byID map[string]core.FileMeta) string {
 // File restoration
 // ---------------------------------------------------------------------------
 
-func (rm *RestoreManager) restoreEntry(meta core.FileMeta, target string) error {
+func (rm *RestoreManager) restoreEntry(ctx context.Context, meta core.FileMeta, target string) error {
 	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 		return err
 	}
@@ -303,7 +303,7 @@ func (rm *RestoreManager) restoreEntry(meta core.FileMeta, target string) error 
 	if meta.ContentHash == "" {
 		return nil
 	}
-	return rm.restoreFile(meta, target)
+	return rm.restoreFile(ctx, meta, target)
 }
 
 func (rm *RestoreManager) restoreFolder(meta core.FileMeta, target string) error {
@@ -314,8 +314,8 @@ func (rm *RestoreManager) restoreFolder(meta core.FileMeta, target string) error
 	return nil
 }
 
-func (rm *RestoreManager) restoreFile(meta core.FileMeta, target string) error {
-	content, err := rm.loadContent(meta.ContentHash)
+func (rm *RestoreManager) restoreFile(ctx context.Context, meta core.FileMeta, target string) error {
+	content, err := rm.loadContent(ctx, meta.ContentHash)
 	if err != nil {
 		return err
 	}
@@ -327,7 +327,7 @@ func (rm *RestoreManager) restoreFile(meta core.FileMeta, target string) error {
 	defer func() { _ = f.Close() }()
 
 	for _, chunkRef := range content.Chunks {
-		if err := rm.writeChunk(f, chunkRef); err != nil {
+		if err := rm.writeChunk(ctx, f, chunkRef); err != nil {
 			return err
 		}
 	}
@@ -342,8 +342,8 @@ func (rm *RestoreManager) restoreFile(meta core.FileMeta, target string) error {
 	return nil
 }
 
-func (rm *RestoreManager) loadContent(hash string) (*core.Content, error) {
-	data, err := rm.store.Get("content/" + hash)
+func (rm *RestoreManager) loadContent(ctx context.Context, hash string) (*core.Content, error) {
+	data, err := rm.store.Get(ctx, "content/"+hash)
 	if err != nil {
 		return nil, err
 	}
@@ -354,8 +354,8 @@ func (rm *RestoreManager) loadContent(hash string) (*core.Content, error) {
 	return &c, nil
 }
 
-func (rm *RestoreManager) writeChunk(w io.Writer, ref string) error {
-	data, err := rm.store.Get(ref)
+func (rm *RestoreManager) writeChunk(ctx context.Context, w io.Writer, ref string) error {
+	data, err := rm.store.Get(ctx, ref)
 	if err != nil {
 		return err
 	}

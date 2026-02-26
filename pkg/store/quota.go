@@ -21,8 +21,8 @@ func NewQuotaStore(inner ObjectStore, budget int64, cancel context.CancelCauseFu
 	return &QuotaStore{ObjectStore: inner, budget: budget, cancel: cancel}
 }
 
-func (q *QuotaStore) Put(key string, data []byte) error {
-	if err := q.ObjectStore.Put(key, data); err != nil {
+func (q *QuotaStore) Put(ctx context.Context, key string, data []byte) error {
+	if err := q.ObjectStore.Put(ctx, key, data); err != nil {
 		return err
 	}
 	if q.written.Add(int64(len(data))) > q.budget {

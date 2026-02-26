@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -33,9 +34,9 @@ func (s *HybridStore) B2() *B2Store { return s.b2 }
 // encryption_key_slots that live outside app.objects).
 func (s *HybridStore) DB() TxFunc { return s.db }
 
-func (s *HybridStore) Put(key string, data []byte) error {
+func (s *HybridStore) Put(ctx context.Context, key string, data []byte) error {
 	if isChunk(key) || isKeySlot(key) {
-		return s.b2.Put(key, data)
+		return s.b2.Put(ctx, key, data)
 	}
 	if err := s.db(func(ctx context.Context, tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `
@@ -46,13 +47,15 @@ func (s *HybridStore) Put(key string, data []byte) error {
 	}); err != nil {
 		return fmt.Errorf("db put %s: %w", key, err)
 	}
-	_ = s.b2.Put(key, data)
+	if err := s.b2.Put(ctx, key, data); err != nil {
+		log.Printf("WARN: b2 write-through failed for %s: %v", key, err)
+	}
 	return nil
 }
 
-func (s *HybridStore) Get(key string) ([]byte, error) {
+func (s *HybridStore) Get(ctx context.Context, key string) ([]byte, error) {
 	if isChunk(key) || isKeySlot(key) {
-		return s.b2.Get(key)
+		return s.b2.Get(ctx, key)
 	}
 	var data []byte
 	if err := s.db(func(ctx context.Context, tx pgx.Tx) error {
@@ -66,9 +69,9 @@ func (s *HybridStore) Get(key string) ([]byte, error) {
 	return data, nil
 }
 
-func (s *HybridStore) Exists(key string) (bool, error) {
+func (s *HybridStore) Exists(ctx context.Context, key string) (bool, error) {
 	if isChunk(key) || isKeySlot(key) {
-		return s.b2.Exists(key)
+		return s.b2.Exists(ctx, key)
 	}
 	var exists bool
 	if err := s.db(func(ctx context.Context, tx pgx.Tx) error {
@@ -82,9 +85,9 @@ func (s *HybridStore) Exists(key string) (bool, error) {
 	return exists, nil
 }
 
-func (s *HybridStore) Delete(key string) error {
+func (s *HybridStore) Delete(ctx context.Context, key string) error {
 	if isChunk(key) || isKeySlot(key) {
-		return s.b2.Delete(key)
+		return s.b2.Delete(ctx, key)
 	}
 	if err := s.db(func(ctx context.Context, tx pgx.Tx) error {
 		_, err := tx.Exec(ctx,
@@ -95,13 +98,15 @@ func (s *HybridStore) Delete(key string) error {
 	}); err != nil {
 		return fmt.Errorf("db delete %s: %w", key, err)
 	}
-	_ = s.b2.Delete(key)
+	if err := s.b2.Delete(ctx, key); err != nil {
+		log.Printf("WARN: b2 write-through delete failed for %s: %v", key, err)
+	}
 	return nil
 }
 
-func (s *HybridStore) List(prefix string) ([]string, error) {
+func (s *HybridStore) List(ctx context.Context, prefix string) ([]string, error) {
 	if isChunk(prefix) || isKeySlot(prefix) {
-		return s.b2.List(prefix)
+		return s.b2.List(ctx, prefix)
 	}
 
 	var keys []string
@@ -127,7 +132,7 @@ func (s *HybridStore) List(prefix string) ([]string, error) {
 	}
 
 	if prefix == "" {
-		b2Keys, err := s.b2.List("chunk/")
+		b2Keys, err := s.b2.List(ctx, "chunk/")
 		if err != nil {
 			return nil, err
 		}
@@ -136,9 +141,9 @@ func (s *HybridStore) List(prefix string) ([]string, error) {
 	return keys, nil
 }
 
-func (s *HybridStore) Size(key string) (int64, error) {
+func (s *HybridStore) Size(ctx context.Context, key string) (int64, error) {
 	if isChunk(key) || isKeySlot(key) {
-		return s.b2.Size(key)
+		return s.b2.Size(ctx, key)
 	}
 	var size int64
 	if err := s.db(func(ctx context.Context, tx pgx.Tx) error {
@@ -152,8 +157,8 @@ func (s *HybridStore) Size(key string) (int64, error) {
 	return size, nil
 }
 
-func (s *HybridStore) TotalSize() (int64, error) {
-	return s.b2.TotalSize()
+func (s *HybridStore) TotalSize(ctx context.Context) (int64, error) {
+	return s.b2.TotalSize(ctx)
 }
 
 func isChunk(key string) bool {

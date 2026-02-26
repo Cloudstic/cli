@@ -41,12 +41,12 @@ func NewLsSnapshotManager(s store.ObjectStore) *LsSnapshotManager {
 
 // Run resolves the snapshot, collects metadata, and returns the tree structure.
 func (lm *LsSnapshotManager) Run(ctx context.Context, snapshotID string, opts ...LsSnapshotOption) (*LsSnapshotResult, error) {
-	snap, ref, err := lm.resolveSnapshot(snapshotID)
+	snap, ref, err := lm.resolveSnapshot(ctx, snapshotID)
 	if err != nil {
 		return nil, err
 	}
 
-	refToMeta, err := lm.collectMeta(snap.Root)
+	refToMeta, err := lm.collectMeta(ctx, snap.Root)
 	if err != nil {
 		return nil, err
 	}
@@ -66,10 +66,10 @@ func (lm *LsSnapshotManager) Run(ctx context.Context, snapshotID string, opts ..
 // Snapshot resolution
 // ---------------------------------------------------------------------------
 
-func (lm *LsSnapshotManager) resolveSnapshot(id string) (*core.Snapshot, string, error) {
+func (lm *LsSnapshotManager) resolveSnapshot(ctx context.Context, id string) (*core.Snapshot, string, error) {
 	ref := id
 	if ref == "latest" || ref == "" {
-		data, err := lm.store.Get("index/latest")
+		data, err := lm.store.Get(ctx, "index/latest")
 		if err != nil {
 			return nil, "", fmt.Errorf("get latest index: %w", err)
 		}
@@ -82,7 +82,7 @@ func (lm *LsSnapshotManager) resolveSnapshot(id string) (*core.Snapshot, string,
 		ref = "snapshot/" + ref
 	}
 
-	data, err := lm.store.Get(ref)
+	data, err := lm.store.Get(ctx, ref)
 	if err != nil {
 		return nil, "", fmt.Errorf("load snapshot %s: %w", ref, err)
 	}
@@ -97,11 +97,11 @@ func (lm *LsSnapshotManager) resolveSnapshot(id string) (*core.Snapshot, string,
 // Metadata collection
 // ---------------------------------------------------------------------------
 
-func (lm *LsSnapshotManager) collectMeta(root string) (map[string]core.FileMeta, error) {
+func (lm *LsSnapshotManager) collectMeta(ctx context.Context, root string) (map[string]core.FileMeta, error) {
 	refToMeta := make(map[string]core.FileMeta)
 
 	err := lm.tree.Walk(root, func(_, valueRef string) error {
-		data, err := lm.store.Get(valueRef)
+		data, err := lm.store.Get(ctx, valueRef)
 		if err != nil {
 			return err
 		}
@@ -143,4 +143,3 @@ func (lm *LsSnapshotManager) buildHierarchy(refToMeta map[string]core.FileMeta) 
 	})
 	return roots, children
 }
-

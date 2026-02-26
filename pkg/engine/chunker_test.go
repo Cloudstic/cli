@@ -3,12 +3,14 @@ package engine
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"io"
 	"strings"
 	"testing"
 )
 
 func TestChunker_ProcessStream(t *testing.T) {
+	ctx := context.Background()
 	store := NewMockStore()
 	chunker := NewChunker(store)
 	// Note: With FastCDC, exact chunk boundaries are content-defined and depend on Min/Avg/Max sizes.
@@ -39,7 +41,7 @@ func TestChunker_ProcessStream(t *testing.T) {
 
 	// Verify chunk content
 	ref := refs[0]
-	compressedData, _ := store.Get(ref)
+	compressedData, _ := store.Get(ctx, ref)
 	gr, _ := gzip.NewReader(bytes.NewReader(compressedData))
 	uncompressed, _ := io.ReadAll(gr)
 	_ = gr.Close()
@@ -88,6 +90,7 @@ func TestChunker_Deduplication(t *testing.T) {
 }
 
 func TestChunker_CreateContentObject(t *testing.T) {
+	ctx := context.Background()
 	store := NewMockStore()
 	chunker := NewChunker(store)
 
@@ -107,7 +110,7 @@ func TestChunker_CreateContentObject(t *testing.T) {
 		t.Errorf("Expected ref %s, got %s", expectedRef, ref)
 	}
 
-	data, _ := store.Get(ref)
+	data, _ := store.Get(ctx, ref)
 	// Check if it contains chunks list
 	if !strings.Contains(string(data), "chunk/1") {
 		t.Error("Content object missing chunk/1")

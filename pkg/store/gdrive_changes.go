@@ -37,7 +37,7 @@ func (s *GDriveChangeSource) GetStartPageToken() (string, error) {
 	if s.isSharedDrive() {
 		call.DriveId(s.DriveID).SupportsAllDrives(true)
 	}
-	resp, err := call.Do()
+	resp, err := driveCallWithRetry(context.Background(), func() (*drive.StartPageToken, error) { return call.Do() })
 	if err != nil {
 		return "", fmt.Errorf("get start page token: %w", err)
 	}
@@ -61,7 +61,8 @@ func (s *GDriveChangeSource) WalkChanges(ctx context.Context, token string, call
 				SupportsAllDrives(true).
 				IncludeItemsFromAllDrives(true)
 		}
-		resp, err := call.Do()
+
+		resp, err := driveCallWithRetry(ctx, func() (*drive.ChangeList, error) { return call.Do() })
 		if err != nil {
 			return "", fmt.Errorf("list changes: %w", err)
 		}

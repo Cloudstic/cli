@@ -1,12 +1,14 @@
 package store
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
 func TestLocalStore(t *testing.T) {
+	ctx := context.Background()
 	// Setup temp dir
 	tmpDir, err := os.MkdirTemp("", "cloudstic-test-*")
 	if err != nil {
@@ -23,12 +25,12 @@ func TestLocalStore(t *testing.T) {
 	data := []byte("test data")
 
 	// Test Put
-	if err := s.Put(key, data); err != nil {
+	if err := s.Put(ctx, key, data); err != nil {
 		t.Fatalf("Put failed: %v", err)
 	}
 
 	// Test Exists
-	exists, err := s.Exists(key)
+	exists, err := s.Exists(ctx, key)
 	if err != nil {
 		t.Fatalf("Exists failed: %v", err)
 	}
@@ -37,7 +39,7 @@ func TestLocalStore(t *testing.T) {
 	}
 
 	// Test Get
-	fetched, err := s.Get(key)
+	fetched, err := s.Get(ctx, key)
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}
@@ -46,7 +48,7 @@ func TestLocalStore(t *testing.T) {
 	}
 
 	// Test Exists - false
-	exists, err = s.Exists("nonexistent")
+	exists, err = s.Exists(ctx, "nonexistent")
 	if err != nil {
 		t.Fatalf("Exists(nonexistent) failed: %v", err)
 	}
@@ -55,11 +57,11 @@ func TestLocalStore(t *testing.T) {
 	}
 
 	// Test Delete
-	if err := s.Delete(key); err != nil {
+	if err := s.Delete(ctx, key); err != nil {
 		t.Fatalf("Delete failed: %v", err)
 	}
 
-	exists, err = s.Exists(key)
+	exists, err = s.Exists(ctx, key)
 	if err != nil {
 		t.Fatalf("Exists after delete failed: %v", err)
 	}
@@ -69,7 +71,7 @@ func TestLocalStore(t *testing.T) {
 
 	// Check nested structure
 	key2 := "nested/dir/structure/key"
-	if err := s.Put(key2, data); err != nil {
+	if err := s.Put(ctx, key2, data); err != nil {
 		t.Fatalf("Nested put failed: %v", err)
 	}
 

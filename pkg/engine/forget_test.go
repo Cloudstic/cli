@@ -10,19 +10,20 @@ import (
 )
 
 func TestForgetManager_Run(t *testing.T) {
+	ctx := context.Background()
 	store := NewMockStore()
 
 	// Setup: Create 3 snapshots, latest points to snap3.
 	snap1 := core.Snapshot{Seq: 1, Root: "node/1"}
-	snap1Ref := saveSnapshot(store, &snap1)
+	snap1Ref := saveSnapshot(ctx, store, &snap1)
 
 	snap2 := core.Snapshot{Seq: 2, Root: "node/2"}
-	snap2Ref := saveSnapshot(store, &snap2)
+	snap2Ref := saveSnapshot(ctx, store, &snap2)
 
 	snap3 := core.Snapshot{Seq: 3, Root: "node/3"}
-	snap3Ref := saveSnapshot(store, &snap3)
+	snap3Ref := saveSnapshot(ctx, store, &snap3)
 
-	_ = store.Put("index/latest", createIndex(snap3Ref, 3))
+	_ = store.Put(ctx, "index/latest", createIndex(snap3Ref, 3))
 
 	fm := NewForgetManager(store, ui.NewNoOpReporter())
 
@@ -31,12 +32,12 @@ func TestForgetManager_Run(t *testing.T) {
 		t.Fatalf("Forget snap2 failed: %v", err)
 	}
 
-	assertNotExists(t, store, snap2Ref)
-	assertExists(t, store, snap1Ref)
-	assertExists(t, store, snap3Ref)
-	assertExists(t, store, "index/latest")
+	assertNotExists(t, ctx, store, snap2Ref)
+	assertExists(t, ctx, store, snap1Ref)
+	assertExists(t, ctx, store, snap3Ref)
+	assertExists(t, ctx, store, "index/latest")
 
-	idxData, _ := store.Get("index/latest")
+	idxData, _ := store.Get(ctx, "index/latest")
 	var idx core.Index
 	if err := json.Unmarshal(idxData, &idx); err != nil {
 		t.Fatalf("Unmarshal index: %v", err)
@@ -50,9 +51,9 @@ func TestForgetManager_Run(t *testing.T) {
 		t.Fatalf("Forget latest failed: %v", err)
 	}
 
-	assertNotExists(t, store, snap3Ref)
+	assertNotExists(t, ctx, store, snap3Ref)
 
-	idxData, _ = store.Get("index/latest")
+	idxData, _ = store.Get(ctx, "index/latest")
 	if err := json.Unmarshal(idxData, &idx); err != nil {
 		t.Fatalf("Unmarshal index: %v", err)
 	}
@@ -64,10 +65,10 @@ func TestForgetManager_Run(t *testing.T) {
 	}
 }
 
-func saveSnapshot(s *MockStore, snap *core.Snapshot) string {
+func saveSnapshot(ctx context.Context, s *MockStore, snap *core.Snapshot) string {
 	hash, data, _ := core.ComputeJSONHash(snap)
 	ref := "snapshot/" + hash
-	_ = s.Put(ref, data)
+	_ = s.Put(ctx, ref, data)
 	return ref
 }
 

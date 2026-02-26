@@ -23,12 +23,19 @@ Content-addressable, encrypted backup tool for Google Drive, OneDrive, and local
 
 See the [User Guide — Sources](docs/user-guide.md#sources) for setup instructions and authentication details.
 
-## Quick Start
-
-Download a pre-built binary from [Releases](https://github.com/cloudstic/cli/releases), or install with Go:
+## Install
 
 ```bash
-go install github.com/cloudstic/cli/cmd/cloudstic@latest
+brew install cloudstic/tap/cloudstic   # macOS / Linux
+winget install Cloudstic.CLI           # Windows
+go install github.com/cloudstic/cli/cmd/cloudstic@latest  # with Go
+```
+
+Or download a binary from [Releases](https://github.com/cloudstic/cli/releases). See the [User Guide](docs/user-guide.md#installation) for all options.
+
+## Quick Start
+
+```bash
 
 # Initialize an encrypted repository
 cloudstic init -encryption-password "my passphrase"

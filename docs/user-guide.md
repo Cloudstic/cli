@@ -50,6 +50,18 @@ cloudstic restore -encryption-password "my secret passphrase" -target ./restored
 
 ## Installation
 
+### Homebrew (macOS / Linux)
+
+```bash
+brew install cloudstic/tap/cloudstic
+```
+
+### Winget (Windows)
+
+```bash
+winget install Cloudstic.CLI
+```
+
 ### Pre-built binaries
 
 Download the latest release for your platform from the [GitHub Releases](https://github.com/cloudstic/cli/releases) page. Binaries are available for macOS (Intel & Apple Silicon), Linux (amd64 & arm64), and Windows.
@@ -77,7 +89,7 @@ go build -o cloudstic ./cmd/cloudstic
 mv cloudstic /usr/local/bin/
 ```
 
-Verify the installation:
+### Verify
 
 ```bash
 cloudstic version

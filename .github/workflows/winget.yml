@@ -1,0 +1,16 @@
+name: Winget
+
+on:
+  release:
+    types: [released]
+
+jobs:
+  winget:
+    name: Publish to Winget
+    runs-on: windows-latest
+    steps:
+      - uses: vedantmgoyal9/winget-releaser@v2
+        with:
+          identifier: Cloudstic.CLI
+          installers-regex: '_windows_amd64\.zip$'
+          token: ${{ secrets.WINGET_TOKEN }}

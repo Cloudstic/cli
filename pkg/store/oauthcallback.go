@@ -27,6 +27,8 @@ func exchangeWithLocalServer(config *oauth2.Config, authCodeOpts ...oauth2.AuthC
 		return nil, fmt.Errorf("generate state: %w", err)
 	}
 
+	verifier := oauth2.GenerateVerifier()
+
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("listen on localhost: %w", err)
@@ -56,23 +58,19 @@ func exchangeWithLocalServer(config *oauth2.Config, authCodeOpts ...oauth2.AuthC
 			ch <- result{err: fmt.Errorf("OAuth error: %s – %s", errMsg, desc)}
 			return
 		}
-		code := r.URL.Query().Get("code")
-		if code == "" {
-			http.Error(w, "missing code parameter", http.StatusBadRequest)
-			ch <- result{err: fmt.Errorf("no code in OAuth callback")}
-			return
-		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, `<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0"><div style="text-align:center"><h2>Authorization successful</h2><p>You can close this tab and return to the terminal.</p></div></body></html>`)
-		ch <- result{code: code}
+		ch <- result{code: r.URL.Query().Get("code")}
 	})
 
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() { _ = srv.Serve(listener) }()
 	defer func() { _ = srv.Shutdown(context.Background()) }()
 
-	authURL := config.AuthCodeURL(state, authCodeOpts...)
+	// PKCE: send code_challenge with the auth request
+	opts := append([]oauth2.AuthCodeOption{oauth2.S256ChallengeOption(verifier)}, authCodeOpts...)
+	authURL := config.AuthCodeURL(state, opts...)
 
 	fmt.Printf("Opening browser for authorization...\n")
 	if err := openBrowser(authURL); err != nil {
@@ -84,7 +82,7 @@ func exchangeWithLocalServer(config *oauth2.Config, authCodeOpts ...oauth2.AuthC
 		return nil, res.err
 	}
 
-	tok, err := config.Exchange(context.Background(), res.code)
+	tok, err := config.Exchange(context.Background(), res.code, oauth2.VerifierOption(verifier))
 	if err != nil {
 		return nil, fmt.Errorf("exchange token: %w", err)
 	}

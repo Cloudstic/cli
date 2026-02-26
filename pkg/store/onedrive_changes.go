@@ -17,8 +17,8 @@ type OneDriveChangeSource struct {
 	OneDriveSource
 }
 
-func NewOneDriveChangeSource(clientID, clientSecret, tokenPath string) (*OneDriveChangeSource, error) {
-	base, err := NewOneDriveSource(clientID, clientSecret, tokenPath)
+func NewOneDriveChangeSource(clientID, tokenPath string) (*OneDriveChangeSource, error) {
+	base, err := NewOneDriveSource(clientID, tokenPath)
 	if err != nil {
 		return nil, err
 	}

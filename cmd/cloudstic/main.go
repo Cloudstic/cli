@@ -119,16 +119,16 @@ Command Specifics:
     Requires --encryption-key or --encryption-password to unlock the master key.
 
   backup
-    -source <type>        source type (local, gdrive, gdrive-changes, onedrive) [default: gdrive]
-    -source-path <path>   Path to local source directory (if source=local)
-    -drive-id <id>        Shared drive ID for gdrive (omit for My Drive)
-    -root-folder <id>     Root folder ID for gdrive (defaults to entire drive)
+    -source <type>        source type (local, gdrive, gdrive-changes, onedrive, onedrive-changes) [env: CLOUDSTIC_SOURCE, default: gdrive]
+    -source-path <path>   Path to local source directory (if source=local)    [env: CLOUDSTIC_SOURCE_PATH, default: .]
+    -drive-id <id>        Shared drive ID for gdrive (omit for My Drive)      [env: CLOUDSTIC_DRIVE_ID]
+    -root-folder <id>     Root folder ID for gdrive (defaults to entire drive) [env: CLOUDSTIC_ROOT_FOLDER]
     -tag <tag>            Tag to apply to the snapshot (can be specified multiple times)
     -verbose              Enable verbose output
 
     Environment Variables (all optional – built-in OAuth credentials are used by default):
       gdrive:   GOOGLE_APPLICATION_CREDENTIALS (override), GOOGLE_TOKEN_FILE
-      onedrive: ONEDRIVE_CLIENT_ID (override), ONEDRIVE_CLIENT_SECRET (override), ONEDRIVE_TOKEN_FILE
+      onedrive: ONEDRIVE_CLIENT_ID (override), ONEDRIVE_TOKEN_FILE
       b2:       B2_KEY_ID, B2_APP_KEY
 
     Token files are stored in the cloudstic config directory by default:
@@ -601,13 +601,19 @@ func initSource(sourceType, sourcePath, driveID, rootFolder string) (store.Sourc
 		src.RootFolderID = rootFolder
 		return src, nil
 	case "onedrive":
-		clientID := os.Getenv("ONEDRIVE_CLIENT_ID")     // optional; uses built-in OAuth client when empty
-		clientSecret := os.Getenv("ONEDRIVE_CLIENT_SECRET") // optional; uses built-in OAuth client when empty
+		clientID := os.Getenv("ONEDRIVE_CLIENT_ID") // optional; uses built-in OAuth client when empty
 		tokenPath, err := resolveTokenPath("ONEDRIVE_TOKEN_FILE", "onedrive_token.json")
 		if err != nil {
 			return nil, err
 		}
-		return store.NewOneDriveSource(clientID, clientSecret, tokenPath)
+		return store.NewOneDriveSource(clientID, tokenPath)
+	case "onedrive-changes":
+		clientID := os.Getenv("ONEDRIVE_CLIENT_ID") // optional; uses built-in OAuth client when empty
+		tokenPath, err := resolveTokenPath("ONEDRIVE_TOKEN_FILE", "onedrive_token.json")
+		if err != nil {
+			return nil, err
+		}
+		return store.NewOneDriveChangeSource(clientID, tokenPath)
 	default:
 		return nil, fmt.Errorf("unsupported source type: %s", sourceType)
 	}
@@ -950,10 +956,10 @@ func printBackupSummary(r *engine.RunResult) {
 
 func runBackup() {
 	bkCmd := flag.NewFlagSet("backup", flag.ExitOnError)
-	sourceType := bkCmd.String("source", "gdrive", "source type (gdrive, local, onedrive)")
-	sourcePath := bkCmd.String("source-path", ".", "Local source path (if source=local)")
-	driveID := bkCmd.String("drive-id", "", "Shared drive ID for gdrive source (omit for My Drive)")
-	rootFolder := bkCmd.String("root-folder", "", "Root folder ID for gdrive source (defaults to entire drive)")
+	sourceType := bkCmd.String("source", envDefault("CLOUDSTIC_SOURCE", "gdrive"), "source type (gdrive, gdrive-changes, local, onedrive, onedrive-changes)")
+	sourcePath := bkCmd.String("source-path", envDefault("CLOUDSTIC_SOURCE_PATH", "."), "Local source path (if source=local)")
+	driveID := bkCmd.String("drive-id", envDefault("CLOUDSTIC_DRIVE_ID", ""), "Shared drive ID for gdrive source (omit for My Drive)")
+	rootFolder := bkCmd.String("root-folder", envDefault("CLOUDSTIC_ROOT_FOLDER", ""), "Root folder ID for gdrive source (defaults to entire drive)")
 	g := addGlobalFlags(bkCmd)
 	verbose := bkCmd.Bool("verbose", false, "Display verbose output")
 

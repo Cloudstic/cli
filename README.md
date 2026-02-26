@@ -20,6 +20,7 @@ Content-addressable, encrypted backup tool for Google Drive, OneDrive, and local
 | Google Drive | `-source gdrive` | Full rescan of My Drive or a Shared Drive |
 | Google Drive (Changes) | `-source gdrive-changes` | **Recommended.** Fast incremental backup via the Changes API |
 | OneDrive | `-source onedrive` | Full scan of a Microsoft OneDrive account |
+| OneDrive (Changes) | `-source onedrive-changes` | **Recommended.** Fast incremental backup via the Delta API |
 
 Google Drive and OneDrive work out of the box — no API keys or credentials setup needed. On first run, Cloudstic opens your browser for authorization and caches the token locally. See the [User Guide — Sources](docs/user-guide.md#sources) for details.
 

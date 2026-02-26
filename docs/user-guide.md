@@ -23,6 +23,7 @@ Cloudstic is a content-addressable backup tool that creates encrypted, deduplica
   - [Google Drive](#google-drive)
   - [Google Drive (Changes API)](#google-drive-changes-api)
   - [OneDrive](#onedrive)
+  - [OneDrive (Changes API)](#onedrive-changes-api)
 - [Storage Backends](#storage-backends)
   - [Local](#local-storage)
   - [Backblaze B2](#backblaze-b2)
@@ -217,14 +218,14 @@ cloudstic backup -source local -source-path ~/Documents -verbose
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-source` | `gdrive` | Source type: `local`, `gdrive`, `gdrive-changes`, `onedrive` |
+| `-source` | `gdrive` | Source type: `local`, `gdrive`, `gdrive-changes`, `onedrive`, `onedrive-changes` |
 | `-source-path` | `.` | Path to local source directory (when `source=local`) |
 | `-drive-id` | | Shared drive ID for Google Drive (omit for My Drive) |
 | `-root-folder` | | Root folder ID for Google Drive (defaults to entire drive) |
 | `-tag` | | Tag to apply to the snapshot (repeatable) |
 | `-verbose` | `false` | Show detailed file-level output |
 
-The `gdrive-changes` source type uses the Google Drive Changes API for faster incremental backups after the first full backup.
+The `gdrive-changes` and `onedrive-changes` source types use their respective change/delta APIs for faster incremental backups after the first full backup.
 
 ---
 
@@ -380,8 +381,9 @@ A **source** is where Cloudstic reads files from during a backup. Each source ty
 |--------|---------------|------------------|------|
 | [Local directory](#local-directory) | `local` | Files on your local filesystem | None |
 | [Google Drive](#google-drive) | `gdrive` | Full scan of Google Drive (My Drive or Shared Drive) | Automatic (browser) |
-| [Google Drive (Changes API)](#google-drive-changes-api) | `gdrive-changes` | Incremental changes since last backup (recommended) | Automatic (browser) |
+| [Google Drive (Changes API)](#google-drive-changes-api) | `gdrive-changes` | Incremental changes since last backup (recommended for Google Drive) | Automatic (browser) |
 | [OneDrive](#onedrive) | `onedrive` | Full scan of Microsoft OneDrive | Automatic (browser) |
+| [OneDrive (Changes API)](#onedrive-changes-api) | `onedrive-changes` | Incremental changes since last backup (recommended for OneDrive) | Automatic (browser) |
 
 All sources produce the same snapshot format. You can back up different sources into the same repository, and snapshots are tagged with source metadata so retention policies can be applied per-source.
 
@@ -469,25 +471,45 @@ cloudstic backup -source onedrive
 If you prefer to use your own Azure app registration instead of the built-in credentials:
 
 1. Go to the [Azure App Registrations](https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade) portal
-2. Register a new application (platform: **Mobile and desktop applications**, redirect URI: `http://localhost`)
-3. Under **Certificates & secrets**, create a new client secret
-4. Under **API permissions**, add `Files.Read.All` (Microsoft Graph, Delegated)
-5. Set the environment variables below
+2. Register a new application with **"Accounts in any organizational directory and personal Microsoft accounts"**
+3. Under **Authentication**, add platform **Mobile and desktop applications** with redirect URI `http://localhost/callback`
+4. Under **Authentication > Advanced settings**, enable **Allow public client flows**
+5. Under **API permissions**, add `Files.Read.All` and `User.Read` (Microsoft Graph, Delegated)
 
 ```bash
 export ONEDRIVE_CLIENT_ID=your-client-id
-export ONEDRIVE_CLIENT_SECRET=your-client-secret
 
 cloudstic backup -source onedrive
 ```
+
+No client secret is needed — Cloudstic uses the public client flow with PKCE.
 
 **Environment variables (optional overrides):**
 
 | Variable | Description |
 |----------|-------------|
 | `ONEDRIVE_CLIENT_ID` | Azure app client ID (overrides built-in credentials) |
-| `ONEDRIVE_CLIENT_SECRET` | Azure app client secret (overrides built-in credentials) |
 | `ONEDRIVE_TOKEN_FILE` | Override token cache path (default: `<config-dir>/onedrive_token.json`) |
+
+### OneDrive (Changes API)
+
+**This is the recommended way to back up OneDrive.** Uses the Microsoft Graph delta API to fetch only files that changed since the last backup, rather than listing every file on the drive. This dramatically reduces both backup duration and the number of API requests.
+
+**When to use:** All routine OneDrive backups. The first run performs a full scan automatically, so there is no need to start with `onedrive`.
+
+**How it works:** The first run behaves like a full `onedrive` backup and records a delta token. Subsequent runs fetch only the changes since that token, making backups much faster for drives with many files but few daily modifications.
+
+```bash
+# First run: full scan + saves delta token
+cloudstic backup -source onedrive-changes
+
+# Subsequent runs: only fetches changes since last token
+cloudstic backup -source onedrive-changes
+```
+
+Uses the same authentication as [OneDrive](#onedrive). No setup required — just run the command and authorize in the browser.
+
+> **Tip:** You can use `-source onedrive-changes` from day one — the first run performs a full scan just like `onedrive`. Only fall back to `-source onedrive` if you need to force a complete rescan.
 
 ### Source metadata in snapshots
 
@@ -622,6 +644,10 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 | `CLOUDSTIC_STORE` | `-store` | Storage backend: `local`, `b2` |
 | `CLOUDSTIC_STORE_PATH` | `-store-path` | Local path or B2 bucket name |
 | `CLOUDSTIC_STORE_PREFIX` | `-store-prefix` | Key prefix for B2 objects |
+| `CLOUDSTIC_SOURCE` | `-source` | Source type: `local`, `gdrive`, `gdrive-changes`, `onedrive`, `onedrive-changes` |
+| `CLOUDSTIC_SOURCE_PATH` | `-source-path` | Local source directory path (when `source=local`) |
+| `CLOUDSTIC_DRIVE_ID` | `-drive-id` | Shared drive ID for Google Drive |
+| `CLOUDSTIC_ROOT_FOLDER` | `-root-folder` | Root folder ID for Google Drive |
 | `CLOUDSTIC_DATABASE_URL` | `-database-url` | PostgreSQL URL (hybrid store) |
 | `CLOUDSTIC_TENANT_ID` | `-tenant-id` | Tenant ID (hybrid store) |
 | `CLOUDSTIC_ENCRYPTION_KEY` | `-encryption-key` | Platform key (hex) |
@@ -631,7 +657,6 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 | `GOOGLE_APPLICATION_CREDENTIALS` | — | Path to your own Google OAuth credentials file (optional, overrides built-in) |
 | `GOOGLE_TOKEN_FILE` | — | Override Google OAuth token path |
 | `ONEDRIVE_CLIENT_ID` | — | Microsoft app client ID (optional, overrides built-in) |
-| `ONEDRIVE_CLIENT_SECRET` | — | Microsoft app client secret (optional, overrides built-in) |
 | `ONEDRIVE_TOKEN_FILE` | — | Override OneDrive token path |
 | `B2_KEY_ID` | — | Backblaze B2 key ID |
 | `B2_APP_KEY` | — | Backblaze B2 application key |

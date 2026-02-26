@@ -19,21 +19,16 @@ type OneDriveSource struct {
 	Client *http.Client
 }
 
-func NewOneDriveSource(clientID, clientSecret, tokenPath string) (*OneDriveSource, error) {
+func NewOneDriveSource(clientID, tokenPath string) (*OneDriveSource, error) {
 	if clientID == "" {
 		clientID = defaultOneDriveClientID
-	}
-	if clientSecret == "" {
-		clientSecret = defaultOneDriveClientSecret
 	}
 
 	ctx := context.Background()
 	conf := &oauth2.Config{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		Scopes:       []string{"Files.Read", "Files.Read.All", "User.Read"},
-		Endpoint:     microsoft.AzureADEndpoint("common"),
-		RedirectURL:  "http://localhost:9999/callback",
+		ClientID: clientID,
+		Scopes:   []string{"Files.Read", "Files.Read.All", "User.Read", "offline_access"},
+		Endpoint: microsoft.AzureADEndpoint("common"),
 	}
 
 	token, err := loadToken(tokenPath)

@@ -58,6 +58,9 @@ func (s *OneDriveChangeSource) WalkChanges(ctx context.Context, token string, ca
 		}
 
 		for _, item := range resp.Value {
+			if item.Deleted == nil && !item.isDownloadable() {
+				continue
+			}
 			fc := s.itemToFileChange(item)
 			if fc.Type == ChangeUpsert && fc.Meta.Type == core.FileTypeFolder {
 				folderChanges = append(folderChanges, fc)

@@ -78,6 +78,7 @@ type graphItem struct {
 	Folder               *graphFolder    `json:"folder"`
 	Deleted              *graphDeleted   `json:"deleted"`
 	ParentReference      *graphParentRef `json:"parentReference"`
+	Package              *graphPackage   `json:"package"`
 	DownloadURL          string          `json:"@microsoft.graph.downloadUrl"`
 }
 
@@ -95,6 +96,19 @@ type graphFolder struct {
 
 type graphParentRef struct {
 	ID string `json:"id"`
+}
+
+type graphPackage struct {
+	Type string `json:"type"`
+}
+
+// isDownloadable returns true for regular files and folders.
+// Package items (e.g. OneNote notebooks/sections) are not downloadable via /content.
+func (item graphItem) isDownloadable() bool {
+	if item.Package != nil {
+		return false
+	}
+	return item.File != nil || item.Folder != nil
 }
 
 type graphListResponse struct {
@@ -167,6 +181,9 @@ func (s *OneDriveSource) walkRecursive(ctx context.Context, folderID string, cal
 		}
 
 		for _, item := range listResp.Value {
+			if !item.isDownloadable() {
+				continue
+			}
 			meta := s.toFileMeta(item)
 
 			if err := callback(meta); err != nil {
@@ -245,13 +262,37 @@ func (s *OneDriveSource) Size(ctx context.Context) (*SourceSize, error) {
 }
 
 func (s *OneDriveSource) GetFileStream(fileID string) (io.ReadCloser, error) {
-	// We can use the downloadUrl from metadata if valid, or request content directly
 	url := fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/items/%s/content", fileID)
 
-	// Note: Client.Get will follow redirects, which is what we want for /content
-	resp, err := s.Client.Get(url)
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
+	}
+
+	// The /content endpoint returns a 302 redirect to a pre-authenticated
+	// download URL on a different domain. We must NOT follow the redirect with
+	// the oauth2 client, because it would forward the Graph API Bearer token to
+	// SharePoint, which rejects it with 401.
+	noFollow := *s.Client
+	noFollow.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+
+	resp, err := noFollow.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode/100 == 3 {
+		location := resp.Header.Get("Location")
+		_ = resp.Body.Close()
+		if location == "" {
+			return nil, fmt.Errorf("redirect without Location header")
+		}
+		resp, err = http.Get(location)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if resp.StatusCode != http.StatusOK {

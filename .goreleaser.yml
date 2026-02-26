@@ -30,7 +30,7 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
-homebrew_casks:
+brews:
   - repository:
       owner: cloudstic
       name: homebrew-tap
@@ -38,6 +38,10 @@ homebrew_casks:
     homepage: "https://github.com/cloudstic/cli"
     description: "Content-addressable, encrypted backup tool for Google Drive, OneDrive, and local files"
     license: "MIT"
+    install: |
+      bin.install "cloudstic"
+    test: |
+      system "#{bin}/cloudstic", "version"
 
 changelog:
   sort: asc

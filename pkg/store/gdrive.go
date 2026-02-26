@@ -107,19 +107,7 @@ func oauthClient(config *oauth2.Config, tokFile string) (*http.Client, error) {
 }
 
 func tokenFromWeb(config *oauth2.Config) (*oauth2.Token, error) {
-	authURL := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
-	fmt.Printf("Go to the following link in your browser then type the authorization code:\n%v\n", authURL)
-
-	var authCode string
-	if _, err := fmt.Scan(&authCode); err != nil {
-		return nil, fmt.Errorf("read authorization code: %w", err)
-	}
-
-	tok, err := config.Exchange(context.TODO(), authCode)
-	if err != nil {
-		return nil, fmt.Errorf("exchange token: %w", err)
-	}
-	return tok, nil
+	return exchangeWithLocalServer(config, oauth2.AccessTypeOffline)
 }
 
 func tokenFromFile(file string) (*oauth2.Token, error) {

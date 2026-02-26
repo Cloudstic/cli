@@ -29,24 +29,11 @@ func NewOneDriveSource(clientID, clientSecret, tokenPath string) (*OneDriveSourc
 		RedirectURL:  "http://localhost:9999/callback",
 	}
 
-	// Load token
 	token, err := loadToken(tokenPath)
 	if err != nil {
-		// If no token, we might need a way to trigger auth flow.
-		// For now, assuming we fail if not present or print URL?
-		// Copying gdrive pattern somewhat.
-		url := conf.AuthCodeURL("state", oauth2.AccessTypeOffline)
-		fmt.Printf("Visit the URL for the auth dialog: %v\n", url)
-		fmt.Printf("Paste the code here: ")
-
-		var code string
-		if _, err := fmt.Scan(&code); err != nil {
-			return nil, err
-		}
-
-		token, err = conf.Exchange(ctx, code)
+		token, err = exchangeWithLocalServer(conf, oauth2.AccessTypeOffline)
 		if err != nil {
-			return nil, fmt.Errorf("failed to exchange token: %w", err)
+			return nil, fmt.Errorf("onedrive auth: %w", err)
 		}
 		_ = saveTokenJSON(tokenPath, token)
 	}

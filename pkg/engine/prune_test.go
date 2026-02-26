@@ -12,23 +12,24 @@ import (
 )
 
 func TestPruneManager_Run(t *testing.T) {
+	ctx := context.Background()
 	mockStore := NewMockStore()
 
 	// 1. Setup Valid Chain
 	chunkRef := "chunk/valid"
-	_ = mockStore.Put(chunkRef, []byte("data"))
+	_ = mockStore.Put(ctx, chunkRef, []byte("data"))
 
 	content := core.Content{Chunks: []string{chunkRef}}
 	fileContentHash := "valid-content-hash"
 	contentRef := "content/" + fileContentHash
 
 	_, contentData, _ := core.ComputeJSONHash(&content)
-	_ = mockStore.Put(contentRef, contentData)
+	_ = mockStore.Put(ctx, contentRef, contentData)
 
 	meta := core.FileMeta{ContentHash: fileContentHash, Name: "valid.txt"}
 	metaHash, metaData, _ := core.ComputeJSONHash(&meta)
 	metaRef := "filemeta/" + metaHash
-	_ = mockStore.Put(metaRef, metaData)
+	_ = mockStore.Put(ctx, metaRef, metaData)
 
 	// HAMT Construction using BackupManager's tree for flushing.
 	src := NewMockSource()
@@ -52,22 +53,22 @@ func TestPruneManager_Run(t *testing.T) {
 	snap := core.Snapshot{Root: rootRef, Seq: 1}
 	snapHash, snapData, _ := core.ComputeJSONHash(&snap)
 	snapRef := "snapshot/" + snapHash
-	_ = mockStore.Put(snapRef, snapData)
+	_ = mockStore.Put(ctx, snapRef, snapData)
 
 	// Index
 	idx := core.Index{LatestSnapshot: snapRef, Seq: 1}
 	idxData, _ := json.Marshal(idx)
-	_ = mockStore.Put("index/latest", idxData)
+	_ = mockStore.Put(ctx, "index/latest", idxData)
 
 	// 2. Create Garbage (unreachable objects not referenced by any snapshot)
-	_ = mockStore.Put("chunk/garbage", []byte("trash"))
-	_ = mockStore.Put("filemeta/garbage", []byte("{}"))
-	_ = mockStore.Put("content/garbage", []byte("{}"))
+	_ = mockStore.Put(ctx, "chunk/garbage", []byte("trash"))
+	_ = mockStore.Put(ctx, "filemeta/garbage", []byte("{}"))
+	_ = mockStore.Put(ctx, "content/garbage", []byte("{}"))
 
 	// 3. Run Prune
 	metered := store.NewMeteredStore(mockStore)
 	pm := NewPruneManager(metered, ui.NewNoOpReporter())
-	result, err := pm.Run(context.Background())
+	result, err := pm.Run(ctx)
 	if err != nil {
 		t.Fatalf("Prune failed: %v", err)
 	}
@@ -76,27 +77,27 @@ func TestPruneManager_Run(t *testing.T) {
 	}
 
 	// 4. Verify reachable objects remain
-	assertExists(t, mockStore, chunkRef)
-	assertExists(t, mockStore, contentRef)
-	assertExists(t, mockStore, metaRef)
-	assertExists(t, mockStore, rootRef)
-	assertExists(t, mockStore, snapRef)
-	assertExists(t, mockStore, "index/latest")
+	assertExists(t, ctx, mockStore, chunkRef)
+	assertExists(t, ctx, mockStore, contentRef)
+	assertExists(t, ctx, mockStore, metaRef)
+	assertExists(t, ctx, mockStore, rootRef)
+	assertExists(t, ctx, mockStore, snapRef)
+	assertExists(t, ctx, mockStore, "index/latest")
 
 	// Verify garbage was swept
-	assertNotExists(t, mockStore, "chunk/garbage")
-	assertNotExists(t, mockStore, "filemeta/garbage")
-	assertNotExists(t, mockStore, "content/garbage")
+	assertNotExists(t, ctx, mockStore, "chunk/garbage")
+	assertNotExists(t, ctx, mockStore, "filemeta/garbage")
+	assertNotExists(t, ctx, mockStore, "content/garbage")
 }
 
-func assertExists(t *testing.T, s *MockStore, key string) {
-	if exists, _ := s.Exists(key); !exists {
+func assertExists(t *testing.T, ctx context.Context, s *MockStore, key string) {
+	if exists, _ := s.Exists(ctx, key); !exists {
 		t.Errorf("Expected %s to exist", key)
 	}
 }
 
-func assertNotExists(t *testing.T, s *MockStore, key string) {
-	if exists, _ := s.Exists(key); exists {
+func assertNotExists(t *testing.T, ctx context.Context, s *MockStore, key string) {
+	if exists, _ := s.Exists(ctx, key); exists {
 		t.Errorf("Expected %s to be deleted", key)
 	}
 }

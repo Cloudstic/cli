@@ -55,11 +55,11 @@ func NewDiffManager(s store.ObjectStore) *DiffManager {
 
 // Run resolves two snapshot IDs and computes the diff.
 func (dm *DiffManager) Run(ctx context.Context, snapID1, snapID2 string, opts ...DiffOption) (*DiffResult, error) {
-	root1, ref1, err := dm.loadRoot(snapID1)
+	root1, ref1, err := dm.loadRoot(ctx, snapID1)
 	if err != nil {
 		return nil, err
 	}
-	root2, ref2, err := dm.loadRoot(snapID2)
+	root2, ref2, err := dm.loadRoot(ctx, snapID2)
 	if err != nil {
 		return nil, err
 	}
@@ -82,21 +82,21 @@ func (dm *DiffManager) Run(ctx context.Context, snapID1, snapID2 string, opts ..
 
 // loadRoot resolves a snapshot ID and returns its HAMT root along with the
 // fully-qualified snapshot ref (for display).
-func (dm *DiffManager) loadRoot(id string) (root, ref string, err error) {
-	ref, err = dm.resolveSnapshot(id)
+func (dm *DiffManager) loadRoot(ctx context.Context, id string) (root, ref string, err error) {
+	ref, err = dm.resolveSnapshot(ctx, id)
 	if err != nil {
 		return "", "", err
 	}
-	snap, err := dm.loadSnapshot(ref)
+	snap, err := dm.loadSnapshot(ctx, ref)
 	if err != nil {
 		return "", "", err
 	}
 	return snap.Root, ref, nil
 }
 
-func (dm *DiffManager) resolveSnapshot(id string) (string, error) {
+func (dm *DiffManager) resolveSnapshot(ctx context.Context, id string) (string, error) {
 	if id == "latest" || id == "" {
-		data, err := dm.store.Get("index/latest")
+		data, err := dm.store.Get(ctx, "index/latest")
 		if err != nil {
 			return "", fmt.Errorf("get latest index: %w", err)
 		}
@@ -112,8 +112,8 @@ func (dm *DiffManager) resolveSnapshot(id string) (string, error) {
 	return id, nil
 }
 
-func (dm *DiffManager) loadSnapshot(ref string) (*core.Snapshot, error) {
-	data, err := dm.store.Get(ref)
+func (dm *DiffManager) loadSnapshot(ctx context.Context, ref string) (*core.Snapshot, error) {
+	data, err := dm.store.Get(ctx, ref)
 	if err != nil {
 		return nil, fmt.Errorf("load snapshot %s: %w", ref, err)
 	}
@@ -164,7 +164,7 @@ func classifyEntry(d hamt.DiffEntry) (ChangeType, string) {
 }
 
 func (dm *DiffManager) loadMeta(ref string) (*core.FileMeta, error) {
-	data, err := dm.store.Get(ref)
+	data, err := dm.store.Get(context.Background(), ref)
 	if err != nil {
 		return nil, err
 	}

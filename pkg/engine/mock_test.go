@@ -25,14 +25,14 @@ func NewMockStore() *MockStore {
 	}
 }
 
-func (s *MockStore) Put(key string, data []byte) error {
+func (s *MockStore) Put(_ context.Context, key string, data []byte) error {
 	s.mu.Lock()
 	s.Data[key] = data
 	s.mu.Unlock()
 	return nil
 }
 
-func (s *MockStore) Get(key string) ([]byte, error) {
+func (s *MockStore) Get(_ context.Context, key string) ([]byte, error) {
 	s.mu.RLock()
 	data, ok := s.Data[key]
 	s.mu.RUnlock()
@@ -42,21 +42,21 @@ func (s *MockStore) Get(key string) ([]byte, error) {
 	return data, nil
 }
 
-func (s *MockStore) Exists(key string) (bool, error) {
+func (s *MockStore) Exists(_ context.Context, key string) (bool, error) {
 	s.mu.RLock()
 	_, ok := s.Data[key]
 	s.mu.RUnlock()
 	return ok, nil
 }
 
-func (s *MockStore) Delete(key string) error {
+func (s *MockStore) Delete(_ context.Context, key string) error {
 	s.mu.Lock()
 	delete(s.Data, key)
 	s.mu.Unlock()
 	return nil
 }
 
-func (s *MockStore) List(prefix string) ([]string, error) {
+func (s *MockStore) List(_ context.Context, prefix string) ([]string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var keys []string
@@ -68,7 +68,7 @@ func (s *MockStore) List(prefix string) ([]string, error) {
 	return keys, nil
 }
 
-func (s *MockStore) Size(key string) (int64, error) {
+func (s *MockStore) Size(_ context.Context, key string) (int64, error) {
 	s.mu.RLock()
 	data, ok := s.Data[key]
 	s.mu.RUnlock()
@@ -78,7 +78,7 @@ func (s *MockStore) Size(key string) (int64, error) {
 	return int64(len(data)), nil
 }
 
-func (s *MockStore) TotalSize() (int64, error) {
+func (s *MockStore) TotalSize(_ context.Context) (int64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var total int64
@@ -171,4 +171,3 @@ func (s *MockSource) GetFileStream(fileID string) (io.ReadCloser, error) {
 	}
 	return io.NopCloser(bytes.NewReader(f.Content)), nil
 }
-

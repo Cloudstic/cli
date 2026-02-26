@@ -47,14 +47,14 @@ func NewPruneManager(s store.ObjectStore, reporter ui.Reporter) *PruneManager {
 // Run performs a full mark-and-sweep garbage collection.
 func (pm *PruneManager) Run(ctx context.Context, opts ...PruneOption) (*PruneResult, error) {
 	markPhase := pm.reporter.StartPhase("Marking reachable objects", 0, false)
-	reachable, err := pm.mark(markPhase)
+	reachable, err := pm.mark(ctx, markPhase)
 	if err != nil {
 		markPhase.Error()
 		return nil, err
 	}
 	markPhase.Done()
 
-	result := pm.sweep(reachable)
+	result := pm.sweep(ctx, reachable)
 	return result, nil
 }
 
@@ -63,10 +63,10 @@ func (pm *PruneManager) Run(ctx context.Context, opts ...PruneOption) (*PruneRes
 // ---------------------------------------------------------------------------
 
 // mark returns the set of all reachable object keys.
-func (pm *PruneManager) mark(phase ui.Phase) (map[string]bool, error) {
+func (pm *PruneManager) mark(ctx context.Context, phase ui.Phase) (map[string]bool, error) {
 	reachable := make(map[string]bool)
 
-	snapRefs, err := pm.collectSnapshots(reachable)
+	snapRefs, err := pm.collectSnapshots(ctx, reachable)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +74,7 @@ func (pm *PruneManager) mark(phase ui.Phase) (map[string]bool, error) {
 	phase.Log(fmt.Sprintf("Found %d unique snapshots", len(snapRefs)))
 
 	for ref := range snapRefs {
-		if err := pm.markSnapshot(ref, reachable); err != nil {
+		if err := pm.markSnapshot(ctx, ref, reachable); err != nil {
 			return nil, fmt.Errorf("mark snapshot %s: %w", ref, err)
 		}
 		phase.Increment(1)
@@ -85,8 +85,8 @@ func (pm *PruneManager) mark(phase ui.Phase) (map[string]bool, error) {
 
 // collectSnapshots lists all snapshot/ keys and marks them as reachable.
 // It also marks index/latest as reachable so the sweep phase won't delete it.
-func (pm *PruneManager) collectSnapshots(reachable map[string]bool) (map[string]bool, error) {
-	keys, err := pm.store.List("snapshot/")
+func (pm *PruneManager) collectSnapshots(ctx context.Context, reachable map[string]bool) (map[string]bool, error) {
+	keys, err := pm.store.List(ctx, "snapshot/")
 	if err != nil {
 		return nil, fmt.Errorf("list snapshots: %w", err)
 	}
@@ -96,23 +96,23 @@ func (pm *PruneManager) collectSnapshots(reachable map[string]bool) (map[string]
 		snapRefs[key] = true
 	}
 
-	if exists, _ := pm.store.Exists("index/latest"); exists {
+	if exists, _ := pm.store.Exists(ctx, "index/latest"); exists {
 		reachable["index/latest"] = true
 	}
-	if exists, _ := pm.store.Exists("index/snapshots"); exists {
+	if exists, _ := pm.store.Exists(ctx, "index/snapshots"); exists {
 		reachable["index/snapshots"] = true
 	}
 
 	return snapRefs, nil
 }
 
-func (pm *PruneManager) markSnapshot(ref string, reachable map[string]bool) error {
+func (pm *PruneManager) markSnapshot(ctx context.Context, ref string, reachable map[string]bool) error {
 	if reachable[ref] {
 		return nil
 	}
 	reachable[ref] = true
 
-	snap, err := pm.loadSnapshot(ref)
+	snap, err := pm.loadSnapshot(ctx, ref)
 	if err != nil {
 		return err
 	}
@@ -125,17 +125,17 @@ func (pm *PruneManager) markSnapshot(ref string, reachable map[string]bool) erro
 	}
 
 	return pm.tree.Walk(snap.Root, func(_, valueRef string) error {
-		return pm.markFileMeta(valueRef, reachable)
+		return pm.markFileMeta(ctx, valueRef, reachable)
 	})
 }
 
-func (pm *PruneManager) markFileMeta(ref string, reachable map[string]bool) error {
+func (pm *PruneManager) markFileMeta(ctx context.Context, ref string, reachable map[string]bool) error {
 	if reachable[ref] {
 		return nil
 	}
 	reachable[ref] = true
 
-	meta, err := pm.loadMeta(ref)
+	meta, err := pm.loadMeta(ctx, ref)
 	if err != nil {
 		return err
 	}
@@ -143,16 +143,16 @@ func (pm *PruneManager) markFileMeta(ref string, reachable map[string]bool) erro
 	if meta.ContentHash == "" {
 		return nil
 	}
-	return pm.markContent("content/"+meta.ContentHash, reachable)
+	return pm.markContent(ctx, "content/"+meta.ContentHash, reachable)
 }
 
-func (pm *PruneManager) markContent(ref string, reachable map[string]bool) error {
+func (pm *PruneManager) markContent(ctx context.Context, ref string, reachable map[string]bool) error {
 	if reachable[ref] {
 		return nil
 	}
 	reachable[ref] = true
 
-	content, err := pm.loadContent(ref)
+	content, err := pm.loadContent(ctx, ref)
 	if err != nil {
 		return err
 	}
@@ -167,10 +167,10 @@ func (pm *PruneManager) markContent(ref string, reachable map[string]bool) error
 // Sweep phase
 // ---------------------------------------------------------------------------
 
-func (pm *PruneManager) sweep(reachable map[string]bool) *PruneResult {
+func (pm *PruneManager) sweep(ctx context.Context, reachable map[string]bool) *PruneResult {
 	var totalKeys int
 	for _, prefix := range objectPrefixes {
-		keys, err := pm.store.List(prefix)
+		keys, err := pm.store.List(ctx, prefix)
 		if err != nil {
 			continue
 		}
@@ -181,7 +181,7 @@ func (pm *PruneManager) sweep(reachable map[string]bool) *PruneResult {
 	result := &PruneResult{}
 
 	for _, prefix := range objectPrefixes {
-		keys, err := pm.store.List(prefix)
+		keys, err := pm.store.List(ctx, prefix)
 		if err != nil {
 			continue
 		}
@@ -191,7 +191,7 @@ func (pm *PruneManager) sweep(reachable map[string]bool) *PruneResult {
 				phase.Increment(0)
 				continue
 			}
-			size, err := pm.store.DeleteReturnSize(key)
+			size, err := pm.store.DeleteReturnSize(ctx, key)
 			if err != nil {
 				continue
 			}
@@ -209,8 +209,8 @@ func (pm *PruneManager) sweep(reachable map[string]bool) *PruneResult {
 // Loaders
 // ---------------------------------------------------------------------------
 
-func (pm *PruneManager) loadSnapshot(ref string) (*core.Snapshot, error) {
-	data, err := pm.store.Get(ref)
+func (pm *PruneManager) loadSnapshot(ctx context.Context, ref string) (*core.Snapshot, error) {
+	data, err := pm.store.Get(ctx, ref)
 	if err != nil {
 		return nil, fmt.Errorf("get snapshot %s: %w", ref, err)
 	}
@@ -221,8 +221,8 @@ func (pm *PruneManager) loadSnapshot(ref string) (*core.Snapshot, error) {
 	return &s, nil
 }
 
-func (pm *PruneManager) loadMeta(ref string) (*core.FileMeta, error) {
-	data, err := pm.store.Get(ref)
+func (pm *PruneManager) loadMeta(ctx context.Context, ref string) (*core.FileMeta, error) {
+	data, err := pm.store.Get(ctx, ref)
 	if err != nil {
 		return nil, fmt.Errorf("get filemeta %s: %w", ref, err)
 	}
@@ -233,8 +233,8 @@ func (pm *PruneManager) loadMeta(ref string) (*core.FileMeta, error) {
 	return &fm, nil
 }
 
-func (pm *PruneManager) loadContent(ref string) (*core.Content, error) {
-	data, err := pm.store.Get(ref)
+func (pm *PruneManager) loadContent(ctx context.Context, ref string) (*core.Content, error) {
+	data, err := pm.store.Get(ctx, ref)
 	if err != nil {
 		return nil, fmt.Errorf("get content %s: %w", ref, err)
 	}

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"encoding/json"
 	"sort"
 	"time"
@@ -16,7 +17,9 @@ const snapshotCatalogKey = "index/snapshots"
 // is self-healing: missing entries are fetched from the store and stale entries
 // are pruned. Results are sorted newest-first by Created time.
 func ListAllSnapshots(s store.ObjectStore) ([]SnapshotEntry, error) {
-	keys, err := s.List("snapshot/")
+	ctx := context.Background()
+
+	keys, err := s.List(ctx, "snapshot/")
 	if err != nil {
 		return nil, err
 	}
@@ -43,7 +46,7 @@ func ListAllSnapshots(s store.ObjectStore) ([]SnapshotEntry, error) {
 		if _, ok := indexed[key]; ok {
 			continue
 		}
-		data, err := s.Get(key)
+		data, err := s.Get(ctx, key)
 		if err != nil {
 			continue
 		}
@@ -104,7 +107,7 @@ func RemoveSnapshotFromIndex(s store.ObjectStore, ref string) error {
 // resolveLatest reads index/latest and returns the snapshot ref it points to.
 // Returns empty string on error (fresh repo).
 func resolveLatest(s store.ObjectStore) (ref string, seq int) {
-	data, err := s.Get("index/latest")
+	data, err := s.Get(context.Background(), "index/latest")
 	if err != nil {
 		return "", 0
 	}
@@ -118,11 +121,12 @@ func resolveLatest(s store.ObjectStore) (ref string, seq int) {
 // updateLatest sets index/latest to point to the given snapshot, or deletes it
 // if ref is empty.
 func updateLatest(s store.ObjectStore, ref string, seq int) error {
+	ctx := context.Background()
 	if ref == "" {
-		return s.Delete("index/latest")
+		return s.Delete(ctx, "index/latest")
 	}
 	data, _ := json.Marshal(core.Index{LatestSnapshot: ref, Seq: seq})
-	return s.Put("index/latest", data)
+	return s.Put(ctx, "index/latest", data)
 }
 
 // ---------------------------------------------------------------------------
@@ -130,7 +134,7 @@ func updateLatest(s store.ObjectStore, ref string, seq int) error {
 // ---------------------------------------------------------------------------
 
 func loadCatalog(s store.ObjectStore) core.SnapshotCatalog {
-	data, err := s.Get(snapshotCatalogKey)
+	data, err := s.Get(context.Background(), snapshotCatalogKey)
 	if err != nil {
 		return core.SnapshotCatalog{}
 	}
@@ -161,7 +165,7 @@ func saveCatalog(s store.ObjectStore, indexed map[string]core.SnapshotSummary) e
 	if err != nil {
 		return err
 	}
-	return s.Put(snapshotCatalogKey, data)
+	return s.Put(context.Background(), snapshotCatalogKey, data)
 }
 
 func snapshotToSummary(snap core.Snapshot, ref string) core.SnapshotSummary {

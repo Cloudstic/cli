@@ -10,13 +10,15 @@ import (
 	"time"
 
 	"github.com/cloudstic/cli/pkg/core"
+	"github.com/cloudstic/cli/pkg/retry"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/microsoft"
 )
 
 type OneDriveSource struct {
-	Client *http.Client
+	Client  *http.Client
+	account string // cached user principal name; populated lazily by Info()
 }
 
 func NewOneDriveSource(clientID, tokenPath string) (*OneDriveSource, error) {
@@ -45,7 +47,37 @@ func NewOneDriveSource(clientID, tokenPath string) (*OneDriveSource, error) {
 }
 
 func (s *OneDriveSource) Info() core.SourceInfo {
-	return core.SourceInfo{Type: "onedrive"}
+	if s.account == "" {
+		s.account = s.fetchAccount()
+	}
+	return core.SourceInfo{
+		Type:    "onedrive",
+		Account: s.account,
+		Path:    "onedrive://",
+	}
+}
+
+func (s *OneDriveSource) fetchAccount() string {
+	req, err := http.NewRequestWithContext(context.Background(), "GET",
+		"https://graph.microsoft.com/v1.0/me?$select=userPrincipalName", nil)
+	if err != nil {
+		return ""
+	}
+	resp, err := s.Client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	var me struct {
+		UPN string `json:"userPrincipalName"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&me); err != nil {
+		return ""
+	}
+	return me.UPN
 }
 
 func loadToken(file string) (*oauth2.Token, error) {
@@ -147,106 +179,106 @@ func (s *OneDriveSource) toFileMeta(item graphItem) core.FileMeta {
 
 func (s *OneDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) error) error {
 	rootURL := "https://graph.microsoft.com/v1.0/me/drive/root"
-	req, err := http.NewRequestWithContext(ctx, "GET", rootURL, nil)
-	if err != nil {
-		return err
-	}
-
-	resp, err := s.Client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("graph api error fetching root: %s %s", resp.Status, string(body))
-	}
 
 	var rootItem graphItem
-	if err := json.NewDecoder(resp.Body).Decode(&rootItem); err != nil {
-		return err
-	}
-
-	return s.walkRecursive(ctx, rootItem.ID, callback)
-}
-
-func (s *OneDriveSource) walkRecursive(ctx context.Context, folderID string, callback func(core.FileMeta) error) error {
-	url := fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/items/%s/children", folderID)
-
-	for {
-		listResp, err := s.fetchPage(ctx, url)
+	err := retry.Do(ctx, retry.DefaultPolicy(), func() error {
+		req, err := http.NewRequestWithContext(ctx, "GET", rootURL, nil)
 		if err != nil {
 			return err
 		}
+		resp, err := s.Client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = resp.Body.Close() }()
 
-		for _, item := range listResp.Value {
-			if !item.isDownloadable() {
-				continue
-			}
-			meta := s.toFileMeta(item)
+		body, _ := io.ReadAll(resp.Body)
+		if apiErr := retry.ClassifyHTTPResponse(resp, body); apiErr != nil {
+			return apiErr
+		}
+		return json.Unmarshal(body, &rootItem)
+	})
+	if err != nil {
+		return err
+	}
 
-			if err := callback(meta); err != nil {
+	// Iterative DFS using an explicit stack instead of recursion.
+	type stackEntry struct {
+		folderID string
+		url      string
+	}
+	stack := []stackEntry{{folderID: rootItem.ID, url: fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/items/%s/children", rootItem.ID)}}
+
+	for len(stack) > 0 {
+		top := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+
+		url := top.url
+		for {
+			listResp, err := s.fetchPage(ctx, url)
+			if err != nil {
 				return err
 			}
 
-			if meta.Type == core.FileTypeFolder {
-				if err := s.walkRecursive(ctx, item.ID, callback); err != nil {
+			var childFolders []stackEntry
+			for _, item := range listResp.Value {
+				if !item.isDownloadable() {
+					continue
+				}
+				meta := s.toFileMeta(item)
+
+				if err := callback(meta); err != nil {
 					return err
 				}
-			}
-		}
 
-		if listResp.NextLink == "" {
-			break
+				if meta.Type == core.FileTypeFolder {
+					childFolders = append(childFolders, stackEntry{
+						folderID: item.ID,
+						url:      fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/items/%s/children", item.ID),
+					})
+				}
+			}
+
+			// Push child folders onto the stack (reverse order for DFS consistency).
+			for i := len(childFolders) - 1; i >= 0; i-- {
+				stack = append(stack, childFolders[i])
+			}
+
+			if listResp.NextLink == "" {
+				break
+			}
+			url = listResp.NextLink
 		}
-		url = listResp.NextLink
 	}
 	return nil
 }
 
 func (s *OneDriveSource) fetchPage(ctx context.Context, url string) (*graphListResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := s.Client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("graph api error: %s %s", resp.Status, string(body))
-	}
-
 	var listResp graphListResponse
-	if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
-		return nil, err
-	}
-	return &listResp, nil
+	err := retry.Do(ctx, retry.DefaultPolicy(), func() error {
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return err
+		}
+
+		resp, err := s.Client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		body, _ := io.ReadAll(resp.Body)
+		if apiErr := retry.ClassifyHTTPResponse(resp, body); apiErr != nil {
+			return apiErr
+		}
+		return json.Unmarshal(body, &listResp)
+	})
+	return &listResp, err
 }
 
 // Size returns the total storage usage for the OneDrive account by calling
 // the /me/drive endpoint which includes quota information.
 func (s *OneDriveSource) Size(ctx context.Context) (*SourceSize, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", "https://graph.microsoft.com/v1.0/me/drive?$select=quota", nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := s.Client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("graph drive request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("graph drive error: %s %s", resp.Status, string(body))
-	}
-
 	var result struct {
 		Quota struct {
 			Used      int64 `json:"used"`
@@ -254,8 +286,26 @@ func (s *OneDriveSource) Size(ctx context.Context) (*SourceSize, error) {
 			FileCount int64 `json:"fileCount"`
 		} `json:"quota"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode drive quota: %w", err)
+
+	err := retry.Do(ctx, retry.DefaultPolicy(), func() error {
+		req, err := http.NewRequestWithContext(ctx, "GET", "https://graph.microsoft.com/v1.0/me/drive?$select=quota", nil)
+		if err != nil {
+			return err
+		}
+		resp, err := s.Client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		body, _ := io.ReadAll(resp.Body)
+		if apiErr := retry.ClassifyHTTPResponse(resp, body); apiErr != nil {
+			return apiErr
+		}
+		return json.Unmarshal(body, &result)
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return &SourceSize{Bytes: result.Quota.Used, Files: result.Quota.FileCount}, nil
@@ -264,41 +314,50 @@ func (s *OneDriveSource) Size(ctx context.Context) (*SourceSize, error) {
 func (s *OneDriveSource) GetFileStream(fileID string) (io.ReadCloser, error) {
 	url := fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/items/%s/content", fileID)
 
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	// The /content endpoint returns a 302 redirect to a pre-authenticated
-	// download URL on a different domain. We must NOT follow the redirect with
-	// the oauth2 client, because it would forward the Graph API Bearer token to
-	// SharePoint, which rejects it with 401.
-	noFollow := *s.Client
-	noFollow.CheckRedirect = func(*http.Request, []*http.Request) error {
-		return http.ErrUseLastResponse
-	}
-
-	resp, err := noFollow.Do(req)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode/100 == 3 {
-		location := resp.Header.Get("Location")
-		_ = resp.Body.Close()
-		if location == "" {
-			return nil, fmt.Errorf("redirect without Location header")
-		}
-		resp, err = http.Get(location)
+	var body io.ReadCloser
+	err := retry.Do(context.Background(), retry.DefaultPolicy(), func() error {
+		req, err := http.NewRequest("GET", url, nil)
 		if err != nil {
-			return nil, err
+			return err
 		}
-	}
 
-	if resp.StatusCode != http.StatusOK {
-		_ = resp.Body.Close()
-		return nil, fmt.Errorf("failed to download file: %s", resp.Status)
-	}
+		// The /content endpoint returns a 302 redirect to a pre-authenticated
+		// download URL on a different domain. We must NOT follow the redirect with
+		// the oauth2 client, because it would forward the Graph API Bearer token to
+		// SharePoint, which rejects it with 401.
+		noFollow := *s.Client
+		noFollow.CheckRedirect = func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
 
-	return resp.Body, nil
+		resp, err := noFollow.Do(req)
+		if err != nil {
+			return err
+		}
+
+		if resp.StatusCode/100 == 3 {
+			location := resp.Header.Get("Location")
+			_ = resp.Body.Close()
+			if location == "" {
+				return fmt.Errorf("redirect without Location header")
+			}
+			resp, err = http.Get(location)
+			if err != nil {
+				return &retry.RetryableError{Err: err}
+			}
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			respBody, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			return retry.ClassifyHTTPResponse(resp, respBody)
+		}
+
+		body = resp.Body
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return body, nil
 }

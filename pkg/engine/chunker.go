@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -21,7 +22,7 @@ var cdcMu sync.Mutex
 
 // FastCDC boundary sizes.
 const (
-	cdcMinSize = 512 * 1024     // 512 KiB
+	cdcMinSize = 512 * 1024      // 512 KiB
 	cdcAvgSize = 1 * 1024 * 1024 // 1 MiB
 	cdcMaxSize = 8 * 1024 * 1024 // 8 MiB
 )
@@ -54,6 +55,7 @@ func (c *Chunker) ProcessStream(r io.Reader, onProgress func(int64)) (refs []str
 		return nil, 0, 0, 0, "", err
 	}
 
+	ctx := context.Background()
 	hasher := sha256.New()
 
 	for {
@@ -75,7 +77,7 @@ func (c *Chunker) ProcessStream(r io.Reader, onProgress func(int64)) (refs []str
 			onProgress(n)
 		}
 
-		ref, raw, compressed, err := c.storeChunk(chunk.Data)
+		ref, raw, compressed, err := c.storeChunk(ctx, chunk.Data)
 		if err != nil {
 			return nil, 0, 0, 0, "", err
 		}
@@ -103,7 +105,7 @@ func (c *Chunker) CreateContentObject(chunkRefs []string, size int64, contentHas
 	}
 
 	ref := "content/" + contentHash
-	if err := c.store.Put(ref, data); err != nil {
+	if err := c.store.Put(context.Background(), ref, data); err != nil {
 		return "", err
 	}
 	return ref, nil
@@ -112,10 +114,10 @@ func (c *Chunker) CreateContentObject(chunkRefs []string, size int64, contentHas
 // storeChunk compresses data with gzip and writes it to chunk/<hash>,
 // skipping the write if the key already exists (dedup).
 // Returns the raw and compressed sizes of newly stored data (both zero when deduped).
-func (c *Chunker) storeChunk(data []byte) (ref string, rawNew int64, compressedNew int64, err error) {
+func (c *Chunker) storeChunk(ctx context.Context, data []byte) (ref string, rawNew int64, compressedNew int64, err error) {
 	ref = "chunk/" + core.ComputeHash(data)
 
-	exists, err := c.store.Exists(ref)
+	exists, err := c.store.Exists(ctx, ref)
 	if err != nil {
 		return "", 0, 0, err
 	}
@@ -127,7 +129,7 @@ func (c *Chunker) storeChunk(data []byte) (ref string, rawNew int64, compressedN
 	if err != nil {
 		return "", 0, 0, err
 	}
-	if err := c.store.Put(ref, compressed); err != nil {
+	if err := c.store.Put(ctx, ref, compressed); err != nil {
 		return "", 0, 0, err
 	}
 	return ref, int64(len(data)), int64(len(compressed)), nil

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,7 +24,7 @@ func (s *LocalStore) getPath(key string) string {
 	return filepath.Join(s.BasePath, filepath.Join(parts...))
 }
 
-func (s *LocalStore) Put(key string, data []byte) error {
+func (s *LocalStore) Put(_ context.Context, key string, data []byte) error {
 	fullPath := s.getPath(key)
 	dir := filepath.Dir(fullPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -36,11 +37,11 @@ func (s *LocalStore) Put(key string, data []byte) error {
 	return os.Rename(tmpFile, fullPath)
 }
 
-func (s *LocalStore) Get(key string) ([]byte, error) {
+func (s *LocalStore) Get(_ context.Context, key string) ([]byte, error) {
 	return os.ReadFile(s.getPath(key))
 }
 
-func (s *LocalStore) Exists(key string) (bool, error) {
+func (s *LocalStore) Exists(_ context.Context, key string) (bool, error) {
 	_, err := os.Stat(s.getPath(key))
 	if err == nil {
 		return true, nil
@@ -51,11 +52,11 @@ func (s *LocalStore) Exists(key string) (bool, error) {
 	return false, err
 }
 
-func (s *LocalStore) Delete(key string) error {
+func (s *LocalStore) Delete(_ context.Context, key string) error {
 	return os.Remove(s.getPath(key))
 }
 
-func (s *LocalStore) Size(key string) (int64, error) {
+func (s *LocalStore) Size(_ context.Context, key string) (int64, error) {
 	info, err := os.Stat(s.getPath(key))
 	if err != nil {
 		return 0, err
@@ -63,7 +64,7 @@ func (s *LocalStore) Size(key string) (int64, error) {
 	return info.Size(), nil
 }
 
-func (s *LocalStore) TotalSize() (int64, error) {
+func (s *LocalStore) TotalSize(_ context.Context) (int64, error) {
 	var total int64
 	err := filepath.Walk(s.BasePath, func(_ string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -82,7 +83,7 @@ func (s *LocalStore) TotalSize() (int64, error) {
 
 // List returns all keys matching the given prefix. When a prefix is provided
 // the walk is scoped to just that subdirectory for efficiency.
-func (s *LocalStore) List(prefix string) ([]string, error) {
+func (s *LocalStore) List(_ context.Context, prefix string) ([]string, error) {
 	startPath := s.BasePath
 	if prefix != "" {
 		candidate := filepath.Join(s.BasePath, filepath.FromSlash(prefix))

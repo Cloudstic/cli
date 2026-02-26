@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"testing"
 
@@ -16,12 +17,12 @@ func newMemStore() *memStore {
 	return &memStore{data: make(map[string][]byte)}
 }
 
-func (m *memStore) Put(key string, data []byte) error {
+func (m *memStore) Put(_ context.Context, key string, data []byte) error {
 	m.data[key] = append([]byte(nil), data...)
 	return nil
 }
 
-func (m *memStore) Get(key string) ([]byte, error) {
+func (m *memStore) Get(_ context.Context, key string) ([]byte, error) {
 	d, ok := m.data[key]
 	if !ok {
 		return nil, fmt.Errorf("not found: %s", key)
@@ -29,17 +30,17 @@ func (m *memStore) Get(key string) ([]byte, error) {
 	return d, nil
 }
 
-func (m *memStore) Exists(key string) (bool, error) {
+func (m *memStore) Exists(_ context.Context, key string) (bool, error) {
 	_, ok := m.data[key]
 	return ok, nil
 }
 
-func (m *memStore) Delete(key string) error {
+func (m *memStore) Delete(_ context.Context, key string) error {
 	delete(m.data, key)
 	return nil
 }
 
-func (m *memStore) List(prefix string) ([]string, error) {
+func (m *memStore) List(_ context.Context, prefix string) ([]string, error) {
 	var keys []string
 	for k := range m.data {
 		if len(prefix) == 0 || k[:len(prefix)] == prefix {
@@ -49,7 +50,7 @@ func (m *memStore) List(prefix string) ([]string, error) {
 	return keys, nil
 }
 
-func (m *memStore) Size(key string) (int64, error) {
+func (m *memStore) Size(_ context.Context, key string) (int64, error) {
 	d, ok := m.data[key]
 	if !ok {
 		return 0, fmt.Errorf("not found: %s", key)
@@ -57,7 +58,7 @@ func (m *memStore) Size(key string) (int64, error) {
 	return int64(len(d)), nil
 }
 
-func (m *memStore) TotalSize() (int64, error) {
+func (m *memStore) TotalSize(_ context.Context) (int64, error) {
 	var total int64
 	for _, d := range m.data {
 		total += int64(len(d))
@@ -75,12 +76,13 @@ func testKey(t *testing.T) []byte {
 }
 
 func TestEncryptedStore_RoundTrip(t *testing.T) {
+	ctx := context.Background()
 	inner := newMemStore()
 	key := testKey(t)
 	store := NewEncryptedStore(inner, key)
 
 	plain := []byte(`{"root":"abc123","created":"2026-01-01"}`)
-	if err := store.Put("snapshot/abc", plain); err != nil {
+	if err := store.Put(ctx, "snapshot/abc", plain); err != nil {
 		t.Fatal(err)
 	}
 
@@ -92,7 +94,7 @@ func TestEncryptedStore_RoundTrip(t *testing.T) {
 		t.Fatal("data in inner store should have encryption header")
 	}
 
-	got, err := store.Get("snapshot/abc")
+	got, err := store.Get(ctx, "snapshot/abc")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,6 +104,7 @@ func TestEncryptedStore_RoundTrip(t *testing.T) {
 }
 
 func TestEncryptedStore_LegacyPlaintext(t *testing.T) {
+	ctx := context.Background()
 	inner := newMemStore()
 	key := testKey(t)
 
@@ -109,7 +112,7 @@ func TestEncryptedStore_LegacyPlaintext(t *testing.T) {
 	inner.data["snapshot/old"] = legacy
 
 	store := NewEncryptedStore(inner, key)
-	got, err := store.Get("snapshot/old")
+	got, err := store.Get(ctx, "snapshot/old")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,6 +122,7 @@ func TestEncryptedStore_LegacyPlaintext(t *testing.T) {
 }
 
 func TestEncryptedStore_LegacyGzip(t *testing.T) {
+	ctx := context.Background()
 	inner := newMemStore()
 	key := testKey(t)
 
@@ -126,7 +130,7 @@ func TestEncryptedStore_LegacyGzip(t *testing.T) {
 	inner.data["chunk/abc"] = gzipData
 
 	store := NewEncryptedStore(inner, key)
-	got, err := store.Get("chunk/abc")
+	got, err := store.Get(ctx, "chunk/abc")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,60 +140,63 @@ func TestEncryptedStore_LegacyGzip(t *testing.T) {
 }
 
 func TestEncryptedStore_WrongKey(t *testing.T) {
+	ctx := context.Background()
 	inner := newMemStore()
 	key1 := testKey(t)
 	key2 := testKey(t)
 
 	store1 := NewEncryptedStore(inner, key1)
-	if err := store1.Put("data/x", []byte("secret")); err != nil {
+	if err := store1.Put(ctx, "data/x", []byte("secret")); err != nil {
 		t.Fatal(err)
 	}
 
 	store2 := NewEncryptedStore(inner, key2)
-	if _, err := store2.Get("data/x"); err == nil {
+	if _, err := store2.Get(ctx, "data/x"); err == nil {
 		t.Fatal("expected error reading with wrong key")
 	}
 }
 
 func TestEncryptedStore_PassthroughOps(t *testing.T) {
+	ctx := context.Background()
 	inner := newMemStore()
 	key := testKey(t)
 	store := NewEncryptedStore(inner, key)
 
-	_ = store.Put("a/1", []byte("one"))
-	_ = store.Put("a/2", []byte("two"))
-	_ = store.Put("b/1", []byte("three"))
+	_ = store.Put(ctx, "a/1", []byte("one"))
+	_ = store.Put(ctx, "a/2", []byte("two"))
+	_ = store.Put(ctx, "b/1", []byte("three"))
 
-	exists, _ := store.Exists("a/1")
+	exists, _ := store.Exists(ctx, "a/1")
 	if !exists {
 		t.Fatal("Exists should return true")
 	}
-	exists, _ = store.Exists("c/1")
+	exists, _ = store.Exists(ctx, "c/1")
 	if exists {
 		t.Fatal("Exists should return false for missing key")
 	}
 
-	keys, _ := store.List("a/")
+	keys, _ := store.List(ctx, "a/")
 	if len(keys) != 2 {
 		t.Fatalf("List(a/) = %d keys, want 2", len(keys))
 	}
 
-	_ = store.Delete("a/1")
-	exists, _ = store.Exists("a/1")
+	_ = store.Delete(ctx, "a/1")
+	exists, _ = store.Exists(ctx, "a/1")
 	if exists {
 		t.Fatal("key should be deleted")
 	}
 }
 
 func TestEncryptedStore_EmptyValue(t *testing.T) {
+	ctx := context.Background()
 	inner := newMemStore()
 	key := testKey(t)
 	store := NewEncryptedStore(inner, key)
 
-	if err := store.Put("empty", []byte{}); err != nil {
+	if err := store.Put(ctx, "empty", []byte{}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := store.Get("empty")
+	got, err := store.Get(ctx, "empty")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,12 +206,13 @@ func TestEncryptedStore_EmptyValue(t *testing.T) {
 }
 
 func TestEncryptedStore_KeySlotPassthrough(t *testing.T) {
+	ctx := context.Background()
 	inner := newMemStore()
 	key := testKey(t)
 	store := NewEncryptedStore(inner, key)
 
 	slotData := []byte(`{"slot_type":"platform","wrapped_key":"base64data"}`)
-	if err := store.Put("keys/platform-default", slotData); err != nil {
+	if err := store.Put(ctx, "keys/platform-default", slotData); err != nil {
 		t.Fatal(err)
 	}
 
@@ -213,7 +221,7 @@ func TestEncryptedStore_KeySlotPassthrough(t *testing.T) {
 		t.Fatal("keys/ objects should be stored as plaintext, not encrypted")
 	}
 
-	got, err := store.Get("keys/platform-default")
+	got, err := store.Get(ctx, "keys/platform-default")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,6 +231,7 @@ func TestEncryptedStore_KeySlotPassthrough(t *testing.T) {
 }
 
 func TestEncryptedStore_LargeChunk(t *testing.T) {
+	ctx := context.Background()
 	inner := newMemStore()
 	key := testKey(t)
 	store := NewEncryptedStore(inner, key)
@@ -232,10 +241,10 @@ func TestEncryptedStore_LargeChunk(t *testing.T) {
 		plain[i] = byte(i % 251)
 	}
 
-	if err := store.Put("chunk/big", plain); err != nil {
+	if err := store.Put(ctx, "chunk/big", plain); err != nil {
 		t.Fatal(err)
 	}
-	got, err := store.Get("chunk/big")
+	got, err := store.Get(ctx, "chunk/big")
 	if err != nil {
 		t.Fatal(err)
 	}

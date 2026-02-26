@@ -10,13 +10,13 @@ import (
 // ObjectStore is the interface for content-addressable object storage.
 // Keys are slash-separated paths like "chunk/<hash>" or "snapshot/<hash>".
 type ObjectStore interface {
-	Put(key string, data []byte) error
-	Get(key string) ([]byte, error)
-	Exists(key string) (bool, error)
-	Delete(key string) error
-	List(prefix string) ([]string, error)
-	Size(key string) (int64, error)
-	TotalSize() (int64, error)
+	Put(ctx context.Context, key string, data []byte) error
+	Get(ctx context.Context, key string) ([]byte, error)
+	Exists(ctx context.Context, key string) (bool, error)
+	Delete(ctx context.Context, key string) error
+	List(ctx context.Context, prefix string) ([]string, error)
+	Size(ctx context.Context, key string) (int64, error)
+	TotalSize(ctx context.Context) (int64, error)
 }
 
 // SourceSize holds the total size of a source.

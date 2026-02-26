@@ -25,6 +25,8 @@ See the [User Guide — Sources](docs/user-guide.md#sources) for setup instructi
 
 ## Quick Start
 
+Download a pre-built binary from [Releases](https://github.com/cloudstic/cli/releases), or install with Go:
+
 ```bash
 go install github.com/cloudstic/cli/cmd/cloudstic@latest
 

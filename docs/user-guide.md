@@ -50,17 +50,37 @@ cloudstic restore -encryption-password "my secret passphrase" -target ./restored
 
 ## Installation
 
-Build from source (requires Go 1.24+):
+### Pre-built binaries
+
+Download the latest release for your platform from the [GitHub Releases](https://github.com/cloudstic/cli/releases) page. Binaries are available for macOS (Intel & Apple Silicon), Linux (amd64 & arm64), and Windows.
 
 ```bash
-cd cli
-go build -o cloudstic ./cmd/cloudstic
+# Example: macOS Apple Silicon
+curl -L https://github.com/cloudstic/cli/releases/latest/download/cloudstic_$(curl -s https://api.github.com/repos/cloudstic/cli/releases/latest | grep tag_name | cut -d '"' -f 4 | sed 's/^v//')_darwin_arm64.tar.gz | tar xz
+mv cloudstic /usr/local/bin/
 ```
 
-Move the binary to a directory in your `$PATH`:
+### Install with Go
 
 ```bash
+go install github.com/cloudstic/cli/cmd/cloudstic@latest
+```
+
+### Build from source
+
+Requires Go 1.24+:
+
+```bash
+git clone https://github.com/cloudstic/cli.git
+cd cli
+go build -o cloudstic ./cmd/cloudstic
 mv cloudstic /usr/local/bin/
+```
+
+Verify the installation:
+
+```bash
+cloudstic version
 ```
 
 ## Concepts

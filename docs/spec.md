@@ -261,7 +261,7 @@ The `diff` command leverages the HAMT's `Diff(root1, root2)` primitive, which pe
 3. Optionally run prune.
 
 **Prune** (mark-and-sweep GC):
-1. **Mark**: list `snapshot/` to find all live snapshots, then walk each snapshot → HAMT nodes → filemeta → content → chunks. Collect all reachable keys.
+1. **Mark**: list `snapshot/` to find all live snapshots, then walk each snapshot → HAMT nodes → filemeta → content → chunks. Collect all reachable keys. Chunk reachability is resolved from a cached content-to-chunks mapping (`index/content`) to avoid fetching every content object.
 2. **Sweep**: list all keys under `chunk/`, `content/`, `filemeta/`, `node/`, `snapshot/`. Delete any key not in the reachable set.
 
 ---

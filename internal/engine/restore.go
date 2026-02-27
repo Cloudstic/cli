@@ -8,7 +8,6 @@ import (
 	"io"
 	"path"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/cloudstic/cli/internal/core"
@@ -48,15 +47,16 @@ type RestoreResult struct {
 
 // RestoreManager recreates a snapshot's file tree as a ZIP archive.
 type RestoreManager struct {
-	store    store.ObjectStore
-	tree     *hamt.Tree
-	reporter ui.Reporter
+	store     store.ObjectStore
+	tree      *hamt.Tree
+	reporter  ui.Reporter
+	metaCache map[string]core.FileMeta
 }
 
 func NewRestoreManager(s store.ObjectStore, reporter ui.Reporter) *RestoreManager {
 	return &RestoreManager{
 		store:    s,
-		tree:     hamt.NewTree(s),
+		tree:     NewCachedTree(s),
 		reporter: reporter,
 	}
 }
@@ -68,6 +68,8 @@ func (rm *RestoreManager) Run(ctx context.Context, w io.Writer, snapshotRef stri
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+
+	rm.metaCache, _ = LoadFileMetaCache(rm.store)
 
 	snap, snapshotRef, err := rm.resolveSnapshot(ctx, snapshotRef)
 	if err != nil {
@@ -267,48 +269,14 @@ func (rm *RestoreManager) collectMetadata(root string) (map[string]core.FileMeta
 
 	phase := rm.reporter.StartPhase("Loading metadata", int64(len(refs)), false)
 
-	const workers = 20
-	type result struct {
-		meta core.FileMeta
-		err  error
-	}
-
-	jobs := make(chan string, len(refs))
-	results := make(chan result, len(refs))
-
-	var wg sync.WaitGroup
-	for range min(workers, len(refs)) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for ref := range jobs {
-				fm, err := rm.loadMeta(ref)
-				if err != nil {
-					results <- result{err: err}
-					continue
-				}
-				results <- result{meta: *fm}
-			}
-		}()
-	}
-
-	for _, ref := range refs {
-		jobs <- ref
-	}
-	close(jobs)
-
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
 	byID := make(map[string]core.FileMeta, len(refs))
-	for res := range results {
-		if res.err != nil {
+	for _, ref := range refs {
+		fm, err := rm.loadMeta(ref)
+		if err != nil {
 			phase.Error()
-			return nil, res.err
+			return nil, err
 		}
-		byID[res.meta.FileID] = res.meta
+		byID[fm.FileID] = *fm
 		phase.Increment(1)
 	}
 	phase.Done()
@@ -316,6 +284,10 @@ func (rm *RestoreManager) collectMetadata(root string) (map[string]core.FileMeta
 }
 
 func (rm *RestoreManager) loadMeta(ref string) (*core.FileMeta, error) {
+	if fm, ok := rm.metaCache[ref]; ok {
+		return &fm, nil
+	}
+	debugf(dYellow+"cache miss"+dReset+" loadMeta %s", ref)
 	data, err := rm.store.Get(context.Background(), ref)
 	if err != nil {
 		return nil, err

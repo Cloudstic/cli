@@ -79,6 +79,33 @@ is required.
 The source of truth is always the set of `snapshot/*` keys in the store.
 The catalog is a disposable acceleration layer on top.
 
+## File-Meta Catalog (`index/filemeta`)
+
+The `index/filemeta` object is a **best-effort cache** that maps every
+`filemeta/<hash>` ref to its full `FileMeta` value. It is stored as a JSON
+object (key → value) so it doubles as an in-memory lookup table once loaded.
+
+This catalog is **self-healing**. Every time `LoadFileMetaCache` is called it:
+
+1. **Lists** all live `filemeta/` keys (cheap — key names only).
+2. **Loads** the cached catalog (one `Get`).
+3. **Reconciles:**
+   - key exists + in cache → trust the cached value (zero cost).
+   - key exists + not cached → fetch from store, add to cache.
+   - key gone + in cache → drop from cache.
+4. **Flushes** the updated catalog back to the store if anything changed.
+
+On a steady-state repo with 10 000 files and 10 changes since the last run
+the cost is: 1 `List` + 1 `Get` (catalog) + 10 `Get` (new entries) + 1 `Put`
+= 13 store operations — instead of 10 000 individual fetches.
+
+During backup, newly created file-meta objects are also eagerly merged into
+the catalog via `AddFileMetasToIndex` so the cache is already warm for the
+next command.
+
+The source of truth is always the set of `filemeta/*` keys in the store.
+The catalog is a disposable acceleration layer on top.
+
 ## Garbage Collection (Prune)
 
 Prune performs a mark-and-sweep to reclaim space from orphaned objects:

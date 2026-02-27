@@ -42,19 +42,22 @@ type DiffResult struct {
 
 // DiffManager compares two snapshots and reports file-level changes.
 type DiffManager struct {
-	store store.ObjectStore
-	tree  *hamt.Tree
+	store     store.ObjectStore
+	tree      *hamt.Tree
+	metaCache map[string]core.FileMeta
 }
 
 func NewDiffManager(s store.ObjectStore) *DiffManager {
 	return &DiffManager{
 		store: s,
-		tree:  hamt.NewTree(s),
+		tree:  NewCachedTree(s),
 	}
 }
 
 // Run resolves two snapshot IDs and computes the diff.
 func (dm *DiffManager) Run(ctx context.Context, snapID1, snapID2 string, opts ...DiffOption) (*DiffResult, error) {
+	dm.metaCache, _ = LoadFileMetaCache(dm.store)
+
 	root1, ref1, err := dm.loadRoot(ctx, snapID1)
 	if err != nil {
 		return nil, err
@@ -164,6 +167,10 @@ func classifyEntry(d hamt.DiffEntry) (ChangeType, string) {
 }
 
 func (dm *DiffManager) loadMeta(ref string) (*core.FileMeta, error) {
+	if fm, ok := dm.metaCache[ref]; ok {
+		return &fm, nil
+	}
+	debugf(dYellow+"cache miss"+dReset+" loadMeta %s", ref)
 	data, err := dm.store.Get(context.Background(), ref)
 	if err != nil {
 		return nil, err

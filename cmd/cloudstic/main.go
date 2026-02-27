@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -71,99 +72,126 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Println(`Cloudstic - Content-Addressable Backup System
+	t := ui.NewTermWriter(os.Stdout)
 
-Usage:
-  cloudstic <command> [options]
+	fmt.Fprintf(t.W, "%sCloudstic%s — Content-Addressable Backup System\n", ui.Bold, ui.Reset)
 
-Commands:
-  init              Initialize a new repository (must run before first backup)
-  backup            Create a new backup snapshot from a source
-  restore           Restore files from a backup snapshot
-  list              List all backup snapshots in the repository
-  ls                List files within a specific snapshot
-  prune             Remove unused data chunks from the repository
-  forget            Remove a specific snapshot from history
-  diff              Compare two snapshots or a snapshot against latest
-  add-recovery-key  Generate a recovery key for an existing encrypted repository
+	t.Heading("USAGE")
+	fmt.Fprintf(t.W, "  cloudstic %s<command>%s [options]\n", ui.Cyan, ui.Reset)
 
-Global Options (also settable via env vars):
-  -store <type>        Type of backup storage (local, b2, hybrid) [env: CLOUDSTIC_STORE, default: local]
-  -store-path <path>   Path to local storage or B2 bucket name   [env: CLOUDSTIC_STORE_PATH, default: ./backup_store]
-  -store-prefix <pfx>  Key prefix for B2 objects                 [env: CLOUDSTIC_STORE_PREFIX]
-  -database-url <url>  PostgreSQL URL (required for hybrid)      [env: CLOUDSTIC_DATABASE_URL]
-  -tenant-id <uuid>    Tenant ID for hybrid store RLS            [env: CLOUDSTIC_TENANT_ID]
+	t.Heading("COMMANDS")
+	t.Commands([][2]string{
+		{"init", "Initialize a new repository (must run before first backup)"},
+		{"backup", "Create a new backup snapshot from a source"},
+		{"restore", "Restore files from a backup snapshot"},
+		{"list", "List all backup snapshots in the repository"},
+		{"ls", "List files within a specific snapshot"},
+		{"prune", "Remove unused data chunks from the repository"},
+		{"forget", "Remove a specific snapshot from history"},
+		{"diff", "Compare two snapshots or a snapshot against latest"},
+		{"add-recovery-key", "Generate a recovery key for an existing encrypted repository"},
+	})
 
-Encryption Options:
-  -encryption-key <hex>      Platform key (64 hex chars = 32 bytes)   [env: CLOUDSTIC_ENCRYPTION_KEY]
-  -encryption-password <pw>  Password for password-based encryption   [env: CLOUDSTIC_ENCRYPTION_PASSWORD]
-  -recovery-key <mnemonic>   Recovery key (24-word seed phrase)       [env: CLOUDSTIC_RECOVERY_KEY]
+	t.HeadingSub("GLOBAL OPTIONS", "(also settable via env vars)")
+	t.Flags([][2]string{
+		{"-store <type>", ui.Env("Storage backend: local, b2, hybrid", "CLOUDSTIC_STORE")},
+		{"-store-path <path>", ui.Env("Local path or B2 bucket name", "CLOUDSTIC_STORE_PATH")},
+		{"-store-prefix <pfx>", ui.Env("Key prefix for B2 objects", "CLOUDSTIC_STORE_PREFIX")},
+		{"-database-url <url>", ui.Env("PostgreSQL URL (hybrid store)", "CLOUDSTIC_DATABASE_URL")},
+		{"-tenant-id <uuid>", ui.Env("Tenant ID for hybrid store RLS", "CLOUDSTIC_TENANT_ID")},
+		{"-verbose", "Log detailed file-level operations"},
+		{"-quiet", "Suppress progress bars (keeps final summary)"},
+	})
 
-  Encryption is REQUIRED by default (AES-256-GCM). Provide --encryption-password
-  or --encryption-key when running 'cloudstic init'. Provide both to create
-  dual-access (platform + password) key slots.
-  Use --recovery-key to open a repository with a recovery seed phrase.
+	t.Heading("ENCRYPTION OPTIONS")
+	t.Flags([][2]string{
+		{"-encryption-key <hex>", ui.Env("Platform key (64 hex chars = 32 bytes)", "CLOUDSTIC_ENCRYPTION_KEY")},
+		{"-encryption-password", ui.Env("Password for password-based encryption", "CLOUDSTIC_ENCRYPTION_PASSWORD")},
+		{"-recovery-key <words>", ui.Env("Recovery key (24-word seed phrase)", "CLOUDSTIC_RECOVERY_KEY")},
+	})
+	t.Blank()
+	t.Note(
+		"Encryption is required by default (AES-256-GCM). Provide -encryption-password",
+		"or -encryption-key when running 'cloudstic init'. Use -recovery-key to open a",
+		"repository with a recovery seed phrase.",
+	)
 
-Command Specifics:
+	t.Heading("COMMAND DETAILS")
 
-  init
-    -recovery             Generate a 24-word recovery key during init
-    -no-encryption        Create an unencrypted repository (not recommended)
-    Initializes a new repository. Encryption credentials are required unless
-    --no-encryption is explicitly passed. Use --recovery to also create a
-    recovery key slot.
-    For web-created hybrid repos, the web handles initialization during signup.
+	t.Command("init", "")
+	t.Flags([][2]string{
+		{"-recovery", "Generate a 24-word recovery key during init"},
+		{"-no-encryption", "Create an unencrypted repository (not recommended)"},
+	})
+	t.Blank()
 
-  add-recovery-key
-    Generates a 24-word recovery key for an existing encrypted repository.
-    Requires --encryption-key or --encryption-password to unlock the master key.
+	t.Command("add-recovery-key", "")
+	t.Note(
+		"  Generate a 24-word recovery key for an existing encrypted repository.",
+		"  Requires -encryption-key or -encryption-password to unlock the master key.",
+	)
+	t.Blank()
 
-  backup
-    -source <type>        source type (local, gdrive, gdrive-changes, onedrive, onedrive-changes) [env: CLOUDSTIC_SOURCE, default: gdrive]
-    -source-path <path>   Path to local source directory (if source=local)    [env: CLOUDSTIC_SOURCE_PATH, default: .]
-    -drive-id <id>        Shared drive ID for gdrive (omit for My Drive)      [env: CLOUDSTIC_DRIVE_ID]
-    -root-folder <id>     Root folder ID for gdrive (defaults to entire drive) [env: CLOUDSTIC_ROOT_FOLDER]
-    -tag <tag>            Tag to apply to the snapshot (can be specified multiple times)
-    -verbose              Enable verbose output
+	t.Command("backup", "")
+	t.Flags([][2]string{
+		{"-source <type>", "local, gdrive, gdrive-changes, onedrive, onedrive-changes"},
+		{"-source-path <path>", "Path to local source directory (if source=local)"},
+		{"-drive-id <id>", "Shared drive ID for gdrive (omit for My Drive)"},
+		{"-root-folder <id>", "Root folder ID for gdrive (defaults to entire drive)"},
+		{"-tag <tag>", "Tag to apply to the snapshot (repeatable)"},
+		{"-dry-run", "Scan source and report changes without writing to the store"},
+	})
+	t.Blank()
 
-    Environment Variables (all optional – built-in OAuth credentials are used by default):
-      gdrive:   GOOGLE_APPLICATION_CREDENTIALS (override), GOOGLE_TOKEN_FILE
-      onedrive: ONEDRIVE_CLIENT_ID (override), ONEDRIVE_TOKEN_FILE
-      b2:       B2_KEY_ID, B2_APP_KEY
+	t.Command("restore", "[snapshot_id]")
+	t.Flags([][2]string{
+		{"-output <path>", "Output ZIP file path (default: ./restore.zip)"},
+		{"-dry-run", "Show what would be restored without writing the archive"},
+	})
+	t.Blank()
 
-    Token files are stored in the cloudstic config directory by default:
-      Linux:   ~/.config/cloudstic/
-      macOS:   ~/Library/Application Support/cloudstic/
-      Windows: %AppData%\cloudstic\
-    Override with CLOUDSTIC_CONFIG_DIR or the per-source token env vars above.
+	t.Command("list", "")
+	t.Note("  No additional flags.")
+	t.Blank()
 
-  restore [snapshot_id]
-    -output <path>        Output ZIP file path [default: ./restore.zip]
-    Restores from the given snapshot (defaults to latest if omitted)
+	t.Command("ls", "[snapshot_id]")
+	t.Note("  List files in the specified snapshot (defaults to latest).")
+	t.Blank()
 
-  list
-    (No additional flags)
+	t.Command("prune", "")
+	t.Flags([][2]string{
+		{"-dry-run", "Show what would be deleted without deleting"},
+	})
+	t.Blank()
 
-  ls <snapshot_id>
-    Lists files in the specified snapshot (defaults to latest if omitted)
+	t.Command("forget", "<snapshot_id>")
+	t.Flags([][2]string{
+		{"-prune", "Run prune immediately after forgetting"},
+		{"-dry-run", "Show what would be removed without acting"},
+		{"-keep-last N", "Keep the N most recent snapshots"},
+		{"-keep-daily N", "Keep N daily snapshots"},
+		{"-keep-weekly N", "Keep N weekly snapshots"},
+		{"-keep-monthly N", "Keep N monthly snapshots"},
+		{"-keep-yearly N", "Keep N yearly snapshots"},
+	})
+	t.Blank()
 
-  prune
-    (No additional flags)
+	t.Command("diff", "<snapshot_1> <snapshot_2>")
+	t.Note("  Compare two snapshots. Use 'latest' as an alias for the most recent.")
 
-  forget <snapshot_id>
-    -prune                Run prune immediately after forgetting [default: false]
-
-  diff <snapshot_id_1> <snapshot_id_2>
-    Compares two snapshots. Use 'latest' as an alias for the most recent snapshot.
-
-Examples:
-  cloudstic init -encryption-password "my secret passphrase"
-  cloudstic init -encryption-password "my secret passphrase" -recovery -store b2 -store-path my-bucket
-  cloudstic backup -source local -source-path ./documents -encryption-password "my secret passphrase"
-  cloudstic backup -source gdrive -encryption-password "my secret passphrase" -store b2 -store-path my-bucket
-  cloudstic list -encryption-password "my secret passphrase"
-  cloudstic restore -encryption-password "my secret passphrase"
-  cloudstic restore abc123 -output ./my-backup.zip -encryption-password "my secret passphrase"`)
+	t.Heading("EXAMPLES")
+	t.Examples(
+		`cloudstic init -encryption-password "my secret passphrase"`,
+		`cloudstic init -encryption-password "my secret passphrase" -recovery`,
+		"cloudstic backup -source local -source-path ./documents",
+		"cloudstic backup -source gdrive -store b2 -store-path my-bucket",
+		"cloudstic list",
+		"cloudstic restore",
+		"cloudstic restore abc123 -output ./my-backup.zip",
+		"cloudstic backup -source local -source-path ./documents -dry-run",
+		"cloudstic prune -dry-run -verbose",
+	)
+	t.Blank()
 }
 
 func envDefault(key, fallback string) string {
@@ -178,6 +206,7 @@ type globalFlags struct {
 	databaseURL, tenantID               *string
 	encryptionKey, encryptionPassword   *string
 	recoveryKey                         *string
+	verbose, quiet                      *bool
 }
 
 func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
@@ -190,6 +219,8 @@ func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 	g.encryptionKey = fs.String("encryption-key", envDefault("CLOUDSTIC_ENCRYPTION_KEY", ""), "Platform key (hex-encoded, 32 bytes)")
 	g.encryptionPassword = fs.String("encryption-password", envDefault("CLOUDSTIC_ENCRYPTION_PASSWORD", ""), "Password for password-based encryption")
 	g.recoveryKey = fs.String("recovery-key", envDefault("CLOUDSTIC_RECOVERY_KEY", ""), "Recovery key (BIP39 24-word mnemonic)")
+	g.verbose = fs.Bool("verbose", false, "Log detailed file-level operations")
+	g.quiet = fs.Bool("quiet", false, "Suppress progress bars (keeps final summary)")
 	return g
 }
 
@@ -241,9 +272,13 @@ func (g *globalFlags) openClient() (*cloudstic.Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	var reporter cloudstic.Reporter = ui.NewConsoleReporter()
+	if *g.quiet {
+		reporter = ui.NewNoOpReporter()
+	}
 	return cloudstic.NewClient(raw,
 		cloudstic.WithEncryptionKey(encKey),
-		cloudstic.WithReporter(ui.NewConsoleReporter()),
+		cloudstic.WithReporter(reporter),
 	), nil
 }
 
@@ -894,6 +929,7 @@ func appendTreeNode(l list.Writer, ref string, refToMeta map[string]core.FileMet
 func runPrune() {
 	pruneCmd := flag.NewFlagSet("prune", flag.ExitOnError)
 	g := addGlobalFlags(pruneCmd)
+	dryRun := pruneCmd.Bool("dry-run", false, "Show what would be deleted without deleting")
 
 	_ = pruneCmd.Parse(os.Args[2:])
 
@@ -904,7 +940,15 @@ func runPrune() {
 		fmt.Printf("Failed to init store: %v\n", err)
 		os.Exit(1)
 	}
-	result, err := client.Prune(ctx)
+
+	var pruneOpts []cloudstic.PruneOption
+	if *dryRun {
+		pruneOpts = append(pruneOpts, engine.WithPruneDryRun())
+	}
+	if *g.verbose {
+		pruneOpts = append(pruneOpts, engine.WithPruneVerbose())
+	}
+	result, err := client.Prune(ctx, pruneOpts...)
 	if err != nil {
 		fmt.Printf("Prune failed: %v\n", err)
 		os.Exit(1)
@@ -915,10 +959,16 @@ func runPrune() {
 }
 
 func printPruneStats(r *engine.PruneResult) {
-	fmt.Printf("Prune complete.\n")
-	fmt.Printf("  Objects scanned:  %d\n", r.ObjectsScanned)
-	fmt.Printf("  Objects deleted:  %d\n", r.ObjectsDeleted)
-	fmt.Printf("  Space reclaimed:  %s\n", formatBytes(r.BytesReclaimed))
+	if r.DryRun {
+		fmt.Printf("Prune dry run complete.\n")
+		fmt.Printf("  Objects scanned:       %d\n", r.ObjectsScanned)
+		fmt.Printf("  Objects would delete:  %d\n", r.ObjectsDeleted)
+	} else {
+		fmt.Printf("Prune complete.\n")
+		fmt.Printf("  Objects scanned:  %d\n", r.ObjectsScanned)
+		fmt.Printf("  Objects deleted:  %d\n", r.ObjectsDeleted)
+		fmt.Printf("  Space reclaimed:  %s\n", formatBytes(r.BytesReclaimed))
+	}
 }
 
 func formatBytes(b int64) string {
@@ -945,16 +995,24 @@ func formatBytes(b int64) string {
 func printBackupSummary(r *engine.RunResult) {
 	total := r.FilesNew + r.FilesChanged + r.FilesUnmodified +
 		r.DirsNew + r.DirsChanged + r.DirsUnmodified
-	fmt.Printf("\nBackup complete. Snapshot: %s, Root: %s\n", r.SnapshotRef, r.Root)
+	if r.DryRun {
+		fmt.Printf("\nBackup dry run complete.\n")
+	} else {
+		fmt.Printf("\nBackup complete. Snapshot: %s, Root: %s\n", r.SnapshotRef, r.Root)
+	}
 	fmt.Printf("Files:  %d new,  %d changed,  %d unmodified,  %d removed\n",
 		r.FilesNew, r.FilesChanged, r.FilesUnmodified, r.FilesRemoved)
 	fmt.Printf("Dirs:   %d new,  %d changed,  %d unmodified,  %d removed\n",
 		r.DirsNew, r.DirsChanged, r.DirsUnmodified, r.DirsRemoved)
-	fmt.Printf("Added to the repository: %s (%s compressed)\n",
-		formatBytes(r.BytesAddedRaw), formatBytes(r.BytesAddedStored))
+	if !r.DryRun {
+		fmt.Printf("Added to the repository: %s (%s compressed)\n",
+			formatBytes(r.BytesAddedRaw), formatBytes(r.BytesAddedStored))
+	}
 	fmt.Printf("Processed %d entries in %s\n",
 		total, r.Duration.Round(time.Second))
-	fmt.Printf("Snapshot %s saved\n", r.SnapshotHash)
+	if !r.DryRun {
+		fmt.Printf("Snapshot %s saved\n", r.SnapshotHash)
+	}
 }
 
 func runBackup() {
@@ -964,7 +1022,7 @@ func runBackup() {
 	driveID := bkCmd.String("drive-id", envDefault("CLOUDSTIC_DRIVE_ID", ""), "Shared drive ID for gdrive source (omit for My Drive)")
 	rootFolder := bkCmd.String("root-folder", envDefault("CLOUDSTIC_ROOT_FOLDER", ""), "Root folder ID for gdrive source (defaults to entire drive)")
 	g := addGlobalFlags(bkCmd)
-	verbose := bkCmd.Bool("verbose", false, "Display verbose output")
+	dryRun := bkCmd.Bool("dry-run", false, "Scan source and report changes without writing to the store")
 
 	var tags stringArrayFlags
 	bkCmd.Var(&tags, "tag", "Tag to apply to the snapshot (can be specified multiple times)")
@@ -986,8 +1044,11 @@ func runBackup() {
 	}
 
 	var backupOpts []cloudstic.BackupOption
-	if *verbose {
+	if *g.verbose {
 		backupOpts = append(backupOpts, cloudstic.WithVerbose())
+	}
+	if *dryRun {
+		backupOpts = append(backupOpts, engine.WithBackupDryRun())
 	}
 	if len(tags) > 0 {
 		backupOpts = append(backupOpts, cloudstic.WithTags(tags...))
@@ -1004,6 +1065,7 @@ func runRestore() {
 	rsCmd := flag.NewFlagSet("restore", flag.ExitOnError)
 	g := addGlobalFlags(rsCmd)
 	output := rsCmd.String("output", "./restore.zip", "Output ZIP file path")
+	dryRun := rsCmd.Bool("dry-run", false, "Show what would be restored without writing the archive")
 
 	_ = rsCmd.Parse(reorderArgs(rsCmd, os.Args[2:]))
 
@@ -1020,6 +1082,26 @@ func runRestore() {
 		os.Exit(1)
 	}
 
+	var restoreOpts []cloudstic.RestoreOption
+	if *dryRun {
+		restoreOpts = append(restoreOpts, engine.WithRestoreDryRun())
+	}
+	if *g.verbose {
+		restoreOpts = append(restoreOpts, engine.WithRestoreVerbose())
+	}
+
+	if *dryRun {
+		result, err := client.Restore(ctx, io.Discard, snapshotRef, restoreOpts...)
+		if err != nil {
+			fmt.Printf("Restore failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("\nRestore dry run complete. Snapshot: %s\n", result.SnapshotRef)
+		fmt.Printf("  Files: %d, Dirs: %d\n", result.FilesWritten, result.DirsWritten)
+		fmt.Printf("  Estimated size: %s\n", formatBytes(result.BytesWritten))
+		return
+	}
+
 	f, err := os.Create(*output)
 	if err != nil {
 		fmt.Printf("Failed to create output file: %v\n", err)
@@ -1027,7 +1109,7 @@ func runRestore() {
 	}
 	defer f.Close()
 
-	result, err := client.Restore(ctx, f, snapshotRef)
+	result, err := client.Restore(ctx, f, snapshotRef, restoreOpts...)
 	if err != nil {
 		os.Remove(*output)
 		fmt.Printf("Restore failed: %v\n", err)

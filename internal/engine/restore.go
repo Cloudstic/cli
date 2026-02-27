@@ -20,7 +20,20 @@ import (
 // RestoreOption configures a restore operation.
 type RestoreOption func(*restoreConfig)
 
-type restoreConfig struct{}
+type restoreConfig struct {
+	dryRun  bool
+	verbose bool
+}
+
+// WithRestoreDryRun resolves the snapshot and reports what would be restored without writing the archive.
+func WithRestoreDryRun() RestoreOption {
+	return func(cfg *restoreConfig) { cfg.dryRun = true }
+}
+
+// WithRestoreVerbose logs each file/dir being written.
+func WithRestoreVerbose() RestoreOption {
+	return func(cfg *restoreConfig) { cfg.verbose = true }
+}
 
 // RestoreResult holds the outcome of a restore operation.
 type RestoreResult struct {
@@ -30,6 +43,7 @@ type RestoreResult struct {
 	DirsWritten  int
 	BytesWritten int64
 	Errors       int
+	DryRun       bool
 }
 
 // RestoreManager recreates a snapshot's file tree as a ZIP archive.
@@ -49,7 +63,12 @@ func NewRestoreManager(s store.ObjectStore, reporter ui.Reporter) *RestoreManage
 
 // Run writes the snapshot's file tree as a ZIP archive to w.
 // snapshotRef can be "", "latest", a bare hash, or "snapshot/<hash>".
-func (rm *RestoreManager) Run(ctx context.Context, w io.Writer, snapshotRef string) (*RestoreResult, error) {
+func (rm *RestoreManager) Run(ctx context.Context, w io.Writer, snapshotRef string, opts ...RestoreOption) (*RestoreResult, error) {
+	var cfg restoreConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
 	snap, snapshotRef, err := rm.resolveSnapshot(ctx, snapshotRef)
 	if err != nil {
 		return nil, err
@@ -58,6 +77,12 @@ func (rm *RestoreManager) Run(ctx context.Context, w io.Writer, snapshotRef stri
 	byID, err := rm.collectMetadata(snap.Root)
 	if err != nil {
 		return nil, err
+	}
+
+	sorted := topoSort(byID)
+
+	if cfg.dryRun {
+		return rm.dryRunRestore(sorted, byID, snapshotRef, snap.Root), nil
 	}
 
 	cw := &countingWriter{w: w}
@@ -69,7 +94,6 @@ func (rm *RestoreManager) Run(ctx context.Context, w io.Writer, snapshotRef stri
 		Root:        snap.Root,
 	}
 
-	sorted := topoSort(byID)
 	phase := rm.reporter.StartPhase("Restoring", int64(len(sorted)), false)
 
 	for _, meta := range sorted {
@@ -85,6 +109,9 @@ func (rm *RestoreManager) Run(ctx context.Context, w io.Writer, snapshotRef stri
 				result.Errors++
 				phase.Increment(1)
 				continue
+			}
+			if cfg.verbose {
+				phase.Log(fmt.Sprintf("Dir: %s", p))
 			}
 			result.DirsWritten++
 			phase.Increment(1)
@@ -114,6 +141,9 @@ func (rm *RestoreManager) Run(ctx context.Context, w io.Writer, snapshotRef stri
 			phase.Increment(1)
 			continue
 		}
+		if cfg.verbose {
+			phase.Log(fmt.Sprintf("File: %s (%d bytes)", p, meta.Size))
+		}
 		result.FilesWritten++
 		phase.Increment(1)
 	}
@@ -125,6 +155,23 @@ func (rm *RestoreManager) Run(ctx context.Context, w io.Writer, snapshotRef stri
 	}
 	result.BytesWritten = cw.count
 	return result, nil
+}
+
+func (rm *RestoreManager) dryRunRestore(sorted []core.FileMeta, byID map[string]core.FileMeta, snapshotRef, root string) *RestoreResult {
+	result := &RestoreResult{
+		SnapshotRef: snapshotRef,
+		Root:        root,
+		DryRun:      true,
+	}
+	for _, meta := range sorted {
+		if meta.Type == core.FileTypeFolder {
+			result.DirsWritten++
+		} else if meta.ContentHash != "" {
+			result.FilesWritten++
+			result.BytesWritten += meta.Size
+		}
+	}
+	return result
 }
 
 type countingWriter struct {

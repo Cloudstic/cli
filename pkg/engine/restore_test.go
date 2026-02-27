@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/cloudstic/cli/pkg/core"
+	"github.com/cloudstic/cli/pkg/store"
 	"github.com/cloudstic/cli/pkg/ui"
 )
 
@@ -74,7 +75,7 @@ func TestRestoreManager_Run(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	rsMgr := NewRestoreManager(dest, ui.NewNoOpReporter())
+	rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())
 
 	// Run Restore (latest)
 	if _, err := rsMgr.Run(context.Background(), tmpDir, ""); err != nil {

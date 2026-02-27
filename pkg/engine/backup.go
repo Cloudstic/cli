@@ -189,27 +189,19 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 		return nil, fmt.Errorf("flush hamt nodes: %w", err)
 	}
 
-	var bytesIn, bytesOut int64
-	if cs, ok := store.UnwrapCompressedStore(bm.store); ok {
-		bytesIn, bytesOut = cs.Stats()
-		cs.ResetStats()
-	}
-
 	return &RunResult{
-		SnapshotHash:       snapHash,
-		SnapshotRef:        snapRef,
-		Root:               newRoot,
-		FilesNew:           bm.stats.filesNew.Load(),
-		FilesChanged:       bm.stats.filesChanged.Load(),
-		FilesUnmodified:    bm.stats.filesUnmodified.Load(),
-		FilesRemoved:       bm.stats.filesRemoved.Load(),
-		DirsNew:            bm.stats.dirsNew.Load(),
-		DirsChanged:        bm.stats.dirsChanged.Load(),
-		DirsUnmodified:     bm.stats.dirsUnmodified.Load(),
-		DirsRemoved:        bm.stats.dirsRemoved.Load(),
-		BytesAddedRaw:      bytesIn,
-		BytesAddedStored:   bytesOut,
-		Duration:           time.Since(bm.stats.startTime),
+		SnapshotHash:    snapHash,
+		SnapshotRef:     snapRef,
+		Root:            newRoot,
+		FilesNew:        bm.stats.filesNew.Load(),
+		FilesChanged:    bm.stats.filesChanged.Load(),
+		FilesUnmodified: bm.stats.filesUnmodified.Load(),
+		FilesRemoved:    bm.stats.filesRemoved.Load(),
+		DirsNew:         bm.stats.dirsNew.Load(),
+		DirsChanged:     bm.stats.dirsChanged.Load(),
+		DirsUnmodified:  bm.stats.dirsUnmodified.Load(),
+		DirsRemoved:     bm.stats.dirsRemoved.Load(),
+		Duration:        time.Since(bm.stats.startTime),
 	}, nil
 }
 

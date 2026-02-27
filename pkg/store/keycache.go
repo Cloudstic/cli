@@ -5,10 +5,8 @@ import (
 	"sync"
 )
 
-// KeyCacheStore wraps an ObjectStore and caches key existence from List calls.
-// After PreloadKeys, Exists returns immediately for keys known to be present,
-// avoiding individual network round trips. Keys created via Put are
-// automatically added to the cache. Thread-safe.
+// KeyCacheStore wraps an ObjectStore and caches key existence from List calls,
+// so that Exists returns immediately for known keys. Thread-safe.
 type KeyCacheStore struct {
 	inner     ObjectStore
 	knownKeys map[string]struct{}
@@ -22,7 +20,6 @@ func NewKeyCacheStore(inner ObjectStore) *KeyCacheStore {
 	}
 }
 
-// PreloadKeys lists all keys under the given prefixes and caches them.
 func (s *KeyCacheStore) PreloadKeys(ctx context.Context, prefixes ...string) error {
 	for _, prefix := range prefixes {
 		keys, err := s.inner.List(ctx, prefix)

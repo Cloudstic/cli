@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/cloudstic/cli/pkg/core"
-	"github.com/cloudstic/cli/pkg/hamt"
+	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/internal/hamt"
 )
 
 func TestDiffManager_Run(t *testing.T) {

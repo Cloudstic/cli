@@ -378,6 +378,7 @@ func TestCLI_ForgetPolicy_Encrypted(t *testing.T) {
 	}
 }
 
+// readZipFile reads a single file's content from a zip archive.
 func readZipFile(t *testing.T, zipPath, name string) string {
 	t.Helper()
 	zr, err := zip.OpenReader(zipPath)

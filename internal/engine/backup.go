@@ -34,9 +34,15 @@ type BackupOption func(*backupConfig)
 
 type backupConfig struct {
 	verbose   bool
+	dryRun    bool
 	tags      []string
 	generator string
 	meta      map[string]string
+}
+
+// WithBackupDryRun scans the source and reports what would change without writing to the store.
+func WithBackupDryRun() BackupOption {
+	return func(cfg *backupConfig) { cfg.dryRun = true }
 }
 
 // WithVerbose enables verbose output during backup.
@@ -117,6 +123,7 @@ type RunResult struct {
 	BytesAddedRaw      int64
 	BytesAddedStored   int64
 	Duration           time.Duration
+	DryRun             bool
 }
 
 func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
@@ -163,6 +170,27 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 			return nil, err
 		}
 		usedFullScan = true
+	}
+
+	if bm.cfg.dryRun {
+		if usedFullScan {
+			if err := bm.countRemoved(oldRoot, newRoot); err != nil {
+				return nil, fmt.Errorf("counting removed entries: %w", err)
+			}
+		}
+		return &RunResult{
+			Root:            newRoot,
+			FilesNew:        bm.stats.filesNew.Load(),
+			FilesChanged:    bm.stats.filesChanged.Load(),
+			FilesUnmodified: bm.stats.filesUnmodified.Load(),
+			FilesRemoved:    bm.stats.filesRemoved.Load(),
+			DirsNew:         bm.stats.dirsNew.Load(),
+			DirsChanged:     bm.stats.dirsChanged.Load(),
+			DirsUnmodified:  bm.stats.dirsUnmodified.Load(),
+			DirsRemoved:     bm.stats.dirsRemoved.Load(),
+			Duration:        time.Since(bm.stats.startTime),
+			DryRun:          true,
+		}, nil
 	}
 
 	if err := bm.keyCache.PreloadKeys(ctx, "chunk/", "content/", "node/"); err != nil {

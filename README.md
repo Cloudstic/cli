@@ -52,6 +52,9 @@ cloudstic list -encryption-password "my passphrase"
 
 # Restore latest snapshot to a zip file
 cloudstic restore -encryption-password "my passphrase"
+
+# Preview what a backup would do (dry run)
+cloudstic backup -source local -source-path ~/Documents -dry-run
 ```
 
 ## Documentation

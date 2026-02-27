@@ -77,10 +77,11 @@ type BackupOption = engine.BackupOption
 type BackupResult = engine.RunResult
 
 var (
-	WithVerbose   = engine.WithVerbose
-	WithTags      = engine.WithTags
-	WithGenerator = engine.WithGenerator
-	WithMeta      = engine.WithMeta
+	WithVerbose        = engine.WithVerbose
+	WithBackupDryRun   = engine.WithBackupDryRun
+	WithTags           = engine.WithTags
+	WithGenerator      = engine.WithGenerator
+	WithMeta           = engine.WithMeta
 )
 
 func (c *Client) Backup(ctx context.Context, src store.Source, opts ...BackupOption) (*BackupResult, error) {
@@ -105,11 +106,16 @@ func (c *Client) Backup(ctx context.Context, src store.Source, opts ...BackupOpt
 type RestoreOption = engine.RestoreOption
 type RestoreResult = engine.RestoreResult
 
+var (
+	WithRestoreDryRun  = engine.WithRestoreDryRun
+	WithRestoreVerbose = engine.WithRestoreVerbose
+)
+
 // Restore writes the snapshot's file tree as a ZIP archive to w.
 // snapshotRef can be "", "latest", a bare hash, or "snapshot/<hash>".
 func (c *Client) Restore(ctx context.Context, w io.Writer, snapshotRef string, opts ...RestoreOption) (*RestoreResult, error) {
 	mgr := engine.NewRestoreManager(c.store, c.reporter)
-	return mgr.Run(ctx, w, snapshotRef)
+	return mgr.Run(ctx, w, snapshotRef, opts...)
 }
 
 // ---------------------------------------------------------------------------
@@ -142,6 +148,11 @@ func (c *Client) LsSnapshot(ctx context.Context, snapshotID string, opts ...LsSn
 
 type PruneOption = engine.PruneOption
 type PruneResult = engine.PruneResult
+
+var (
+	WithPruneDryRun  = engine.WithPruneDryRun
+	WithPruneVerbose = engine.WithPruneVerbose
+)
 
 func (c *Client) Prune(ctx context.Context, opts ...PruneOption) (*PruneResult, error) {
 	mgr := engine.NewPruneManager(c.store, c.reporter)

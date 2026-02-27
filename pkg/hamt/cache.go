@@ -62,9 +62,7 @@ func (cs *cachingStore) TotalSize(_ context.Context) (int64, error) {
 }
 
 // TransactionalStore buffers HAMT node writes in memory and flushes only the
-// reachable subset to the persistent store. Reads fall through to the
-// persistent store when the key is not in the cache; fetched values are
-// promoted into the read cache to avoid repeated round trips.
+// reachable subset to the persistent store.
 type TransactionalStore struct {
 	cache      *cachingStore
 	readCache  map[string][]byte

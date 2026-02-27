@@ -7,6 +7,7 @@ import (
 
 	"github.com/cloudstic/cli/pkg/core"
 	"github.com/cloudstic/cli/pkg/hamt"
+	"github.com/cloudstic/cli/pkg/store"
 	"github.com/cloudstic/cli/pkg/ui"
 )
 
@@ -21,10 +22,14 @@ func TestBackupManager_Run(t *testing.T) {
 
 	mgr := NewBackupManager(src, dest, reporter, WithVerbose())
 
+	// Read store wraps dest with CompressedStore so we can read back
+	// the compressed data written by the BackupManager.
+	readStore := store.NewCompressedStore(dest)
+
 	// Helper: lookup a key in the HAMT and load the FileMeta from the store.
 	lookupMeta := func(root, key string) *core.FileMeta {
 		t.Helper()
-		tree := hamt.NewTree(dest)
+		tree := hamt.NewTree(readStore)
 		ref, err := tree.Lookup(root, key)
 		if err != nil {
 			t.Fatalf("Lookup %s: %v", key, err)
@@ -32,7 +37,7 @@ func TestBackupManager_Run(t *testing.T) {
 		if ref == "" {
 			return nil
 		}
-		data, err := dest.Get(ctx, ref)
+		data, err := readStore.Get(ctx, ref)
 		if err != nil {
 			t.Fatalf("Get %s: %v", ref, err)
 		}
@@ -48,7 +53,7 @@ func TestBackupManager_Run(t *testing.T) {
 		t.Fatalf("First backup failed: %v", err)
 	}
 
-	idxData, err := dest.Get(ctx, "index/latest")
+	idxData, err := readStore.Get(ctx, "index/latest")
 	if err != nil {
 		t.Fatal("index/latest not found")
 	}
@@ -60,7 +65,7 @@ func TestBackupManager_Run(t *testing.T) {
 		t.Errorf("Expected Seq 1, got %d", idx.Seq)
 	}
 
-	snapData, err := dest.Get(ctx, idx.LatestSnapshot)
+	snapData, err := readStore.Get(ctx, idx.LatestSnapshot)
 	if err != nil {
 		t.Fatal("Snapshot not found")
 	}
@@ -84,7 +89,7 @@ func TestBackupManager_Run(t *testing.T) {
 		t.Fatalf("Second backup failed: %v", err)
 	}
 
-	idxData2, _ := dest.Get(ctx, "index/latest")
+	idxData2, _ := readStore.Get(ctx, "index/latest")
 	var idx2 core.Index
 	if err := json.Unmarshal(idxData2, &idx2); err != nil {
 		t.Fatalf("Unmarshal index: %v", err)
@@ -93,7 +98,7 @@ func TestBackupManager_Run(t *testing.T) {
 		t.Errorf("Expected Seq 2, got %d", idx2.Seq)
 	}
 
-	snapData2, _ := dest.Get(ctx, idx2.LatestSnapshot)
+	snapData2, _ := readStore.Get(ctx, idx2.LatestSnapshot)
 	var snap2 core.Snapshot
 	if err := json.Unmarshal(snapData2, &snap2); err != nil {
 		t.Fatalf("Unmarshal snapshot: %v", err)
@@ -120,7 +125,7 @@ func TestBackupManager_Run(t *testing.T) {
 		t.Fatalf("Third backup failed: %v", err)
 	}
 
-	idxData3, _ := dest.Get(ctx, "index/latest")
+	idxData3, _ := readStore.Get(ctx, "index/latest")
 	var idx3 core.Index
 	if err := json.Unmarshal(idxData3, &idx3); err != nil {
 		t.Fatalf("Unmarshal index: %v", err)
@@ -129,7 +134,7 @@ func TestBackupManager_Run(t *testing.T) {
 		t.Errorf("Expected Seq 3, got %d", idx3.Seq)
 	}
 
-	snapData3, _ := dest.Get(ctx, idx3.LatestSnapshot)
+	snapData3, _ := readStore.Get(ctx, idx3.LatestSnapshot)
 	var snap3 core.Snapshot
 	if err := json.Unmarshal(snapData3, &snap3); err != nil {
 		t.Fatalf("Unmarshal snapshot: %v", err)

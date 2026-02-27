@@ -26,8 +26,7 @@ const (
 )
 
 // Chunker splits a byte stream into content-defined chunks, deduplicates
-// them, and persists the resulting Content object. Compression is handled
-// transparently by the store layer (CompressedStore).
+// them, and persists the resulting Content object.
 type Chunker struct {
 	store store.ObjectStore
 }
@@ -107,8 +106,6 @@ func (c *Chunker) CreateContentObject(chunkRefs []string, size int64, contentHas
 	return ref, nil
 }
 
-// storeChunk writes raw data to chunk/<hash>, skipping the write if the key
-// already exists (dedup). Compression is handled by the store layer.
 func (c *Chunker) storeChunk(ctx context.Context, data []byte) (string, error) {
 	ref := "chunk/" + core.ComputeHash(data)
 

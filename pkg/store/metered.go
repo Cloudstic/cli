@@ -6,8 +6,7 @@ import (
 	"sync/atomic"
 )
 
-// MeteredStore wraps an ObjectStore and tracks the total number of bytes
-// written via Put and deleted via Delete. It is safe for concurrent use.
+// MeteredStore wraps an ObjectStore and tracks bytes written/deleted.
 type MeteredStore struct {
 	ObjectStore
 	bytesWritten atomic.Int64
@@ -57,3 +56,4 @@ func (m *MeteredStore) BytesWritten() int64 {
 func (m *MeteredStore) Reset() {
 	m.bytesWritten.Store(0)
 }
+

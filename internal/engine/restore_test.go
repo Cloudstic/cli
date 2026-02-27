@@ -7,9 +7,9 @@ import (
 	"io"
 	"testing"
 
-	"github.com/cloudstic/cli/pkg/core"
+	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/pkg/store"
-	"github.com/cloudstic/cli/pkg/ui"
+	"github.com/cloudstic/cli/internal/ui"
 )
 
 func TestRestoreManager_Run(t *testing.T) {

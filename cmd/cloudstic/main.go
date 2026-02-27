@@ -137,9 +137,9 @@ Command Specifics:
       Windows: %AppData%\cloudstic\
     Override with CLOUDSTIC_CONFIG_DIR or the per-source token env vars above.
 
-  restore
-    -target <path>        Directory to restore files to [default: ./restore_out]
-    -snapshot <hash>      Snapshot ID to restore (defaults to latest)
+  restore [snapshot_id]
+    -output <path>        Output ZIP file path [default: ./restore.zip]
+    Restores from the given snapshot (defaults to latest if omitted)
 
   list
     (No additional flags)
@@ -162,7 +162,8 @@ Examples:
   cloudstic backup -source local -source-path ./documents -encryption-password "my secret passphrase"
   cloudstic backup -source gdrive -encryption-password "my secret passphrase" -store b2 -store-path my-bucket
   cloudstic list -encryption-password "my secret passphrase"
-  cloudstic restore -snapshot latest -target ./restored -encryption-password "my secret passphrase"`)
+  cloudstic restore -encryption-password "my secret passphrase"
+  cloudstic restore abc123 -output ./my-backup.zip -encryption-password "my secret passphrase"`)
 }
 
 func envDefault(key, fallback string) string {
@@ -1002,10 +1003,14 @@ func runBackup() {
 func runRestore() {
 	rsCmd := flag.NewFlagSet("restore", flag.ExitOnError)
 	g := addGlobalFlags(rsCmd)
-	targetPath := rsCmd.String("target", "./restore_out", "Target directory for restore")
-	snapshot := rsCmd.String("snapshot", "", "Snapshot hash (optional, defaults to latest)")
+	output := rsCmd.String("output", "./restore.zip", "Output ZIP file path")
 
-	_ = rsCmd.Parse(os.Args[2:])
+	_ = rsCmd.Parse(reorderArgs(rsCmd, os.Args[2:]))
+
+	snapshotRef := "latest"
+	if rsCmd.NArg() > 0 {
+		snapshotRef = rsCmd.Arg(0)
+	}
 
 	ctx := context.Background()
 
@@ -1014,17 +1019,27 @@ func runRestore() {
 		fmt.Printf("Failed to init store: %v\n", err)
 		os.Exit(1)
 	}
-	result, err := client.Restore(ctx, *targetPath, *snapshot)
+
+	f, err := os.Create(*output)
 	if err != nil {
+		fmt.Printf("Failed to create output file: %v\n", err)
+		os.Exit(1)
+	}
+	defer f.Close()
+
+	result, err := client.Restore(ctx, f, snapshotRef)
+	if err != nil {
+		os.Remove(*output)
 		fmt.Printf("Restore failed: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("\nRestore complete. Snapshot: %s, Target: %s\n", result.SnapshotRef, result.TargetDir)
-	fmt.Printf("Restored %d entries", result.Restored)
+	fmt.Printf("\nRestore complete. Snapshot: %s\n", result.SnapshotRef)
+	fmt.Printf("  Files: %d, Dirs: %d", result.FilesWritten, result.DirsWritten)
 	if result.Errors > 0 {
-		fmt.Printf(", %d errors", result.Errors)
+		fmt.Printf(", Errors: %d", result.Errors)
 	}
 	fmt.Println()
+	fmt.Printf("  Archive: %s (%s)\n", *output, formatBytes(result.BytesWritten))
 }
 
 func runList() {

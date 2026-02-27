@@ -1,6 +1,8 @@
 package main
 
 import (
+	"archive/zip"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -97,16 +99,13 @@ func TestCLI_EndToEnd(t *testing.T) {
 	}
 
 	// Restore
+	zipPath := filepath.Join(restoreDir, "restore.zip")
 	run(t, bin, "restore",
 		"--store", "local", "--store-path", storeDir,
-		"--target", restoreDir)
+		"--output", zipPath)
 
-	data, err := os.ReadFile(filepath.Join(restoreDir, "file1.txt"))
-	if err != nil {
-		t.Fatalf("Restored file missing: %v", err)
-	}
-	if string(data) != "hello world" {
-		t.Error("Content mismatch for file1.txt")
+	if got := readZipFile(t, zipPath, "file1.txt"); got != "hello world" {
+		t.Errorf("Content mismatch for file1.txt: got %q", got)
 	}
 }
 
@@ -179,10 +178,11 @@ func TestCLI_EndToEnd_Encrypted(t *testing.T) {
 	}
 
 	// Restore latest
+	zipPath := filepath.Join(restoreDir, "restore.zip")
 	run(t, bin, "restore",
 		"--store", "local", "--store-path", storeDir,
 		"--encryption-password", password,
-		"--target", restoreDir)
+		"--output", zipPath)
 
 	for _, tc := range []struct {
 		path    string
@@ -193,13 +193,8 @@ func TestCLI_EndToEnd_Encrypted(t *testing.T) {
 		{"subdir/nested.txt", "nested content"},
 		{"new-file.txt", "brand new"},
 	} {
-		data, err := os.ReadFile(filepath.Join(restoreDir, tc.path))
-		if err != nil {
-			t.Errorf("Restored file %s missing: %v", tc.path, err)
-			continue
-		}
-		if string(data) != tc.content {
-			t.Errorf("Content mismatch for %s: got %q, want %q", tc.path, data, tc.content)
+		if got := readZipFile(t, zipPath, tc.path); got != tc.content {
+			t.Errorf("Content mismatch for %s: got %q, want %q", tc.path, got, tc.content)
 		}
 	}
 
@@ -282,17 +277,14 @@ func TestCLI_RecoveryKey(t *testing.T) {
 		"--encryption-password", password)
 
 	// Restore using recovery key (simulating lost password)
+	zipPath := filepath.Join(restoreDir, "restore.zip")
 	run(t, bin, "restore",
 		"--store", "local", "--store-path", storeDir,
 		"--recovery-key", mnemonic,
-		"--target", restoreDir)
+		"--output", zipPath)
 
-	data, err := os.ReadFile(filepath.Join(restoreDir, "important.txt"))
-	if err != nil {
-		t.Fatalf("Restored file missing: %v", err)
-	}
-	if string(data) != "do not lose this" {
-		t.Errorf("Content mismatch: got %q", data)
+	if got := readZipFile(t, zipPath, "important.txt"); got != "do not lose this" {
+		t.Errorf("Content mismatch: got %q", got)
 	}
 }
 
@@ -327,17 +319,14 @@ func TestCLI_AddRecoveryKey(t *testing.T) {
 	mnemonic := extractMnemonic(t, out)
 
 	// Restore using the recovery key
+	zipPath := filepath.Join(restoreDir, "restore.zip")
 	run(t, bin, "restore",
 		"--store", "local", "--store-path", storeDir,
 		"--recovery-key", mnemonic,
-		"--target", restoreDir)
+		"--output", zipPath)
 
-	data, err := os.ReadFile(filepath.Join(restoreDir, "data.txt"))
-	if err != nil {
-		t.Fatalf("Restored file missing: %v", err)
-	}
-	if string(data) != "recovery test data" {
-		t.Errorf("Content mismatch: got %q", data)
+	if got := readZipFile(t, zipPath, "data.txt"); got != "recovery test data" {
+		t.Errorf("Content mismatch: got %q", got)
 	}
 }
 
@@ -387,6 +376,31 @@ func TestCLI_ForgetPolicy_Encrypted(t *testing.T) {
 	if !strings.Contains(out, "1 snapshot") {
 		t.Errorf("Expected 1 snapshot after policy, got: %s", out)
 	}
+}
+
+func readZipFile(t *testing.T, zipPath, name string) string {
+	t.Helper()
+	zr, err := zip.OpenReader(zipPath)
+	if err != nil {
+		t.Fatalf("open zip %s: %v", zipPath, err)
+	}
+	defer zr.Close()
+	for _, f := range zr.File {
+		if f.Name == name {
+			rc, err := f.Open()
+			if err != nil {
+				t.Fatalf("open zip entry %s: %v", name, err)
+			}
+			defer rc.Close()
+			data, err := io.ReadAll(rc)
+			if err != nil {
+				t.Fatalf("read zip entry %s: %v", name, err)
+			}
+			return string(data)
+		}
+	}
+	t.Fatalf("file %s not found in zip %s", name, zipPath)
+	return ""
 }
 
 // extractMnemonic pulls the 24-word BIP39 mnemonic from the recovery key

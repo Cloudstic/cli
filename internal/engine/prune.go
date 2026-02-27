@@ -11,7 +11,6 @@ import (
 	"github.com/cloudstic/cli/internal/ui"
 )
 
-// PruneOption configures a prune operation.
 type PruneOption func(*pruneConfig)
 
 type pruneConfig struct {
@@ -19,17 +18,14 @@ type pruneConfig struct {
 	verbose bool
 }
 
-// WithPruneDryRun shows what would be deleted without actually deleting.
 func WithPruneDryRun() PruneOption {
 	return func(cfg *pruneConfig) { cfg.dryRun = true }
 }
 
-// WithPruneVerbose logs each deleted key during sweep.
 func WithPruneVerbose() PruneOption {
 	return func(cfg *pruneConfig) { cfg.verbose = true }
 }
 
-// PruneResult holds statistics from a prune operation.
 type PruneResult struct {
 	BytesReclaimed int64
 	ObjectsDeleted int
@@ -37,33 +33,34 @@ type PruneResult struct {
 	DryRun         bool
 }
 
-// objectPrefixes lists every key-space that prune should sweep.
 var objectPrefixes = []string{"chunk/", "content/", "filemeta/", "node/", "snapshot/"}
 
-// PruneManager implements mark-and-sweep garbage collection over the object
-// store. It walks all live index → snapshot → HAMT → filemeta → content →
-// chunk chains, then deletes any object not reachable from that set.
+// PruneManager implements mark-and-sweep garbage collection over the object store.
 type PruneManager struct {
-	store    *store.MeteredStore
-	tree     *hamt.Tree
-	reporter ui.Reporter
+	store        *store.MeteredStore
+	tree         *hamt.Tree
+	reporter     ui.Reporter
+	metaCache    map[string]core.FileMeta
+	contentCache ContentCatalog
 }
 
 func NewPruneManager(s store.ObjectStore, reporter ui.Reporter) *PruneManager {
 	meteredStore := store.NewMeteredStore(s)
 	return &PruneManager{
 		store:    meteredStore,
-		tree:     hamt.NewTree(meteredStore),
+		tree:     NewCachedTree(meteredStore),
 		reporter: reporter,
 	}
 }
 
-// Run performs a full mark-and-sweep garbage collection.
 func (pm *PruneManager) Run(ctx context.Context, opts ...PruneOption) (*PruneResult, error) {
 	var cfg pruneConfig
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+
+	pm.metaCache, _ = LoadFileMetaCache(pm.store)
+	pm.contentCache = LoadContentCache(pm.store)
 
 	markPhase := pm.reporter.StartPhase("Marking reachable objects", 0, false)
 	reachable, err := pm.mark(ctx, markPhase)
@@ -73,15 +70,17 @@ func (pm *PruneManager) Run(ctx context.Context, opts ...PruneOption) (*PruneRes
 	}
 	markPhase.Done()
 
+	_ = SaveContentCache(pm.store, pm.contentCache)
+
 	result := pm.sweep(ctx, reachable, &cfg)
+
+	if !cfg.dryRun && result.ObjectsDeleted > 0 {
+		pm.rebuildCaches(reachable)
+	}
+
 	return result, nil
 }
 
-// ---------------------------------------------------------------------------
-// Mark phase
-// ---------------------------------------------------------------------------
-
-// mark returns the set of all reachable object keys.
 func (pm *PruneManager) mark(ctx context.Context, phase ui.Phase) (map[string]bool, error) {
 	reachable := make(map[string]bool)
 
@@ -102,8 +101,6 @@ func (pm *PruneManager) mark(ctx context.Context, phase ui.Phase) (map[string]bo
 	return reachable, nil
 }
 
-// collectSnapshots lists all snapshot/ keys and marks them as reachable.
-// It also marks index/latest as reachable so the sweep phase won't delete it.
 func (pm *PruneManager) collectSnapshots(ctx context.Context, reachable map[string]bool) (map[string]bool, error) {
 	keys, err := pm.store.List(ctx, "snapshot/")
 	if err != nil {
@@ -120,6 +117,15 @@ func (pm *PruneManager) collectSnapshots(ctx context.Context, reachable map[stri
 	}
 	if exists, _ := pm.store.Exists(ctx, "index/snapshots"); exists {
 		reachable["index/snapshots"] = true
+	}
+	if exists, _ := pm.store.Exists(ctx, "index/filemeta"); exists {
+		reachable["index/filemeta"] = true
+	}
+	if exists, _ := pm.store.Exists(ctx, "index/nodes"); exists {
+		reachable["index/nodes"] = true
+	}
+	if exists, _ := pm.store.Exists(ctx, "index/content"); exists {
+		reachable["index/content"] = true
 	}
 
 	return snapRefs, nil
@@ -159,10 +165,10 @@ func (pm *PruneManager) markFileMeta(ctx context.Context, ref string, reachable 
 		return err
 	}
 
-	if meta.ContentHash == "" {
-		return nil
+	if meta.ContentHash != "" {
+		return pm.markContent(ctx, "content/"+meta.ContentHash, reachable)
 	}
-	return pm.markContent(ctx, "content/"+meta.ContentHash, reachable)
+	return nil
 }
 
 func (pm *PruneManager) markContent(ctx context.Context, ref string, reachable map[string]bool) error {
@@ -171,20 +177,29 @@ func (pm *PruneManager) markContent(ctx context.Context, ref string, reachable m
 	}
 	reachable[ref] = true
 
-	content, err := pm.loadContent(ctx, ref)
+	if chunks, ok := pm.contentCache[ref]; ok {
+		for _, c := range chunks {
+			reachable[c] = true
+		}
+		return nil
+	}
+
+	debugf(dYellow+"cache miss"+dReset+" loadContent %s", ref)
+	data, err := pm.store.Get(ctx, ref)
 	if err != nil {
+		return fmt.Errorf("get content %s: %w", ref, err)
+	}
+	var content core.Content
+	if err := json.Unmarshal(data, &content); err != nil {
 		return err
 	}
 
-	for _, chunkRef := range content.Chunks {
-		reachable[chunkRef] = true
+	pm.contentCache[ref] = content.Chunks
+	for _, c := range content.Chunks {
+		reachable[c] = true
 	}
 	return nil
 }
-
-// ---------------------------------------------------------------------------
-// Sweep phase
-// ---------------------------------------------------------------------------
 
 func (pm *PruneManager) sweep(ctx context.Context, reachable map[string]bool, cfg *pruneConfig) *PruneResult {
 	var totalKeys int
@@ -241,9 +256,50 @@ func (pm *PruneManager) sweep(ctx context.Context, reachable map[string]bool, cf
 	return result
 }
 
-// ---------------------------------------------------------------------------
-// Loaders
-// ---------------------------------------------------------------------------
+func (pm *PruneManager) rebuildCaches(reachable map[string]bool) {
+	if len(pm.metaCache) > 0 {
+		pruned := 0
+		for ref := range pm.metaCache {
+			if !reachable[ref] {
+				delete(pm.metaCache, ref)
+				pruned++
+			}
+		}
+		if pruned > 0 {
+			debugf("pruned %d stale entries from filemeta cache", pruned)
+			_ = saveFileMetaCatalog(pm.store, pm.metaCache)
+		}
+	}
+
+	nodeData := LoadNodeCache(pm.store)
+	if len(nodeData) > 0 {
+		pruned := 0
+		for ref := range nodeData {
+			if !reachable[ref] {
+				delete(nodeData, ref)
+				pruned++
+			}
+		}
+		if pruned > 0 {
+			debugf("pruned %d stale entries from node cache", pruned)
+			_ = SaveNodeCache(pm.store, nodeData)
+		}
+	}
+
+	if len(pm.contentCache) > 0 {
+		pruned := 0
+		for ref := range pm.contentCache {
+			if !reachable[ref] {
+				delete(pm.contentCache, ref)
+				pruned++
+			}
+		}
+		if pruned > 0 {
+			debugf("pruned %d stale entries from content cache", pruned)
+			_ = SaveContentCache(pm.store, pm.contentCache)
+		}
+	}
+}
 
 func (pm *PruneManager) loadSnapshot(ctx context.Context, ref string) (*core.Snapshot, error) {
 	data, err := pm.store.Get(ctx, ref)
@@ -258,6 +314,10 @@ func (pm *PruneManager) loadSnapshot(ctx context.Context, ref string) (*core.Sna
 }
 
 func (pm *PruneManager) loadMeta(ctx context.Context, ref string) (*core.FileMeta, error) {
+	if fm, ok := pm.metaCache[ref]; ok {
+		return &fm, nil
+	}
+	debugf(dYellow+"cache miss"+dReset+" loadMeta %s", ref)
 	data, err := pm.store.Get(ctx, ref)
 	if err != nil {
 		return nil, fmt.Errorf("get filemeta %s: %w", ref, err)
@@ -269,14 +329,3 @@ func (pm *PruneManager) loadMeta(ctx context.Context, ref string) (*core.FileMet
 	return &fm, nil
 }
 
-func (pm *PruneManager) loadContent(ctx context.Context, ref string) (*core.Content, error) {
-	data, err := pm.store.Get(ctx, ref)
-	if err != nil {
-		return nil, fmt.Errorf("get content %s: %w", ref, err)
-	}
-	var c core.Content
-	if err := json.Unmarshal(data, &c); err != nil {
-		return nil, err
-	}
-	return &c, nil
-}

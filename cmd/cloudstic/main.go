@@ -101,6 +101,7 @@ func printUsage() {
 		{"-tenant-id <uuid>", ui.Env("Tenant ID for hybrid store RLS", "CLOUDSTIC_TENANT_ID")},
 		{"-verbose", "Log detailed file-level operations"},
 		{"-quiet", "Suppress progress bars (keeps final summary)"},
+		{"-debug", "Log every store request (network calls, timing, sizes)"},
 	})
 
 	t.Heading("ENCRYPTION OPTIONS")
@@ -206,7 +207,8 @@ type globalFlags struct {
 	databaseURL, tenantID               *string
 	encryptionKey, encryptionPassword   *string
 	recoveryKey                         *string
-	verbose, quiet                      *bool
+	verbose, quiet, debug               *bool
+	debugLog                            *ui.SafeLogWriter
 }
 
 func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
@@ -221,6 +223,7 @@ func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 	g.recoveryKey = fs.String("recovery-key", envDefault("CLOUDSTIC_RECOVERY_KEY", ""), "Recovery key (BIP39 24-word mnemonic)")
 	g.verbose = fs.Bool("verbose", false, "Log detailed file-level operations")
 	g.quiet = fs.Bool("quiet", false, "Suppress progress bars (keeps final summary)")
+	g.debug = fs.Bool("debug", false, "Log every store request (network calls, timing, sizes)")
 	return g
 }
 
@@ -230,6 +233,12 @@ func (g *globalFlags) openStore() (store.ObjectStore, []byte, error) {
 	raw, err := g.initObjectStore()
 	if err != nil {
 		return nil, nil, err
+	}
+	if *g.debug {
+		if g.debugLog == nil {
+			g.debugLog = &ui.SafeLogWriter{}
+		}
+		raw = store.NewDebugStore(raw, g.debugLog)
 	}
 
 	cfg, err := loadRepoConfig(raw)
@@ -272,9 +281,18 @@ func (g *globalFlags) openClient() (*cloudstic.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	var reporter cloudstic.Reporter = ui.NewConsoleReporter()
+	if g.debugLog != nil {
+		engine.DebugWriter = g.debugLog
+	}
+	var reporter cloudstic.Reporter
 	if *g.quiet {
 		reporter = ui.NewNoOpReporter()
+	} else {
+		cr := ui.NewConsoleReporter()
+		if g.debugLog != nil {
+			cr.SetLogWriter(g.debugLog)
+		}
+		reporter = cr
 	}
 	return cloudstic.NewClient(raw,
 		cloudstic.WithEncryptionKey(encKey),

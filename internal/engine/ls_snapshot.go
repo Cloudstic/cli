@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
@@ -29,19 +28,22 @@ type LsSnapshotResult struct {
 
 // LsSnapshotManager lists the file tree of a single snapshot.
 type LsSnapshotManager struct {
-	store store.ObjectStore
-	tree  *hamt.Tree
+	store     store.ObjectStore
+	tree      *hamt.Tree
+	metaCache map[string]core.FileMeta
 }
 
 func NewLsSnapshotManager(s store.ObjectStore) *LsSnapshotManager {
 	return &LsSnapshotManager{
 		store: s,
-		tree:  hamt.NewTree(s),
+		tree:  NewCachedTree(s),
 	}
 }
 
 // Run resolves the snapshot, collects metadata, and returns the tree structure.
 func (lm *LsSnapshotManager) Run(ctx context.Context, snapshotID string, opts ...LsSnapshotOption) (*LsSnapshotResult, error) {
+	lm.metaCache, _ = LoadFileMetaCache(lm.store)
+
 	snap, ref, err := lm.resolveSnapshot(ctx, snapshotID)
 	if err != nil {
 		return nil, err
@@ -99,64 +101,32 @@ func (lm *LsSnapshotManager) resolveSnapshot(ctx context.Context, id string) (*c
 // ---------------------------------------------------------------------------
 
 func (lm *LsSnapshotManager) collectMeta(ctx context.Context, root string) (map[string]core.FileMeta, error) {
-	var refs []string
+	refToMeta := make(map[string]core.FileMeta)
 	err := lm.tree.Walk(root, func(_, valueRef string) error {
-		refs = append(refs, valueRef)
+		fm, err := lm.loadMeta(ctx, valueRef)
+		if err != nil {
+			return err
+		}
+		refToMeta[valueRef] = *fm
 		return nil
 	})
+	return refToMeta, err
+}
+
+func (lm *LsSnapshotManager) loadMeta(ctx context.Context, ref string) (*core.FileMeta, error) {
+	if fm, ok := lm.metaCache[ref]; ok {
+		return &fm, nil
+	}
+	debugf(dYellow+"cache miss"+dReset+" loadMeta %s", ref)
+	data, err := lm.store.Get(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
-
-	const workers = 20
-	type result struct {
-		ref  string
-		meta core.FileMeta
-		err  error
+	var fm core.FileMeta
+	if err := json.Unmarshal(data, &fm); err != nil {
+		return nil, err
 	}
-
-	jobs := make(chan string, len(refs))
-	results := make(chan result, len(refs))
-
-	var wg sync.WaitGroup
-	for range min(workers, len(refs)) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for ref := range jobs {
-				data, err := lm.store.Get(ctx, ref)
-				if err != nil {
-					results <- result{err: err}
-					continue
-				}
-				var fm core.FileMeta
-				if err := json.Unmarshal(data, &fm); err != nil {
-					results <- result{err: err}
-					continue
-				}
-				results <- result{ref: ref, meta: fm}
-			}
-		}()
-	}
-
-	for _, ref := range refs {
-		jobs <- ref
-	}
-	close(jobs)
-
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	refToMeta := make(map[string]core.FileMeta, len(refs))
-	for res := range results {
-		if res.err != nil {
-			return nil, res.err
-		}
-		refToMeta[res.ref] = res.meta
-	}
-	return refToMeta, nil
+	return &fm, nil
 }
 
 // buildHierarchy returns sorted root refs and a parent->children map.

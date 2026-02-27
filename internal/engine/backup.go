@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"sync/atomic"
 	"time"
 
@@ -13,8 +12,6 @@ import (
 	"github.com/cloudstic/cli/pkg/store"
 	"github.com/cloudstic/cli/internal/ui"
 )
-
-const uploadConcurrency = 10
 
 // backupStats holds atomic counters accumulated during a backup run.
 type backupStats struct {
@@ -78,6 +75,11 @@ type BackupManager struct {
 	stats      *backupStats
 	sourceInfo core.SourceInfo
 	cfg        backupConfig
+
+	newMetas     map[string]core.FileMeta
+	metaCache    map[string]core.FileMeta
+	contentCache ContentCatalog
+	pendingMetas map[string][]byte // deferred filemeta PUTs (ref → JSON)
 }
 
 func NewBackupManager(src store.Source, dest store.ObjectStore, reporter ui.Reporter, opts ...BackupOption) *BackupManager {
@@ -93,40 +95,46 @@ func NewBackupManager(src store.Source, dest store.ObjectStore, reporter ui.Repo
 	keyCache := store.NewKeyCacheStore(dest)
 	cache := hamt.NewTransactionalStore(keyCache)
 	return &BackupManager{
-		source:     src,
-		store:      keyCache,
-		keyCache:   keyCache,
-		tree:       hamt.NewTree(cache),
-		cache:      cache,
-		chunker:    NewChunker(keyCache),
-		reporter:   reporter,
-		sourceInfo: sourceInfo,
-		cfg:        cfg,
+		source:       src,
+		store:        keyCache,
+		keyCache:     keyCache,
+		tree:         hamt.NewTree(cache),
+		cache:        cache,
+		chunker:      NewChunker(keyCache),
+		reporter:     reporter,
+		sourceInfo:   sourceInfo,
+		cfg:          cfg,
+		newMetas:     make(map[string]core.FileMeta),
+		contentCache: LoadContentCache(dest),
+		pendingMetas: make(map[string][]byte),
 	}
+}
+
+// RunResult holds the outcome of a successful backup run.
+type RunResult struct {
+	SnapshotHash     string
+	SnapshotRef      string
+	Root             string
+	FilesNew         int64
+	FilesChanged     int64
+	FilesUnmodified  int64
+	FilesRemoved     int64
+	DirsNew          int64
+	DirsChanged      int64
+	DirsUnmodified   int64
+	DirsRemoved      int64
+	BytesAddedRaw    int64
+	BytesAddedStored int64
+	Duration         time.Duration
+	DryRun           bool
 }
 
 // Run executes a full backup: scan the source for changes, upload new/modified
 // files, build a new HAMT root, and persist a snapshot.
-// RunResult holds the outcome of a successful backup run.
-type RunResult struct {
-	SnapshotHash       string
-	SnapshotRef        string
-	Root               string
-	FilesNew           int64
-	FilesChanged       int64
-	FilesUnmodified    int64
-	FilesRemoved       int64
-	DirsNew            int64
-	DirsChanged        int64
-	DirsUnmodified     int64
-	DirsRemoved        int64
-	BytesAddedRaw      int64
-	BytesAddedStored   int64
-	Duration           time.Duration
-	DryRun             bool
-}
-
 func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
+	bm.metaCache, _ = LoadFileMetaCache(bm.store)
+	bm.cache.PreloadReadCache(LoadNodeCache(bm.store))
+
 	seq := bm.loadLatestSeq()
 	prevSnap := bm.findPreviousSnapshot(bm.sourceInfo)
 	bm.stats = &backupStats{startTime: time.Now()}
@@ -138,38 +146,9 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 		changeToken = prevSnap.ChangeToken
 	}
 
-	var newRoot string
-	var newToken string
-	var pending []core.FileMeta
-	var totalBytes int64
-	var err error
-	usedFullScan := false
-
-	if incSrc, ok := bm.source.(store.IncrementalSource); ok {
-		if changeToken == "" {
-			// First run (or previous snapshot deleted): capture the token
-			// BEFORE the full walk so changes during the walk are not lost.
-			newToken, err = incSrc.GetStartPageToken()
-			if err != nil {
-				return nil, fmt.Errorf("get start page token: %w", err)
-			}
-			newRoot, pending, totalBytes, err = bm.scan(ctx, oldRoot)
-			if err != nil {
-				return nil, err
-			}
-			usedFullScan = true
-		} else {
-			newRoot, pending, totalBytes, newToken, err = bm.scanIncremental(ctx, oldRoot, incSrc, changeToken)
-			if err != nil {
-				return nil, err
-			}
-		}
-	} else {
-		newRoot, pending, totalBytes, err = bm.scan(ctx, oldRoot)
-		if err != nil {
-			return nil, err
-		}
-		usedFullScan = true
+	newRoot, pending, totalBytes, newToken, usedFullScan, err := bm.scanSource(ctx, oldRoot, changeToken)
+	if err != nil {
+		return nil, err
 	}
 
 	if bm.cfg.dryRun {
@@ -178,19 +157,14 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 				return nil, fmt.Errorf("counting removed entries: %w", err)
 			}
 		}
-		return &RunResult{
-			Root:            newRoot,
-			FilesNew:        bm.stats.filesNew.Load(),
-			FilesChanged:    bm.stats.filesChanged.Load(),
-			FilesUnmodified: bm.stats.filesUnmodified.Load(),
-			FilesRemoved:    bm.stats.filesRemoved.Load(),
-			DirsNew:         bm.stats.dirsNew.Load(),
-			DirsChanged:     bm.stats.dirsChanged.Load(),
-			DirsUnmodified:  bm.stats.dirsUnmodified.Load(),
-			DirsRemoved:     bm.stats.dirsRemoved.Load(),
-			Duration:        time.Since(bm.stats.startTime),
-			DryRun:          true,
-		}, nil
+		r := bm.buildResult()
+		r.Root = newRoot
+		r.DryRun = true
+		return r, nil
+	}
+
+	if err := bm.flushPendingMetas(ctx); err != nil {
+		return nil, err
 	}
 
 	if err := bm.keyCache.PreloadKeys(ctx, "chunk/", "content/", "node/"); err != nil {
@@ -217,10 +191,18 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 		return nil, fmt.Errorf("flush hamt nodes: %w", err)
 	}
 
+	_ = SaveNodeCache(bm.store, bm.cache.ExportCaches())
+	_ = SaveContentCache(bm.store, bm.contentCache)
+
+	r := bm.buildResult()
+	r.SnapshotHash = snapHash
+	r.SnapshotRef = snapRef
+	r.Root = newRoot
+	return r, nil
+}
+
+func (bm *BackupManager) buildResult() *RunResult {
 	return &RunResult{
-		SnapshotHash:    snapHash,
-		SnapshotRef:     snapRef,
-		Root:            newRoot,
 		FilesNew:        bm.stats.filesNew.Load(),
 		FilesChanged:    bm.stats.filesChanged.Load(),
 		FilesUnmodified: bm.stats.filesUnmodified.Load(),
@@ -230,12 +212,8 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 		DirsUnmodified:  bm.stats.dirsUnmodified.Load(),
 		DirsRemoved:     bm.stats.dirsRemoved.Load(),
 		Duration:        time.Since(bm.stats.startTime),
-	}, nil
+	}
 }
-
-// ---------------------------------------------------------------------------
-// Phase 0: load previous state
-// ---------------------------------------------------------------------------
 
 // loadLatestSeq returns the global sequence number from the most recent
 // snapshot. On a fresh repository it returns 0.
@@ -263,379 +241,6 @@ func (bm *BackupManager) findPreviousSnapshot(info core.SourceInfo) *core.Snapsh
 	}
 	return nil
 }
-
-// ---------------------------------------------------------------------------
-// Phase 1: scan
-// ---------------------------------------------------------------------------
-
-// scan walks the source and builds a new HAMT root containing unmodified and
-// folder entries. New or changed files are returned in pending for upload.
-func (bm *BackupManager) scan(ctx context.Context, oldRoot string) (newRoot string, pending []core.FileMeta, totalBytes int64, err error) {
-	phase := bm.reporter.StartPhase("Scanning", 0, false)
-
-	err = bm.source.Walk(ctx, func(meta core.FileMeta) error {
-		phase.Increment(1)
-
-		changed, oldRef, cerr := bm.detectChange(oldRoot, &meta)
-		if cerr != nil {
-			return cerr
-		}
-
-		if !changed {
-			bm.recordStat(meta.Type, false, false)
-			newRoot, err = bm.tree.Insert(newRoot, meta.FileID, oldRef)
-			if err != nil {
-				return fmt.Errorf("hamt insert: %w", err)
-			}
-			return nil
-		}
-
-		bm.recordStat(meta.Type, true, oldRef == "")
-
-		if meta.Type == core.FileTypeFolder {
-			newRoot, err = bm.insertFolder(ctx, newRoot, &meta, phase)
-			return err
-		}
-
-		if bm.cfg.verbose {
-			phase.Log(fmt.Sprintf("Queueing: %s", meta.Name))
-		}
-		pending = append(pending, meta)
-		totalBytes += meta.Size
-		return nil
-	})
-
-	if err != nil {
-		phase.Error()
-		return "", nil, 0, err
-	}
-	phase.Done()
-	return newRoot, pending, totalBytes, nil
-}
-
-// detectChange compares meta against the previous snapshot. It returns whether
-// the entry changed, and the old value ref (empty when the entry is new).
-//
-// For sources that do not provide a content hash (e.g. Google Drive), a
-// fast-path compares observable metadata and carries the hash forward to avoid
-// false-positive diffs.
-func (bm *BackupManager) detectChange(oldRoot string, meta *core.FileMeta) (changed bool, oldRef string, err error) {
-	oldRef, err = bm.tree.Lookup(oldRoot, meta.FileID)
-	if err != nil {
-		return false, "", fmt.Errorf("hamt lookup: %w", err)
-	}
-	if oldRef == "" {
-		return true, "", nil
-	}
-
-	oldMeta, err := bm.loadMeta(oldRef)
-	if err != nil {
-		return false, "", err
-	}
-
-	if meta.ContentHash == "" && oldMeta.ContentHash != "" && metadataEqual(*meta, *oldMeta) {
-		meta.ContentHash = oldMeta.ContentHash
-	}
-
-	newRef, _, err := meta.Ref()
-	if err != nil {
-		return false, "", err
-	}
-	return newRef != oldRef, oldRef, nil
-}
-
-func metadataEqual(a, b core.FileMeta) bool {
-	return a.Name == b.Name &&
-		a.Size == b.Size &&
-		a.Mtime == b.Mtime &&
-		a.Type == b.Type &&
-		len(a.Parents) == len(b.Parents)
-}
-
-func (bm *BackupManager) insertFolder(ctx context.Context, root string, meta *core.FileMeta, phase ui.Phase) (string, error) {
-	if bm.cfg.verbose {
-		phase.Log(fmt.Sprintf("Folder: %s (New/Changed)", meta.Name))
-	}
-	meta.ContentHash = ""
-	meta.Size = 0
-
-	metaRef, metaData, err := meta.Ref()
-	if err != nil {
-		return "", err
-	}
-	if err := bm.store.Put(ctx, metaRef, metaData); err != nil {
-		return "", err
-	}
-	return bm.tree.Insert(root, meta.FileID, metaRef)
-}
-
-// recordStat increments the appropriate counter in bm.stats.
-func (bm *BackupManager) recordStat(ft core.FileType, changed, isNew bool) {
-	switch {
-	case !changed && ft == core.FileTypeFolder:
-		bm.stats.dirsUnmodified.Add(1)
-	case !changed:
-		bm.stats.filesUnmodified.Add(1)
-	case isNew && ft == core.FileTypeFolder:
-		bm.stats.dirsNew.Add(1)
-	case isNew:
-		bm.stats.filesNew.Add(1)
-	case ft == core.FileTypeFolder:
-		bm.stats.dirsChanged.Add(1)
-	default:
-		bm.stats.filesChanged.Add(1)
-	}
-}
-
-func (bm *BackupManager) recordRemoved(ft core.FileType) {
-	if ft == core.FileTypeFolder {
-		bm.stats.dirsRemoved.Add(1)
-	} else {
-		bm.stats.filesRemoved.Add(1)
-	}
-}
-
-// countRemoved uses a structural HAMT diff to count entries present in oldRoot
-// but absent from newRoot (full-scan path where deletions are implicit).
-func (bm *BackupManager) countRemoved(oldRoot, newRoot string) error {
-	if oldRoot == "" {
-		return nil
-	}
-	return bm.tree.Diff(oldRoot, newRoot, func(d hamt.DiffEntry) error {
-		if d.OldValue != "" && d.NewValue == "" {
-			meta, err := bm.loadMeta(d.OldValue)
-			if err != nil {
-				return err
-			}
-			bm.recordRemoved(meta.Type)
-		}
-		return nil
-	})
-}
-
-// ---------------------------------------------------------------------------
-// Phase 1b: incremental scan (IncrementalSource)
-// ---------------------------------------------------------------------------
-
-// scanIncremental applies deltas from WalkChanges on top of the previous HAMT
-// root, producing a new root and a list of files pending upload.
-func (bm *BackupManager) scanIncremental(ctx context.Context, oldRoot string, incSrc store.IncrementalSource, token string) (newRoot string, pending []core.FileMeta, totalBytes int64, newToken string, err error) {
-	phase := bm.reporter.StartPhase("Scanning (incremental)", 0, false)
-	newRoot = oldRoot
-
-	newToken, walkErr := incSrc.WalkChanges(ctx, token, func(fc store.FileChange) error {
-		phase.Increment(1)
-
-		switch fc.Type {
-		case store.ChangeDelete:
-			bm.recordRemoved(fc.Meta.Type)
-			newRoot, err = bm.tree.Delete(newRoot, fc.Meta.FileID)
-			if err != nil {
-				return fmt.Errorf("hamt delete %s: %w", fc.Meta.FileID, err)
-			}
-
-		case store.ChangeUpsert:
-			changed, oldRef, cerr := bm.detectChange(oldRoot, &fc.Meta)
-			if cerr != nil {
-				return cerr
-			}
-
-			if !changed {
-				bm.recordStat(fc.Meta.Type, false, false)
-				newRoot, err = bm.tree.Insert(newRoot, fc.Meta.FileID, oldRef)
-				if err != nil {
-					return fmt.Errorf("hamt insert: %w", err)
-				}
-				return nil
-			}
-
-			bm.recordStat(fc.Meta.Type, true, oldRef == "")
-
-			if fc.Meta.Type == core.FileTypeFolder {
-				newRoot, err = bm.insertFolder(ctx, newRoot, &fc.Meta, phase)
-				return err
-			}
-
-			if bm.cfg.verbose {
-				phase.Log(fmt.Sprintf("Queueing: %s", fc.Meta.Name))
-			}
-			pending = append(pending, fc.Meta)
-			totalBytes += fc.Meta.Size
-		}
-		return nil
-	})
-
-	if walkErr != nil {
-		phase.Error()
-		return "", nil, 0, "", walkErr
-	}
-
-	phase.Done()
-	return newRoot, pending, totalBytes, newToken, nil
-}
-
-// ---------------------------------------------------------------------------
-// Phase 2: upload
-// ---------------------------------------------------------------------------
-
-type uploadResult struct {
-	fileID string
-	ref    string
-	err    error
-}
-
-// upload processes the pending file queue with concurrent workers, inserts each
-// result into the HAMT, and returns the updated root.
-func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, totalBytes int64, root string) (string, error) {
-	if len(pending) == 0 {
-		return root, nil
-	}
-
-	phase := bm.reporter.StartPhase("Uploading", totalBytes, true)
-
-	jobs := make(chan core.FileMeta, min(128, len(pending)))
-	results := make(chan uploadResult, min(128, len(pending)))
-
-	for range min(uploadConcurrency, len(pending)) {
-		go func() {
-			for meta := range jobs {
-				results <- bm.processFile(ctx, meta, phase)
-			}
-		}()
-	}
-
-	go func() {
-		for _, m := range pending {
-			jobs <- m
-		}
-		close(jobs)
-	}()
-
-	var err error
-	for range pending {
-		res := <-results
-		if res.err != nil {
-			phase.Error()
-			return "", res.err
-		}
-		root, err = bm.tree.Insert(root, res.fileID, res.ref)
-		if err != nil {
-			phase.Error()
-			return "", fmt.Errorf("hamt insert: %w", err)
-		}
-	}
-
-	phase.Done()
-	return root, nil
-}
-
-// processFile uploads (or deduplicates) a single file's content and persists
-// its FileMeta. It is safe to call from multiple goroutines.
-func (bm *BackupManager) processFile(ctx context.Context, meta core.FileMeta, phase ui.Phase) uploadResult {
-	if bm.cfg.verbose {
-		phase.Log(fmt.Sprintf("Processing: %s", meta.Name))
-	}
-
-	contentHash, size, err := bm.uploadContent(ctx, meta, phase)
-	if err != nil {
-		return uploadResult{err: err}
-	}
-
-	meta.ContentHash = contentHash
-	meta.Size = size
-
-	metaRef, metaData, err := meta.Ref()
-	if err != nil {
-		return uploadResult{err: err}
-	}
-	if err := bm.store.Put(ctx, metaRef, metaData); err != nil {
-		return uploadResult{err: err}
-	}
-	return uploadResult{fileID: meta.FileID, ref: metaRef}
-}
-
-// inlineThreshold is the maximum file size for which content is stored inline
-// in the Content object rather than as separate chunk objects. This avoids
-// per-chunk Exists+Put round trips to the backend store.
-const inlineThreshold = 512 * 1024 // 512 KiB (matches CDC min chunk size)
-
-// uploadContent streams, chunks, and stores the file content. If the content
-// already exists (dedup by hash), the upload is skipped and newBytes is zero.
-// Small files (below inlineThreshold) are stored inline in the Content object
-// to reduce the number of backend API calls.
-func (bm *BackupManager) uploadContent(ctx context.Context, meta core.FileMeta, phase ui.Phase) (hash string, size int64, err error) {
-	if meta.ContentHash != "" {
-		exists, err := bm.store.Exists(ctx, "content/"+meta.ContentHash)
-		if err == nil && exists {
-			if bm.cfg.verbose {
-				phase.Log(fmt.Sprintf("Deduplicated: %s", meta.Name))
-			}
-			return meta.ContentHash, meta.Size, nil
-		}
-	}
-
-	rc, err := bm.source.GetFileStream(meta.FileID)
-	if err != nil {
-		return "", 0, fmt.Errorf("get stream for %s: %w", meta.FileID, err)
-	}
-	defer func() { _ = rc.Close() }()
-
-	if meta.Size > 0 && meta.Size <= inlineThreshold {
-		return bm.uploadInline(ctx, rc, meta, phase)
-	}
-
-	chunkRefs, size, hash, err := bm.chunker.ProcessStream(rc, func(n int64) {
-		phase.Increment(n)
-	})
-	if err != nil {
-		return "", 0, fmt.Errorf("chunking %s: %w", meta.Name, err)
-	}
-
-	if _, err := bm.chunker.CreateContentObject(chunkRefs, size, hash); err != nil {
-		return "", 0, fmt.Errorf("create content for %s: %w", meta.Name, err)
-	}
-	return hash, size, nil
-}
-
-// uploadInline reads the entire file into memory and stores it directly inside
-// the Content object, bypassing the chunker. This turns 3 backend calls
-// (chunk Exists + chunk Put + content Put) into a single content Put.
-func (bm *BackupManager) uploadInline(ctx context.Context, r io.Reader, meta core.FileMeta, phase ui.Phase) (hash string, size int64, err error) {
-	data, err := io.ReadAll(r)
-	if err != nil {
-		return "", 0, fmt.Errorf("read %s: %w", meta.Name, err)
-	}
-
-	size = int64(len(data))
-	phase.Increment(size)
-	hash = core.ComputeHash(data)
-
-	contentKey := "content/" + hash
-	if exists, _ := bm.store.Exists(ctx, contentKey); exists {
-		if bm.cfg.verbose {
-			phase.Log(fmt.Sprintf("Deduplicated: %s", meta.Name))
-		}
-		return hash, size, nil
-	}
-
-	content := core.Content{
-		Type:          core.ObjectTypeContent,
-		Size:          size,
-		DataInlineB64: data,
-	}
-	contentData, err := json.Marshal(content)
-	if err != nil {
-		return "", 0, err
-	}
-	if err := bm.store.Put(ctx, contentKey, contentData); err != nil {
-		return "", 0, err
-	}
-	return hash, size, nil
-}
-
-// ---------------------------------------------------------------------------
-// Phase 3: persist snapshot
-// ---------------------------------------------------------------------------
 
 func (bm *BackupManager) saveSnapshot(ctx context.Context, root string, seq int, changeToken string) (ref, hash string, err error) {
 	meta := make(map[string]string, len(bm.cfg.meta)+1)
@@ -670,15 +275,20 @@ func (bm *BackupManager) saveSnapshot(ctx context.Context, root string, seq int,
 	}
 
 	_ = AddSnapshotToIndex(bm.store, snap, ref)
+	_ = AddFileMetasToIndex(bm.store, bm.newMetas)
 
 	return ref, hash, nil
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+func (bm *BackupManager) trackFileMeta(ref string, fm core.FileMeta) {
+	bm.newMetas[ref] = fm
+}
 
 func (bm *BackupManager) loadMeta(ref string) (*core.FileMeta, error) {
+	if fm, ok := bm.metaCache[ref]; ok {
+		return &fm, nil
+	}
+	debugf(dYellow+"cache miss"+dReset+" loadMeta %s", ref)
 	data, err := bm.store.Get(context.Background(), ref)
 	if err != nil {
 		return nil, err

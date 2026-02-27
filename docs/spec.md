@@ -41,7 +41,7 @@ Cloudstic is a content-addressable backup system designed for flat cloud storage
 | Command   | Description                                              |
 |-----------|----------------------------------------------------------|
 | `backup`  | Scan a source, upload changed files, create a snapshot   |
-| `restore` | Recreate a snapshot's file tree on the local filesystem  |
+| `restore` | Export a snapshot's file tree as a ZIP archive            |
 | `list`    | Print a table of all snapshots                           |
 | `ls`      | Print the file tree of a specific snapshot               |
 | `diff`    | Compare two snapshots and show file-level changes        |
@@ -240,10 +240,10 @@ Clients fetch `index/latest` to find the head. To list all snapshots, list the `
 2. Walk the HAMT to collect all `filemeta` entries.
 3. **Topological sort** ensures parent directories are created before their children.
 4. **Path building**: walk the parent chain of each entry to reconstruct the full relative path.
-5. For each entry:
-   - Folders: `mkdir`.
-   - Files: load `content/<hash>`, fetch and decompress each chunk, concatenate, write to disk.
-6. Restore `mtime` where available.
+5. Write entries to a ZIP archive:
+   - Folders: directory entries with stored `mtime`.
+   - Files: load `content/<hash>`, fetch and decompress each chunk, write to the ZIP stream.
+6. Output is always a ZIP archive (used by both CLI and web).
 
 ---
 

@@ -128,6 +128,34 @@ func (ts *TransactionalStore) TotalSize(ctx context.Context) (int64, error) {
 	return ts.persistent.TotalSize(ctx)
 }
 
+// PreloadReadCache populates the read-through cache from externally loaded data.
+// Nodes already present in the staging buffer or read cache are not overwritten.
+func (ts *TransactionalStore) PreloadReadCache(data map[string][]byte) {
+	for k, v := range data {
+		if _, ok := ts.cache.staging[k]; ok {
+			continue
+		}
+		if _, ok := ts.readCache[k]; ok {
+			continue
+		}
+		ts.readCache[k] = v
+	}
+}
+
+// ExportCaches returns a merged view of all node data currently held in memory
+// (both the staging buffer and the read cache). The caller can persist this to
+// avoid fetching the same nodes on the next run.
+func (ts *TransactionalStore) ExportCaches() map[string][]byte {
+	out := make(map[string][]byte, len(ts.readCache)+len(ts.cache.staging))
+	for k, v := range ts.readCache {
+		out[k] = v
+	}
+	for k, v := range ts.cache.staging {
+		out[k] = v
+	}
+	return out
+}
+
 // Flush writes only the HAMT nodes reachable from rootRef to the persistent
 // store, ignoring intermediate nodes that were superseded during the
 // transaction. Returns the number of nodes written.

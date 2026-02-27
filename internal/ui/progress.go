@@ -25,10 +25,19 @@ type Phase interface {
 }
 
 // ConsoleReporter implements Reporter using go-pretty for console output.
-type ConsoleReporter struct{}
+type ConsoleReporter struct {
+	logWriter *SafeLogWriter
+}
 
 func NewConsoleReporter() *ConsoleReporter {
 	return &ConsoleReporter{}
+}
+
+// SetLogWriter registers a SafeLogWriter that will be kept in sync with the
+// active progress writer so external log lines (e.g. store debug output)
+// render cleanly above the progress bar.
+func (c *ConsoleReporter) SetLogWriter(w *SafeLogWriter) {
+	c.logWriter = w
 }
 
 func (c *ConsoleReporter) StartPhase(name string, total int64, isBytes bool) Phase {
@@ -54,18 +63,24 @@ func (c *ConsoleReporter) StartPhase(name string, total int64, isBytes bool) Pha
 
 	tracker := progress.Tracker{Message: name, Total: total, Units: units}
 
+	if c.logWriter != nil {
+		c.logWriter.SetActive(pw)
+	}
+
 	go pw.Render()
 	pw.AppendTracker(&tracker)
 
 	return &consolePhase{
-		pw:      pw,
-		tracker: &tracker,
+		pw:        pw,
+		tracker:   &tracker,
+		logWriter: c.logWriter,
 	}
 }
 
 type consolePhase struct {
-	pw      progress.Writer
-	tracker *progress.Tracker
+	pw        progress.Writer
+	tracker   *progress.Tracker
+	logWriter *SafeLogWriter
 }
 
 func (cp *consolePhase) Increment(n int64) {
@@ -78,15 +93,20 @@ func (cp *consolePhase) Log(msg string) {
 
 func (cp *consolePhase) Done() {
 	cp.tracker.MarkAsDone()
-	// Allow render to catch up
 	time.Sleep(time.Millisecond * 100)
 	cp.pw.Stop()
+	if cp.logWriter != nil {
+		cp.logWriter.ClearActive()
+	}
 }
 
 func (cp *consolePhase) Error() {
 	cp.tracker.MarkAsErrored()
 	time.Sleep(time.Millisecond * 100)
 	cp.pw.Stop()
+	if cp.logWriter != nil {
+		cp.logWriter.ClearActive()
+	}
 }
 
 // NoOpReporter implements Reporter doing nothing (for tests or silent mode).

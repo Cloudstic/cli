@@ -62,16 +62,17 @@ func (cs *cachingStore) TotalSize(_ context.Context) (int64, error) {
 }
 
 // TransactionalStore buffers HAMT node writes in memory and flushes only the
-// reachable subset to the persistent store. Reads fall through to the
-// persistent store when the key is not in the cache.
+// reachable subset to the persistent store.
 type TransactionalStore struct {
 	cache      *cachingStore
+	readCache  map[string][]byte
 	persistent store.ObjectStore
 }
 
 func NewTransactionalStore(persistent store.ObjectStore) *TransactionalStore {
 	return &TransactionalStore{
 		cache:      newCachingStore(),
+		readCache:  make(map[string][]byte),
 		persistent: persistent,
 	}
 }
@@ -84,11 +85,22 @@ func (ts *TransactionalStore) Get(ctx context.Context, key string) ([]byte, erro
 	if data, err := ts.cache.Get(ctx, key); err == nil {
 		return data, nil
 	}
-	return ts.persistent.Get(ctx, key)
+	if data, ok := ts.readCache[key]; ok {
+		return data, nil
+	}
+	data, err := ts.persistent.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	ts.readCache[key] = data
+	return data, nil
 }
 
 func (ts *TransactionalStore) Exists(ctx context.Context, key string) (bool, error) {
 	if ok, _ := ts.cache.Exists(ctx, key); ok {
+		return true, nil
+	}
+	if _, ok := ts.readCache[key]; ok {
 		return true, nil
 	}
 	return ts.persistent.Exists(ctx, key)
@@ -105,6 +117,9 @@ func (ts *TransactionalStore) List(ctx context.Context, prefix string) ([]string
 func (ts *TransactionalStore) Size(ctx context.Context, key string) (int64, error) {
 	if size, err := ts.cache.Size(ctx, key); err == nil {
 		return size, nil
+	}
+	if data, ok := ts.readCache[key]; ok {
+		return int64(len(data)), nil
 	}
 	return ts.persistent.Size(ctx, key)
 }
@@ -184,6 +199,10 @@ func (ts *TransactionalStore) writeParallel(toWrite map[string][]byte) error {
 	for range workers {
 		go func() {
 			for j := range jobs {
+				if exists, _ := ts.persistent.Exists(ctx, j.key); exists {
+					errs <- nil
+					continue
+				}
 				errs <- ts.persistent.Put(ctx, j.key, j.data)
 			}
 		}()

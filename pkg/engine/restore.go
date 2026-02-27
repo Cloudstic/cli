@@ -6,9 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"path"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -26,14 +24,15 @@ type restoreConfig struct{}
 
 // RestoreResult holds the outcome of a restore operation.
 type RestoreResult struct {
-	SnapshotRef string
-	Root        string
-	TargetDir   string
-	Restored    int
-	Errors      int
+	SnapshotRef  string
+	Root         string
+	FilesWritten int
+	DirsWritten  int
+	BytesWritten int64
+	Errors       int
 }
 
-// RestoreManager recreates a snapshot's file tree on the local filesystem.
+// RestoreManager recreates a snapshot's file tree as a ZIP archive.
 type RestoreManager struct {
 	store    store.ObjectStore
 	tree     *hamt.Tree
@@ -48,8 +47,9 @@ func NewRestoreManager(s store.ObjectStore, reporter ui.Reporter) *RestoreManage
 	}
 }
 
-// Run restores the given snapshot (or the latest) into targetDir.
-func (rm *RestoreManager) Run(ctx context.Context, targetDir, snapshotRef string, opts ...RestoreOption) (*RestoreResult, error) {
+// Run writes the snapshot's file tree as a ZIP archive to w.
+// snapshotRef can be "", "latest", a bare hash, or "snapshot/<hash>".
+func (rm *RestoreManager) Run(ctx context.Context, w io.Writer, snapshotRef string) (*RestoreResult, error) {
 	snap, snapshotRef, err := rm.resolveSnapshot(ctx, snapshotRef)
 	if err != nil {
 		return nil, err
@@ -60,50 +60,18 @@ func (rm *RestoreManager) Run(ctx context.Context, targetDir, snapshotRef string
 		return nil, err
 	}
 
-	phase := rm.reporter.StartPhase("Restoring", int64(len(byID)), false)
+	cw := &countingWriter{w: w}
+	zw := zip.NewWriter(cw)
+	defer func() { _ = zw.Close() }()
 
 	result := &RestoreResult{
 		SnapshotRef: snapshotRef,
 		Root:        snap.Root,
-		TargetDir:   targetDir,
 	}
 
 	sorted := topoSort(byID)
-	for _, meta := range sorted {
-		path := buildPath(meta, byID)
-		target := filepath.Join(targetDir, path)
+	phase := rm.reporter.StartPhase("Restoring", int64(len(sorted)), false)
 
-		if err := rm.restoreEntry(ctx, meta, target); err != nil {
-			phase.Log(fmt.Sprintf("Failed: %s: %v", path, err))
-			result.Errors++
-			phase.Increment(1)
-			continue
-		}
-		result.Restored++
-		phase.Increment(1)
-	}
-
-	phase.Done()
-	return result, nil
-}
-
-// RestoreToZip writes the snapshot's file tree as a ZIP archive to w.
-func (rm *RestoreManager) RestoreToZip(ctx context.Context, w io.Writer, snapshotHash string) error {
-	snapshotRef := "snapshot/" + snapshotHash
-	snap, _, err := rm.resolveSnapshot(ctx, snapshotRef)
-	if err != nil {
-		return err
-	}
-
-	byID, err := rm.collectMetadata(snap.Root)
-	if err != nil {
-		return err
-	}
-
-	zw := zip.NewWriter(w)
-	defer func() { _ = zw.Close() }()
-
-	sorted := topoSort(byID)
 	for _, meta := range sorted {
 		p := buildZipPath(meta, byID)
 
@@ -113,12 +81,18 @@ func (rm *RestoreManager) RestoreToZip(ctx context.Context, w io.Writer, snapsho
 				header.Modified = time.Unix(meta.Mtime, 0)
 			}
 			if _, err := zw.CreateHeader(header); err != nil {
-				return fmt.Errorf("create zip dir %s: %w", p, err)
+				phase.Log(fmt.Sprintf("Failed: %s: %v", p, err))
+				result.Errors++
+				phase.Increment(1)
+				continue
 			}
+			result.DirsWritten++
+			phase.Increment(1)
 			continue
 		}
 
 		if meta.ContentHash == "" {
+			phase.Increment(1)
 			continue
 		}
 
@@ -128,15 +102,40 @@ func (rm *RestoreManager) RestoreToZip(ctx context.Context, w io.Writer, snapsho
 		}
 		fw, err := zw.CreateHeader(header)
 		if err != nil {
-			return fmt.Errorf("create zip entry %s: %w", p, err)
+			phase.Log(fmt.Sprintf("Failed: %s: %v", p, err))
+			result.Errors++
+			phase.Increment(1)
+			continue
 		}
 
 		if err := rm.writeFileContent(ctx, fw, meta.ContentHash); err != nil {
-			return fmt.Errorf("write zip entry %s: %w", p, err)
+			phase.Log(fmt.Sprintf("Failed: %s: %v", p, err))
+			result.Errors++
+			phase.Increment(1)
+			continue
 		}
+		result.FilesWritten++
+		phase.Increment(1)
 	}
 
-	return zw.Close()
+	phase.Done()
+
+	if err := zw.Close(); err != nil {
+		return nil, fmt.Errorf("finalize zip: %w", err)
+	}
+	result.BytesWritten = cw.count
+	return result, nil
+}
+
+type countingWriter struct {
+	w     io.Writer
+	count int64
+}
+
+func (cw *countingWriter) Write(p []byte) (int, error) {
+	n, err := cw.w.Write(p)
+	cw.count += int64(n)
+	return n, err
 }
 
 func (rm *RestoreManager) writeFileContent(ctx context.Context, w io.Writer, contentHash string) error {
@@ -157,7 +156,6 @@ func (rm *RestoreManager) writeFileContent(ctx context.Context, w io.Writer, con
 	return nil
 }
 
-// buildZipPath is like buildPath but always uses forward slashes for ZIP compatibility.
 func buildZipPath(meta core.FileMeta, byID map[string]core.FileMeta) string {
 	const maxDepth = 50
 	parts := []string{meta.Name}
@@ -283,7 +281,7 @@ func (rm *RestoreManager) loadMeta(ref string) (*core.FileMeta, error) {
 }
 
 // ---------------------------------------------------------------------------
-// Ordering & path building
+// Ordering
 // ---------------------------------------------------------------------------
 
 // topoSort returns entries in parent-before-child order so that directories
@@ -312,81 +310,9 @@ func topoSort(byID map[string]core.FileMeta) []core.FileMeta {
 	return out
 }
 
-// buildPath walks the parent chain to reconstruct the full relative path.
-// Parents contain FileIDs, resolved via byID.
-func buildPath(meta core.FileMeta, byID map[string]core.FileMeta) string {
-	const maxDepth = 50
-
-	parts := []string{meta.Name}
-	cur := meta
-	for i := 0; i < maxDepth && len(cur.Parents) > 0; i++ {
-		parent, ok := byID[cur.Parents[0]]
-		if !ok {
-			break
-		}
-		parts = append(parts, parent.Name)
-		cur = parent
-	}
-
-	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
-		parts[i], parts[j] = parts[j], parts[i]
-	}
-	return strings.Join(parts, string(filepath.Separator))
-}
-
 // ---------------------------------------------------------------------------
-// File restoration
+// Content loading
 // ---------------------------------------------------------------------------
-
-func (rm *RestoreManager) restoreEntry(ctx context.Context, meta core.FileMeta, target string) error {
-	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-		return err
-	}
-
-	if meta.Type == core.FileTypeFolder {
-		return rm.restoreFolder(meta, target)
-	}
-	if meta.ContentHash == "" {
-		return nil
-	}
-	return rm.restoreFile(ctx, meta, target)
-}
-
-func (rm *RestoreManager) restoreFolder(meta core.FileMeta, target string) error {
-	if err := os.MkdirAll(target, 0755); err != nil {
-		return err
-	}
-	setMtime(target, meta.Mtime)
-	return nil
-}
-
-func (rm *RestoreManager) restoreFile(ctx context.Context, meta core.FileMeta, target string) error {
-	content, err := rm.loadContent(ctx, meta.ContentHash)
-	if err != nil {
-		return err
-	}
-
-	f, err := os.Create(target)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-
-	for _, chunkRef := range content.Chunks {
-		if err := rm.writeChunk(ctx, f, chunkRef); err != nil {
-			return err
-		}
-	}
-
-	if len(content.DataInlineB64) > 0 {
-		if _, err := f.Write(content.DataInlineB64); err != nil {
-			return err
-		}
-	}
-
-	setMtime(target, meta.Mtime)
-	return nil
-}
 
 func (rm *RestoreManager) loadContent(ctx context.Context, hash string) (*core.Content, error) {
 	data, err := rm.store.Get(ctx, "content/"+hash)
@@ -407,12 +333,4 @@ func (rm *RestoreManager) writeChunk(ctx context.Context, w io.Writer, ref strin
 	}
 	_, err = w.Write(data)
 	return err
-}
-
-func setMtime(path string, mtime int64) {
-	if mtime <= 0 {
-		return
-	}
-	t := time.Unix(mtime, 0)
-	_ = os.Chtimes(path, t, t)
 }

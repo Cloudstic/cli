@@ -14,13 +14,27 @@ import (
 // PruneOption configures a prune operation.
 type PruneOption func(*pruneConfig)
 
-type pruneConfig struct{}
+type pruneConfig struct {
+	dryRun  bool
+	verbose bool
+}
+
+// WithPruneDryRun shows what would be deleted without actually deleting.
+func WithPruneDryRun() PruneOption {
+	return func(cfg *pruneConfig) { cfg.dryRun = true }
+}
+
+// WithPruneVerbose logs each deleted key during sweep.
+func WithPruneVerbose() PruneOption {
+	return func(cfg *pruneConfig) { cfg.verbose = true }
+}
 
 // PruneResult holds statistics from a prune operation.
 type PruneResult struct {
 	BytesReclaimed int64
 	ObjectsDeleted int
 	ObjectsScanned int
+	DryRun         bool
 }
 
 // objectPrefixes lists every key-space that prune should sweep.
@@ -46,6 +60,11 @@ func NewPruneManager(s store.ObjectStore, reporter ui.Reporter) *PruneManager {
 
 // Run performs a full mark-and-sweep garbage collection.
 func (pm *PruneManager) Run(ctx context.Context, opts ...PruneOption) (*PruneResult, error) {
+	var cfg pruneConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
 	markPhase := pm.reporter.StartPhase("Marking reachable objects", 0, false)
 	reachable, err := pm.mark(ctx, markPhase)
 	if err != nil {
@@ -54,7 +73,7 @@ func (pm *PruneManager) Run(ctx context.Context, opts ...PruneOption) (*PruneRes
 	}
 	markPhase.Done()
 
-	result := pm.sweep(ctx, reachable)
+	result := pm.sweep(ctx, reachable, &cfg)
 	return result, nil
 }
 
@@ -167,7 +186,7 @@ func (pm *PruneManager) markContent(ctx context.Context, ref string, reachable m
 // Sweep phase
 // ---------------------------------------------------------------------------
 
-func (pm *PruneManager) sweep(ctx context.Context, reachable map[string]bool) *PruneResult {
+func (pm *PruneManager) sweep(ctx context.Context, reachable map[string]bool, cfg *pruneConfig) *PruneResult {
 	var totalKeys int
 	for _, prefix := range objectPrefixes {
 		keys, err := pm.store.List(ctx, prefix)
@@ -177,8 +196,12 @@ func (pm *PruneManager) sweep(ctx context.Context, reachable map[string]bool) *P
 		totalKeys += len(keys)
 	}
 
-	phase := pm.reporter.StartPhase("Sweeping unreachable objects", int64(totalKeys), true)
-	result := &PruneResult{}
+	label := "Sweeping unreachable objects"
+	if cfg.dryRun {
+		label = "Scanning unreachable objects (dry run)"
+	}
+	phase := pm.reporter.StartPhase(label, int64(totalKeys), true)
+	result := &PruneResult{DryRun: cfg.dryRun}
 
 	for _, prefix := range objectPrefixes {
 		keys, err := pm.store.List(ctx, prefix)
@@ -191,16 +214,29 @@ func (pm *PruneManager) sweep(ctx context.Context, reachable map[string]bool) *P
 				phase.Increment(0)
 				continue
 			}
+			if cfg.dryRun {
+				if cfg.verbose {
+					phase.Log(fmt.Sprintf("Would delete: %s", key))
+				}
+				result.ObjectsDeleted++
+				phase.Increment(0)
+				continue
+			}
 			size, err := pm.store.DeleteReturnSize(ctx, key)
 			if err != nil {
 				continue
+			}
+			if cfg.verbose {
+				phase.Log(fmt.Sprintf("Deleted: %s", key))
 			}
 			result.ObjectsDeleted++
 			phase.Increment(size)
 		}
 	}
-	result.BytesReclaimed = -pm.store.BytesWritten()
-	pm.store.Reset()
+	if !cfg.dryRun {
+		result.BytesReclaimed = -pm.store.BytesWritten()
+		pm.store.Reset()
+	}
 	phase.Done()
 	return result
 }

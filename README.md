@@ -50,8 +50,8 @@ cloudstic backup -source gdrive-changes -encryption-password "my passphrase"
 # List snapshots
 cloudstic list -encryption-password "my passphrase"
 
-# Restore
-cloudstic restore -target ./restored -encryption-password "my passphrase"
+# Restore latest snapshot to a zip file
+cloudstic restore -encryption-password "my passphrase"
 ```
 
 ## Documentation

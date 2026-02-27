@@ -1,9 +1,10 @@
 package engine
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
-	"os"
-	"path/filepath"
+	"io"
 	"testing"
 
 	"github.com/cloudstic/cli/pkg/core"
@@ -12,92 +13,79 @@ import (
 )
 
 func TestRestoreManager_Run(t *testing.T) {
-	// Setup: Create a backup first
 	src := NewMockSource()
 	dest := NewMockStore()
 
 	src.AddFile("restore_me.txt", "id1", []byte("restore content"))
 
-	// Hierarchy: subdir (id_subdir) -> nested.txt (id2)
-
-	// 1. Add Parent Folder
 	src.Files["id_subdir"] = MockFile{
 		Meta: core.FileMeta{
 			FileID: "id_subdir",
 			Name:   "subdir",
 			Type:   core.FileTypeFolder,
 			Extra:  map[string]interface{}{"mimeType": "application/vnd.google-apps.folder"},
-			// Parents empty (root)
 		},
 		Content: []byte{},
 	}
 
-	// 2. Add Child File
-	// NOTE: BackupManager now expects source to provide IDs in Parents,
-	// and it converts them to Refs during Walk.
-	// MockSource.Walk just iterates the map.
 	src.Files["id2"] = MockFile{
 		Meta: core.FileMeta{
 			FileID:  "id2",
 			Name:    "nested.txt",
-			Parents: []string{"id_subdir"}, // Points to parent ID
+			Parents: []string{"id_subdir"},
 		},
 		Content: []byte("nested content"),
 	}
 
-	// IMPORTANT: BackupManager builds `idToRef` map during walk to resolve parents.
-	// For this to work with MockSource (which is a map, random order),
-	// we need to ensure parent is processed or we need BackupManager to handle out-of-order.
-	// My implementation of BackupManager has a TODO/Warning:
-	// "If we haven't processed it... Parent unknown... implies order violation".
-	// The current BackupManager implementation does NOT topological sort, it assumes input order or lookups.
-	// BUT, `idToRef` is populated as we go.
-	// Since `MockSource` iterates map, order is random.
-	// If child comes before parent, `idToRef[parentID]` will be missing.
-	// We should probably enforce order in MockSource for this test to be reliable.
-	// Or update BackupManager to be more robust (two-pass).
-	// Given I just implemented topological sort in `GDriveSource`, `MockSource` needs something similar?
-	// `MockSource.Walk` is trivial.
-	// Let's leave it random and see if it fails, or fix MockSource to be deterministic/topological.
-	// Actually, standard `MockSource.Walk` iterates keys.
-	// Let's make MockSource Walk implicitly ordered (Folders first, then files)?
-
-	// Run Backup
 	bkMgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), WithVerbose())
 	if _, err := bkMgr.Run(context.Background()); err != nil {
 		t.Fatalf("Backup setup failed: %v", err)
 	}
 
-	// Prepare Restore
-	tmpDir, err := os.MkdirTemp("", "cloudstic-restore-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
-
 	rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())
 
-	// Run Restore (latest)
-	if _, err := rsMgr.Run(context.Background(), tmpDir, ""); err != nil {
+	var buf bytes.Buffer
+	result, err := rsMgr.Run(context.Background(), &buf, "")
+	if err != nil {
 		t.Fatalf("Restore failed: %v", err)
 	}
 
-	// Verify files on disk
-	// 1. restore_me.txt
-	content1, err := os.ReadFile(filepath.Join(tmpDir, "restore_me.txt"))
-	if err != nil {
-		t.Errorf("restore_me.txt not found: %v", err)
+	if result.FilesWritten < 2 {
+		t.Errorf("Expected at least 2 files written, got %d", result.FilesWritten)
 	}
-	if string(content1) != "restore content" {
-		t.Errorf("Content mismatch for restore_me.txt")
+	if result.BytesWritten == 0 {
+		t.Error("Expected non-zero bytes written")
 	}
 
-	// 2. subdir/nested.txt
-	content2, err := os.ReadFile(filepath.Join(tmpDir, "subdir/nested.txt"))
+	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
 	if err != nil {
-		t.Errorf("subdir/nested.txt not found: %v", err)
+		t.Fatalf("Failed to open zip: %v", err)
 	}
-	if string(content2) != "nested content" {
-		t.Errorf("Content mismatch for nested.txt")
+
+	entries := make(map[string]string)
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("Failed to open zip entry %s: %v", f.Name, err)
+		}
+		data, _ := io.ReadAll(rc)
+		rc.Close()
+		entries[f.Name] = string(data)
+	}
+
+	if content, ok := entries["restore_me.txt"]; !ok {
+		t.Error("restore_me.txt not found in zip")
+	} else if content != "restore content" {
+		t.Errorf("Content mismatch for restore_me.txt: got %q", content)
+	}
+
+	if content, ok := entries["subdir/nested.txt"]; !ok {
+		t.Error("subdir/nested.txt not found in zip")
+	} else if content != "nested content" {
+		t.Errorf("Content mismatch for nested.txt: got %q", content)
+	}
+
+	if _, ok := entries["subdir/"]; !ok {
+		t.Error("subdir/ directory entry not found in zip")
 	}
 }

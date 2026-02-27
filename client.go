@@ -2,6 +2,7 @@ package cloudstic
 
 import (
 	"context"
+	"io"
 
 	"github.com/cloudstic/cli/pkg/engine"
 	"github.com/cloudstic/cli/pkg/store"
@@ -89,9 +90,11 @@ func (c *Client) Backup(ctx context.Context, src store.Source, opts ...BackupOpt
 type RestoreOption = engine.RestoreOption
 type RestoreResult = engine.RestoreResult
 
-func (c *Client) Restore(ctx context.Context, targetPath string, snapshotID string, opts ...RestoreOption) (*RestoreResult, error) {
+// Restore writes the snapshot's file tree as a ZIP archive to w.
+// snapshotRef can be "", "latest", a bare hash, or "snapshot/<hash>".
+func (c *Client) Restore(ctx context.Context, w io.Writer, snapshotRef string, opts ...RestoreOption) (*RestoreResult, error) {
 	mgr := engine.NewRestoreManager(c.store, c.reporter)
-	return mgr.Run(ctx, targetPath, snapshotID, opts...)
+	return mgr.Run(ctx, w, snapshotRef)
 }
 
 // ---------------------------------------------------------------------------

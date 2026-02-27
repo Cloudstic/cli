@@ -46,7 +46,7 @@ cloudstic backup -source local -source-path ~/Documents -encryption-password "my
 cloudstic list -encryption-password "my secret passphrase"
 
 # 4. Restore the latest snapshot
-cloudstic restore -encryption-password "my secret passphrase" -target ./restored
+cloudstic restore -encryption-password "my secret passphrase"
 ```
 
 ## Installation
@@ -150,7 +150,7 @@ export B2_APP_KEY=your-app-key
 # Now commands are much shorter:
 cloudstic backup -source local -source-path ~/Documents
 cloudstic list
-cloudstic restore -target ./restored
+cloudstic restore
 ```
 
 See [Environment Variables](#environment-variables) for the full list.
@@ -231,25 +231,26 @@ The `gdrive-changes` and `onedrive-changes` source types use their respective ch
 
 ### restore
 
-Restore files from a snapshot.
+Restore a snapshot as a ZIP archive.
 
 ```bash
 # Restore the latest snapshot
-cloudstic restore -target ./restored
+cloudstic restore
 
 # Restore a specific snapshot
-cloudstic restore -target ./restored -snapshot <snapshot-hash>
+cloudstic restore <snapshot-hash>
 
-# Restore using a snapshot hash prefix
-cloudstic restore -target ./restored -snapshot abc123
+# Restore to a custom output path
+cloudstic restore <snapshot-hash> -output ./my-backup.zip
 ```
 
 **Flags:**
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-target` | `./restore_out` | Directory to restore files into |
-| `-snapshot` | latest | Snapshot hash or prefix (defaults to the most recent snapshot) |
+| `-output` | `./restore.zip` | Output ZIP file path |
+
+The snapshot ID is a positional argument (defaults to latest if omitted).
 
 ---
 
@@ -598,7 +599,7 @@ If you lose your password, provide the 24-word seed phrase:
 
 ```bash
 cloudstic list -recovery-key "word1 word2 word3 ... word24"
-cloudstic restore -recovery-key "word1 word2 ... word24" -target ./restored
+cloudstic restore -recovery-key "word1 word2 ... word24"
 ```
 
 ### Adding a recovery key later

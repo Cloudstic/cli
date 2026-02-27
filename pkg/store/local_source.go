@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cloudstic/cli/pkg/core"
+	"github.com/cloudstic/cli/internal/core"
 )
 
 func (s *LocalSource) Info() core.SourceInfo {

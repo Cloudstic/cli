@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cloudstic/cli/pkg/core"
+	"github.com/cloudstic/cli/internal/core"
 )
 
 func makeEntry(ref, created string, source *core.SourceInfo, tags []string) SnapshotEntry {

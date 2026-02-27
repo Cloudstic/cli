@@ -9,8 +9,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/cloudstic/cli/pkg/core"
-	"github.com/cloudstic/cli/pkg/retry"
+	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/internal/retry"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/microsoft"

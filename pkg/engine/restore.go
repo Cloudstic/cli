@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cloudstic/cli/pkg/core"
@@ -209,19 +210,64 @@ func (rm *RestoreManager) resolveSnapshot(ctx context.Context, ref string) (*cor
 // Metadata collection
 // ---------------------------------------------------------------------------
 
-// collectMetadata walks the HAMT and returns all entries keyed by FileID.
-func (rm *RestoreManager) collectMetadata(root string) (byID map[string]core.FileMeta, err error) {
-	byID = make(map[string]core.FileMeta)
-
-	err = rm.tree.Walk(root, func(_, valueRef string) error {
-		fm, err := rm.loadMeta(valueRef)
-		if err != nil {
-			return err
-		}
-		byID[fm.FileID] = *fm
+func (rm *RestoreManager) collectMetadata(root string) (map[string]core.FileMeta, error) {
+	var refs []string
+	err := rm.tree.Walk(root, func(_, valueRef string) error {
+		refs = append(refs, valueRef)
 		return nil
 	})
-	return byID, err
+	if err != nil {
+		return nil, err
+	}
+
+	phase := rm.reporter.StartPhase("Loading metadata", int64(len(refs)), false)
+
+	const workers = 20
+	type result struct {
+		meta core.FileMeta
+		err  error
+	}
+
+	jobs := make(chan string, len(refs))
+	results := make(chan result, len(refs))
+
+	var wg sync.WaitGroup
+	for range min(workers, len(refs)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for ref := range jobs {
+				fm, err := rm.loadMeta(ref)
+				if err != nil {
+					results <- result{err: err}
+					continue
+				}
+				results <- result{meta: *fm}
+			}
+		}()
+	}
+
+	for _, ref := range refs {
+		jobs <- ref
+	}
+	close(jobs)
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	byID := make(map[string]core.FileMeta, len(refs))
+	for res := range results {
+		if res.err != nil {
+			phase.Error()
+			return nil, res.err
+		}
+		byID[res.meta.FileID] = res.meta
+		phase.Increment(1)
+	}
+	phase.Done()
+	return byID, nil
 }
 
 func (rm *RestoreManager) loadMeta(ref string) (*core.FileMeta, error) {

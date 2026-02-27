@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"sync/atomic"
 	"time"
 
@@ -25,7 +26,6 @@ type backupStats struct {
 	dirsChanged     atomic.Int64
 	dirsUnmodified  atomic.Int64
 	dirsRemoved     atomic.Int64
-	bytesAddedRaw   atomic.Int64
 	startTime       time.Time
 }
 
@@ -63,7 +63,8 @@ func WithMeta(key, value string) BackupOption {
 // new or modified files, and persisting a snapshot backed by a Merkle-HAMT.
 type BackupManager struct {
 	source     store.Source
-	store      *store.MeteredStore
+	store      store.ObjectStore
+	keyCache   *store.KeyCacheStore
 	tree       *hamt.Tree
 	cache      *hamt.TransactionalStore
 	chunker    *Chunker
@@ -83,14 +84,15 @@ func NewBackupManager(src store.Source, dest store.ObjectStore, reporter ui.Repo
 	}
 
 	sourceInfo := src.Info()
-	meteredStore := store.NewMeteredStore(dest)
-	cache := hamt.NewTransactionalStore(meteredStore)
+	keyCache := store.NewKeyCacheStore(dest)
+	cache := hamt.NewTransactionalStore(keyCache)
 	return &BackupManager{
 		source:     src,
-		store:      meteredStore,
+		store:      keyCache,
+		keyCache:   keyCache,
 		tree:       hamt.NewTree(cache),
 		cache:      cache,
-		chunker:    NewChunker(meteredStore),
+		chunker:    NewChunker(keyCache),
 		reporter:   reporter,
 		sourceInfo: sourceInfo,
 		cfg:        cfg,
@@ -101,20 +103,20 @@ func NewBackupManager(src store.Source, dest store.ObjectStore, reporter ui.Repo
 // files, build a new HAMT root, and persist a snapshot.
 // RunResult holds the outcome of a successful backup run.
 type RunResult struct {
-	SnapshotHash    string
-	SnapshotRef     string
-	Root            string
-	FilesNew        int64
-	FilesChanged    int64
-	FilesUnmodified int64
-	FilesRemoved    int64
-	DirsNew         int64
-	DirsChanged     int64
-	DirsUnmodified  int64
-	DirsRemoved     int64
-	BytesAddedRaw   int64
-	BytesAdded      int64
-	Duration        time.Duration
+	SnapshotHash       string
+	SnapshotRef        string
+	Root               string
+	FilesNew           int64
+	FilesChanged       int64
+	FilesUnmodified    int64
+	FilesRemoved       int64
+	DirsNew            int64
+	DirsChanged        int64
+	DirsUnmodified     int64
+	DirsRemoved        int64
+	BytesAddedRaw      int64
+	BytesAddedStored   int64
+	Duration           time.Duration
 }
 
 func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
@@ -163,6 +165,10 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 		usedFullScan = true
 	}
 
+	if err := bm.keyCache.PreloadKeys(ctx, "chunk/", "content/", "node/"); err != nil {
+		return nil, fmt.Errorf("preload key cache: %w", err)
+	}
+
 	newRoot, err = bm.upload(ctx, pending, totalBytes, newRoot)
 	if err != nil {
 		return nil, err
@@ -182,8 +188,7 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 	if err := bm.cache.Flush(newRoot); err != nil {
 		return nil, fmt.Errorf("flush hamt nodes: %w", err)
 	}
-	bytesAdded := bm.store.BytesWritten()
-	bm.store.Reset()
+
 	return &RunResult{
 		SnapshotHash:    snapHash,
 		SnapshotRef:     snapRef,
@@ -196,8 +201,6 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 		DirsChanged:     bm.stats.dirsChanged.Load(),
 		DirsUnmodified:  bm.stats.dirsUnmodified.Load(),
 		DirsRemoved:     bm.stats.dirsRemoved.Load(),
-		BytesAddedRaw:   bm.stats.bytesAddedRaw.Load(),
-		BytesAdded:      bytesAdded,
 		Duration:        time.Since(bm.stats.startTime),
 	}, nil
 }
@@ -448,12 +451,9 @@ func (bm *BackupManager) scanIncremental(ctx context.Context, oldRoot string, in
 // ---------------------------------------------------------------------------
 
 type uploadResult struct {
-	fileID             string
-	ref                string
-	size               int64
-	newBytes           int64
-	newBytesCompressed int64
-	err                error
+	fileID string
+	ref    string
+	err    error
 }
 
 // upload processes the pending file queue with concurrent workers, inserts each
@@ -490,7 +490,6 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 			phase.Error()
 			return "", res.err
 		}
-		bm.stats.bytesAddedRaw.Add(res.newBytes)
 		root, err = bm.tree.Insert(root, res.fileID, res.ref)
 		if err != nil {
 			phase.Error()
@@ -509,7 +508,7 @@ func (bm *BackupManager) processFile(ctx context.Context, meta core.FileMeta, ph
 		phase.Log(fmt.Sprintf("Processing: %s", meta.Name))
 	}
 
-	contentHash, size, newBytes, newBytesCompressed, err := bm.uploadContent(ctx, meta, phase)
+	contentHash, size, err := bm.uploadContent(ctx, meta, phase)
 	if err != nil {
 		return uploadResult{err: err}
 	}
@@ -524,39 +523,86 @@ func (bm *BackupManager) processFile(ctx context.Context, meta core.FileMeta, ph
 	if err := bm.store.Put(ctx, metaRef, metaData); err != nil {
 		return uploadResult{err: err}
 	}
-	return uploadResult{fileID: meta.FileID, ref: metaRef, size: size, newBytes: newBytes, newBytesCompressed: newBytesCompressed}
+	return uploadResult{fileID: meta.FileID, ref: metaRef}
 }
+
+// inlineThreshold is the maximum file size for which content is stored inline
+// in the Content object rather than as separate chunk objects. This avoids
+// per-chunk Exists+Put round trips to the backend store.
+const inlineThreshold = 512 * 1024 // 512 KiB (matches CDC min chunk size)
 
 // uploadContent streams, chunks, and stores the file content. If the content
 // already exists (dedup by hash), the upload is skipped and newBytes is zero.
-func (bm *BackupManager) uploadContent(ctx context.Context, meta core.FileMeta, phase ui.Phase) (hash string, size, newBytes, newBytesCompressed int64, err error) {
+// Small files (below inlineThreshold) are stored inline in the Content object
+// to reduce the number of backend API calls.
+func (bm *BackupManager) uploadContent(ctx context.Context, meta core.FileMeta, phase ui.Phase) (hash string, size int64, err error) {
 	if meta.ContentHash != "" {
 		exists, err := bm.store.Exists(ctx, "content/"+meta.ContentHash)
 		if err == nil && exists {
 			if bm.cfg.verbose {
 				phase.Log(fmt.Sprintf("Deduplicated: %s", meta.Name))
 			}
-			return meta.ContentHash, meta.Size, 0, 0, nil
+			return meta.ContentHash, meta.Size, nil
 		}
 	}
 
 	rc, err := bm.source.GetFileStream(meta.FileID)
 	if err != nil {
-		return "", 0, 0, 0, fmt.Errorf("get stream for %s: %w", meta.FileID, err)
+		return "", 0, fmt.Errorf("get stream for %s: %w", meta.FileID, err)
 	}
 	defer func() { _ = rc.Close() }()
 
-	chunkRefs, size, newBytes, newBytesCompressed, hash, err := bm.chunker.ProcessStream(rc, func(n int64) {
+	if meta.Size > 0 && meta.Size <= inlineThreshold {
+		return bm.uploadInline(ctx, rc, meta, phase)
+	}
+
+	chunkRefs, size, hash, err := bm.chunker.ProcessStream(rc, func(n int64) {
 		phase.Increment(n)
 	})
 	if err != nil {
-		return "", 0, 0, 0, fmt.Errorf("chunking %s: %w", meta.Name, err)
+		return "", 0, fmt.Errorf("chunking %s: %w", meta.Name, err)
 	}
 
 	if _, err := bm.chunker.CreateContentObject(chunkRefs, size, hash); err != nil {
-		return "", 0, 0, 0, fmt.Errorf("create content for %s: %w", meta.Name, err)
+		return "", 0, fmt.Errorf("create content for %s: %w", meta.Name, err)
 	}
-	return hash, size, newBytes, newBytesCompressed, nil
+	return hash, size, nil
+}
+
+// uploadInline reads the entire file into memory and stores it directly inside
+// the Content object, bypassing the chunker. This turns 3 backend calls
+// (chunk Exists + chunk Put + content Put) into a single content Put.
+func (bm *BackupManager) uploadInline(ctx context.Context, r io.Reader, meta core.FileMeta, phase ui.Phase) (hash string, size int64, err error) {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return "", 0, fmt.Errorf("read %s: %w", meta.Name, err)
+	}
+
+	size = int64(len(data))
+	phase.Increment(size)
+	hash = core.ComputeHash(data)
+
+	contentKey := "content/" + hash
+	if exists, _ := bm.store.Exists(ctx, contentKey); exists {
+		if bm.cfg.verbose {
+			phase.Log(fmt.Sprintf("Deduplicated: %s", meta.Name))
+		}
+		return hash, size, nil
+	}
+
+	content := core.Content{
+		Type:          core.ObjectTypeContent,
+		Size:          size,
+		DataInlineB64: data,
+	}
+	contentData, err := json.Marshal(content)
+	if err != nil {
+		return "", 0, err
+	}
+	if err := bm.store.Put(ctx, contentKey, contentData); err != nil {
+		return "", 0, err
+	}
+	return hash, size, nil
 }
 
 // ---------------------------------------------------------------------------

@@ -1,8 +1,6 @@
 package engine
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -27,8 +25,8 @@ const (
 	cdcMaxSize = 8 * 1024 * 1024 // 8 MiB
 )
 
-// Chunker splits a byte stream into content-defined chunks, compresses and
-// deduplicates them, and persists the resulting Content object.
+// Chunker splits a byte stream into content-defined chunks, deduplicates
+// them, and persists the resulting Content object.
 type Chunker struct {
 	store store.ObjectStore
 }
@@ -37,13 +35,12 @@ func NewChunker(s store.ObjectStore) *Chunker {
 	return &Chunker{store: s}
 }
 
-// ProcessStream splits r into content-defined chunks, compresses each one, and
-// stores it (skipping duplicates). It returns the ordered chunk refs, total
-// byte count, the raw and compressed sizes of truly new chunks, and the SHA-256
-// content hash over the raw stream.
+// ProcessStream splits r into content-defined chunks and stores each one
+// (skipping duplicates). It returns the ordered chunk refs, total byte count,
+// and the SHA-256 content hash over the raw stream.
 //
 // onProgress is called after each chunk with the number of raw bytes consumed.
-func (c *Chunker) ProcessStream(r io.Reader, onProgress func(int64)) (refs []string, size int64, newBytes int64, newBytesCompressed int64, hash string, err error) {
+func (c *Chunker) ProcessStream(r io.Reader, onProgress func(int64)) (refs []string, size int64, hash string, err error) {
 	cdcMu.Lock()
 	cdc, err := fastcdc.NewChunker(r, fastcdc.Options{
 		MinSize:     cdcMinSize,
@@ -52,7 +49,7 @@ func (c *Chunker) ProcessStream(r io.Reader, onProgress func(int64)) (refs []str
 	})
 	cdcMu.Unlock()
 	if err != nil {
-		return nil, 0, 0, 0, "", err
+		return nil, 0, "", err
 	}
 
 	ctx := context.Background()
@@ -64,11 +61,11 @@ func (c *Chunker) ProcessStream(r io.Reader, onProgress func(int64)) (refs []str
 			break
 		}
 		if err != nil {
-			return nil, 0, 0, 0, "", err
+			return nil, 0, "", err
 		}
 
 		if _, err := hasher.Write(chunk.Data); err != nil {
-			return nil, 0, 0, 0, "", err
+			return nil, 0, "", err
 		}
 
 		n := int64(chunk.Length)
@@ -77,17 +74,15 @@ func (c *Chunker) ProcessStream(r io.Reader, onProgress func(int64)) (refs []str
 			onProgress(n)
 		}
 
-		ref, raw, compressed, err := c.storeChunk(ctx, chunk.Data)
+		ref, err := c.storeChunk(ctx, chunk.Data)
 		if err != nil {
-			return nil, 0, 0, 0, "", err
+			return nil, 0, "", err
 		}
-		newBytes += raw
-		newBytesCompressed += compressed
 		refs = append(refs, ref)
 	}
 
 	hash = hex.EncodeToString(hasher.Sum(nil))
-	return refs, size, newBytes, newBytesCompressed, hash, nil
+	return refs, size, hash, nil
 }
 
 // CreateContentObject persists a Content object keyed by contentHash and
@@ -111,38 +106,19 @@ func (c *Chunker) CreateContentObject(chunkRefs []string, size int64, contentHas
 	return ref, nil
 }
 
-// storeChunk compresses data with gzip and writes it to chunk/<hash>,
-// skipping the write if the key already exists (dedup).
-// Returns the raw and compressed sizes of newly stored data (both zero when deduped).
-func (c *Chunker) storeChunk(ctx context.Context, data []byte) (ref string, rawNew int64, compressedNew int64, err error) {
-	ref = "chunk/" + core.ComputeHash(data)
+func (c *Chunker) storeChunk(ctx context.Context, data []byte) (string, error) {
+	ref := "chunk/" + core.ComputeHash(data)
 
 	exists, err := c.store.Exists(ctx, ref)
 	if err != nil {
-		return "", 0, 0, err
+		return "", err
 	}
 	if exists {
-		return ref, 0, 0, nil
+		return ref, nil
 	}
 
-	compressed, err := gzipCompress(data)
-	if err != nil {
-		return "", 0, 0, err
+	if err := c.store.Put(ctx, ref, data); err != nil {
+		return "", err
 	}
-	if err := c.store.Put(ctx, ref, compressed); err != nil {
-		return "", 0, 0, err
-	}
-	return ref, int64(len(data)), int64(len(compressed)), nil
-}
-
-func gzipCompress(data []byte) ([]byte, error) {
-	var buf bytes.Buffer
-	zw := gzip.NewWriter(&buf)
-	if _, err := zw.Write(data); err != nil {
-		return nil, err
-	}
-	if err := zw.Close(); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
+	return ref, nil
 }

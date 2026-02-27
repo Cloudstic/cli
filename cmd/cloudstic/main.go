@@ -194,48 +194,56 @@ func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 
 const configKey = "config"
 
-// openStore creates the object store for commands that operate on an
-// existing repository. It checks that the repo has been initialized (the
-// "config" marker exists) and opens encryption if needed.
-func (g *globalFlags) openStore() (store.ObjectStore, error) {
+func (g *globalFlags) openStore() (store.ObjectStore, []byte, error) {
 	raw, err := g.initObjectStore()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	cfg, err := loadRepoConfig(raw)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if cfg == nil {
-		return nil, fmt.Errorf("repository not initialized -- run 'cloudstic init' first")
+		return nil, nil, fmt.Errorf("repository not initialized -- run 'cloudstic init' first")
 	}
 
 	if !cfg.Encrypted {
-		return raw, nil
+		return raw, nil, nil
 	}
 
 	platformKey, err := g.parsePlatformKey()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(platformKey) == 0 && *g.encryptionPassword == "" && *g.recoveryKey == "" {
-		return nil, fmt.Errorf("repository is encrypted -- provide --encryption-key, --encryption-password, or --recovery-key")
+		return nil, nil, fmt.Errorf("repository is encrypted -- provide --encryption-key, --encryption-password, or --recovery-key")
 	}
 
 	slots, err := g.loadKeySlots(raw)
 	if err != nil {
-		return nil, fmt.Errorf("load encryption key slots: %w", err)
+		return nil, nil, fmt.Errorf("load encryption key slots: %w", err)
 	}
 	if len(slots) == 0 {
-		return nil, fmt.Errorf("repository is encrypted but no key slots found")
+		return nil, nil, fmt.Errorf("repository is encrypted but no key slots found")
 	}
 
 	encKey, err := openExistingSlots(slots, platformKey, *g.encryptionPassword, *g.recoveryKey)
 	if err != nil {
+		return nil, nil, err
+	}
+	return raw, encKey, nil
+}
+
+func (g *globalFlags) openClient() (*cloudstic.Client, error) {
+	raw, encKey, err := g.openStore()
+	if err != nil {
 		return nil, err
 	}
-	return store.NewEncryptedStore(raw, encKey), nil
+	return cloudstic.NewClient(raw,
+		cloudstic.WithEncryptionKey(encKey),
+		cloudstic.WithReporter(ui.NewConsoleReporter()),
+	), nil
 }
 
 func loadRepoConfig(s store.ObjectStore) (*core.RepoConfig, error) {
@@ -645,13 +653,11 @@ func runDiff() {
 
 	ctx := context.Background()
 
-	s, err := g.openStore()
+	client, err := g.openClient()
 	if err != nil {
 		fmt.Printf("Failed to init store: %v\n", err)
 		os.Exit(1)
 	}
-
-	client := cloudstic.NewClient(s, cloudstic.WithReporter(ui.NewConsoleReporter()))
 	result, err := client.Diff(ctx, snap1, snap2)
 	if err != nil {
 		fmt.Printf("Diff failed: %v\n", err)
@@ -699,13 +705,11 @@ func runForget() {
 
 	ctx := context.Background()
 
-	s, err := g.openStore()
+	client, err := g.openClient()
 	if err != nil {
 		fmt.Printf("Failed to init store: %v\n", err)
 		os.Exit(1)
 	}
-
-	client := cloudstic.NewClient(s, cloudstic.WithReporter(ui.NewConsoleReporter()))
 
 	if hasPolicy {
 		var opts []cloudstic.ForgetOption
@@ -894,13 +898,11 @@ func runPrune() {
 
 	ctx := context.Background()
 
-	s, err := g.openStore()
+	client, err := g.openClient()
 	if err != nil {
 		fmt.Printf("Failed to init store: %v\n", err)
 		os.Exit(1)
 	}
-
-	client := cloudstic.NewClient(s, cloudstic.WithReporter(ui.NewConsoleReporter()))
 	result, err := client.Prune(ctx)
 	if err != nil {
 		fmt.Printf("Prune failed: %v\n", err)
@@ -948,7 +950,7 @@ func printBackupSummary(r *engine.RunResult) {
 	fmt.Printf("Dirs:   %d new,  %d changed,  %d unmodified,  %d removed\n",
 		r.DirsNew, r.DirsChanged, r.DirsUnmodified, r.DirsRemoved)
 	fmt.Printf("Added to the repository: %s (%s compressed)\n",
-		formatBytes(r.BytesAddedRaw), formatBytes(r.BytesAdded))
+		formatBytes(r.BytesAddedRaw), formatBytes(r.BytesAddedStored))
 	fmt.Printf("Processed %d entries in %s\n",
 		total, r.Duration.Round(time.Second))
 	fmt.Printf("Snapshot %s saved\n", r.SnapshotHash)
@@ -976,7 +978,7 @@ func runBackup() {
 		os.Exit(1)
 	}
 
-	dest, err := g.openStore()
+	client, err := g.openClient()
 	if err != nil {
 		fmt.Printf("Failed to init store: %v\n", err)
 		os.Exit(1)
@@ -989,7 +991,6 @@ func runBackup() {
 	if len(tags) > 0 {
 		backupOpts = append(backupOpts, cloudstic.WithTags(tags...))
 	}
-	client := cloudstic.NewClient(dest, cloudstic.WithReporter(ui.NewConsoleReporter()))
 	result, err := client.Backup(ctx, src, backupOpts...)
 	if err != nil {
 		fmt.Printf("Backup failed: %v\n", err)
@@ -1008,13 +1009,11 @@ func runRestore() {
 
 	ctx := context.Background()
 
-	s, err := g.openStore()
+	client, err := g.openClient()
 	if err != nil {
 		fmt.Printf("Failed to init store: %v\n", err)
 		os.Exit(1)
 	}
-
-	client := cloudstic.NewClient(s, cloudstic.WithReporter(ui.NewConsoleReporter()))
 	result, err := client.Restore(ctx, *targetPath, *snapshot)
 	if err != nil {
 		fmt.Printf("Restore failed: %v\n", err)
@@ -1036,13 +1035,11 @@ func runList() {
 
 	ctx := context.Background()
 
-	s, err := g.openStore()
+	client, err := g.openClient()
 	if err != nil {
 		fmt.Printf("Failed to init store: %v\n", err)
 		os.Exit(1)
 	}
-
-	client := cloudstic.NewClient(s, cloudstic.WithReporter(ui.NewConsoleReporter()))
 	result, err := client.List(ctx)
 	if err != nil {
 		fmt.Printf("List failed: %v\n", err)
@@ -1066,13 +1063,12 @@ func runLsSnapshot() {
 
 	ctx := context.Background()
 
-	s, err := g.openStore()
+	client, err := g.openClient()
 	if err != nil {
 		fmt.Printf("Failed to init store: %v\n", err)
 		os.Exit(1)
 	}
-
-	client := cloudstic.NewClient(s, cloudstic.WithReporter(ui.NewConsoleReporter()))
+	start := time.Now()
 	result, err := client.LsSnapshot(ctx, snapshotID)
 	if err != nil {
 		fmt.Printf("Ls failed: %v\n", err)
@@ -1081,6 +1077,7 @@ func runLsSnapshot() {
 
 	fmt.Printf("Listing files for snapshot: %s (Created: %s)\n", result.Ref, result.Snapshot.Created)
 	renderSnapshotTree(result)
+	fmt.Printf("\n%d entries listed in %s\n", len(result.RefToMeta), time.Since(start).Round(time.Millisecond))
 }
 
 // reorderArgs moves flag arguments before positional arguments so that Go's

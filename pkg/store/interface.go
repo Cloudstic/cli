@@ -4,7 +4,7 @@ import (
 	"context"
 	"io"
 
-	"github.com/cloudstic/cli/pkg/core"
+	"github.com/cloudstic/cli/internal/core"
 )
 
 // ObjectStore is the interface for content-addressable object storage.

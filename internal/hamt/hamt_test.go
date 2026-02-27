@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cloudstic/cli/pkg/core"
+	"github.com/cloudstic/cli/internal/core"
 )
 
 // inMemoryStore implements store.ObjectStore for testing.

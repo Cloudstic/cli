@@ -4,10 +4,24 @@ import (
 	"context"
 	"io"
 
-	"github.com/cloudstic/cli/pkg/engine"
+	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/internal/engine"
+	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/store"
-	"github.com/cloudstic/cli/pkg/ui"
 )
+
+// ---------------------------------------------------------------------------
+// Re-exported types from internal packages
+// ---------------------------------------------------------------------------
+
+// RepoConfig is the repository marker written by "init".
+type RepoConfig = core.RepoConfig
+
+// Reporter defines the interface for progress reporting.
+type Reporter = ui.Reporter
+
+// Phase represents an active progress tracking phase.
+type Phase = ui.Phase
 
 // ---------------------------------------------------------------------------
 // Client
@@ -17,7 +31,7 @@ import (
 type ClientOption func(*Client)
 
 // WithReporter sets the progress reporter for the client.
-func WithReporter(r ui.Reporter) ClientOption {
+func WithReporter(r Reporter) ClientOption {
 	return func(c *Client) { c.reporter = r }
 }
 
@@ -60,6 +74,7 @@ func (c *Client) Store() store.ObjectStore { return c.store }
 // ---------------------------------------------------------------------------
 
 type BackupOption = engine.BackupOption
+type BackupResult = engine.RunResult
 
 var (
 	WithVerbose   = engine.WithVerbose
@@ -68,7 +83,7 @@ var (
 	WithMeta      = engine.WithMeta
 )
 
-func (c *Client) Backup(ctx context.Context, src store.Source, opts ...BackupOption) (*engine.RunResult, error) {
+func (c *Client) Backup(ctx context.Context, src store.Source, opts ...BackupOption) (*BackupResult, error) {
 	rawMeter := store.NewMeteredStore(c.store)
 	c.storedMeter.Reset()
 
@@ -126,8 +141,9 @@ func (c *Client) LsSnapshot(ctx context.Context, snapshotID string, opts ...LsSn
 // ---------------------------------------------------------------------------
 
 type PruneOption = engine.PruneOption
+type PruneResult = engine.PruneResult
 
-func (c *Client) Prune(ctx context.Context, opts ...PruneOption) (*engine.PruneResult, error) {
+func (c *Client) Prune(ctx context.Context, opts ...PruneOption) (*PruneResult, error) {
 	mgr := engine.NewPruneManager(c.store, c.reporter)
 	return mgr.Run(ctx, opts...)
 }
@@ -137,6 +153,7 @@ func (c *Client) Prune(ctx context.Context, opts ...PruneOption) (*engine.PruneR
 // ---------------------------------------------------------------------------
 
 type ForgetOption = engine.ForgetOption
+type ForgetResult = engine.ForgetResult
 
 var (
 	WithPrune         = engine.WithPrune
@@ -156,7 +173,7 @@ var (
 
 type PolicyResult = engine.PolicyResult
 
-func (c *Client) Forget(ctx context.Context, snapshotID string, opts ...ForgetOption) (*engine.ForgetResult, error) {
+func (c *Client) Forget(ctx context.Context, snapshotID string, opts ...ForgetOption) (*ForgetResult, error) {
 	mgr := engine.NewForgetManager(c.store, c.reporter)
 	return mgr.Run(ctx, snapshotID, opts...)
 }

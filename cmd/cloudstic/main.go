@@ -12,12 +12,12 @@ import (
 	"time"
 
 	"github.com/cloudstic/cli"
-	"github.com/cloudstic/cli/pkg/core"
+	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/pkg/crypto"
-	"github.com/cloudstic/cli/pkg/engine"
-	"github.com/cloudstic/cli/pkg/paths"
+	"github.com/cloudstic/cli/internal/engine"
+	"github.com/cloudstic/cli/internal/paths"
 	"github.com/cloudstic/cli/pkg/store"
-	"github.com/cloudstic/cli/pkg/ui"
+	"github.com/cloudstic/cli/internal/ui"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"

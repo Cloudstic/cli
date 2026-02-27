@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/cloudstic/cli/pkg/core"
-	"github.com/cloudstic/cli/pkg/ui"
+	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/internal/ui"
 )
 
 func TestForgetManager_Run(t *testing.T) {

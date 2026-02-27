@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cloudstic/cli/pkg/core"
-	"github.com/cloudstic/cli/pkg/hamt"
+	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/internal/hamt"
 	"github.com/cloudstic/cli/pkg/store"
 )
 

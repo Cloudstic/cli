@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/cloudstic/cli/pkg/core"
+	"github.com/cloudstic/cli/internal/core"
 
 	"google.golang.org/api/drive/v3"
 )

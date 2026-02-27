@@ -7,8 +7,8 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/cloudstic/cli/pkg/core"
-	"github.com/cloudstic/cli/pkg/retry"
+	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/internal/retry"
 )
 
 // OneDriveChangeSource is an IncrementalSource backed by the Microsoft Graph

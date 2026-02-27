@@ -159,6 +159,17 @@ See [Environment Variables](#environment-variables) for the full list.
 
 ## Commands
 
+### Global flags
+
+These flags apply to all commands:
+
+| Flag | Description |
+|------|-------------|
+| `-verbose` | Log detailed file-level operations (files scanned, written, deleted) |
+| `-quiet` | Suppress progress bars (keeps final summary output) |
+
+`-verbose` and `-quiet` are mutually exclusive. If both are set, `-quiet` takes precedence.
+
 ### init
 
 Initialize a new repository. Encryption is **required by default**.
@@ -212,6 +223,9 @@ cloudstic backup -source local -source-path ~/Documents -tag daily -tag importan
 
 # Verbose output (shows individual files)
 cloudstic backup -source local -source-path ~/Documents -verbose
+
+# Dry run — see what would change without writing to the store
+cloudstic backup -source local -source-path ~/Documents -dry-run
 ```
 
 **Flags:**
@@ -223,7 +237,7 @@ cloudstic backup -source local -source-path ~/Documents -verbose
 | `-drive-id` | | Shared drive ID for Google Drive (omit for My Drive) |
 | `-root-folder` | | Root folder ID for Google Drive (defaults to entire drive) |
 | `-tag` | | Tag to apply to the snapshot (repeatable) |
-| `-verbose` | `false` | Show detailed file-level output |
+| `-dry-run` | `false` | Scan source and report changes without writing to the store |
 
 The `gdrive-changes` and `onedrive-changes` source types use their respective change/delta APIs for faster incremental backups after the first full backup.
 
@@ -242,6 +256,9 @@ cloudstic restore <snapshot-hash>
 
 # Restore to a custom output path
 cloudstic restore <snapshot-hash> -output ./my-backup.zip
+
+# Dry run — see what would be restored without writing the archive
+cloudstic restore -dry-run
 ```
 
 **Flags:**
@@ -249,6 +266,7 @@ cloudstic restore <snapshot-hash> -output ./my-backup.zip
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-output` | `./restore.zip` | Output ZIP file path |
+| `-dry-run` | `false` | Show what would be restored without writing the archive |
 
 The snapshot ID is a positional argument (defaults to latest if omitted).
 
@@ -356,7 +374,19 @@ Remove unreachable data chunks that are no longer referenced by any snapshot. Ru
 
 ```bash
 cloudstic prune
+
+# Dry run — see what would be deleted without deleting
+cloudstic prune -dry-run
+
+# Verbose output — see each deleted key
+cloudstic prune -verbose
 ```
+
+**Flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-dry-run` | `false` | Show what would be deleted without deleting |
 
 ---
 

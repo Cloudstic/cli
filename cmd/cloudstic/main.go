@@ -76,10 +76,10 @@ func main() {
 func printUsage() {
 	t := ui.NewTermWriter(os.Stdout)
 
-	fmt.Fprintf(t.W, "%sCloudstic%s — Content-Addressable Backup System\n", ui.Bold, ui.Reset)
+	_, _ = fmt.Fprintf(t.W, "%sCloudstic%s — Content-Addressable Backup System\n", ui.Bold, ui.Reset)
 
 	t.Heading("USAGE")
-	fmt.Fprintf(t.W, "  cloudstic %s<command>%s [options]\n", ui.Cyan, ui.Reset)
+	_, _ = fmt.Fprintf(t.W, "  cloudstic %s<command>%s [options]\n", ui.Cyan, ui.Reset)
 
 	t.Heading("COMMANDS")
 	t.Commands([][2]string{
@@ -1182,11 +1182,11 @@ func runRestore() {
 		fmt.Printf("Failed to create output file: %v\n", err)
 		os.Exit(1)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	result, err := client.Restore(ctx, f, snapshotRef, restoreOpts...)
 	if err != nil {
-		os.Remove(*output)
+		_ = os.Remove(*output)
 		fmt.Printf("Restore failed: %v\n", err)
 		os.Exit(1)
 	}

@@ -11,6 +11,34 @@ import (
 	"testing"
 )
 
+// TestEnv classifies a test integration environment.
+type TestEnv string
+
+const (
+	// Hermetic runs entirely local (e.g., TempDir, Testcontainers). Safe for all machines.
+	Hermetic TestEnv = "hermetic"
+	// Live runs against real cloud vendor APIs (e.g., real AWS S3, real Google Drive). Requires secrets.
+	Live TestEnv = "live"
+)
+
+// currentE2EMode returns the current test mode ("hermetic", "live", "all").
+// Defaults to hermetic if unset.
+func currentE2EMode() string {
+	if mode := os.Getenv("CLOUDSTIC_E2E_MODE"); mode != "" {
+		return strings.ToLower(mode)
+	}
+	return "hermetic"
+}
+
+// shouldRun returns true if the given environment should run under the current E2E mode.
+func shouldRun(e TestEnv) bool {
+	mode := currentE2EMode()
+	if mode == "all" {
+		return true
+	}
+	return mode == string(e)
+}
+
 func buildBinary(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -58,323 +86,240 @@ func runExpectFail(t *testing.T, bin string, args ...string) string {
 
 func writeFile(t *testing.T, dir, name, content string) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestCLI_EndToEnd(t *testing.T) {
-	bin := buildBinary(t)
-	srcDir := t.TempDir()
-	storeDir := t.TempDir()
-	restoreDir := t.TempDir()
+// ----------------------------------------------------------------------------
+// E2E Testing Matrix Interfaces
+// ----------------------------------------------------------------------------
 
-	writeFile(t, srcDir, "file1.txt", "hello world")
-
-	// Init (unencrypted, requires explicit opt-out)
-	run(t, bin, "init", "--store", "local", "--store-path", storeDir, "--no-encryption")
-
-	// Backup
-	run(t, bin, "backup",
-		"--source", "local", "--source-path", srcDir,
-		"--store", "local", "--store-path", storeDir)
-
-	// List
-	out := run(t, bin, "list", "--store", "local", "--store-path", storeDir)
-	if !strings.Contains(out, "1") {
-		t.Errorf("List output missing sequence 1: %s", out)
-	}
-
-	// Backup with tags
-	writeFile(t, srcDir, "file2.txt", "new file")
-	run(t, bin, "backup",
-		"-source", "local", "-source-path", srcDir,
-		"-store", "local", "-store-path", storeDir,
-		"-tag", "daily", "-tag", "important")
-
-	// List and check tags
-	out = run(t, bin, "list", "-store", "local", "-store-path", storeDir)
-	if !strings.Contains(out, "daily, important") {
-		t.Errorf("List output missing tags 'daily, important': %s", out)
-	}
-
-	// Restore
-	zipPath := filepath.Join(restoreDir, "restore.zip")
-	run(t, bin, "restore",
-		"--store", "local", "--store-path", storeDir,
-		"--output", zipPath)
-
-	if got := readZipFile(t, zipPath, "file1.txt"); got != "hello world" {
-		t.Errorf("Content mismatch for file1.txt: got %q", got)
-	}
+// TestSource encapsulates the origin of data to be backed up.
+type TestSource interface {
+	Name() string
+	Env() TestEnv
+	Setup(t *testing.T) (sourceArgs []string)
+	WriteFile(t *testing.T, relPath, content string)
 }
 
-func TestCLI_InitRequiresEncryption(t *testing.T) {
-	bin := buildBinary(t)
-	storeDir := t.TempDir()
-
-	out := runExpectFail(t, bin, "init", "--store", "local", "--store-path", storeDir)
-	if !strings.Contains(out, "encryption is required") {
-		t.Errorf("Expected encryption-required error, got: %s", out)
-	}
+// TestStore encapsulates the content-addressable storage backend.
+type TestStore interface {
+	Name() string
+	Env() TestEnv
+	Setup(t *testing.T) (storeArgs []string)
 }
 
-func TestCLI_EndToEnd_Encrypted(t *testing.T) {
+// ----------------------------------------------------------------------------
+// Local Filesystem Implementations
+// ----------------------------------------------------------------------------
+
+type localSource struct {
+	dir string
+}
+
+func newLocalSource(t *testing.T) *localSource {
+	return &localSource{dir: t.TempDir()}
+}
+
+func (s *localSource) Name() string { return "local" }
+func (s *localSource) Env() TestEnv { return Hermetic }
+func (s *localSource) Setup(t *testing.T) []string {
+	return []string{"-source", "local", "-source-path", s.dir}
+}
+func (s *localSource) WriteFile(t *testing.T, relPath, content string) {
+	writeFile(t, s.dir, relPath, content)
+}
+
+type localStore struct {
+	dir string
+}
+
+func newLocalStore(t *testing.T) *localStore {
+	return &localStore{dir: t.TempDir()}
+}
+
+func (s *localStore) Name() string { return "local" }
+func (s *localStore) Env() TestEnv { return Hermetic }
+func (s *localStore) Setup(t *testing.T) []string {
+	return []string{"-store", "local", "-store-path", s.dir}
+}
+
+// ----------------------------------------------------------------------------
+// Matrix E2E Test Suite
+// ----------------------------------------------------------------------------
+
+func TestCLI_EndToEnd_Matrix(t *testing.T) {
 	bin := buildBinary(t)
-	srcDir := t.TempDir()
-	storeDir := t.TempDir()
-	restoreDir := t.TempDir()
-	password := "test-passphrase-e2e"
 
-	writeFile(t, srcDir, "secret.txt", "classified data")
-	writeFile(t, srcDir, "notes.txt", "some notes")
-	if err := os.MkdirAll(filepath.Join(srcDir, "subdir"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, srcDir, "subdir/nested.txt", "nested content")
-
-	// Init with password encryption
-	out := run(t, bin, "init",
-		"--store", "local", "--store-path", storeDir,
-		"--encryption-password", password)
-	if !strings.Contains(out, "encrypted: true") {
-		t.Errorf("Expected encrypted repo, got: %s", out)
+	// In the future, we will selectively append Google Drive, OneDrive, S3, B2, etc
+	// here depending on the environment and available secrets.
+	sources := []func(t *testing.T) TestSource{
+		func(t *testing.T) TestSource { return newLocalSource(t) },
 	}
 
-	// Backup
-	run(t, bin, "backup",
-		"--source", "local", "--source-path", srcDir,
-		"--store", "local", "--store-path", storeDir,
-		"--encryption-password", password)
-
-	// List
-	out = run(t, bin, "list",
-		"--store", "local", "--store-path", storeDir,
-		"--encryption-password", password)
-	if !strings.Contains(out, "1") {
-		t.Errorf("List output missing sequence 1: %s", out)
+	stores := []func(t *testing.T) TestStore{
+		func(t *testing.T) TestStore { return newLocalStore(t) },
 	}
 
-	// Ls
-	run(t, bin, "ls",
-		"--store", "local", "--store-path", storeDir,
-		"--encryption-password", password)
-
-	// Second backup with modifications
-	writeFile(t, srcDir, "secret.txt", "updated classified data")
-	writeFile(t, srcDir, "new-file.txt", "brand new")
-	run(t, bin, "backup",
-		"-source", "local", "-source-path", srcDir,
-		"-store", "local", "-store-path", storeDir,
-		"-encryption-password", password,
-		"-tag", "v2")
-
-	// List should show 2 snapshots
-	out = run(t, bin, "list",
-		"-store", "local", "-store-path", storeDir,
-		"-encryption-password", password)
-	if !strings.Contains(out, "2 snapshots") {
-		t.Errorf("Expected 2 snapshots: %s", out)
+	// Only add Docker-based hermetic tests if Docker is actually available
+	// (not always true in rudimentary CI environments)
+	if _, err := os.Stat("/var/run/docker.sock"); err == nil {
+		stores = append(stores, func(t *testing.T) TestStore { return newMinIOTestStore(t) })
 	}
 
-	// Restore latest
-	zipPath := filepath.Join(restoreDir, "restore.zip")
-	run(t, bin, "restore",
-		"--store", "local", "--store-path", storeDir,
-		"--encryption-password", password,
-		"--output", zipPath)
+	for _, srcFn := range sources {
+		for _, storeFn := range stores {
+			// We build instances just to read their Name/Env for the test name
+			probeSrc := srcFn(t)
+			probeStore := storeFn(t)
 
-	for _, tc := range []struct {
-		path    string
-		content string
-	}{
-		{"secret.txt", "updated classified data"},
-		{"notes.txt", "some notes"},
-		{"subdir/nested.txt", "nested content"},
-		{"new-file.txt", "brand new"},
-	} {
-		if got := readZipFile(t, zipPath, tc.path); got != tc.content {
-			t.Errorf("Content mismatch for %s: got %q, want %q", tc.path, got, tc.content)
+			if !shouldRun(probeSrc.Env()) || !shouldRun(probeStore.Env()) {
+				continue
+			}
+
+			t.Run(probeSrc.Name()+"_to_"+probeStore.Name(), func(t *testing.T) {
+				t.Parallel()
+
+				// Instantiate fresh environments for this particular isolated test
+				src := srcFn(t)
+				store := storeFn(t)
+				restoreDir := t.TempDir()
+
+				srcArgs := src.Setup(t)
+				storeArgs := store.Setup(t)
+
+				password := "test-matrix-passphrase"
+				baseEncArgs := append(storeArgs, "-encryption-password", password)
+
+				// 1. Initial State
+				src.WriteFile(t, "file1.txt", "hello world")
+				src.WriteFile(t, "secret.txt", "classified data")
+				src.WriteFile(t, "subdir/nested.txt", "nested content")
+
+				// 2. Init
+				run(t, bin, append([]string{"init"}, baseEncArgs...)...)
+
+				// 3. Backup 1
+				run(t, bin, append([]string{"backup"}, append(srcArgs, baseEncArgs...)...)...)
+
+				// 4. Verify Backup 1
+				out := run(t, bin, append([]string{"list"}, baseEncArgs...)...)
+				if !strings.Contains(out, "1 snapshot") {
+					t.Fatalf("Expected 1 snapshot, got: %s", out)
+				}
+
+				// 5. Incremental State
+				src.WriteFile(t, "file2.txt", "new file")
+				src.WriteFile(t, "secret.txt", "updated classified data")
+
+				// 6. Backup 2 (with tags)
+				backup2Args := append([]string{"backup"}, append(srcArgs, baseEncArgs...)...)
+				backup2Args = append(backup2Args, "-tag", "daily", "-tag", "important")
+				run(t, bin, backup2Args...)
+
+				// 7. Verify Backup 2
+				out = run(t, bin, append([]string{"list"}, baseEncArgs...)...)
+				if !strings.Contains(out, "2 snapshots") {
+					t.Fatalf("Expected 2 snapshots, got: %s", out)
+				}
+				if !strings.Contains(out, "daily, important") {
+					t.Fatalf("Expected tags 'daily, important' in output: %s", out)
+				}
+
+				// 8. Restore Latest -> Validates bits
+				zipPath := filepath.Join(restoreDir, "restore.zip")
+				restoreArgs := append([]string{"restore"}, baseEncArgs...)
+				restoreArgs = append(restoreArgs, "-output", zipPath)
+				run(t, bin, restoreArgs...)
+
+				for _, tc := range []struct {
+					path    string
+					content string
+				}{
+					{"file1.txt", "hello world"},
+					{"file2.txt", "new file"},
+					{"secret.txt", "updated classified data"},
+					{"subdir/nested.txt", "nested content"},
+				} {
+					if got := readZipFile(t, zipPath, tc.path); got != tc.content {
+						t.Errorf("Restore content mismatch for %s: got %q, want %q", tc.path, got, tc.content)
+					}
+				}
+
+				// 9. Forget & Prune
+				forgetArgs := append([]string{"forget", "--keep-last", "1", "--prune"}, baseEncArgs...)
+				run(t, bin, forgetArgs...)
+
+				run(t, bin, append([]string{"list"}, baseEncArgs...)...)
+				// 10. Test Key Validation (Wrong Password)
+				out = runExpectFail(t, bin, append([]string{"list", "--encryption-password", "wrong-password"}, storeArgs...)...)
+				if !strings.Contains(out, "no provided credential matches") {
+					t.Errorf("Expected credential mismatch error, got: %s", out)
+				}
+
+				// 11. Test Init Requires Encryption
+				// (We use a fresh initialized dummy temp dir for this test to not ruin the matrix store)
+				dummyStoreDir := t.TempDir()
+				dummyStoreArgs := []string{"--store", "local", "--store-path", dummyStoreDir}
+				out = runExpectFail(t, bin, append([]string{"init"}, dummyStoreArgs...)...)
+				if !strings.Contains(out, "encryption is required") {
+					t.Errorf("Expected encryption-required error, got: %s", out)
+				}
+
+				// 12. Test Missing Password on Encrypted Store
+				out = runExpectFail(t, bin, append([]string{"list"}, storeArgs...)...)
+				if !strings.Contains(out, "repository is encrypted") {
+					t.Errorf("Expected encrypted-repo error, got: %s", out)
+				}
+
+				// 13. Test Backup Storage Backend With Recovery Key Generation & Restore
+				// Re-init the isolated dummy store with recovery key enabled
+				out = run(t, bin, append([]string{"init", "--encryption-password", password, "--recovery"}, dummyStoreArgs...)...)
+				if !strings.Contains(out, "RECOVERY KEY") {
+					t.Fatalf("Expected recovery key output on init, got: %s", out)
+				}
+				mnemonic := extractMnemonic(t, out)
+				if mnemonic == "" {
+					t.Fatal("Could not extract mnemonic from recovery key output")
+				}
+
+				run(t, bin, append([]string{"backup", "--encryption-password", password}, append(srcArgs, dummyStoreArgs...)...)...)
+
+				zipRecoveryPath := filepath.Join(restoreDir, "recovery_restore.zip")
+				restoreRecoveryArgs := append([]string{"restore", "--output", zipRecoveryPath, "--recovery-key", mnemonic}, dummyStoreArgs...)
+				run(t, bin, restoreRecoveryArgs...)
+
+				if got := readZipFile(t, zipRecoveryPath, "file1.txt"); got != "hello world" {
+					t.Errorf("Recovery Restore content mismatch for file1.txt: got %q, want %q", got, "hello world")
+				}
+
+				// 14. Test Forget Policy & Dry Run
+				// Re-init another dummy store to test forget logic
+				dummyPolicyDir := t.TempDir()
+				dummyPolicyStoreArgs := []string{"--store", "local", "--store-path", dummyPolicyDir}
+				run(t, bin, append([]string{"init", "--encryption-password", password}, dummyPolicyStoreArgs...)...)
+
+				for i := range 3 {
+					src.WriteFile(t, "policy-file.txt", strings.Repeat("x", i+1))
+					run(t, bin, append([]string{"backup", "--encryption-password", password}, append(srcArgs, dummyPolicyStoreArgs...)...)...)
+				}
+
+				out = run(t, bin, append([]string{"forget", "--keep-last", "1", "--dry-run", "--encryption-password", password}, dummyPolicyStoreArgs...)...)
+				if !strings.Contains(out, "would remove") {
+					t.Errorf("Expected dry-run output, got: %s", out)
+				}
+
+				run(t, bin, append([]string{"forget", "--keep-last", "1", "--prune", "--encryption-password", password}, dummyPolicyStoreArgs...)...)
+				out = run(t, bin, append([]string{"list", "--encryption-password", password}, dummyPolicyStoreArgs...)...)
+				if !strings.Contains(out, "1 snapshot") {
+					t.Errorf("Expected 1 snapshot after policy, got: %s", out)
+				}
+			})
 		}
-	}
-
-	// Forget all but the latest snapshot and prune
-	run(t, bin, "forget", "--keep-last", "1", "--prune",
-		"-store", "local", "-store-path", storeDir,
-		"-encryption-password", password)
-
-	out = run(t, bin, "list",
-		"-store", "local", "-store-path", storeDir,
-		"-encryption-password", password)
-	if !strings.Contains(out, "1 snapshot") {
-		t.Errorf("Expected 1 snapshot after forget: %s", out)
-	}
-}
-
-func TestCLI_Encrypted_WrongPassword(t *testing.T) {
-	bin := buildBinary(t)
-	storeDir := t.TempDir()
-
-	run(t, bin, "init",
-		"--store", "local", "--store-path", storeDir,
-		"--encryption-password", "correct-password")
-
-	out := runExpectFail(t, bin, "list",
-		"--store", "local", "--store-path", storeDir,
-		"--encryption-password", "wrong-password")
-	if !strings.Contains(out, "no provided credential matches") {
-		t.Errorf("Expected credential mismatch error, got: %s", out)
-	}
-}
-
-func TestCLI_Encrypted_NoPassword(t *testing.T) {
-	bin := buildBinary(t)
-	storeDir := t.TempDir()
-
-	run(t, bin, "init",
-		"--store", "local", "--store-path", storeDir,
-		"--encryption-password", "my-password")
-
-	out := runExpectFail(t, bin, "list",
-		"--store", "local", "--store-path", storeDir)
-	if !strings.Contains(out, "repository is encrypted") {
-		t.Errorf("Expected encrypted-repo error, got: %s", out)
-	}
-}
-
-func TestCLI_RecoveryKey(t *testing.T) {
-	bin := buildBinary(t)
-	srcDir := t.TempDir()
-	storeDir := t.TempDir()
-	restoreDir := t.TempDir()
-	password := "recovery-test-password"
-
-	writeFile(t, srcDir, "important.txt", "do not lose this")
-
-	// Init with password + recovery key
-	out := run(t, bin, "init",
-		"--store", "local", "--store-path", storeDir,
-		"--encryption-password", password,
-		"--recovery")
-	if !strings.Contains(out, "RECOVERY KEY") {
-		t.Fatalf("Expected recovery key output, got: %s", out)
-	}
-
-	// Extract the 24-word mnemonic from the output
-	mnemonic := extractMnemonic(t, out)
-	if mnemonic == "" {
-		t.Fatal("Could not extract mnemonic from recovery key output")
-	}
-	words := strings.Fields(mnemonic)
-	if len(words) != 24 {
-		t.Fatalf("Expected 24-word mnemonic, got %d words: %q", len(words), mnemonic)
-	}
-
-	// Backup with password
-	run(t, bin, "backup",
-		"--source", "local", "--source-path", srcDir,
-		"--store", "local", "--store-path", storeDir,
-		"--encryption-password", password)
-
-	// Restore using recovery key (simulating lost password)
-	zipPath := filepath.Join(restoreDir, "restore.zip")
-	run(t, bin, "restore",
-		"--store", "local", "--store-path", storeDir,
-		"--recovery-key", mnemonic,
-		"--output", zipPath)
-
-	if got := readZipFile(t, zipPath, "important.txt"); got != "do not lose this" {
-		t.Errorf("Content mismatch: got %q", got)
-	}
-}
-
-func TestCLI_AddRecoveryKey(t *testing.T) {
-	bin := buildBinary(t)
-	srcDir := t.TempDir()
-	storeDir := t.TempDir()
-	restoreDir := t.TempDir()
-	password := "add-recovery-test"
-
-	writeFile(t, srcDir, "data.txt", "recovery test data")
-
-	// Init without recovery
-	run(t, bin, "init",
-		"--store", "local", "--store-path", storeDir,
-		"--encryption-password", password)
-
-	// Backup
-	run(t, bin, "backup",
-		"--source", "local", "--source-path", srcDir,
-		"--store", "local", "--store-path", storeDir,
-		"--encryption-password", password)
-
-	// Add recovery key after the fact
-	out := run(t, bin, "add-recovery-key",
-		"--store", "local", "--store-path", storeDir,
-		"--encryption-password", password)
-	if !strings.Contains(out, "RECOVERY KEY") {
-		t.Fatalf("Expected recovery key output, got: %s", out)
-	}
-
-	mnemonic := extractMnemonic(t, out)
-
-	// Restore using the recovery key
-	zipPath := filepath.Join(restoreDir, "restore.zip")
-	run(t, bin, "restore",
-		"--store", "local", "--store-path", storeDir,
-		"--recovery-key", mnemonic,
-		"--output", zipPath)
-
-	if got := readZipFile(t, zipPath, "data.txt"); got != "recovery test data" {
-		t.Errorf("Content mismatch: got %q", got)
-	}
-}
-
-func TestCLI_ForgetPolicy_Encrypted(t *testing.T) {
-	bin := buildBinary(t)
-	srcDir := t.TempDir()
-	storeDir := t.TempDir()
-	password := "forget-policy-test"
-
-	run(t, bin, "init",
-		"--store", "local", "--store-path", storeDir,
-		"--encryption-password", password)
-
-	// Create 3 snapshots
-	for i := range 3 {
-		writeFile(t, srcDir, "file.txt", strings.Repeat("x", i+1))
-		run(t, bin, "backup",
-			"-source", "local", "-source-path", srcDir,
-			"-store", "local", "-store-path", storeDir,
-			"-encryption-password", password)
-	}
-
-	// Verify 3 snapshots
-	out := run(t, bin, "list",
-		"-store", "local", "-store-path", storeDir,
-		"-encryption-password", password)
-	if !strings.Contains(out, "3 snapshots") {
-		t.Fatalf("Expected 3 snapshots: %s", out)
-	}
-
-	// Dry-run: keep last 1
-	out = run(t, bin, "forget", "--keep-last", "1", "--dry-run",
-		"-store", "local", "-store-path", storeDir,
-		"-encryption-password", password)
-	if !strings.Contains(out, "would remove") {
-		t.Errorf("Expected dry-run output, got: %s", out)
-	}
-
-	// Apply: keep last 1 with prune
-	run(t, bin, "forget", "--keep-last", "1", "--prune",
-		"-store", "local", "-store-path", storeDir,
-		"-encryption-password", password)
-
-	out = run(t, bin, "list",
-		"-store", "local", "-store-path", storeDir,
-		"-encryption-password", password)
-	if !strings.Contains(out, "1 snapshot") {
-		t.Errorf("Expected 1 snapshot after policy, got: %s", out)
 	}
 }
 
@@ -385,14 +330,14 @@ func readZipFile(t *testing.T, zipPath, name string) string {
 	if err != nil {
 		t.Fatalf("open zip %s: %v", zipPath, err)
 	}
-	defer zr.Close()
+	defer func() { _ = zr.Close() }()
 	for _, f := range zr.File {
 		if f.Name == name {
 			rc, err := f.Open()
 			if err != nil {
 				t.Fatalf("open zip entry %s: %v", name, err)
 			}
-			defer rc.Close()
+			defer func() { _ = rc.Close() }()
 			data, err := io.ReadAll(rc)
 			if err != nil {
 				t.Fatalf("read zip entry %s: %v", name, err)

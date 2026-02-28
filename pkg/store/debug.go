@@ -106,7 +106,7 @@ func (s *DebugStore) log(op, key string, bytes, count int, d time.Duration, err 
 		detail = fmt.Sprintf(" %s%s%s", cDim, fmtBytes(bytes), cReset)
 	}
 
-	fmt.Fprintf(s.w, "%s[store #%d]%s %s%-6s%s %-50s %s%7.1fms%s%s\n",
+	_, _ = fmt.Fprintf(s.w, "%s[store #%d]%s %s%-6s%s %-50s %s%7.1fms%s%s\n",
 		cDim, n, cReset,
 		oc, op, cReset,
 		key,

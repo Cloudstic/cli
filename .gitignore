@@ -7,3 +7,7 @@ restore_out/
 .idea/
 cloudstic
 dist/
+
+# Test output
+coverage.out
+test-output.json

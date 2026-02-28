@@ -409,10 +409,10 @@ func (g *globalFlags) loadKeySlots(rawStore store.ObjectStore) ([]store.KeySlot,
 	if hybrid, ok := rawStore.(*store.HybridStore); ok {
 		slots, err := store.LoadKeySlotsFromDB(hybrid.DB())
 		if err == nil && len(slots) > 0 {
-			store.SyncKeySlots(hybrid.B2(), slots)
+			store.SyncKeySlots(hybrid.Store(), slots)
 			return slots, nil
 		}
-		slots, err = store.LoadKeySlots(hybrid.B2())
+		slots, err = store.LoadKeySlots(hybrid.Store())
 		if err == nil && len(slots) > 0 {
 			return slots, nil
 		}

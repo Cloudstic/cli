@@ -18,17 +18,17 @@ type TxFunc func(fn func(ctx context.Context, tx pgx.Tx) error) error
 // all metadata objects (node, filemeta, content, snapshot, index) to
 // PostgreSQL with write-through to B2 for disaster recovery.
 type HybridStore struct {
-	db TxFunc
-	b2 *B2Store
+	db    TxFunc
+	store ObjectStore
 }
 
-func NewHybridStore(db TxFunc, b2 *B2Store) *HybridStore {
-	return &HybridStore{db: db, b2: b2}
+func NewHybridStore(db TxFunc, store ObjectStore) *HybridStore {
+	return &HybridStore{db: db, store: store}
 }
 
-// B2 returns the underlying B2 store for operations that need direct B2
+// Store returns the underlying store for operations that need direct
 // access (e.g. zip upload for restore, signed URLs).
-func (s *HybridStore) B2() *B2Store { return s.b2 }
+func (s *HybridStore) Store() ObjectStore { return s.store }
 
 // DB returns the TxFunc for direct database access (e.g. reading
 // encryption_key_slots that live outside app.objects).
@@ -36,7 +36,7 @@ func (s *HybridStore) DB() TxFunc { return s.db }
 
 func (s *HybridStore) Put(ctx context.Context, key string, data []byte) error {
 	if isChunk(key) || isKeySlot(key) {
-		return s.b2.Put(ctx, key, data)
+		return s.store.Put(ctx, key, data)
 	}
 	if err := s.db(func(ctx context.Context, tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `
@@ -47,7 +47,7 @@ func (s *HybridStore) Put(ctx context.Context, key string, data []byte) error {
 	}); err != nil {
 		return fmt.Errorf("db put %s: %w", key, err)
 	}
-	if err := s.b2.Put(ctx, key, data); err != nil {
+	if err := s.store.Put(ctx, key, data); err != nil {
 		log.Printf("WARN: b2 write-through failed for %s: %v", key, err)
 	}
 	return nil
@@ -55,7 +55,7 @@ func (s *HybridStore) Put(ctx context.Context, key string, data []byte) error {
 
 func (s *HybridStore) Get(ctx context.Context, key string) ([]byte, error) {
 	if isChunk(key) || isKeySlot(key) {
-		return s.b2.Get(ctx, key)
+		return s.store.Get(ctx, key)
 	}
 	var data []byte
 	if err := s.db(func(ctx context.Context, tx pgx.Tx) error {
@@ -71,7 +71,7 @@ func (s *HybridStore) Get(ctx context.Context, key string) ([]byte, error) {
 
 func (s *HybridStore) Exists(ctx context.Context, key string) (bool, error) {
 	if isChunk(key) || isKeySlot(key) {
-		return s.b2.Exists(ctx, key)
+		return s.store.Exists(ctx, key)
 	}
 	var exists bool
 	if err := s.db(func(ctx context.Context, tx pgx.Tx) error {
@@ -87,7 +87,7 @@ func (s *HybridStore) Exists(ctx context.Context, key string) (bool, error) {
 
 func (s *HybridStore) Delete(ctx context.Context, key string) error {
 	if isChunk(key) || isKeySlot(key) {
-		return s.b2.Delete(ctx, key)
+		return s.store.Delete(ctx, key)
 	}
 	if err := s.db(func(ctx context.Context, tx pgx.Tx) error {
 		_, err := tx.Exec(ctx,
@@ -98,7 +98,7 @@ func (s *HybridStore) Delete(ctx context.Context, key string) error {
 	}); err != nil {
 		return fmt.Errorf("db delete %s: %w", key, err)
 	}
-	if err := s.b2.Delete(ctx, key); err != nil {
+	if err := s.store.Delete(ctx, key); err != nil {
 		log.Printf("WARN: b2 write-through delete failed for %s: %v", key, err)
 	}
 	return nil
@@ -106,7 +106,7 @@ func (s *HybridStore) Delete(ctx context.Context, key string) error {
 
 func (s *HybridStore) List(ctx context.Context, prefix string) ([]string, error) {
 	if isChunk(prefix) || isKeySlot(prefix) {
-		return s.b2.List(ctx, prefix)
+		return s.store.List(ctx, prefix)
 	}
 
 	var keys []string
@@ -132,7 +132,7 @@ func (s *HybridStore) List(ctx context.Context, prefix string) ([]string, error)
 	}
 
 	if prefix == "" {
-		b2Keys, err := s.b2.List(ctx, "chunk/")
+		b2Keys, err := s.store.List(ctx, "chunk/")
 		if err != nil {
 			return nil, err
 		}
@@ -143,7 +143,7 @@ func (s *HybridStore) List(ctx context.Context, prefix string) ([]string, error)
 
 func (s *HybridStore) Size(ctx context.Context, key string) (int64, error) {
 	if isChunk(key) || isKeySlot(key) {
-		return s.b2.Size(ctx, key)
+		return s.store.Size(ctx, key)
 	}
 	var size int64
 	if err := s.db(func(ctx context.Context, tx pgx.Tx) error {
@@ -158,7 +158,7 @@ func (s *HybridStore) Size(ctx context.Context, key string) (int64, error) {
 }
 
 func (s *HybridStore) TotalSize(ctx context.Context) (int64, error) {
-	return s.b2.TotalSize(ctx)
+	return s.store.TotalSize(ctx)
 }
 
 func isChunk(key string) bool {

@@ -19,6 +19,7 @@ import (
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/crypto"
 	"github.com/cloudstic/cli/pkg/store"
+	"github.com/moby/term"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -303,16 +304,34 @@ func (g *globalFlags) openStore() (store.ObjectStore, []byte, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(platformKey) == 0 && *g.encryptionPassword == "" && *g.recoveryKey == "" {
-		return nil, nil, fmt.Errorf("repository is encrypted -- provide --encryption-key, --encryption-password, or --recovery-key")
-	}
-
 	slots, err := g.loadKeySlots(raw)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load encryption key slots: %w", err)
 	}
 	if len(slots) == 0 {
 		return nil, nil, fmt.Errorf("repository is encrypted but no key slots found")
+	}
+
+	if len(platformKey) == 0 && *g.encryptionPassword == "" && *g.recoveryKey == "" {
+		hasPasswordSlot := false
+		for _, s := range slots {
+			if s.SlotType == "password" {
+				hasPasswordSlot = true
+				break
+			}
+		}
+
+		if hasPasswordSlot && term.IsTerminal(os.Stdin.Fd()) {
+			pw, err := ui.PromptPassword("Repository password")
+			if err != nil {
+				return nil, nil, fmt.Errorf("read password: %w", err)
+			}
+			*g.encryptionPassword = pw
+		}
+
+		if *g.encryptionPassword == "" {
+			return nil, nil, fmt.Errorf("repository is encrypted -- provide --encryption-key, --encryption-password, or --recovery-key")
+		}
 	}
 
 	encKey, err := openExistingSlots(slots, platformKey, *g.encryptionPassword, *g.recoveryKey)
@@ -459,10 +478,34 @@ func runInit() {
 	hasEncryptionCreds := len(platformKey) > 0 || password != ""
 
 	if !hasEncryptionCreds && !*noEncryption {
-		fmt.Fprintln(os.Stderr, "Error: encryption is required by default.")
-		fmt.Fprintln(os.Stderr, "Provide --encryption-password or --encryption-key to encrypt your repository.")
-		fmt.Fprintln(os.Stderr, "To create an unencrypted repository, pass --no-encryption (not recommended).")
-		os.Exit(1)
+		if term.IsTerminal(os.Stdin.Fd()) {
+			pw, err := ui.PromptPassword("Enter new repository password")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to read password: %v\n", err)
+				os.Exit(1)
+			}
+			if pw == "" {
+				fmt.Fprintln(os.Stderr, "Error: encryption password cannot be empty.")
+				os.Exit(1)
+			}
+			// Confirm password
+			pw2, err := ui.PromptPassword("Confirm repository password")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to read password confirmation: %v\n", err)
+				os.Exit(1)
+			}
+			if pw != pw2 {
+				fmt.Fprintln(os.Stderr, "Error: passwords do not match.")
+				os.Exit(1)
+			}
+			password = pw
+			hasEncryptionCreds = true
+		} else {
+			fmt.Fprintln(os.Stderr, "Error: encryption is required by default.")
+			fmt.Fprintln(os.Stderr, "Provide --encryption-password or --encryption-key to encrypt your repository.")
+			fmt.Fprintln(os.Stderr, "To create an unencrypted repository, pass --no-encryption (not recommended).")
+			os.Exit(1)
+		}
 	}
 
 	encrypted := hasEncryptionCreds

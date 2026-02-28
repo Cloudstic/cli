@@ -46,6 +46,9 @@ brews:
     test: |
       system "#{bin}/cloudstic", "version"
 
+sboms:
+  - artifacts: archive
+
 changelog:
   sort: asc
   filters:

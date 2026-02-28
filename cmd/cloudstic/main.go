@@ -97,13 +97,18 @@ func printUsage() {
 
 	t.HeadingSub("GLOBAL OPTIONS", "(also settable via env vars)")
 	t.Flags([][2]string{
-		{"-store <type>", ui.Env("Storage backend: local, b2, s3, hybrid", "CLOUDSTIC_STORE")},
-		{"-store-path <path>", ui.Env("Local path or B2/S3 bucket name", "CLOUDSTIC_STORE_PATH")},
+		{"-store <type>", ui.Env("Storage backend: local, b2, s3, sftp, hybrid", "CLOUDSTIC_STORE")},
+		{"-store-path <path>", ui.Env("Local/SFTP path or B2/S3 bucket name", "CLOUDSTIC_STORE_PATH")},
 		{"-store-prefix <pfx>", ui.Env("Key prefix for B2/S3 objects", "CLOUDSTIC_STORE_PREFIX")},
 		{"-s3-endpoint <url>", ui.Env("S3 compatible endpoint (for MinIO, R2, etc.)", "CLOUDSTIC_S3_ENDPOINT")},
 		{"-s3-region <region>", ui.Env("S3 region", "CLOUDSTIC_S3_REGION")},
 		{"-s3-access-key <key>", ui.Env("S3 Access Key ID", "AWS_ACCESS_KEY_ID")},
 		{"-s3-secret-key <secret>", ui.Env("S3 Secret Access Key", "AWS_SECRET_ACCESS_KEY")},
+		{"-sftp-host <host>", ui.Env("SFTP server hostname", "CLOUDSTIC_SFTP_HOST")},
+		{"-sftp-port <port>", ui.Env("SFTP server port (default 22)", "CLOUDSTIC_SFTP_PORT")},
+		{"-sftp-user <user>", ui.Env("SFTP username", "CLOUDSTIC_SFTP_USER")},
+		{"-sftp-password <pw>", ui.Env("SFTP password", "CLOUDSTIC_SFTP_PASSWORD")},
+		{"-sftp-key <path>", ui.Env("Path to SSH private key", "CLOUDSTIC_SFTP_KEY")},
 		{"-database-url <url>", ui.Env("PostgreSQL URL (hybrid store)", "CLOUDSTIC_DATABASE_URL")},
 		{"-tenant-id <uuid>", ui.Env("Tenant ID for hybrid store RLS", "CLOUDSTIC_TENANT_ID")},
 		{"-verbose", "Log detailed file-level operations"},
@@ -142,8 +147,8 @@ func printUsage() {
 
 	t.Command("backup", "")
 	t.Flags([][2]string{
-		{"-source <type>", "local, gdrive, gdrive-changes, onedrive, onedrive-changes"},
-		{"-source-path <path>", "Path to local source directory (if source=local)"},
+		{"-source <type>", "local, sftp, gdrive, gdrive-changes, onedrive, onedrive-changes"},
+		{"-source-path <path>", "Path to source directory (local or SFTP remote path)"},
 		{"-drive-id <id>", "Shared drive ID for gdrive (omit for My Drive)"},
 		{"-root-folder <id>", "Root folder ID for gdrive (defaults to entire drive)"},
 		{"-tag <tag>", "Tag to apply to the snapshot (repeatable)"},
@@ -215,25 +220,48 @@ func envDefault(key, fallback string) string {
 }
 
 type globalFlags struct {
-	storeType, storePath, storePrefix *string
-	s3Endpoint, s3Region              *string
-	s3AccessKey, s3SecretKey          *string
-	databaseURL, tenantID             *string
-	encryptionKey, encryptionPassword *string
-	recoveryKey                       *string
-	verbose, quiet, debug             *bool
-	debugLog                          *ui.SafeLogWriter
+	storeType, storePath, storePrefix                 *string
+	s3Endpoint, s3Region                              *string
+	s3AccessKey, s3SecretKey                          *string
+	sftpHost, sftpPort                                *string
+	sftpUser, sftpPassword, sftpKey                   *string
+	sourceSFTPHost, sourceSFTPPort                    *string
+	sourceSFTPUser, sourceSFTPPassword, sourceSFTPKey *string
+	storeSFTPHost, storeSFTPPort                      *string
+	storeSFTPUser, storeSFTPPassword, storeSFTPKey    *string
+	databaseURL, tenantID                             *string
+	encryptionKey, encryptionPassword                 *string
+	recoveryKey                                       *string
+	verbose, quiet, debug                             *bool
+	debugLog                                          *ui.SafeLogWriter
 }
 
 func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 	g := &globalFlags{}
-	g.storeType = fs.String("store", envDefault("CLOUDSTIC_STORE", "local"), "store type (local, b2, s3, hybrid)")
-	g.storePath = fs.String("store-path", envDefault("CLOUDSTIC_STORE_PATH", "./backup_store"), "Local store path or B2/S3 bucket name")
+	g.storeType = fs.String("store", envDefault("CLOUDSTIC_STORE", "local"), "store type (local, b2, s3, sftp, hybrid)")
+	g.storePath = fs.String("store-path", envDefault("CLOUDSTIC_STORE_PATH", "./backup_store"), "Local/SFTP path or B2/S3 bucket name")
 	g.storePrefix = fs.String("store-prefix", envDefault("CLOUDSTIC_STORE_PREFIX", ""), "Key prefix for B2/S3 objects")
 	g.s3Endpoint = fs.String("s3-endpoint", envDefault("CLOUDSTIC_S3_ENDPOINT", ""), "S3 compatible endpoint URL")
 	g.s3Region = fs.String("s3-region", envDefault("CLOUDSTIC_S3_REGION", "us-east-1"), "S3 region")
 	g.s3AccessKey = fs.String("s3-access-key", envDefault("AWS_ACCESS_KEY_ID", ""), "S3 access key ID")
 	g.s3SecretKey = fs.String("s3-secret-key", envDefault("AWS_SECRET_ACCESS_KEY", ""), "S3 secret access key")
+	g.sftpHost = fs.String("sftp-host", envDefault("CLOUDSTIC_SFTP_HOST", ""), "SFTP server hostname")
+	g.sftpPort = fs.String("sftp-port", envDefault("CLOUDSTIC_SFTP_PORT", "22"), "SFTP server port")
+	g.sftpUser = fs.String("sftp-user", envDefault("CLOUDSTIC_SFTP_USER", ""), "SFTP username")
+	g.sftpPassword = fs.String("sftp-password", envDefault("CLOUDSTIC_SFTP_PASSWORD", ""), "SFTP password")
+	g.sftpKey = fs.String("sftp-key", envDefault("CLOUDSTIC_SFTP_KEY", ""), "Path to SSH private key")
+
+	g.sourceSFTPHost = fs.String("source-sftp-host", "", "Override: SFTP source hostname")
+	g.sourceSFTPPort = fs.String("source-sftp-port", "", "Override: SFTP source port")
+	g.sourceSFTPUser = fs.String("source-sftp-user", "", "Override: SFTP source username")
+	g.sourceSFTPPassword = fs.String("source-sftp-password", "", "Override: SFTP source password")
+	g.sourceSFTPKey = fs.String("source-sftp-key", "", "Override: SFTP source private key")
+
+	g.storeSFTPHost = fs.String("store-sftp-host", "", "Override: SFTP store hostname")
+	g.storeSFTPPort = fs.String("store-sftp-port", "", "Override: SFTP store port")
+	g.storeSFTPUser = fs.String("store-sftp-user", "", "Override: SFTP store username")
+	g.storeSFTPPassword = fs.String("store-sftp-password", "", "Override: SFTP store password")
+	g.storeSFTPKey = fs.String("store-sftp-key", "", "Override: SFTP store private key")
 	g.databaseURL = fs.String("database-url", envDefault("CLOUDSTIC_DATABASE_URL", ""), "PostgreSQL URL (required for hybrid store)")
 	g.tenantID = fs.String("tenant-id", envDefault("CLOUDSTIC_TENANT_ID", ""), "Tenant ID for hybrid store RLS")
 	g.encryptionKey = fs.String("encryption-key", envDefault("CLOUDSTIC_ENCRYPTION_KEY", ""), "Platform key (hex-encoded, 32 bytes)")
@@ -581,11 +609,55 @@ func (g *globalFlags) initObjectStore() (store.ObjectStore, error) {
 			return nil, fmt.Errorf("-store-path must be set to the S3 bucket name")
 		}
 		return store.NewS3Store(context.Background(), *g.s3Endpoint, *g.s3Region, *g.storePath, *g.s3AccessKey, *g.s3SecretKey, *g.storePrefix)
+	case "sftp":
+		cfg, err := g.sftpConfig(g.storeSFTPHost, g.storeSFTPPort, g.storeSFTPUser, g.storeSFTPPassword, g.storeSFTPKey)
+		if err != nil {
+			return nil, err
+		}
+		return store.NewSFTPStore(cfg, *g.storePath)
 	case "hybrid":
 		return g.initHybridStore()
 	default:
 		return nil, fmt.Errorf("unsupported store type: %s", *g.storeType)
 	}
+}
+
+func (g *globalFlags) sftpConfig(host, port, user, pass, key *string) (store.SFTPConfig, error) {
+	h := *host
+	if h == "" {
+		h = *g.sftpHost
+	}
+	p := *port
+	if p == "" {
+		p = *g.sftpPort
+	}
+	u := *user
+	if u == "" {
+		u = *g.sftpUser
+	}
+	pw := *pass
+	if pw == "" {
+		pw = *g.sftpPassword
+	}
+	k := *key
+	if k == "" {
+		k = *g.sftpKey
+	}
+
+	if h == "" {
+		return store.SFTPConfig{}, fmt.Errorf("--sftp-host (or CLOUDSTIC_SFTP_HOST) is required for sftp")
+	}
+	if u == "" {
+		return store.SFTPConfig{}, fmt.Errorf("--sftp-user (or CLOUDSTIC_SFTP_USER) is required for sftp")
+	}
+
+	return store.SFTPConfig{
+		Host:           h,
+		Port:           p,
+		User:           u,
+		Password:       pw,
+		PrivateKeyPath: k,
+	}, nil
 }
 
 func (g *globalFlags) initHybridStore() (store.ObjectStore, error) {
@@ -655,10 +727,19 @@ func extractTenantID(prefix string) string {
 	return ""
 }
 
-func initSource(sourceType, sourcePath, driveID, rootFolder string) (store.Source, error) {
+func initSource(sourceType, sourcePath, driveID, rootFolder string, g *globalFlags) (store.Source, error) {
 	switch sourceType {
 	case "local":
 		return store.NewLocalSource(sourcePath), nil
+	case "sftp":
+		cfg, err := g.sftpConfig(g.sourceSFTPHost, g.sourceSFTPPort, g.sourceSFTPUser, g.sourceSFTPPassword, g.sourceSFTPKey)
+		if err != nil {
+			return nil, err
+		}
+		if sourcePath == "" {
+			return nil, fmt.Errorf("-source-path is required for sftp source")
+		}
+		return store.NewSFTPSource(cfg, sourcePath)
 	case "gdrive":
 		creds := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") // optional; uses built-in OAuth client when empty
 		tokenPath, err := resolveTokenPath("GOOGLE_TOKEN_FILE", "google_token.json")
@@ -1106,7 +1187,7 @@ func runBackup() {
 
 	ctx := context.Background()
 
-	src, err := initSource(*sourceType, *sourcePath, *driveID, *rootFolder)
+	src, err := initSource(*sourceType, *sourcePath, *driveID, *rootFolder, g)
 	if err != nil {
 		fmt.Printf("Failed to init source: %v\n", err)
 		os.Exit(1)

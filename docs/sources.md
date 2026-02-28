@@ -54,8 +54,8 @@ Returned by `Info()` and stored in the snapshot's `source` field:
 
 ```go
 type SourceInfo struct {
-    Type    string // e.g. "gdrive", "local", "onedrive", "gdrive-changes"
-    Account string // Google email, hostname, etc.
+    Type    string // e.g. "gdrive", "local", "sftp", "onedrive", "gdrive-changes"
+    Account string // Google email, hostname, user@host, etc.
     Path    string // drive path, filesystem path, etc.
 }
 ```
@@ -100,6 +100,20 @@ type FileMeta struct {
 | **SourceInfo.Path** | Absolute path to the backed-up directory |
 
 Walks the directory tree using `filepath.Walk`. Symbolic links are not followed.
+
+### `sftp` — Remote SFTP Server
+
+| | |
+|---|---|
+| **Struct** | `SFTPSource` |
+| **Interface** | `Source` |
+| **FileID** | Relative path from root (e.g. `subdir/file.txt`) |
+| **Parents** | Parent directory's relative path |
+| **ContentHash** | Not provided (computed by the engine during upload) |
+| **SourceInfo.Account** | `user@host` |
+| **SourceInfo.Path** | Remote root directory path |
+
+Walks the remote directory tree via SFTP. Supports password, SSH private key, and ssh-agent authentication.
 
 ### `gdrive` — Google Drive (Full Scan)
 

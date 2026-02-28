@@ -318,6 +318,60 @@ func TestCLI_EndToEnd_Matrix(t *testing.T) {
 				if !strings.Contains(out, "1 snapshot") {
 					t.Errorf("Expected 1 snapshot after policy, got: %s", out)
 				}
+
+				// 15. Test Unencrypted Backup Lifecycle
+				// Verify that the full backup/restore flow works without encryption.
+				unencDir := t.TempDir()
+				unencStoreArgs := []string{"--store", "local", "--store-path", unencDir}
+
+				// 15a. Init with --no-encryption
+				out = run(t, bin, append([]string{"init", "--no-encryption"}, unencStoreArgs...)...)
+				if !strings.Contains(out, "encrypted: false") {
+					t.Errorf("Expected 'encrypted: false' in init output, got: %s", out)
+				}
+
+				// 15b. Backup without any encryption flags
+				run(t, bin, append([]string{"backup"}, append(srcArgs, unencStoreArgs...)...)...)
+
+				// 15c. List — verify 1 snapshot
+				out = run(t, bin, append([]string{"list"}, unencStoreArgs...)...)
+				if !strings.Contains(out, "1 snapshot") {
+					t.Fatalf("Unencrypted: expected 1 snapshot, got: %s", out)
+				}
+
+				// 15d. Incremental backup
+				src.WriteFile(t, "unenc-file.txt", "plaintext content")
+				run(t, bin, append([]string{"backup"}, append(srcArgs, unencStoreArgs...)...)...)
+
+				out = run(t, bin, append([]string{"list"}, unencStoreArgs...)...)
+				if !strings.Contains(out, "2 snapshots") {
+					t.Fatalf("Unencrypted: expected 2 snapshots, got: %s", out)
+				}
+
+				// 15e. Restore — verify file contents round-trip
+				unencZipPath := filepath.Join(restoreDir, "unenc_restore.zip")
+				run(t, bin, append([]string{"restore", "--output", unencZipPath}, unencStoreArgs...)...)
+
+				for _, tc := range []struct {
+					path    string
+					content string
+				}{
+					{"file1.txt", "hello world"},
+					{"secret.txt", "updated classified data"},
+					{"subdir/nested.txt", "nested content"},
+					{"unenc-file.txt", "plaintext content"},
+				} {
+					if got := readZipFile(t, unencZipPath, tc.path); got != tc.content {
+						t.Errorf("Unencrypted restore mismatch for %s: got %q, want %q", tc.path, got, tc.content)
+					}
+				}
+
+				// 15f. Forget + Prune — verify cleanup works without encryption
+				run(t, bin, append([]string{"forget", "--keep-last", "1", "--prune"}, unencStoreArgs...)...)
+				out = run(t, bin, append([]string{"list"}, unencStoreArgs...)...)
+				if !strings.Contains(out, "1 snapshot") {
+					t.Errorf("Unencrypted: expected 1 snapshot after prune, got: %s", out)
+				}
 			})
 		}
 	}

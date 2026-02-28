@@ -16,15 +16,21 @@ func TestLocalSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Create a nested filesystem structure
 	nestedDir := filepath.Join(tmpDir, "folder")
-	os.Mkdir(nestedDir, 0755)
+	if err := os.Mkdir(nestedDir, 0755); err != nil {
+		t.Fatalf("Failed to create nested dir: %v", err)
+	}
 
 	fileData := []byte("hello world")
-	os.WriteFile(filepath.Join(tmpDir, "file1.txt"), fileData, 0644)
-	os.WriteFile(filepath.Join(nestedDir, "file2.txt"), fileData, 0644)
+	if err := os.WriteFile(filepath.Join(tmpDir, "file1.txt"), fileData, 0644); err != nil {
+		t.Fatalf("Failed to write file1: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(nestedDir, "file2.txt"), fileData, 0644); err != nil {
+		t.Fatalf("Failed to write file2: %v", err)
+	}
 
 	src := NewLocalSource(tmpDir)
 
@@ -53,9 +59,10 @@ func TestLocalSource(t *testing.T) {
 	var walkedFiles []string
 	var walkedFolders []string
 	err = src.Walk(ctx, func(fm core.FileMeta) error {
-		if fm.Type == core.FileTypeFile {
+		switch fm.Type {
+		case core.FileTypeFile:
 			walkedFiles = append(walkedFiles, fm.FileID)
-		} else if fm.Type == core.FileTypeFolder {
+		case core.FileTypeFolder:
 			walkedFolders = append(walkedFolders, fm.FileID)
 		}
 		return nil
@@ -76,9 +83,12 @@ func TestLocalSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetFileStream() failed: %v", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	data, err := io.ReadAll(stream)
+	if err != nil {
+		t.Fatalf("ReadAll() failed: %v", err)
+	}
 	if string(data) != "hello world" {
 		t.Errorf("Expected 'hello world', got '%s'", string(data))
 	}

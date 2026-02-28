@@ -116,7 +116,9 @@ func TestS3Store(t *testing.T) {
 	}
 
 	// List
-	store.Put(ctx, "test/another.txt", data)
+	if err := store.Put(ctx, "test/another.txt", data); err != nil {
+		t.Fatalf("Put another.txt failed: %v", err)
+	}
 	keys, err := store.List(ctx, "test/")
 	if err != nil {
 		t.Fatalf("List failed: %v", err)

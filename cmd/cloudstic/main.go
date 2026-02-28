@@ -315,7 +315,7 @@ func (g *globalFlags) openClient() (*cloudstic.Client, error) {
 	return cloudstic.NewClient(raw,
 		cloudstic.WithEncryptionKey(encKey),
 		cloudstic.WithReporter(reporter),
-	), nil
+	)
 }
 
 func loadRepoConfig(s store.ObjectStore) (*core.RepoConfig, error) {

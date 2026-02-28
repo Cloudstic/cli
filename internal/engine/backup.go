@@ -82,7 +82,7 @@ type BackupManager struct {
 	pendingMetas map[string][]byte // deferred filemeta PUTs (ref → JSON)
 }
 
-func NewBackupManager(src store.Source, dest store.ObjectStore, reporter ui.Reporter, opts ...BackupOption) *BackupManager {
+func NewBackupManager(src store.Source, dest store.ObjectStore, reporter ui.Reporter, hmacKey []byte, opts ...BackupOption) *BackupManager {
 	cfg := backupConfig{
 		generator: "cloudstic-cli",
 		meta:      map[string]string{},
@@ -100,7 +100,7 @@ func NewBackupManager(src store.Source, dest store.ObjectStore, reporter ui.Repo
 		keyCache:     keyCache,
 		tree:         hamt.NewTree(cache),
 		cache:        cache,
-		chunker:      NewChunker(keyCache),
+		chunker:      NewChunker(keyCache, hmacKey),
 		reporter:     reporter,
 		sourceInfo:   sourceInfo,
 		cfg:          cfg,

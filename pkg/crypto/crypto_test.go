@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"bytes"
+	"encoding/hex"
 	"testing"
 )
 
@@ -231,5 +232,45 @@ func TestEncryptDecrypt_LargePayload(t *testing.T) {
 	}
 	if !bytes.Equal(got, plain) {
 		t.Fatal("large payload round-trip failed")
+	}
+}
+
+func TestComputeHMAC_Deterministic(t *testing.T) {
+	key := []byte("test-hmac-key-32-bytes-long!!!!!")
+	data := []byte("hello, hmac!")
+
+	h1 := ComputeHMAC(key, data)
+	h2 := ComputeHMAC(key, data)
+
+	if h1 != h2 {
+		t.Fatalf("ComputeHMAC not deterministic: %s vs %s", h1, h2)
+	}
+	if len(h1) != 64 { // hex-encoded SHA-256 = 64 chars
+		t.Fatalf("expected 64 hex chars, got %d", len(h1))
+	}
+}
+
+func TestComputeHMAC_DifferentKeyProducesDifferentHash(t *testing.T) {
+	data := []byte("same data")
+	h1 := ComputeHMAC([]byte("key-aaaaaaaaaaaaaaaaaaaaaaaaaaaa"), data)
+	h2 := ComputeHMAC([]byte("key-bbbbbbbbbbbbbbbbbbbbbbbbbbbb"), data)
+
+	if h1 == h2 {
+		t.Fatal("different keys should produce different HMACs")
+	}
+}
+
+func TestNewHMACHash_MatchesComputeHMAC(t *testing.T) {
+	key := []byte("test-hmac-key-32-bytes-long!!!!!")
+	data := []byte("consistency check")
+
+	expected := ComputeHMAC(key, data)
+
+	h := NewHMACHash(key)
+	h.Write(data)
+	got := hex.EncodeToString(h.Sum(nil))
+
+	if got != expected {
+		t.Fatalf("NewHMACHash result differs from ComputeHMAC:\n  got:  %s\n  want: %s", got, expected)
 	}
 }

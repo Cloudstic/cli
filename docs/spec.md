@@ -14,7 +14,7 @@ Cloudstic is a content-addressable backup system designed for flat cloud storage
 * **Checkpoint-only snapshots** — every snapshot is a complete view, no delta replay needed
 * **Structural sharing** via a Merkle-HAMT — only changed paths are re-uploaded
 * **Content deduplication** via content-defined chunking (FastCDC)
-* **Immutable, content-addressed objects** — every object is keyed by SHA-256
+* **Immutable, content-addressed objects** — every object is keyed by its hash (HMAC-SHA256 for chunks, SHA-256 for metadata)
 * **Multi-parent and duplicate-name file support** (Google Drive semantics)
 
 ---
@@ -53,12 +53,13 @@ Cloudstic is a content-addressable backup system designed for flat cloud storage
 
 ## Object Types
 
-All objects are stored under a flat key namespace of the form `<type>/<sha256>`.
+All objects are stored under a flat key namespace of the form `<type>/<hash>`.
 
 ### 1. Chunk
 
 * Raw file data, gzip-compressed.
-* Object key: `chunk/<sha256-of-uncompressed-data>`
+* Object key: `chunk/<hmac_sha256>` (HMAC-SHA256 keyed by the dedup key when
+  encryption is enabled, plain SHA-256 otherwise)
 * **Format:** Raw binary (gzip stream). Not JSON-wrapped.
 * Produced by **FastCDC** content-defined chunking:
 
@@ -69,7 +70,8 @@ All objects are stored under a flat key namespace of the form `<type>/<sha256>`.
 | Max size  | 8 MiB    |
 
 * The final chunk of a file may be smaller than the minimum.
-* Deduplicated by the SHA-256 of the original uncompressed data.
+* Deduplicated by hash of the original uncompressed data (HMAC-keyed when
+  encrypted, preventing the storage provider from confirming file contents).
 
 ### 2. Content
 
@@ -226,7 +228,7 @@ Clients fetch `index/latest` to find the head. To list all snapshots, list the `
    - Unchanged files are re-inserted into the new HAMT by reference.
    - Changed or new files are queued for upload.
 3. **Upload**: process queued files with concurrent workers:
-   - Stream → FastCDC split → SHA-256 (raw) → gzip → store as `chunk/<hash>` (dedup by Exists check).
+   - Stream → FastCDC split → HMAC-SHA256 (keyed by dedup key, or plain SHA-256 if unencrypted) → gzip → store as `chunk/<hash>` (dedup by Exists check).
    - Create `content/<content-hash>` object.
    - Create `filemeta/<hash>` object referencing the content.
    - Insert into the new HAMT.

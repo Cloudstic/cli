@@ -11,3 +11,4 @@ dist/
 # Test output
 coverage.out
 test-output.json
+.DS_Store

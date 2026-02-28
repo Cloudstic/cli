@@ -160,15 +160,15 @@ func TestCLI_EndToEnd_Matrix(t *testing.T) {
 	sources := []func(t *testing.T) TestSource{
 		func(t *testing.T) TestSource { return newLocalSource(t) },
 	}
-
 	stores := []func(t *testing.T) TestStore{
 		func(t *testing.T) TestStore { return newLocalStore(t) },
 	}
 
 	// Only add Docker-based hermetic tests if Docker is actually available
-	// (not always true in rudimentary CI environments)
 	if _, err := os.Stat("/var/run/docker.sock"); err == nil {
+		sources = append(sources, func(t *testing.T) TestSource { return newSFTPTestSource(t) })
 		stores = append(stores, func(t *testing.T) TestStore { return newMinIOTestStore(t) })
+		stores = append(stores, func(t *testing.T) TestStore { return newSFTPTestStore(t) })
 	}
 
 	for _, srcFn := range sources {

@@ -39,14 +39,14 @@ jobs:
           go-version-file: go.mod
       - run: |
           set -o pipefail
-          go test -v -race -count=1 ./... | tee test-output.txt
+          go test -v -json -race -count=1 ./... | tee test-output.json
       - name: Test Report
-        uses: dorny/test-reporter@v1
+        uses: dorny/test-reporter@v2
         if: always()
         with:
           name: Go Tests (${{ matrix.os }})
-          path: test-output.txt
-          reporter: go-test
+          path: test-output.json
+          reporter: golang-json
 
   build:
     name: Build

@@ -20,7 +20,7 @@ func TestBackupManager_Run(t *testing.T) {
 	src.AddFile("file1.txt", "id1", []byte("hello world"))
 	src.AddFile("file2.txt", "id2", []byte("another file"))
 
-	mgr := NewBackupManager(src, dest, reporter, WithVerbose())
+	mgr := NewBackupManager(src, dest, reporter, nil, WithVerbose())
 
 	// Read store wraps dest with CompressedStore so we can read back
 	// the compressed data written by the BackupManager.

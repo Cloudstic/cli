@@ -132,7 +132,11 @@ a valid, complete snapshot.
 Dedup is content-addressed at two levels:
 
 - **Chunk level:** Before writing a chunk, `Exists("chunk/<hash>")` is checked.
-  If the chunk is already stored, the write is skipped.
+  If the chunk is already stored, the write is skipped. When encryption is
+  enabled, the chunk hash is an **HMAC-SHA256** keyed by a dedup key derived
+  from the encryption key. This prevents the storage provider from confirming
+  file contents by hashing known plaintext. When encryption is disabled, plain
+  SHA-256 is used.
 - **Content level:** Before streaming a file, `Exists("content/<hash>")` is
   checked using the source-provided content hash (e.g. Drive MD5). If the
   content object exists, the entire file upload is skipped.

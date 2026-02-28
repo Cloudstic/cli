@@ -34,7 +34,7 @@ func TestPruneManager_Run(t *testing.T) {
 
 	// HAMT Construction using BackupManager's tree for flushing.
 	src := NewMockSource()
-	bkMgr := NewBackupManager(src, mockStore, ui.NewNoOpReporter(), WithVerbose())
+	bkMgr := NewBackupManager(src, mockStore, ui.NewNoOpReporter(), nil, WithVerbose())
 	rootRef, err := bkMgr.tree.Insert("", "file1", metaRef)
 	if err != nil {
 		t.Fatalf("Failed to create hamt: %v", err)

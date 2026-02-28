@@ -598,11 +598,16 @@ cloudstic init -store b2 -store-path my-bucket -store-prefix "laptop/" -encrypti
 
 Store backups in an Amazon S3 bucket (or S3-compatible endpoints like Cloudflare R2, MinIO, or Wasabi). Requires credentials and a bucket path.
 
+Cloudstic uses the standard AWS SDK for Go, meaning it automatically loads credentials from your environment. You can use explicit credentials (`AWS_ACCESS_KEY_ID`), or if you already have the AWS CLI configured, you can omit them and Cloudstic will seamlessly use your `~/.aws/credentials` profile.
+
 ```bash
+# Using explicit environment variables
 export AWS_ACCESS_KEY_ID=your-access-key
 export AWS_SECRET_ACCESS_KEY=your-secret-key
-
 cloudstic init -store s3 -store-path my-bucket-name -encryption-password "passphrase"
+
+# Using an existing AWS CLI profile (e.g., from ~/.aws/credentials)
+export AWS_PROFILE=my-profile
 cloudstic backup -store s3 -store-path my-bucket-name -source local -source-path ~/Documents
 ```
 

@@ -48,8 +48,13 @@ Recovery Key (optional, BIP39 mnemonic)       │
                                      HKDF-SHA256(master, info="cloudstic-backup-v1")
                                               │
                                        Encryption Key (256-bit AES)
+                                              ├──────────── EncryptedStore
                                               │
-                                      EncryptedStore
+                                     HKDF-SHA256(enc_key, info="cloudstic-dedup-mac-v1")
+                                              │
+                                        Dedup HMAC Key (256-bit)
+                                              │
+                                       Chunker (HMAC-SHA256 refs)
 ```
 
 ### Master key
@@ -109,8 +114,22 @@ encryption_key = HKDF-SHA256(
 )
 ```
 
-This allows deriving additional purpose-specific keys in the future (e.g.,
-per-object-type keys) without re-encrypting existing data.
+A second key for chunk deduplication (HMAC) is derived from the encryption
+key:
+
+```
+dedup_hmac_key = HKDF-SHA256(
+    secret = encryption_key,
+    salt   = "",
+    info   = "cloudstic-dedup-mac-v1",
+)
+```
+
+This keeps the public API surface unchanged (a single encryption key is
+passed around) while the HMAC key is derived internally at point of use.
+HKDF is a PRF, so chaining derivations is cryptographically sound — the
+dedup key is independent from the encryption key. If only the dedup key
+leaks, the encryption key remains safe (HKDF is one-way).
 
 ## Store Stack
 
@@ -128,20 +147,26 @@ Backup Engine → QuotaStore → EncryptedStore → MeteredStore → HybridStore
   unencrypted legacy data). Objects under `keys/` are returned as-is.
 - **Exists, List, Delete, Size, TotalSize**: pass through unchanged
 
-Content addressing is preserved: keys remain `chunk/<sha256_of_plaintext>`,
-etc. Deduplication works because the chunker checks `Exists(key)` before
-writing, and the key is derived from plaintext content.
+Content addressing is preserved: chunk keys are `chunk/<hmac_sha256>` where
+the hash is an HMAC-SHA256 keyed by the dedup key. This prevents the storage
+provider from confirming file existence by hashing known plaintext
+("confirmation-of-a-file" attack). Without the dedup key, the provider
+cannot reproduce chunk references.
 
 ## Content Addressing and Dedup
 
 Encryption uses random nonces, so encrypting the same plaintext twice produces
 different ciphertext. Dedup still works because:
 
-1. Object keys are hashes of **plaintext**, not ciphertext
+1. **Chunk keys** are HMAC-SHA256 hashes of plaintext keyed by the dedup key.
+   All other object keys (`content/`, `filemeta/`, `node/`, `snapshot/`) use
+   plain SHA-256
 2. Before writing, the engine checks `Exists(key)` — if the key exists, the
    write is skipped entirely
-3. Within a tenant, identical files produce identical chunk hashes and dedup
-   normally
+3. Within a tenant, identical files produce identical HMAC chunk hashes and
+   dedup normally
+4. Different tenants (different keys) produce different chunk hashes, so there
+   is no cross-tenant dedup — this is by design
 
 ## Key Rotation
 

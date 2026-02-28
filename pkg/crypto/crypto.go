@@ -7,10 +7,13 @@ package crypto
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 
 	"golang.org/x/crypto/argon2"
@@ -116,6 +119,23 @@ func UnwrapKey(wrapped, wrappingKey []byte) ([]byte, error) {
 // HKDFInfoBackupV1 is the info string used for deriving the AES-256 backup
 // encryption key from a master key. Shared by web and CLI.
 const HKDFInfoBackupV1 = "cloudstic-backup-v1"
+
+// HKDFInfoDedupV1 is the info string used for deriving the HMAC-SHA256 key
+// for chunk deduplication hashing.
+const HKDFInfoDedupV1 = "cloudstic-dedup-mac-v1"
+
+// ComputeHMAC computes an HMAC-SHA256 hash of the given data and returns it as a hex string.
+func ComputeHMAC(key, data []byte) string {
+	h := hmac.New(sha256.New, key)
+	// hmac.Write never returns an error, but handle it for errcheck.
+	_, _ = h.Write(data)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// NewHMACHash returns a new HMAC-SHA256 hash.Hash initialized with the given key.
+func NewHMACHash(key []byte) hash.Hash {
+	return hmac.New(sha256.New, key)
+}
 
 // Argon2Params controls the cost of Argon2id password hashing.
 type Argon2Params struct {

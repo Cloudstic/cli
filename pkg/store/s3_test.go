@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -13,6 +14,12 @@ import (
 )
 
 func TestS3Store(t *testing.T) {
+	// Check if docker is available and running
+	cmd := exec.Command("docker", "info")
+	if err := cmd.Run(); err != nil {
+		t.Skipf("docker is not available or not running, skipping test: %v", err)
+	}
+
 	ctx := context.Background()
 
 	// 1. Spin up MinIO container

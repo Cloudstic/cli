@@ -1,6 +1,6 @@
 # Cloudstic CLI User Guide
 
-Cloudstic is a content-addressable backup tool that creates encrypted, deduplicated snapshots of your files — from local directories, Google Drive, or OneDrive — and stores them locally, on Amazon S3, or Backblaze B2.
+Cloudstic is a content-addressable backup tool that creates encrypted, deduplicated snapshots of your files — from local directories, SFTP servers, Google Drive, or OneDrive — and stores them locally, on Amazon S3, Backblaze B2, or a remote SFTP server.
 
 ## Table of Contents
 
@@ -20,6 +20,7 @@ Cloudstic is a content-addressable backup tool that creates encrypted, deduplica
   - [add-recovery-key](#add-recovery-key)
 - [Sources](#sources)
   - [Local Directory](#local-directory)
+  - [SFTP](#sftp-source)
   - [Google Drive](#google-drive)
   - [Google Drive (Changes API)](#google-drive-changes-api)
   - [OneDrive](#onedrive)
@@ -28,6 +29,7 @@ Cloudstic is a content-addressable backup tool that creates encrypted, deduplica
   - [Local](#local-storage)
   - [Amazon S3](#amazon-s3)
   - [Backblaze B2](#backblaze-b2)
+  - [SFTP](#sftp-storage)
 - [Encryption](#encryption)
 - [Retention Policies](#retention-policies)
 - [Environment Variables](#environment-variables)
@@ -117,7 +119,7 @@ cloudstic version
 
 **Snapshot** — A point-in-time record of all files from a source. Each backup creates a new snapshot. Snapshots are identified by a SHA-256 hash.
 
-**Source** — Where files are read from during backup: a local directory, Google Drive, or OneDrive.
+**Source** — Where files are read from during backup: a local directory, an SFTP server, Google Drive, or OneDrive.
 
 **Content-addressable storage** — Files are split into chunks and stored by their content hash. Identical chunks across files or snapshots are stored only once (deduplication).
 
@@ -233,8 +235,8 @@ cloudstic backup -source local -source-path ~/Documents -dry-run
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-source` | `gdrive` | Source type: `local`, `gdrive`, `gdrive-changes`, `onedrive`, `onedrive-changes` |
-| `-source-path` | `.` | Path to local source directory (when `source=local`) |
+| `-source` | `gdrive` | Source type: `local`, `sftp`, `gdrive`, `gdrive-changes`, `onedrive`, `onedrive-changes` |
+| `-source-path` | `.` | Path to source directory (local filesystem or SFTP remote path) |
 | `-drive-id` | | Shared drive ID for Google Drive (omit for My Drive) |
 | `-root-folder` | | Root folder ID for Google Drive (defaults to entire drive) |
 | `-tag` | | Tag to apply to the snapshot (repeatable) |
@@ -412,6 +414,7 @@ A **source** is where Cloudstic reads files from during a backup. Each source ty
 | Source | `-source` flag | What it backs up | Auth |
 |--------|---------------|------------------|------|
 | [Local directory](#local-directory) | `local` | Files on your local filesystem | None |
+| [SFTP](#sftp-source) | `sftp` | Files on a remote SFTP server | Password, SSH key, or ssh-agent |
 | [Google Drive](#google-drive) | `gdrive` | Full scan of Google Drive (My Drive or Shared Drive) | Automatic (browser) |
 | [Google Drive (Changes API)](#google-drive-changes-api) | `gdrive-changes` | Incremental changes since last backup (recommended for Google Drive) | Automatic (browser) |
 | [OneDrive](#onedrive) | `onedrive` | Full scan of Microsoft OneDrive | Automatic (browser) |
@@ -432,6 +435,33 @@ cloudstic backup -source local -source-path /path/to/directory
 | `-source-path` | `.` | Root directory to back up |
 
 Cloudstic walks the directory recursively. Symbolic links are not followed. File permissions are not preserved — only name, size, modification time, and content are captured.
+
+### SFTP Source
+
+Back up files from a remote SFTP server. Supports password authentication, SSH private key, and ssh-agent.
+
+```bash
+# Back up a remote directory via SFTP
+cloudstic backup -source sftp -source-path /data/documents \
+  -sftp-host myserver.com -sftp-user backup -sftp-key ~/.ssh/id_ed25519
+
+# Using password auth
+cloudstic backup -source sftp -source-path /home/user/files \
+  -sftp-host myserver.com -sftp-user backup -sftp-password "secret"
+```
+
+| Flag | Description |
+|------|-------------|
+| `-source-path` | Remote directory path to back up |
+| `-sftp-host` | SFTP server hostname |
+| `-sftp-port` | SFTP server port (default: `22`) |
+| `-sftp-user` | SFTP username |
+| `-sftp-password` | SFTP password (optional if using key auth) |
+| `-sftp-key` | Path to SSH private key (optional if using password auth) |
+
+If neither `-sftp-password` nor `-sftp-key` is provided, Cloudstic will fall back to your `SSH_AUTH_SOCK` agent.
+
+Cloudstic walks the remote directory recursively. File permissions are not preserved — only name, size, modification time, and content are captured.
 
 ### Google Drive
 
@@ -632,6 +662,34 @@ cloudstic init -store s3 -store-path my-bucket -store-prefix "laptop/" -encrypti
 | `CLOUDSTIC_S3_ENDPOINT` | Custom endpoint URL (for R2, MinIO, etc.) |
 | `CLOUDSTIC_S3_REGION` | S3 Region |
 
+### SFTP Storage
+
+Store backups on a remote SFTP server. Supports password authentication, SSH private key, and ssh-agent.
+
+```bash
+# Initialize a repository on an SFTP server
+cloudstic init -store sftp -store-path /backups/cloudstic \
+  -sftp-host myserver.com -sftp-user backup -sftp-key ~/.ssh/id_ed25519 \
+  -encryption-password "passphrase"
+
+# Back up to the SFTP store
+cloudstic backup -store sftp -store-path /backups/cloudstic \
+  -sftp-host myserver.com -sftp-user backup -sftp-key ~/.ssh/id_ed25519 \
+  -source local -source-path ~/Documents
+```
+
+The `-store-path` is the remote directory path on the SFTP server where backup objects will be stored. It will be created if it doesn't exist.
+
+**Environment variables:**
+
+| Variable | Description |
+|----------|-------------|
+| `CLOUDSTIC_SFTP_HOST` | SFTP server hostname |
+| `CLOUDSTIC_SFTP_PORT` | SFTP server port (default: `22`) |
+| `CLOUDSTIC_SFTP_USER` | SFTP username |
+| `CLOUDSTIC_SFTP_PASSWORD` | SFTP password |
+| `CLOUDSTIC_SFTP_KEY` | Path to SSH private key |
+
 ---
 
 ## Encryption
@@ -711,15 +769,15 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 
 | Variable | Flag equivalent | Description |
 |----------|----------------|-------------|
-| `CLOUDSTIC_STORE` | `-store` | Storage backend: `local`, `s3`, `b2`, `hybrid` |
-| `CLOUDSTIC_STORE_PATH` | `-store-path` | Local path or S3/B2 bucket name |
+| `CLOUDSTIC_STORE` | `-store` | Storage backend: `local`, `s3`, `b2`, `sftp`, `hybrid` |
+| `CLOUDSTIC_STORE_PATH` | `-store-path` | Local/SFTP path or S3/B2 bucket name |
 | `CLOUDSTIC_STORE_PREFIX` | `-store-prefix` | Key prefix for S3/B2 objects |
 | `CLOUDSTIC_S3_ENDPOINT` | `-s3-endpoint` | S3 compatible endpoint (for MinIO, R2, etc.) |
 | `CLOUDSTIC_S3_REGION` | `-s3-region` | S3 Region |
 | `AWS_ACCESS_KEY_ID` | `-s3-access-key` | S3 Access Key ID |
 | `AWS_SECRET_ACCESS_KEY` | `-s3-secret-key` | S3 Secret Access Key |
-| `CLOUDSTIC_SOURCE` | `-source` | Source type: `local`, `gdrive`, `gdrive-changes`, `onedrive`, `onedrive-changes` |
-| `CLOUDSTIC_SOURCE_PATH` | `-source-path` | Local source directory path (when `source=local`) |
+| `CLOUDSTIC_SOURCE` | `-source` | Source type: `local`, `sftp`, `gdrive`, `gdrive-changes`, `onedrive`, `onedrive-changes` |
+| `CLOUDSTIC_SOURCE_PATH` | `-source-path` | Source directory path (local or SFTP remote) |
 | `CLOUDSTIC_DRIVE_ID` | `-drive-id` | Shared drive ID for Google Drive |
 | `CLOUDSTIC_ROOT_FOLDER` | `-root-folder` | Root folder ID for Google Drive |
 | `CLOUDSTIC_DATABASE_URL` | `-database-url` | PostgreSQL URL (hybrid store) |
@@ -734,3 +792,8 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 | `ONEDRIVE_TOKEN_FILE` | — | Override OneDrive token path |
 | `B2_KEY_ID` | — | Backblaze B2 key ID |
 | `B2_APP_KEY` | — | Backblaze B2 application key |
+| `CLOUDSTIC_SFTP_HOST` | `-sftp-host` | SFTP server hostname |
+| `CLOUDSTIC_SFTP_PORT` | `-sftp-port` | SFTP server port (default: `22`) |
+| `CLOUDSTIC_SFTP_USER` | `-sftp-user` | SFTP username |
+| `CLOUDSTIC_SFTP_PASSWORD` | `-sftp-password` | SFTP password |
+| `CLOUDSTIC_SFTP_KEY` | `-sftp-key` | Path to SSH private key |

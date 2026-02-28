@@ -130,7 +130,7 @@ func (s *sftpTestSource) WriteFile(t *testing.T, relPath, content string) {
 	if err != nil {
 		t.Fatalf("failed to create remote file %s: %v", fullPath, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if _, err := f.Write([]byte(content)); err != nil {
 		t.Fatalf("failed to write remote file %s: %v", fullPath, err)

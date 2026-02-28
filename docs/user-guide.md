@@ -98,7 +98,7 @@ go install github.com/cloudstic/cli/cmd/cloudstic@latest
 
 ### Build from source
 
-Requires Go 1.24+:
+Requires Go 1.26+:
 
 ```bash
 git clone https://github.com/cloudstic/cli.git

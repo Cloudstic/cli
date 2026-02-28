@@ -25,6 +25,10 @@ jobs:
   test:
     name: Test
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
@@ -33,7 +37,16 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: go test -race -count=1 ./...
+      - run: |
+          set -o pipefail
+          go test -v -race -count=1 ./... | tee test-output.txt
+      - name: Test Report
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Go Tests (${{ matrix.os }})
+          path: test-output.txt
+          reporter: go-test
 
   build:
     name: Build

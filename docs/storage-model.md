@@ -54,6 +54,10 @@ snapshot with a complete, consistent tree.
 
 - **B2 (Backblaze):** Incomplete uploads are not visible. An object is only
   readable after the upload completes successfully.
+- **S3 / S3-compatible:** Same as B2 — objects become visible only after the
+  upload completes.
+- **SFTP:** `Put` writes to a `.tmp` file and renames via `PosixRename`,
+  which is atomic on most SFTP server implementations.
 - **Local filesystem:** `Put` writes to a `.tmp` file and renames atomically
   (`os.Rename`), which is atomic on POSIX systems.
 

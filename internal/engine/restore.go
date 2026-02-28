@@ -12,8 +12,8 @@ import (
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
-	"github.com/cloudstic/cli/pkg/store"
 	"github.com/cloudstic/cli/internal/ui"
+	"github.com/cloudstic/cli/pkg/store"
 )
 
 // RestoreOption configures a restore operation.
@@ -68,6 +68,12 @@ func (rm *RestoreManager) Run(ctx context.Context, w io.Writer, snapshotRef stri
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+
+	lock, err := AcquireSharedLock(ctx, rm.store, "restore")
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Release()
 
 	rm.metaCache, _ = LoadFileMetaCache(rm.store)
 

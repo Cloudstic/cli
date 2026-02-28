@@ -254,7 +254,7 @@ func TestCLI_EndToEnd_Matrix(t *testing.T) {
 				forgetArgs := append([]string{"forget", "--keep-last", "1", "--prune"}, baseEncArgs...)
 				run(t, bin, forgetArgs...)
 
-				out = run(t, bin, append([]string{"list"}, baseEncArgs...)...)
+				run(t, bin, append([]string{"list"}, baseEncArgs...)...)
 				// 10. Test Key Validation (Wrong Password)
 				out = runExpectFail(t, bin, append([]string{"list", "--encryption-password", "wrong-password"}, storeArgs...)...)
 				if !strings.Contains(out, "no provided credential matches") {
@@ -330,14 +330,14 @@ func readZipFile(t *testing.T, zipPath, name string) string {
 	if err != nil {
 		t.Fatalf("open zip %s: %v", zipPath, err)
 	}
-	defer zr.Close()
+	defer func() { _ = zr.Close() }()
 	for _, f := range zr.File {
 		if f.Name == name {
 			rc, err := f.Open()
 			if err != nil {
 				t.Fatalf("open zip entry %s: %v", name, err)
 			}
-			defer rc.Close()
+			defer func() { _ = rc.Close() }()
 			data, err := io.ReadAll(rc)
 			if err != nil {
 				t.Fatalf("read zip entry %s: %v", name, err)

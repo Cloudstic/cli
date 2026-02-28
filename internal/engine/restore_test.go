@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/cloudstic/cli/internal/core"
-	"github.com/cloudstic/cli/pkg/store"
 	"github.com/cloudstic/cli/internal/ui"
+	"github.com/cloudstic/cli/pkg/store"
 )
 
 func TestRestoreManager_Run(t *testing.T) {
@@ -69,7 +69,7 @@ func TestRestoreManager_Run(t *testing.T) {
 			t.Fatalf("Failed to open zip entry %s: %v", f.Name, err)
 		}
 		data, _ := io.ReadAll(rc)
-		rc.Close()
+		_ = rc.Close()
 		entries[f.Name] = string(data)
 	}
 

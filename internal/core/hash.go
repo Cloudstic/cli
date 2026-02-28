@@ -21,4 +21,3 @@ func ComputeJSONHash(v interface{}) (string, []byte, error) {
 	}
 	return ComputeHash(data), data, nil
 }
-

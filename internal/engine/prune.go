@@ -7,8 +7,8 @@ import (
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
-	"github.com/cloudstic/cli/pkg/store"
 	"github.com/cloudstic/cli/internal/ui"
+	"github.com/cloudstic/cli/pkg/store"
 )
 
 type PruneOption func(*pruneConfig)
@@ -336,4 +336,3 @@ func (pm *PruneManager) loadMeta(ctx context.Context, ref string) (*core.FileMet
 	}
 	return &fm, nil
 }
-

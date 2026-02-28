@@ -56,4 +56,3 @@ func (m *MeteredStore) BytesWritten() int64 {
 func (m *MeteredStore) Reset() {
 	m.bytesWritten.Store(0)
 }
-

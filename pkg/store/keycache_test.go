@@ -8,10 +8,10 @@ import (
 )
 
 type countingStore struct {
-	mu       sync.RWMutex
-	data     map[string][]byte
-	puts     atomic.Int64
-	exists   atomic.Int64
+	mu     sync.RWMutex
+	data   map[string][]byte
+	puts   atomic.Int64
+	exists atomic.Int64
 }
 
 func newCountingStore() *countingStore {

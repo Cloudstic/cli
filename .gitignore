@@ -11,4 +11,7 @@ dist/
 # Test output
 coverage.out
 test-output.json
+*.test
+*.test.exe
+*.prof
 .DS_Store

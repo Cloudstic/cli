@@ -97,9 +97,13 @@ func printUsage() {
 
 	t.HeadingSub("GLOBAL OPTIONS", "(also settable via env vars)")
 	t.Flags([][2]string{
-		{"-store <type>", ui.Env("Storage backend: local, b2, hybrid", "CLOUDSTIC_STORE")},
-		{"-store-path <path>", ui.Env("Local path or B2 bucket name", "CLOUDSTIC_STORE_PATH")},
-		{"-store-prefix <pfx>", ui.Env("Key prefix for B2 objects", "CLOUDSTIC_STORE_PREFIX")},
+		{"-store <type>", ui.Env("Storage backend: local, b2, s3, hybrid", "CLOUDSTIC_STORE")},
+		{"-store-path <path>", ui.Env("Local path or B2/S3 bucket name", "CLOUDSTIC_STORE_PATH")},
+		{"-store-prefix <pfx>", ui.Env("Key prefix for B2/S3 objects", "CLOUDSTIC_STORE_PREFIX")},
+		{"-s3-endpoint <url>", ui.Env("S3 compatible endpoint (for MinIO, R2, etc.)", "CLOUDSTIC_S3_ENDPOINT")},
+		{"-s3-region <region>", ui.Env("S3 region", "CLOUDSTIC_S3_REGION")},
+		{"-s3-access-key <key>", ui.Env("S3 Access Key ID", "AWS_ACCESS_KEY_ID")},
+		{"-s3-secret-key <secret>", ui.Env("S3 Secret Access Key", "AWS_SECRET_ACCESS_KEY")},
 		{"-database-url <url>", ui.Env("PostgreSQL URL (hybrid store)", "CLOUDSTIC_DATABASE_URL")},
 		{"-tenant-id <uuid>", ui.Env("Tenant ID for hybrid store RLS", "CLOUDSTIC_TENANT_ID")},
 		{"-verbose", "Log detailed file-level operations"},
@@ -212,6 +216,8 @@ func envDefault(key, fallback string) string {
 
 type globalFlags struct {
 	storeType, storePath, storePrefix *string
+	s3Endpoint, s3Region              *string
+	s3AccessKey, s3SecretKey          *string
 	databaseURL, tenantID             *string
 	encryptionKey, encryptionPassword *string
 	recoveryKey                       *string
@@ -221,9 +227,13 @@ type globalFlags struct {
 
 func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 	g := &globalFlags{}
-	g.storeType = fs.String("store", envDefault("CLOUDSTIC_STORE", "local"), "store type (local, b2, hybrid)")
-	g.storePath = fs.String("store-path", envDefault("CLOUDSTIC_STORE_PATH", "./backup_store"), "Local store path or B2 bucket name")
-	g.storePrefix = fs.String("store-prefix", envDefault("CLOUDSTIC_STORE_PREFIX", ""), "Key prefix for B2 objects")
+	g.storeType = fs.String("store", envDefault("CLOUDSTIC_STORE", "local"), "store type (local, b2, s3, hybrid)")
+	g.storePath = fs.String("store-path", envDefault("CLOUDSTIC_STORE_PATH", "./backup_store"), "Local store path or B2/S3 bucket name")
+	g.storePrefix = fs.String("store-prefix", envDefault("CLOUDSTIC_STORE_PREFIX", ""), "Key prefix for B2/S3 objects")
+	g.s3Endpoint = fs.String("s3-endpoint", envDefault("CLOUDSTIC_S3_ENDPOINT", ""), "S3 compatible endpoint URL")
+	g.s3Region = fs.String("s3-region", envDefault("CLOUDSTIC_S3_REGION", "us-east-1"), "S3 region")
+	g.s3AccessKey = fs.String("s3-access-key", envDefault("AWS_ACCESS_KEY_ID", ""), "S3 access key ID")
+	g.s3SecretKey = fs.String("s3-secret-key", envDefault("AWS_SECRET_ACCESS_KEY", ""), "S3 secret access key")
 	g.databaseURL = fs.String("database-url", envDefault("CLOUDSTIC_DATABASE_URL", ""), "PostgreSQL URL (required for hybrid store)")
 	g.tenantID = fs.String("tenant-id", envDefault("CLOUDSTIC_TENANT_ID", ""), "Tenant ID for hybrid store RLS")
 	g.encryptionKey = fs.String("encryption-key", envDefault("CLOUDSTIC_ENCRYPTION_KEY", ""), "Platform key (hex-encoded, 32 bytes)")
@@ -566,6 +576,11 @@ func (g *globalFlags) initObjectStore() (store.ObjectStore, error) {
 			return nil, fmt.Errorf("B2_KEY_ID and B2_APP_KEY env vars required for b2 store")
 		}
 		return store.NewB2StoreWithPrefix(keyID, appKey, *g.storePath, *g.storePrefix)
+	case "s3":
+		if *g.storePath == "" {
+			return nil, fmt.Errorf("-store-path must be set to the S3 bucket name")
+		}
+		return store.NewS3Store(context.Background(), *g.s3Endpoint, *g.s3Region, *g.storePath, *g.s3AccessKey, *g.s3SecretKey, *g.storePrefix)
 	case "hybrid":
 		return g.initHybridStore()
 	default:

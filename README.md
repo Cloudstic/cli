@@ -8,7 +8,7 @@ Content-addressable, encrypted backup tool for Google Drive, OneDrive, and local
 - **Content-addressable storage** — Deduplication across sources; identical files stored only once
 - **Incremental backups** — Only changed files are stored
 - **Multiple sources** — Google Drive, Google Drive Changes API, OneDrive, local directories
-- **Multiple backends** — Local filesystem or Backblaze B2
+- **Multiple backends** — Local filesystem, Amazon S3 (and compatibles like R2, MinIO), or Backblaze B2
 - **Retention policies** — Keep-last, hourly, daily, weekly, monthly, yearly
 - **Point-in-time restore** — Restore any snapshot, any file, any time
 

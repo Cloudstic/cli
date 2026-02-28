@@ -145,7 +145,7 @@ func startSFTPContainer(t *testing.T, ctx context.Context) (testcontainers.Conta
 		Image:        "atmoz/sftp:latest",
 		ExposedPorts: []string{"22/tcp"},
 		Cmd:          []string{"test:test:::upload"},
-		WaitingFor:   wait.ForListeningPort("22/tcp"),
+		WaitingFor:   wait.ForLog("Server listening on"),
 	}
 
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{

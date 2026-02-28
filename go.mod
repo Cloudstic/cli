@@ -1,6 +1,6 @@
 module github.com/cloudstic/cli
 
-go 1.24.1
+go 1.26.0
 
 require (
 	github.com/Backblaze/blazer v0.7.2

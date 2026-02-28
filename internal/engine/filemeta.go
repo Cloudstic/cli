@@ -129,6 +129,6 @@ const (
 
 func debugf(format string, args ...any) {
 	if DebugWriter != nil {
-		fmt.Fprintf(DebugWriter, dCyan+"[index]"+dReset+" "+format+"\n", args...)
+		_, _ = fmt.Fprintf(DebugWriter, dCyan+"[index]"+dReset+" "+format+"\n", args...)
 	}
 }

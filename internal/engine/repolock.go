@@ -238,7 +238,7 @@ func CheckRepoLock(ctx context.Context, s store.ObjectStore) error {
 		if existsErr != nil {
 			return fmt.Errorf("check repo lock: %w", existsErr)
 		}
-		if exists && err != nil {
+		if exists {
 			return fmt.Errorf("failed to read existing repo lock: %w", err)
 		}
 	}

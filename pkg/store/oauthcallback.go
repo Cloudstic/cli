@@ -60,7 +60,7 @@ func exchangeWithLocalServer(config *oauth2.Config, authCodeOpts ...oauth2.AuthC
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprint(w, `<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0"><div style="text-align:center"><h2>Authorization successful</h2><p>You can close this tab and return to the terminal.</p></div></body></html>`)
+		_, _ = fmt.Fprint(w, `<!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0"><div style="text-align:center"><h2>Authorization successful</h2><p>You can close this tab and return to the terminal.</p></div></body></html>`)
 		ch <- result{code: r.URL.Query().Get("code")}
 	})
 

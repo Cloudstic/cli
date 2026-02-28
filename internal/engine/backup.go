@@ -9,8 +9,8 @@ import (
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
-	"github.com/cloudstic/cli/pkg/store"
 	"github.com/cloudstic/cli/internal/ui"
+	"github.com/cloudstic/cli/pkg/store"
 )
 
 // backupStats holds atomic counters accumulated during a backup run.

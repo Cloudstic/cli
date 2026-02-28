@@ -21,14 +21,14 @@ func TestComputeJSONHash(t *testing.T) {
 		Field string `json:"field"`
 		Num   int    `json:"num"`
 	}
-	
+
 	obj := TestStruct{Field: "test", Num: 123}
-	
+
 	hash, data, err := ComputeJSONHash(&obj)
 	if err != nil {
 		t.Fatalf("ComputeJSONHash failed: %v", err)
 	}
-	
+
 	// Verify data is valid JSON
 	var decoded TestStruct
 	if err := json.Unmarshal(data, &decoded); err != nil {
@@ -37,12 +37,10 @@ func TestComputeJSONHash(t *testing.T) {
 	if decoded.Field != "test" || decoded.Num != 123 {
 		t.Errorf("Unmarshaled data mismatch")
 	}
-	
+
 	// Verify hash matches hash of data
 	expectedHash := ComputeHash(data)
 	if hash != expectedHash {
 		t.Errorf("Hash mismatch: got %s, calculated from data %s", hash, expectedHash)
 	}
 }
-
-

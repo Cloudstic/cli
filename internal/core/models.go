@@ -98,10 +98,10 @@ type Index struct {
 // snapshot catalog index. It contains enough metadata for listing, filtering,
 // and finding the previous snapshot without having to fetch the full object.
 type SnapshotSummary struct {
-	Ref         string      `json:"ref"`                    // "snapshot/<hash>"
+	Ref         string      `json:"ref"` // "snapshot/<hash>"
 	Seq         int         `json:"seq"`
-	Created     string      `json:"created"`                // ISO8601
-	Root        string      `json:"root"`                   // "node/<hash>"
+	Created     string      `json:"created"` // ISO8601
+	Root        string      `json:"root"`    // "node/<hash>"
 	Source      *SourceInfo `json:"source,omitempty"`
 	Tags        []string    `json:"tags,omitempty"`
 	ChangeToken string      `json:"change_token,omitempty"`
@@ -121,6 +121,6 @@ type FileMetaCatalog map[string]FileMeta
 // Key: config
 type RepoConfig struct {
 	Version   int    `json:"version"`
-	Created   string `json:"created"`   // ISO8601
+	Created   string `json:"created"` // ISO8601
 	Encrypted bool   `json:"encrypted"`
 }

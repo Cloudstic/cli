@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cloudstic/cli/pkg/store"
 	"github.com/cloudstic/cli/internal/ui"
+	"github.com/cloudstic/cli/pkg/store"
 )
 
 // ForgetOption configures a forget operation.

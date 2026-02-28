@@ -96,6 +96,9 @@ func TestQuotaStore_PutErrorDoesNotCount(t *testing.T) {
 	}
 }
 
-type failingStore struct{ memStore; err error }
+type failingStore struct {
+	memStore
+	err error
+}
 
 func (f *failingStore) Put(_ context.Context, _ string, _ []byte) error { return f.err }

@@ -34,6 +34,7 @@ Cloudstic is a content-addressable backup system designed for flat cloud storage
 | Store   | Flag            | Description                     |
 |---------|-----------------|---------------------------------|
 | `local` | `-store local`  | Local directory (`./backup_store` by default) |
+| `s3`    | `-store s3`     | Amazon S3 (or S3-compatible service) |
 | `b2`    | `-store b2`     | Backblaze B2 bucket             |
 
 ### Commands

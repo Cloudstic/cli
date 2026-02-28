@@ -220,16 +220,20 @@ func envDefault(key, fallback string) string {
 }
 
 type globalFlags struct {
-	storeType, storePath, storePrefix *string
-	s3Endpoint, s3Region              *string
-	s3AccessKey, s3SecretKey          *string
-	sftpHost, sftpPort                *string
-	sftpUser, sftpPassword, sftpKey   *string
-	databaseURL, tenantID             *string
-	encryptionKey, encryptionPassword *string
-	recoveryKey                       *string
-	verbose, quiet, debug             *bool
-	debugLog                          *ui.SafeLogWriter
+	storeType, storePath, storePrefix                 *string
+	s3Endpoint, s3Region                              *string
+	s3AccessKey, s3SecretKey                          *string
+	sftpHost, sftpPort                                *string
+	sftpUser, sftpPassword, sftpKey                   *string
+	sourceSFTPHost, sourceSFTPPort                    *string
+	sourceSFTPUser, sourceSFTPPassword, sourceSFTPKey *string
+	storeSFTPHost, storeSFTPPort                      *string
+	storeSFTPUser, storeSFTPPassword, storeSFTPKey    *string
+	databaseURL, tenantID                             *string
+	encryptionKey, encryptionPassword                 *string
+	recoveryKey                                       *string
+	verbose, quiet, debug                             *bool
+	debugLog                                          *ui.SafeLogWriter
 }
 
 func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
@@ -246,6 +250,18 @@ func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 	g.sftpUser = fs.String("sftp-user", envDefault("CLOUDSTIC_SFTP_USER", ""), "SFTP username")
 	g.sftpPassword = fs.String("sftp-password", envDefault("CLOUDSTIC_SFTP_PASSWORD", ""), "SFTP password")
 	g.sftpKey = fs.String("sftp-key", envDefault("CLOUDSTIC_SFTP_KEY", ""), "Path to SSH private key")
+
+	g.sourceSFTPHost = fs.String("source-sftp-host", "", "Override: SFTP source hostname")
+	g.sourceSFTPPort = fs.String("source-sftp-port", "", "Override: SFTP source port")
+	g.sourceSFTPUser = fs.String("source-sftp-user", "", "Override: SFTP source username")
+	g.sourceSFTPPassword = fs.String("source-sftp-password", "", "Override: SFTP source password")
+	g.sourceSFTPKey = fs.String("source-sftp-key", "", "Override: SFTP source private key")
+
+	g.storeSFTPHost = fs.String("store-sftp-host", "", "Override: SFTP store hostname")
+	g.storeSFTPPort = fs.String("store-sftp-port", "", "Override: SFTP store port")
+	g.storeSFTPUser = fs.String("store-sftp-user", "", "Override: SFTP store username")
+	g.storeSFTPPassword = fs.String("store-sftp-password", "", "Override: SFTP store password")
+	g.storeSFTPKey = fs.String("store-sftp-key", "", "Override: SFTP store private key")
 	g.databaseURL = fs.String("database-url", envDefault("CLOUDSTIC_DATABASE_URL", ""), "PostgreSQL URL (required for hybrid store)")
 	g.tenantID = fs.String("tenant-id", envDefault("CLOUDSTIC_TENANT_ID", ""), "Tenant ID for hybrid store RLS")
 	g.encryptionKey = fs.String("encryption-key", envDefault("CLOUDSTIC_ENCRYPTION_KEY", ""), "Platform key (hex-encoded, 32 bytes)")
@@ -594,7 +610,7 @@ func (g *globalFlags) initObjectStore() (store.ObjectStore, error) {
 		}
 		return store.NewS3Store(context.Background(), *g.s3Endpoint, *g.s3Region, *g.storePath, *g.s3AccessKey, *g.s3SecretKey, *g.storePrefix)
 	case "sftp":
-		cfg, err := g.sftpConfig()
+		cfg, err := g.sftpConfig(g.storeSFTPHost, g.storeSFTPPort, g.storeSFTPUser, g.storeSFTPPassword, g.storeSFTPKey)
 		if err != nil {
 			return nil, err
 		}
@@ -606,19 +622,41 @@ func (g *globalFlags) initObjectStore() (store.ObjectStore, error) {
 	}
 }
 
-func (g *globalFlags) sftpConfig() (store.SFTPConfig, error) {
-	if *g.sftpHost == "" {
-		return store.SFTPConfig{}, fmt.Errorf("--sftp-host (or CLOUDSTIC_SFTP_HOST) is required for sftp store/source")
+func (g *globalFlags) sftpConfig(host, port, user, pass, key *string) (store.SFTPConfig, error) {
+	h := *host
+	if h == "" {
+		h = *g.sftpHost
 	}
-	if *g.sftpUser == "" {
-		return store.SFTPConfig{}, fmt.Errorf("--sftp-user (or CLOUDSTIC_SFTP_USER) is required for sftp store/source")
+	p := *port
+	if p == "" {
+		p = *g.sftpPort
 	}
+	u := *user
+	if u == "" {
+		u = *g.sftpUser
+	}
+	pw := *pass
+	if pw == "" {
+		pw = *g.sftpPassword
+	}
+	k := *key
+	if k == "" {
+		k = *g.sftpKey
+	}
+
+	if h == "" {
+		return store.SFTPConfig{}, fmt.Errorf("--sftp-host (or CLOUDSTIC_SFTP_HOST) is required for sftp")
+	}
+	if u == "" {
+		return store.SFTPConfig{}, fmt.Errorf("--sftp-user (or CLOUDSTIC_SFTP_USER) is required for sftp")
+	}
+
 	return store.SFTPConfig{
-		Host:           *g.sftpHost,
-		Port:           *g.sftpPort,
-		User:           *g.sftpUser,
-		Password:       *g.sftpPassword,
-		PrivateKeyPath: *g.sftpKey,
+		Host:           h,
+		Port:           p,
+		User:           u,
+		Password:       pw,
+		PrivateKeyPath: k,
 	}, nil
 }
 
@@ -694,7 +732,7 @@ func initSource(sourceType, sourcePath, driveID, rootFolder string, g *globalFla
 	case "local":
 		return store.NewLocalSource(sourcePath), nil
 	case "sftp":
-		cfg, err := g.sftpConfig()
+		cfg, err := g.sftpConfig(g.sourceSFTPHost, g.sourceSFTPPort, g.sourceSFTPUser, g.sourceSFTPPassword, g.sourceSFTPKey)
 		if err != nil {
 			return nil, err
 		}

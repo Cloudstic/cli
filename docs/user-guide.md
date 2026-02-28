@@ -459,6 +459,11 @@ cloudstic backup -source sftp -source-path /home/user/files \
 | `-sftp-password` | SFTP password (optional if using key auth) |
 | `-sftp-key` | Path to SSH private key (optional if using password auth) |
 
+> [!TIP]
+> **Advanced: Source-Specific Overrides**
+> If you are using SFTP as *both* a source and a store (e.g. backing up one SFTP server to another), you can use the `-source-sftp-*` flags to override the global SFTP settings for the source:
+> `-source-sftp-host`, `-source-sftp-port`, `-source-sftp-user`, `-source-sftp-password`, `-source-sftp-key`.
+
 If neither `-sftp-password` nor `-sftp-key` is provided, Cloudstic will fall back to your `SSH_AUTH_SOCK` agent.
 
 Cloudstic walks the remote directory recursively. File permissions are not preserved — only name, size, modification time, and content are captured.
@@ -797,3 +802,5 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 | `CLOUDSTIC_SFTP_USER` | `-sftp-user` | SFTP username |
 | `CLOUDSTIC_SFTP_PASSWORD` | `-sftp-password` | SFTP password |
 | `CLOUDSTIC_SFTP_KEY` | `-sftp-key` | Path to SSH private key |
+| — | `-source-sftp-*` | Advanced: Overrides global `-sftp-*` for the source |
+| — | `-store-sftp-*` | Advanced: Overrides global `-sftp-*` for the store |

@@ -77,11 +77,11 @@ type BackupOption = engine.BackupOption
 type BackupResult = engine.RunResult
 
 var (
-	WithVerbose        = engine.WithVerbose
-	WithBackupDryRun   = engine.WithBackupDryRun
-	WithTags           = engine.WithTags
-	WithGenerator      = engine.WithGenerator
-	WithMeta           = engine.WithMeta
+	WithVerbose      = engine.WithVerbose
+	WithBackupDryRun = engine.WithBackupDryRun
+	WithTags         = engine.WithTags
+	WithGenerator    = engine.WithGenerator
+	WithMeta         = engine.WithMeta
 )
 
 func (c *Client) Backup(ctx context.Context, src store.Source, opts ...BackupOption) (*BackupResult, error) {
@@ -192,6 +192,16 @@ func (c *Client) Forget(ctx context.Context, snapshotID string, opts ...ForgetOp
 func (c *Client) ForgetPolicy(ctx context.Context, opts ...ForgetOption) (*PolicyResult, error) {
 	mgr := engine.NewForgetManager(c.store, c.reporter)
 	return mgr.RunPolicy(ctx, opts...)
+}
+
+// ---------------------------------------------------------------------------
+// BreakLock
+// ---------------------------------------------------------------------------
+
+type RepoLock = engine.RepoLock
+
+func (c *Client) BreakLock(ctx context.Context) ([]*RepoLock, error) {
+	return engine.BreakRepoLock(ctx, c.store)
 }
 
 // ---------------------------------------------------------------------------

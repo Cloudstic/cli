@@ -10,6 +10,7 @@ require (
 	github.com/tyler-smith/go-bip39 v1.1.0
 	golang.org/x/crypto v0.48.0
 	golang.org/x/oauth2 v0.35.0
+	golang.org/x/sync v0.19.0
 	google.golang.org/api v0.256.0
 )
 
@@ -37,7 +38,6 @@ require (
 	go.opentelemetry.io/otel/metric v1.37.0 // indirect
 	go.opentelemetry.io/otel/trace v1.37.0 // indirect
 	golang.org/x/net v0.49.0 // indirect
-	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/term v0.40.0 // indirect
 	golang.org/x/text v0.34.0 // indirect

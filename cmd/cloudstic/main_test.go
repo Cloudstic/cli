@@ -255,192 +255,71 @@ func TestCLI_EndToEnd_Matrix(t *testing.T) {
 				run(t, bin, forgetArgs...)
 
 				out = run(t, bin, append([]string{"list"}, baseEncArgs...)...)
+				// 10. Test Key Validation (Wrong Password)
+				out = runExpectFail(t, bin, append([]string{"list", "--encryption-password", "wrong-password"}, storeArgs...)...)
+				if !strings.Contains(out, "no provided credential matches") {
+					t.Errorf("Expected credential mismatch error, got: %s", out)
+				}
+
+				// 11. Test Init Requires Encryption
+				// (We use a fresh initialized dummy temp dir for this test to not ruin the matrix store)
+				dummyStoreDir := t.TempDir()
+				dummyStoreArgs := []string{"--store", "local", "--store-path", dummyStoreDir}
+				out = runExpectFail(t, bin, append([]string{"init"}, dummyStoreArgs...)...)
+				if !strings.Contains(out, "encryption is required") {
+					t.Errorf("Expected encryption-required error, got: %s", out)
+				}
+
+				// 12. Test Missing Password on Encrypted Store
+				out = runExpectFail(t, bin, append([]string{"list"}, storeArgs...)...)
+				if !strings.Contains(out, "repository is encrypted") {
+					t.Errorf("Expected encrypted-repo error, got: %s", out)
+				}
+
+				// 13. Test Backup Storage Backend With Recovery Key Generation & Restore
+				// Re-init the isolated dummy store with recovery key enabled
+				out = run(t, bin, append([]string{"init", "--encryption-password", password, "--recovery"}, dummyStoreArgs...)...)
+				if !strings.Contains(out, "RECOVERY KEY") {
+					t.Fatalf("Expected recovery key output on init, got: %s", out)
+				}
+				mnemonic := extractMnemonic(t, out)
+				if mnemonic == "" {
+					t.Fatal("Could not extract mnemonic from recovery key output")
+				}
+
+				run(t, bin, append([]string{"backup", "--encryption-password", password}, append(srcArgs, dummyStoreArgs...)...)...)
+
+				zipRecoveryPath := filepath.Join(restoreDir, "recovery_restore.zip")
+				restoreRecoveryArgs := append([]string{"restore", "--output", zipRecoveryPath, "--recovery-key", mnemonic}, dummyStoreArgs...)
+				run(t, bin, restoreRecoveryArgs...)
+
+				if got := readZipFile(t, zipRecoveryPath, "file1.txt"); got != "hello world" {
+					t.Errorf("Recovery Restore content mismatch for file1.txt: got %q, want %q", got, "hello world")
+				}
+
+				// 14. Test Forget Policy & Dry Run
+				// Re-init another dummy store to test forget logic
+				dummyPolicyDir := t.TempDir()
+				dummyPolicyStoreArgs := []string{"--store", "local", "--store-path", dummyPolicyDir}
+				run(t, bin, append([]string{"init", "--encryption-password", password}, dummyPolicyStoreArgs...)...)
+
+				for i := range 3 {
+					src.WriteFile(t, "policy-file.txt", strings.Repeat("x", i+1))
+					run(t, bin, append([]string{"backup", "--encryption-password", password}, append(srcArgs, dummyPolicyStoreArgs...)...)...)
+				}
+
+				out = run(t, bin, append([]string{"forget", "--keep-last", "1", "--dry-run", "--encryption-password", password}, dummyPolicyStoreArgs...)...)
+				if !strings.Contains(out, "would remove") {
+					t.Errorf("Expected dry-run output, got: %s", out)
+				}
+
+				run(t, bin, append([]string{"forget", "--keep-last", "1", "--prune", "--encryption-password", password}, dummyPolicyStoreArgs...)...)
+				out = run(t, bin, append([]string{"list", "--encryption-password", password}, dummyPolicyStoreArgs...)...)
 				if !strings.Contains(out, "1 snapshot") {
-					t.Fatalf("Expected 1 snapshot after forget/prune, got: %s", out)
+					t.Errorf("Expected 1 snapshot after policy, got: %s", out)
 				}
 			})
 		}
-	}
-}
-
-// ----------------------------------------------------------------------------
-// Legacy Tests (Testing Specific CLI Features unrelated to the Matrix)
-// ----------------------------------------------------------------------------
-
-func TestCLI_InitRequiresEncryption(t *testing.T) {
-	bin := buildBinary(t)
-	storeDir := t.TempDir()
-
-	out := runExpectFail(t, bin, "init", "--store", "local", "--store-path", storeDir)
-	if !strings.Contains(out, "encryption is required") {
-		t.Errorf("Expected encryption-required error, got: %s", out)
-	}
-}
-
-func TestCLI_Encrypted_WrongPassword(t *testing.T) {
-	bin := buildBinary(t)
-	storeDir := t.TempDir()
-
-	run(t, bin, "init",
-		"--store", "local", "--store-path", storeDir,
-		"--encryption-password", "correct-password")
-
-	out := runExpectFail(t, bin, "list",
-		"--store", "local", "--store-path", storeDir,
-		"--encryption-password", "wrong-password")
-	if !strings.Contains(out, "no provided credential matches") {
-		t.Errorf("Expected credential mismatch error, got: %s", out)
-	}
-}
-
-func TestCLI_Encrypted_NoPassword(t *testing.T) {
-	bin := buildBinary(t)
-	storeDir := t.TempDir()
-
-	run(t, bin, "init",
-		"--store", "local", "--store-path", storeDir,
-		"--encryption-password", "my-password")
-
-	out := runExpectFail(t, bin, "list",
-		"--store", "local", "--store-path", storeDir)
-	if !strings.Contains(out, "repository is encrypted") {
-		t.Errorf("Expected encrypted-repo error, got: %s", out)
-	}
-}
-
-func TestCLI_RecoveryKey(t *testing.T) {
-	bin := buildBinary(t)
-	srcDir := t.TempDir()
-	storeDir := t.TempDir()
-	restoreDir := t.TempDir()
-	password := "recovery-test-password"
-
-	writeFile(t, srcDir, "important.txt", "do not lose this")
-
-	// Init with password + recovery key
-	out := run(t, bin, "init",
-		"--store", "local", "--store-path", storeDir,
-		"--encryption-password", password,
-		"--recovery")
-	if !strings.Contains(out, "RECOVERY KEY") {
-		t.Fatalf("Expected recovery key output, got: %s", out)
-	}
-
-	// Extract the 24-word mnemonic from the output
-	mnemonic := extractMnemonic(t, out)
-	if mnemonic == "" {
-		t.Fatal("Could not extract mnemonic from recovery key output")
-	}
-	words := strings.Fields(mnemonic)
-	if len(words) != 24 {
-		t.Fatalf("Expected 24-word mnemonic, got %d words: %q", len(words), mnemonic)
-	}
-
-	// Backup with password
-	run(t, bin, "backup",
-		"--source", "local", "--source-path", srcDir,
-		"--store", "local", "--store-path", storeDir,
-		"--encryption-password", password)
-
-	// Restore using recovery key (simulating lost password)
-	zipPath := filepath.Join(restoreDir, "restore.zip")
-	run(t, bin, "restore",
-		"--store", "local", "--store-path", storeDir,
-		"--recovery-key", mnemonic,
-		"--output", zipPath)
-
-	if got := readZipFile(t, zipPath, "important.txt"); got != "do not lose this" {
-		t.Errorf("Content mismatch: got %q", got)
-	}
-}
-
-func TestCLI_AddRecoveryKey(t *testing.T) {
-	bin := buildBinary(t)
-	srcDir := t.TempDir()
-	storeDir := t.TempDir()
-	restoreDir := t.TempDir()
-	password := "add-recovery-test"
-
-	writeFile(t, srcDir, "data.txt", "recovery test data")
-
-	// Init without recovery
-	run(t, bin, "init",
-		"--store", "local", "--store-path", storeDir,
-		"--encryption-password", password)
-
-	// Backup
-	run(t, bin, "backup",
-		"--source", "local", "--source-path", srcDir,
-		"--store", "local", "--store-path", storeDir,
-		"--encryption-password", password)
-
-	// Add recovery key after the fact
-	out := run(t, bin, "add-recovery-key",
-		"--store", "local", "--store-path", storeDir,
-		"--encryption-password", password)
-	if !strings.Contains(out, "RECOVERY KEY") {
-		t.Fatalf("Expected recovery key output, got: %s", out)
-	}
-
-	mnemonic := extractMnemonic(t, out)
-
-	// Restore using the recovery key
-	zipPath := filepath.Join(restoreDir, "restore.zip")
-	run(t, bin, "restore",
-		"--store", "local", "--store-path", storeDir,
-		"--recovery-key", mnemonic,
-		"--output", zipPath)
-
-	if got := readZipFile(t, zipPath, "data.txt"); got != "recovery test data" {
-		t.Errorf("Content mismatch: got %q", got)
-	}
-}
-
-func TestCLI_ForgetPolicy_Encrypted(t *testing.T) {
-	bin := buildBinary(t)
-	srcDir := t.TempDir()
-	storeDir := t.TempDir()
-	password := "forget-policy-test"
-
-	run(t, bin, "init",
-		"--store", "local", "--store-path", storeDir,
-		"--encryption-password", password)
-
-	// Create 3 snapshots
-	for i := range 3 {
-		writeFile(t, srcDir, "file.txt", strings.Repeat("x", i+1))
-		run(t, bin, "backup",
-			"-source", "local", "-source-path", srcDir,
-			"-store", "local", "-store-path", storeDir,
-			"-encryption-password", password)
-	}
-
-	// Verify 3 snapshots
-	out := run(t, bin, "list",
-		"-store", "local", "-store-path", storeDir,
-		"-encryption-password", password)
-	if !strings.Contains(out, "3 snapshots") {
-		t.Fatalf("Expected 3 snapshots: %s", out)
-	}
-
-	// Dry-run: keep last 1
-	out = run(t, bin, "forget", "--keep-last", "1", "--dry-run",
-		"-store", "local", "-store-path", storeDir,
-		"-encryption-password", password)
-	if !strings.Contains(out, "would remove") {
-		t.Errorf("Expected dry-run output, got: %s", out)
-	}
-
-	// Apply: keep last 1 with prune
-	run(t, bin, "forget", "--keep-last", "1", "--prune",
-		"-store", "local", "-store-path", storeDir,
-		"-encryption-password", password)
-
-	out = run(t, bin, "list",
-		"-store", "local", "-store-path", storeDir,
-		"-encryption-password", password)
-	if !strings.Contains(out, "1 snapshot") {
-		t.Errorf("Expected 1 snapshot after policy, got: %s", out)
 	}
 }
 

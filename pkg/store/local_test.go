@@ -80,4 +80,35 @@ func TestLocalStore(t *testing.T) {
 	if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
 		t.Error("File not found on disk at expected path")
 	}
+
+	// Test Size
+	size, err := s.Size(ctx, key2)
+	if err != nil {
+		t.Fatalf("Size() failed: %v", err)
+	}
+	if size != int64(len(data)) {
+		t.Errorf("Expected size %d, got %d", len(data), size)
+	}
+
+	// Test TotalSize
+	totalSize, err := s.TotalSize(ctx)
+	if err != nil {
+		t.Fatalf("TotalSize() failed: %v", err)
+	}
+	if totalSize != int64(len(data)) { // Remember we deleted `key` earlier.
+		t.Errorf("Expected total size %d, got %d", len(data), totalSize)
+	}
+
+	// Test List
+	if err := s.Put(ctx, "nested/dir/other", []byte("other")); err != nil {
+		t.Fatalf("Nested put failed: %v", err)
+	}
+
+	keys, err := s.List(ctx, "nested")
+	if err != nil {
+		t.Fatalf("List() failed: %v", err)
+	}
+	if len(keys) != 2 {
+		t.Errorf("Expected 2 keys under 'nested', got %d", len(keys))
+	}
 }

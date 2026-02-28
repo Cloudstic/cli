@@ -59,6 +59,14 @@ func (pm *PruneManager) Run(ctx context.Context, opts ...PruneOption) (*PruneRes
 		opt(&cfg)
 	}
 
+	if !cfg.dryRun {
+		lock, err := AcquireRepoLock(ctx, pm.store, "prune")
+		if err != nil {
+			return nil, err
+		}
+		defer lock.Release()
+	}
+
 	pm.metaCache, _ = LoadFileMetaCache(pm.store)
 	pm.contentCache = LoadContentCache(pm.store)
 

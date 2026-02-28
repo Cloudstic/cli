@@ -19,11 +19,11 @@ type lsSnapshotConfig struct{}
 
 // LsSnapshotResult holds the data returned by an ls-snapshot operation.
 type LsSnapshotResult struct {
-	Ref        string
-	Snapshot   core.Snapshot
-	RootRefs   []string
-	RefToMeta  map[string]core.FileMeta
-	ChildRefs  map[string][]string
+	Ref       string
+	Snapshot  core.Snapshot
+	RootRefs  []string
+	RefToMeta map[string]core.FileMeta
+	ChildRefs map[string][]string
 }
 
 // LsSnapshotManager lists the file tree of a single snapshot.

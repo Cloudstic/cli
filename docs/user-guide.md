@@ -1,6 +1,6 @@
 # Cloudstic CLI User Guide
 
-Cloudstic is a content-addressable backup tool that creates encrypted, deduplicated snapshots of your files — from local directories, Google Drive, or OneDrive — and stores them locally or on Backblaze B2.
+Cloudstic is a content-addressable backup tool that creates encrypted, deduplicated snapshots of your files — from local directories, Google Drive, or OneDrive — and stores them locally, on Amazon S3, or Backblaze B2.
 
 ## Table of Contents
 
@@ -26,6 +26,7 @@ Cloudstic is a content-addressable backup tool that creates encrypted, deduplica
   - [OneDrive (Changes API)](#onedrive-changes-api)
 - [Storage Backends](#storage-backends)
   - [Local](#local-storage)
+  - [Amazon S3](#amazon-s3)
   - [Backblaze B2](#backblaze-b2)
 - [Encryption](#encryption)
 - [Retention Policies](#retention-policies)
@@ -141,11 +142,11 @@ Override with the `CLOUDSTIC_CONFIG_DIR` environment variable.
 Most flags can be set via environment variables to avoid repeating them. For example:
 
 ```bash
-export CLOUDSTIC_STORE=b2
+export CLOUDSTIC_STORE=s3
 export CLOUDSTIC_STORE_PATH=my-backup-bucket
 export CLOUDSTIC_ENCRYPTION_PASSWORD="my secret passphrase"
-export B2_KEY_ID=your-key-id
-export B2_APP_KEY=your-app-key
+export AWS_ACCESS_KEY_ID=your-access-key
+export AWS_SECRET_ACCESS_KEY=your-secret-key
 
 # Now commands are much shorter:
 cloudstic backup -source local -source-path ~/Documents
@@ -593,6 +594,44 @@ cloudstic init -store b2 -store-path my-bucket -store-prefix "laptop/" -encrypti
 | `B2_KEY_ID` | Backblaze B2 application key ID |
 | `B2_APP_KEY` | Backblaze B2 application key |
 
+### Amazon S3
+
+Store backups in an Amazon S3 bucket (or S3-compatible endpoints like Cloudflare R2, MinIO, or Wasabi). Requires credentials and a bucket path.
+
+Cloudstic uses the standard AWS SDK for Go, meaning it automatically loads credentials from your environment. You can use explicit credentials (`AWS_ACCESS_KEY_ID`), or if you already have the AWS CLI configured, you can omit them and Cloudstic will seamlessly use your `~/.aws/credentials` profile.
+
+```bash
+# Using explicit environment variables
+export AWS_ACCESS_KEY_ID=your-access-key
+export AWS_SECRET_ACCESS_KEY=your-secret-key
+cloudstic init -store s3 -store-path my-bucket-name -encryption-password "passphrase"
+
+# Using an existing AWS CLI profile (e.g., from ~/.aws/credentials)
+export AWS_PROFILE=my-profile
+cloudstic backup -store s3 -store-path my-bucket-name -source local -source-path ~/Documents
+```
+
+If using an alternative S3 provider, you must specific the custom endpoint URL. Keep in mind you may also need to modify the `-s3-region` (defaults to `us-east-1`):
+
+```bash
+cloudstic init -store s3 -s3-endpoint https://<account_id>.r2.cloudflarestorage.com -store-path my-bucket -s3-region auto -encryption-password "passphrase"
+```
+
+Use `-store-prefix` to namespace objects within a bucket:
+
+```bash
+cloudstic init -store s3 -store-path my-bucket -store-prefix "laptop/" -encryption-password "passphrase"
+```
+
+**Environment variables:**
+
+| Variable | Description |
+|----------|-------------|
+| `AWS_ACCESS_KEY_ID` | S3 access key ID |
+| `AWS_SECRET_ACCESS_KEY` | S3 secret access key |
+| `CLOUDSTIC_S3_ENDPOINT` | Custom endpoint URL (for R2, MinIO, etc.) |
+| `CLOUDSTIC_S3_REGION` | S3 Region |
+
 ---
 
 ## Encryption
@@ -672,9 +711,13 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 
 | Variable | Flag equivalent | Description |
 |----------|----------------|-------------|
-| `CLOUDSTIC_STORE` | `-store` | Storage backend: `local`, `b2` |
-| `CLOUDSTIC_STORE_PATH` | `-store-path` | Local path or B2 bucket name |
-| `CLOUDSTIC_STORE_PREFIX` | `-store-prefix` | Key prefix for B2 objects |
+| `CLOUDSTIC_STORE` | `-store` | Storage backend: `local`, `s3`, `b2`, `hybrid` |
+| `CLOUDSTIC_STORE_PATH` | `-store-path` | Local path or S3/B2 bucket name |
+| `CLOUDSTIC_STORE_PREFIX` | `-store-prefix` | Key prefix for S3/B2 objects |
+| `CLOUDSTIC_S3_ENDPOINT` | `-s3-endpoint` | S3 compatible endpoint (for MinIO, R2, etc.) |
+| `CLOUDSTIC_S3_REGION` | `-s3-region` | S3 Region |
+| `AWS_ACCESS_KEY_ID` | `-s3-access-key` | S3 Access Key ID |
+| `AWS_SECRET_ACCESS_KEY` | `-s3-secret-key` | S3 Secret Access Key |
 | `CLOUDSTIC_SOURCE` | `-source` | Source type: `local`, `gdrive`, `gdrive-changes`, `onedrive`, `onedrive-changes` |
 | `CLOUDSTIC_SOURCE_PATH` | `-source-path` | Local source directory path (when `source=local`) |
 | `CLOUDSTIC_DRIVE_ID` | `-drive-id` | Shared drive ID for Google Drive |

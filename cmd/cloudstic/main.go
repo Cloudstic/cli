@@ -12,13 +12,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cloudstic/cli"
+	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/core"
-	"github.com/cloudstic/cli/pkg/crypto"
 	"github.com/cloudstic/cli/internal/engine"
 	"github.com/cloudstic/cli/internal/paths"
-	"github.com/cloudstic/cli/pkg/store"
 	"github.com/cloudstic/cli/internal/ui"
+	"github.com/cloudstic/cli/pkg/crypto"
+	"github.com/cloudstic/cli/pkg/store"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -60,6 +60,8 @@ func main() {
 		runForget()
 	case "diff":
 		runDiff()
+	case "break-lock":
+		runBreakLock()
 	case "add-recovery-key":
 		runAddRecoveryKey()
 	case "help", "--help", "-h":
@@ -89,6 +91,7 @@ func printUsage() {
 		{"prune", "Remove unused data chunks from the repository"},
 		{"forget", "Remove a specific snapshot from history"},
 		{"diff", "Compare two snapshots or a snapshot against latest"},
+		{"break-lock", "Remove a stale repository lock left by a crashed process"},
 		{"add-recovery-key", "Generate a recovery key for an existing encrypted repository"},
 	})
 
@@ -179,6 +182,11 @@ func printUsage() {
 
 	t.Command("diff", "<snapshot_1> <snapshot_2>")
 	t.Note("  Compare two snapshots. Use 'latest' as an alias for the most recent.")
+	t.Blank()
+
+	t.Command("break-lock", "")
+	t.Note("  Remove a stale repository lock left by a crashed or killed process.",
+		"  Only use this if you are sure no other operation is running.")
 
 	t.Heading("EXAMPLES")
 	t.Examples(
@@ -203,12 +211,12 @@ func envDefault(key, fallback string) string {
 }
 
 type globalFlags struct {
-	storeType, storePath, storePrefix   *string
-	databaseURL, tenantID               *string
-	encryptionKey, encryptionPassword   *string
-	recoveryKey                         *string
-	verbose, quiet, debug               *bool
-	debugLog                            *ui.SafeLogWriter
+	storeType, storePath, storePrefix *string
+	databaseURL, tenantID             *string
+	encryptionKey, encryptionPassword *string
+	recoveryKey                       *string
+	verbose, quiet, debug             *bool
+	debugLog                          *ui.SafeLogWriter
 }
 
 func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
@@ -478,7 +486,7 @@ func printRecoveryKey(mnemonic string) {
 	fmt.Fprintln(os.Stderr, "║                      RECOVERY KEY                           ║")
 	fmt.Fprintln(os.Stderr, "╠══════════════════════════════════════════════════════════════╣")
 	fmt.Fprintln(os.Stderr, "║                                                              ║")
-	fmt.Fprintf(os.Stderr,  "║  %s\n", mnemonic)
+	fmt.Fprintf(os.Stderr, "║  %s\n", mnemonic)
 	fmt.Fprintln(os.Stderr, "║                                                              ║")
 	fmt.Fprintln(os.Stderr, "║  Write down these 24 words and store them in a safe place.   ║")
 	fmt.Fprintln(os.Stderr, "║  This is the ONLY time the recovery key will be displayed.   ║")
@@ -942,6 +950,40 @@ func appendTreeNode(l list.Writer, ref string, refToMeta map[string]core.FileMet
 		appendTreeNode(l, childRef, refToMeta, children)
 	}
 	l.UnIndent()
+}
+
+func runBreakLock() {
+	blCmd := flag.NewFlagSet("break-lock", flag.ExitOnError)
+	g := addGlobalFlags(blCmd)
+	_ = blCmd.Parse(os.Args[2:])
+
+	ctx := context.Background()
+
+	client, err := g.openClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to init store: %v\n", err)
+		os.Exit(1)
+	}
+
+	removed, err := client.BreakLock(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to break lock: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(removed) == 0 {
+		fmt.Fprintln(os.Stderr, "No lock found — repository is not locked.")
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "Locks removed:\n")
+	for _, r := range removed {
+		fmt.Fprintf(os.Stderr, "  Operation:  %s\n", r.Operation)
+		fmt.Fprintf(os.Stderr, "  Holder:     %s\n", r.Holder)
+		fmt.Fprintf(os.Stderr, "  Acquired:   %s\n", r.AcquiredAt)
+		fmt.Fprintf(os.Stderr, "  Expired at: %s\n", r.ExpiresAt)
+		fmt.Fprintf(os.Stderr, "  Shared:     %v\n\n", r.IsShared)
+	}
 }
 
 func runPrune() {

@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/pkg/crypto"
 	"github.com/cloudstic/cli/pkg/store"
 
 	"github.com/jotfs/fastcdc-go"
@@ -28,11 +29,12 @@ const (
 // Chunker splits a byte stream into content-defined chunks, deduplicates
 // them, and persists the resulting Content object.
 type Chunker struct {
-	store store.ObjectStore
+	store   store.ObjectStore
+	hmacKey []byte
 }
 
-func NewChunker(s store.ObjectStore) *Chunker {
-	return &Chunker{store: s}
+func NewChunker(s store.ObjectStore, hmacKey []byte) *Chunker {
+	return &Chunker{store: s, hmacKey: hmacKey}
 }
 
 // ProcessStream splits r into content-defined chunks and stores each one
@@ -107,7 +109,12 @@ func (c *Chunker) CreateContentObject(chunkRefs []string, size int64, contentHas
 }
 
 func (c *Chunker) storeChunk(ctx context.Context, data []byte) (string, error) {
-	ref := "chunk/" + core.ComputeHash(data)
+	var ref string
+	if len(c.hmacKey) > 0 {
+		ref = "chunk/" + crypto.ComputeHMAC(c.hmacKey, data)
+	} else {
+		ref = "chunk/" + core.ComputeHash(data)
+	}
 
 	exists, err := c.store.Exists(ctx, ref)
 	if err != nil {

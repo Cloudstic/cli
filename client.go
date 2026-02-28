@@ -2,11 +2,13 @@ package cloudstic
 
 import (
 	"context"
+	"fmt"
 	"io"
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/engine"
 	"github.com/cloudstic/cli/internal/ui"
+	"github.com/cloudstic/cli/pkg/crypto"
 	"github.com/cloudstic/cli/pkg/store"
 )
 
@@ -36,6 +38,7 @@ func WithReporter(r Reporter) ClientOption {
 }
 
 // WithEncryptionKey enables AES-256-GCM encryption. Key must be 32 bytes.
+// The HMAC deduplication key is automatically derived from this key.
 func WithEncryptionKey(key []byte) ClientOption {
 	return func(c *Client) { c.encryptionKey = key }
 }
@@ -45,15 +48,27 @@ type Client struct {
 	store         store.ObjectStore
 	storedMeter   *store.MeteredStore
 	encryptionKey []byte
+	hmacKey       []byte
 	reporter      ui.Reporter
 }
 
-func NewClient(base store.ObjectStore, opts ...ClientOption) *Client {
+func NewClient(base store.ObjectStore, opts ...ClientOption) (*Client, error) {
 	c := &Client{
 		reporter: ui.NewNoOpReporter(),
 	}
 	for _, opt := range opts {
 		opt(c)
+	}
+
+	// Derive HMAC dedup key from the encryption key.
+	// This avoids plumbing two keys through the entire stack while
+	// keeping the HMAC key cryptographically independent (HKDF is a PRF).
+	if len(c.encryptionKey) > 0 {
+		hmacKey, err := crypto.DeriveKey(c.encryptionKey, crypto.HKDFInfoDedupV1)
+		if err != nil {
+			return nil, fmt.Errorf("derive HMAC dedup key: %w", err)
+		}
+		c.hmacKey = hmacKey
 	}
 
 	storedMeter := store.NewMeteredStore(base)
@@ -64,7 +79,7 @@ func NewClient(base store.ObjectStore, opts ...ClientOption) *Client {
 
 	c.store = store.NewCompressedStore(inner)
 	c.storedMeter = storedMeter
-	return c
+	return c, nil
 }
 
 func (c *Client) Store() store.ObjectStore { return c.store }
@@ -88,7 +103,7 @@ func (c *Client) Backup(ctx context.Context, src store.Source, opts ...BackupOpt
 	rawMeter := store.NewMeteredStore(c.store)
 	c.storedMeter.Reset()
 
-	mgr := engine.NewBackupManager(src, rawMeter, c.reporter, opts...)
+	mgr := engine.NewBackupManager(src, rawMeter, c.reporter, c.hmacKey, opts...)
 	result, err := mgr.Run(ctx)
 	if err != nil {
 		return nil, err

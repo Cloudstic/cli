@@ -12,6 +12,8 @@ type MeteredStore struct {
 	bytesWritten atomic.Int64
 }
 
+func (m *MeteredStore) Unwrap() ObjectStore { return m.ObjectStore }
+
 func NewMeteredStore(s ObjectStore) *MeteredStore {
 	return &MeteredStore{ObjectStore: s}
 }

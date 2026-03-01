@@ -24,6 +24,8 @@ type EncryptedStore struct {
 	key []byte
 }
 
+func (s *EncryptedStore) Unwrap() ObjectStore { return s.ObjectStore }
+
 // NewEncryptedStore creates an EncryptedStore that encrypts all Put operations
 // and decrypts Get operations. The key must be 32 bytes (AES-256).
 func NewEncryptedStore(inner ObjectStore, key []byte) *EncryptedStore {

@@ -79,6 +79,38 @@ func (pm *PruneManager) Run(ctx context.Context, opts ...PruneOption) (*PruneRes
 	result := pm.sweep(ctx, reachable, &cfg)
 
 	if !cfg.dryRun {
+		// Attempt to repack fragmented packfiles.
+		// We walk down the store chain to find the PackStore if it is enabled.
+		var packStore *store.PackStore
+		var current store.ObjectStore = pm.store
+		for current != nil {
+			if ps, ok := current.(*store.PackStore); ok {
+				packStore = ps
+				break
+			}
+			if un, ok := current.(store.Unwrapper); ok {
+				current = un.Unwrap()
+			} else {
+				break
+			}
+		}
+
+		if packStore != nil {
+			repackPhase := pm.reporter.StartPhase("Repacking fragmented index files", 0, false)
+			// Threshold: Repack any packfile that is more than 30% empty
+			bytesReclaimed, packsDeleted, err := packStore.Repack(ctx, 0.3)
+			if err != nil {
+				repackPhase.Error()
+				return nil, fmt.Errorf("repack: %w", err)
+			}
+			if cfg.verbose {
+				repackPhase.Log(fmt.Sprintf("Repacked/deleted %d packs, reclaimed %d bytes", packsDeleted, bytesReclaimed))
+			}
+			result.BytesReclaimed += bytesReclaimed
+			result.ObjectsDeleted += packsDeleted
+			repackPhase.Done()
+		}
+
 		_ = pm.store.Flush(ctx)
 	}
 

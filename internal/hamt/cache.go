@@ -169,6 +169,10 @@ func (ts *TransactionalStore) Flush(rootRef string) error {
 		return err
 	}
 
+	// Discard unreachable nodes from the staging buffer so ExportCaches
+	// does not persist orphaned intermediate tree states.
+	ts.cache.staging = toWrite
+
 	fmt.Printf("Flushing HAMT: %d nodes (reduced from %d generated)\n", len(toWrite), len(ts.cache.staging))
 
 	return ts.writeParallel(toWrite)

@@ -9,7 +9,7 @@
 
 ## Overview
 
-Cloudstic is a content-addressable backup system designed for flat cloud storage (Google Drive, OneDrive, local filesystem). It supports:
+Cloudstic is a content-addressable backup system designed for flat cloud storage (Google Drive, OneDrive, S3, SFTP, local filesystem). It supports:
 
 * **Checkpoint-only snapshots** — every snapshot is a complete view, no delta replay needed
 * **Structural sharing** via a Merkle-HAMT — only changed paths are re-uploaded
@@ -23,11 +23,14 @@ Cloudstic is a content-addressable backup system designed for flat cloud storage
 
 ### Sources (read-only data origins)
 
-| Source    | Flag              | Description                                      |
-|-----------|-------------------|--------------------------------------------------|
-| `local`   | `-source local`   | Local filesystem directory                       |
-| `gdrive`  | `-source gdrive`  | Google Drive via OAuth2 or service-account creds  |
-| `onedrive`| `-source onedrive`| Microsoft OneDrive via OAuth2                    |
+| Source            | Flag                      | Description                                      |
+|-------------------|---------------------------|--------------------------------------------------|
+| `local`           | `-source local`           | Local filesystem directory                       |
+| `sftp`            | `-source sftp`            | Remote SFTP server                               |
+| `gdrive`          | `-source gdrive`          | Google Drive full scan via OAuth2                 |
+| `gdrive-changes`  | `-source gdrive-changes`  | Google Drive incremental via Changes API          |
+| `onedrive`        | `-source onedrive`        | Microsoft OneDrive full scan via OAuth2           |
+| `onedrive-changes`| `-source onedrive-changes`| Microsoft OneDrive incremental via delta API      |
 
 ### Stores (content-addressed object storage)
 
@@ -36,18 +39,22 @@ Cloudstic is a content-addressable backup system designed for flat cloud storage
 | `local` | `-store local`  | Local directory (`./backup_store` by default) |
 | `s3`    | `-store s3`     | Amazon S3 (or S3-compatible service) |
 | `b2`    | `-store b2`     | Backblaze B2 bucket             |
+| `sftp`  | `-store sftp`   | Remote SFTP server              |
 
 ### Commands
 
-| Command   | Description                                              |
-|-----------|----------------------------------------------------------|
-| `backup`  | Scan a source, upload changed files, create a snapshot   |
-| `restore` | Export a snapshot's file tree as a ZIP archive            |
-| `list`    | Print a table of all snapshots                           |
-| `ls`      | Print the file tree of a specific snapshot               |
-| `diff`    | Compare two snapshots and show file-level changes        |
-| `forget`  | Remove a snapshot (and optionally prune afterwards)      |
-| `prune`   | Mark-and-sweep garbage collection of unreachable objects |
+| Command            | Description                                              |
+|--------------------|----------------------------------------------------------|
+| `init`             | Initialize a new repository with encryption key slots    |
+| `backup`           | Scan a source, upload changed files, create a snapshot   |
+| `restore`          | Export a snapshot's file tree as a ZIP archive            |
+| `list`             | Print a table of all snapshots                           |
+| `ls`               | Print the file tree of a specific snapshot               |
+| `diff`             | Compare two snapshots and show file-level changes        |
+| `forget`           | Remove a snapshot (and optionally prune afterwards)      |
+| `prune`            | Mark-and-sweep garbage collection of unreachable objects |
+| `break-lock`       | Force-remove a stale repository lock                     |
+| `add-recovery-key` | Add a BIP39 recovery key slot to the repository          |
 
 ---
 
@@ -57,10 +64,10 @@ All objects are stored under a flat key namespace of the form `<type>/<hash>`.
 
 ### 1. Chunk
 
-* Raw file data, gzip-compressed.
+* Raw file data, zstd-compressed.
 * Object key: `chunk/<hmac_sha256>` (HMAC-SHA256 keyed by the dedup key when
   encryption is enabled, plain SHA-256 otherwise)
-* **Format:** Raw binary (gzip stream). Not JSON-wrapped.
+* **Format:** Raw binary (zstd stream). Not JSON-wrapped.
 * Produced by **FastCDC** content-defined chunking:
 
 | Parameter | Value    |
@@ -236,7 +243,7 @@ Clients fetch `index/latest` to find the head. To list all snapshots, list the `
    - Unchanged files are re-inserted into the new HAMT by reference.
    - Changed or new files are queued for upload.
 3. **Upload**: process queued files with concurrent workers:
-   - Stream → FastCDC split → HMAC-SHA256 (keyed by dedup key, or plain SHA-256 if unencrypted) → gzip → store as `chunk/<hash>` (dedup by Exists check).
+   - Stream → FastCDC split → HMAC-SHA256 (keyed by dedup key, or plain SHA-256 if unencrypted) → zstd → store as `chunk/<hash>` (dedup by Exists check).
    - Create `content/<content-hash>` object.
    - Create `filemeta/<hash>` object referencing the content.
    - Insert into the new HAMT.
@@ -273,7 +280,8 @@ The `diff` command leverages the HAMT's `Diff(root1, root2)` primitive, which pe
 
 **Prune** (mark-and-sweep GC):
 1. **Mark**: list `snapshot/` to find all live snapshots, then walk each snapshot → HAMT nodes → filemeta → content → chunks. Collect all reachable keys.
-2. **Sweep**: list all keys under `chunk/`, `content/`, `filemeta/`, `node/`, `snapshot/`, and `packs/`. Delete any key not in the reachable set. (Note: Pruning inside packfiles is currently not implemented; full packfiles are retained if they contain at least one live object).
+2. **Sweep**: list all keys under `chunk/`, `content/`, `filemeta/`, `node/`, and `snapshot/`. Delete any key not in the reachable set. Objects inside packfiles are removed from the pack catalog.
+3. **Repack**: when packfiles are enabled, fragmented packs (more than 30% wasted space) are repacked — live objects are extracted, re-bundled into new packs, and the old packs are deleted.
 
 ---
 

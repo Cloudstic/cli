@@ -136,9 +136,8 @@ leaks, the encryption key remains safe (HKDF is one-way).
 Encryption sits in the object store wrapper chain:
 
 ```
-Backup Engine → QuotaStore → EncryptedStore → MeteredStore → HybridStore
-                                                                ├─ PostgreSQL (metadata)
-                                                                └─ B2 (chunks + write-through)
+Backup Engine → CompressedStore → EncryptedStore → MeteredStore → PackStore → Backend
+                                                                                └─ S3 / B2 / Local / SFTP
 ```
 
 - **Put(key, data)**: encrypt `data`, delegate `Put(key, encrypted)` to inner

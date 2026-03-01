@@ -160,11 +160,26 @@ Folder changes are topologically sorted before file changes, ensuring parent ref
 
 Walks the drive recursively starting from the root item via the Microsoft Graph API. Folders are visited depth-first, ensuring parents are emitted before children.
 
+### `onedrive-changes` — Microsoft OneDrive (Delta API)
+
+| | |
+|---|---|
+| **Struct** | `OneDriveChangeSource` (embeds `OneDriveSource`) |
+| **Interface** | `IncrementalSource` |
+| **FileID** | Same as `onedrive` |
+| **Parents** | Same as `onedrive` |
+| **ContentHash** | Same as `onedrive` |
+| **SourceInfo.Account** | Same as `onedrive` |
+| **SourceInfo.Path** | Same as `onedrive` |
+| **Change token** | Microsoft Graph delta link |
+
+Embeds `OneDriveSource` and reuses its `Walk`, `GetFileStream`, and metadata conversion. On the first run (no previous token), the engine calls `GetStartPageToken` + full `Walk`. On subsequent runs, only `WalkChanges` is called, fetching the delta since the stored token.
+
 ---
 
 ## Engine integration
 
-The backup engine (`pkg/engine/backup.go`) interacts with sources as follows:
+The backup engine (`internal/engine/backup.go`) interacts with sources as follows:
 
 1. **Detect source type** — check if the source implements `IncrementalSource`
 2. **Load previous state** — find the most recent snapshot with a matching `SourceInfo`

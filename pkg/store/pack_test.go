@@ -24,8 +24,8 @@ func TestPackStore_RepackOrphan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to init pack store: %v", err)
 	}
+	defer func() { _ = packStore.Close() }()
 
-	// Write some small files to trigger packing
 	key1 := "filemeta/a"
 	key2 := "filemeta/b"
 	data1 := []byte("content A")
@@ -93,6 +93,7 @@ func TestPackStore_RepackFragmented(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to init pack store: %v", err)
 	}
+	defer func() { _ = packStore.Close() }()
 
 	// Write data where one file is large enough to trigger the repack threshold when deleted
 	key1 := "filemeta/keep"
@@ -177,6 +178,7 @@ func TestPackStore_RepackNoFragment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to init pack store: %v", err)
 	}
+	defer func() { _ = packStore.Close() }()
 
 	key1 := "filemeta/keep1"
 	key2 := "filemeta/keep2"

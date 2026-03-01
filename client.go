@@ -52,9 +52,11 @@ func WithPackfile(enable bool) ClientOption {
 }
 
 // Client is the high-level interface for using Cloudstic as a library.
+// Callers should defer Client.Close() to release temporary resources.
 type Client struct {
 	store          store.ObjectStore
 	storedMeter    *store.MeteredStore
+	packStore      *store.PackStore
 	encryptionKey  []byte
 	hmacKey        []byte
 	enablePackfile bool
@@ -84,11 +86,12 @@ func NewClient(base store.ObjectStore, opts ...ClientOption) (*Client, error) {
 
 	log.Debugf("packfile enabled: %v", c.enablePackfile)
 	if c.enablePackfile {
-		packStore, err := store.NewPackStore(inner)
+		ps, err := store.NewPackStore(inner)
 		if err != nil {
 			return nil, fmt.Errorf("init packstore: %w", err)
 		}
-		inner = packStore
+		c.packStore = ps
+		inner = ps
 	}
 
 	storedMeter := store.NewMeteredStore(inner)
@@ -103,6 +106,14 @@ func NewClient(base store.ObjectStore, opts ...ClientOption) (*Client, error) {
 }
 
 func (c *Client) Store() store.ObjectStore { return c.store }
+
+// Close releases temporary resources (e.g. bbolt catalog files).
+func (c *Client) Close() error {
+	if c.packStore != nil {
+		return c.packStore.Close()
+	}
+	return nil
+}
 
 // ---------------------------------------------------------------------------
 // Backup
@@ -123,7 +134,11 @@ func (c *Client) Backup(ctx context.Context, src store.Source, opts ...BackupOpt
 	rawMeter := store.NewMeteredStore(c.store)
 	c.storedMeter.Reset()
 
-	mgr := engine.NewBackupManager(src, rawMeter, c.reporter, c.hmacKey, opts...)
+	mgr, err := engine.NewBackupManager(src, rawMeter, c.reporter, c.hmacKey, opts...)
+	if err != nil {
+		return nil, err
+	}
+	defer mgr.Close()
 	result, err := mgr.Run(ctx)
 	if err != nil {
 		return nil, err

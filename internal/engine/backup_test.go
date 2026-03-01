@@ -20,7 +20,11 @@ func TestBackupManager_Run(t *testing.T) {
 	src.AddFile("file1.txt", "id1", []byte("hello world"))
 	src.AddFile("file2.txt", "id2", []byte("another file"))
 
-	mgr := NewBackupManager(src, dest, reporter, nil, WithVerbose())
+	mgr, err := NewBackupManager(src, dest, reporter, nil, WithVerbose())
+	if err != nil {
+		t.Fatalf("NewBackupManager: %v", err)
+	}
+	defer mgr.Close()
 
 	// Read store wraps dest with CompressedStore so we can read back
 	// the compressed data written by the BackupManager.

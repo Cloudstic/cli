@@ -83,6 +83,16 @@ type notFoundError struct{}
 
 func (e *notFoundError) Error() string { return "not found" }
 
+func mustNewKeyCacheStore(t *testing.T, inner ObjectStore) *KeyCacheStore {
+	t.Helper()
+	kc, err := NewKeyCacheStore(inner)
+	if err != nil {
+		t.Fatalf("NewKeyCacheStore: %v", err)
+	}
+	t.Cleanup(func() { _ = kc.Close() })
+	return kc
+}
+
 func TestKeyCacheStore_ExistsAfterPreload(t *testing.T) {
 	ctx := context.Background()
 	inner := newCountingStore()
@@ -90,7 +100,7 @@ func TestKeyCacheStore_ExistsAfterPreload(t *testing.T) {
 	_ = inner.Put(ctx, "content/bbb", []byte("data"))
 	inner.exists.Store(0)
 
-	kc := NewKeyCacheStore(inner)
+	kc := mustNewKeyCacheStore(t, inner)
 	if err := kc.PreloadKeys(ctx, "chunk/", "content/"); err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +136,7 @@ func TestKeyCacheStore_ExistsAfterPreload(t *testing.T) {
 func TestKeyCacheStore_PutDeduplicates(t *testing.T) {
 	ctx := context.Background()
 	inner := newCountingStore()
-	kc := NewKeyCacheStore(inner)
+	kc := mustNewKeyCacheStore(t, inner)
 	_ = kc.PreloadKeys(ctx, "chunk/")
 
 	// First put goes through
@@ -145,7 +155,7 @@ func TestKeyCacheStore_PutDeduplicates(t *testing.T) {
 func TestKeyCacheStore_PutConcurrentDedup(t *testing.T) {
 	ctx := context.Background()
 	inner := newCountingStore()
-	kc := NewKeyCacheStore(inner)
+	kc := mustNewKeyCacheStore(t, inner)
 	_ = kc.PreloadKeys(ctx, "chunk/")
 
 	var wg sync.WaitGroup
@@ -166,7 +176,7 @@ func TestKeyCacheStore_PutConcurrentDedup(t *testing.T) {
 func TestKeyCacheStore_MutableKeyAlwaysWritten(t *testing.T) {
 	ctx := context.Background()
 	inner := newCountingStore()
-	kc := NewKeyCacheStore(inner)
+	kc := mustNewKeyCacheStore(t, inner)
 	_ = kc.PreloadKeys(ctx, "chunk/", "content/")
 
 	// Mutable keys (not under listed prefix) should always write through
@@ -185,7 +195,7 @@ func TestKeyCacheStore_MutableKeyAlwaysWritten(t *testing.T) {
 func TestKeyCacheStore_PutMakesExistsTrue(t *testing.T) {
 	ctx := context.Background()
 	inner := newCountingStore()
-	kc := NewKeyCacheStore(inner)
+	kc := mustNewKeyCacheStore(t, inner)
 	_ = kc.PreloadKeys(ctx, "chunk/")
 
 	ok, _ := kc.Exists(ctx, "chunk/new")
@@ -210,7 +220,7 @@ func TestKeyCacheStore_DeleteInvalidatesCache(t *testing.T) {
 	inner := newCountingStore()
 	_ = inner.Put(ctx, "chunk/x", []byte("data"))
 
-	kc := NewKeyCacheStore(inner)
+	kc := mustNewKeyCacheStore(t, inner)
 	_ = kc.PreloadKeys(ctx, "chunk/")
 
 	ok, _ := kc.Exists(ctx, "chunk/x")

@@ -85,7 +85,7 @@ type BackupManager struct {
 	pendingMetas map[string][]byte // deferred filemeta PUTs (ref → JSON)
 }
 
-func NewBackupManager(src store.Source, dest store.ObjectStore, reporter ui.Reporter, hmacKey []byte, opts ...BackupOption) *BackupManager {
+func NewBackupManager(src store.Source, dest store.ObjectStore, reporter ui.Reporter, hmacKey []byte, opts ...BackupOption) (*BackupManager, error) {
 	cfg := backupConfig{
 		generator: "cloudstic-cli",
 		meta:      map[string]string{},
@@ -95,7 +95,10 @@ func NewBackupManager(src store.Source, dest store.ObjectStore, reporter ui.Repo
 	}
 
 	sourceInfo := src.Info()
-	keyCache := store.NewKeyCacheStore(dest)
+	keyCache, err := store.NewKeyCacheStore(dest)
+	if err != nil {
+		return nil, fmt.Errorf("init key cache: %w", err)
+	}
 	cache := hamt.NewTransactionalStore(keyCache)
 	return &BackupManager{
 		source:       src,
@@ -110,7 +113,7 @@ func NewBackupManager(src store.Source, dest store.ObjectStore, reporter ui.Repo
 		newMetas:     make(map[string]core.FileMeta),
 		metaCache:    make(map[string]core.FileMeta),
 		pendingMetas: make(map[string][]byte),
-	}
+	}, nil
 }
 
 // RunResult holds the outcome of a successful backup run.
@@ -134,6 +137,11 @@ type RunResult struct {
 
 // Run executes a full backup: scan the source for changes, upload new/modified
 // files, build a new HAMT root, and persist a snapshot.
+// Close releases temporary resources held by the BackupManager (e.g. bbolt key cache).
+func (bm *BackupManager) Close() {
+	_ = bm.keyCache.Close()
+}
+
 func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 	if !bm.cfg.dryRun {
 		lock, err := AcquireSharedLock(ctx, bm.store, "backup")

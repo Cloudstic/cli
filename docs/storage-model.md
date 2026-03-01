@@ -7,12 +7,12 @@ stored under a key derived from its hash. Objects are immutable once written.
 
 | Prefix       | Description                                           |
 |--------------|-------------------------------------------------------|
-| `chunk/`     | Compressed file data segments (gzip, FastCDC boundaries) |
+| `chunk/`     | Compressed file data segments (zstd, FastCDC boundaries) |
 | `content/`   | Manifest listing the chunk refs that make up a file   |
 | `filemeta/`  | File metadata (name, size, mod time, content hash)    |
 | `node/`      | HAMT tree nodes (directory structure)                 |
 | `snapshot/`  | Root object tying a tree to a point in time           |
-| `index/`     | Mutable pointers (`latest`, `snapshots` catalog)       |
+| `index/`     | Mutable pointers (`latest`, `packs` catalog)           |
 
 ## Write Order During Backup
 
@@ -25,7 +25,7 @@ A backup writes objects bottom-up, from raw data to the root pointer:
 4. node/*         – HAMT tree nodes (buffered in memory, flushed at the end)
 5. snapshot/*     – snapshot object referencing the HAMT root
 6. index/latest   – mutable pointer updated to the new snapshot
-7. index/snapshots – catalog updated with the new snapshot summary
+7. index/packs    – pack catalog updated (if packfiles are enabled)
 ```
 
 The commit point is step 6: until `index/latest` is updated, the previous
@@ -45,7 +45,7 @@ or modify an object that was already stored.
 | HAMT Flush                     | Orphaned node + blob objects          | None        |
 | Snapshot write                 | Orphaned snapshot + all its objects    | None        |
 | `index/latest` update          | New snapshot exists but isn't "latest" | None        |
-| `index/snapshots` catalog      | Catalog stale; self-heals on next read | None        |
+| `index/packs` catalog          | Catalog stale; rebuilt on next load    | None        |
 
 In every case the previous `index/latest` still points at a fully valid
 snapshot with a complete, consistent tree.
@@ -61,55 +61,6 @@ snapshot with a complete, consistent tree.
 - **Local filesystem:** `Put` writes to a `.tmp` file and renames atomically
   (`os.Rename`), which is atomic on POSIX systems.
 
-## Snapshot Catalog (`index/snapshots`)
-
-The `index/snapshots` object is a **best-effort cache** that stores lightweight
-summaries of all snapshots. It exists purely to speed up operations like `list`
-and `forget` — avoiding the need to fetch and deserialize every individual
-`snapshot/*` object.
-
-This catalog is **self-healing**. Every time it is read, the engine reconciles
-it against the live `snapshot/` key listing:
-
-- **Missing entries** (snapshot exists on disk but not in the catalog) are
-  fetched and added automatically.
-- **Stale entries** (entry in catalog but snapshot was deleted) are removed.
-
-If the catalog is lost, corrupted, or out of date — for example because a
-backup was interrupted after writing the snapshot but before updating the
-catalog — it is transparently rebuilt on the next read. No manual intervention
-is required.
-
-The source of truth is always the set of `snapshot/*` keys in the store.
-The catalog is a disposable acceleration layer on top.
-
-## File-Meta Catalog (`index/filemeta`)
-
-The `index/filemeta` object is a **best-effort cache** that maps every
-`filemeta/<hash>` ref to its full `FileMeta` value. It is stored as a JSON
-object (key → value) so it doubles as an in-memory lookup table once loaded.
-
-This catalog is **self-healing**. Every time `LoadFileMetaCache` is called it:
-
-1. **Lists** all live `filemeta/` keys (cheap — key names only).
-2. **Loads** the cached catalog (one `Get`).
-3. **Reconciles:**
-   - key exists + in cache → trust the cached value (zero cost).
-   - key exists + not cached → fetch from store, add to cache.
-   - key gone + in cache → drop from cache.
-4. **Flushes** the updated catalog back to the store if anything changed.
-
-On a steady-state repo with 10 000 files and 10 changes since the last run
-the cost is: 1 `List` + 1 `Get` (catalog) + 10 `Get` (new entries) + 1 `Put`
-= 13 store operations — instead of 10 000 individual fetches.
-
-During backup, newly created file-meta objects are also eagerly merged into
-the catalog via `AddFileMetasToIndex` so the cache is already warm for the
-next command.
-
-The source of truth is always the set of `filemeta/*` keys in the store.
-The catalog is a disposable acceleration layer on top.
-
 ## Garbage Collection (Prune)
 
 Prune performs a mark-and-sweep to reclaim space from orphaned objects:
@@ -119,6 +70,9 @@ Prune performs a mark-and-sweep to reclaim space from orphaned objects:
    reachable keys.
 2. **Sweep** — list all keys under each object prefix and delete any key
    not in the reachable set.
+3. **Repack** — when packfiles are enabled, fragmented packs (more than 30%
+   wasted space from deleted objects) are repacked: live objects are extracted,
+   re-bundled into new packs, and the old packs are deleted.
 
 Running prune after an interrupted backup will delete all orphaned objects and
 restore the repository to a clean state. No data from completed snapshots is

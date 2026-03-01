@@ -3,125 +3,72 @@ package hamt
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"github.com/buger/jsonparser"
+	lru "github.com/hashicorp/golang-lru/v2"
+
 	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/pkg/store"
 )
 
-// cachingStore is an in-memory write buffer for HAMT nodes. It is not safe for
-// concurrent use; all access must be serialised by the caller.
-type cachingStore struct {
-	staging map[string][]byte
-}
+var log = logger.New("hamt", logger.ColorCyan)
 
-func newCachingStore() *cachingStore {
-	return &cachingStore{staging: make(map[string][]byte)}
-}
-
-func (cs *cachingStore) Put(_ context.Context, key string, data []byte) error {
-	cs.staging[key] = data
-	return nil
-}
-
-func (cs *cachingStore) Get(_ context.Context, key string) ([]byte, error) {
-	if data, ok := cs.staging[key]; ok {
-		return data, nil
-	}
-	return nil, fmt.Errorf("key %s not found in cache", key)
-}
-
-func (cs *cachingStore) Exists(_ context.Context, key string) (bool, error) {
-	_, ok := cs.staging[key]
-	return ok, nil
-}
-
-func (cs *cachingStore) Delete(_ context.Context, key string) error {
-	delete(cs.staging, key)
-	return nil
-}
-
-func (cs *cachingStore) List(_ context.Context, _ string) ([]string, error) {
-	return nil, fmt.Errorf("list not supported on cache")
-}
-
-func (cs *cachingStore) Flush(ctx context.Context) error {
-	return nil
-}
-
-func (cs *cachingStore) Size(_ context.Context, key string) (int64, error) {
-	data, ok := cs.staging[key]
-	if !ok {
-		return 0, fmt.Errorf("key %s not found in cache", key)
-	}
-	return int64(len(data)), nil
-}
-
-func (cs *cachingStore) TotalSize(_ context.Context) (int64, error) {
-	var total int64
-	for _, data := range cs.staging {
-		total += int64(len(data))
-	}
-	return total, nil
-}
+const readCacheSize = 4096
 
 // TransactionalStore buffers HAMT node writes in memory and flushes only the
 // reachable subset to the persistent store.
 type TransactionalStore struct {
-	cache      *cachingStore
-	mu         sync.RWMutex
-	readCache  map[string][]byte
+	staging    map[string][]byte
+	readCache  *lru.Cache[string, []byte]
 	persistent store.ObjectStore
 }
 
 func NewTransactionalStore(persistent store.ObjectStore) *TransactionalStore {
+	rc, _ := lru.New[string, []byte](readCacheSize)
 	return &TransactionalStore{
-		cache:      newCachingStore(),
-		readCache:  make(map[string][]byte),
+		staging:    make(map[string][]byte),
+		readCache:  rc,
 		persistent: persistent,
 	}
 }
 
-func (ts *TransactionalStore) Put(ctx context.Context, key string, data []byte) error {
-	return ts.cache.Put(ctx, key, data)
+func (ts *TransactionalStore) Put(_ context.Context, key string, data []byte) error {
+	ts.staging[key] = data
+	return nil
 }
 
 func (ts *TransactionalStore) Get(ctx context.Context, key string) ([]byte, error) {
-	if data, err := ts.cache.Get(ctx, key); err == nil {
+	if data, ok := ts.staging[key]; ok {
+		log.Debugf("get %s: hit staging (%d bytes)", key, len(data))
 		return data, nil
 	}
-	ts.mu.RLock()
-	data, ok := ts.readCache[key]
-	ts.mu.RUnlock()
-	if ok {
+	if data, ok := ts.readCache.Get(key); ok {
+		log.Debugf("get %s: hit read cache (%d bytes)", key, len(data))
 		return data, nil
 	}
 	data, err := ts.persistent.Get(ctx, key)
 	if err != nil {
 		return nil, err
 	}
-	ts.mu.Lock()
-	ts.readCache[key] = data
-	ts.mu.Unlock()
+	log.Debugf("get %s: fetched from persistent (%d bytes, cache size %d/%d)", key, len(data), ts.readCache.Len(), readCacheSize)
+	ts.readCache.Add(key, data)
 	return data, nil
 }
 
 func (ts *TransactionalStore) Exists(ctx context.Context, key string) (bool, error) {
-	if ok, _ := ts.cache.Exists(ctx, key); ok {
+	if _, ok := ts.staging[key]; ok {
 		return true, nil
 	}
-	ts.mu.RLock()
-	_, ok := ts.readCache[key]
-	ts.mu.RUnlock()
-	if ok {
+	if ts.readCache.Contains(key) {
 		return true, nil
 	}
 	return ts.persistent.Exists(ctx, key)
 }
 
-func (ts *TransactionalStore) Delete(ctx context.Context, key string) error {
-	return ts.cache.Delete(ctx, key)
+func (ts *TransactionalStore) Delete(_ context.Context, key string) error {
+	delete(ts.staging, key)
+	return nil
 }
 
 func (ts *TransactionalStore) List(ctx context.Context, prefix string) ([]string, error) {
@@ -129,13 +76,10 @@ func (ts *TransactionalStore) List(ctx context.Context, prefix string) ([]string
 }
 
 func (ts *TransactionalStore) Size(ctx context.Context, key string) (int64, error) {
-	if size, err := ts.cache.Size(ctx, key); err == nil {
-		return size, nil
+	if data, ok := ts.staging[key]; ok {
+		return int64(len(data)), nil
 	}
-	ts.mu.RLock()
-	data, ok := ts.readCache[key]
-	ts.mu.RUnlock()
-	if ok {
+	if data, ok := ts.readCache.Get(key); ok {
 		return int64(len(data)), nil
 	}
 	return ts.persistent.Size(ctx, key)
@@ -145,63 +89,34 @@ func (ts *TransactionalStore) TotalSize(ctx context.Context) (int64, error) {
 	return ts.persistent.TotalSize(ctx)
 }
 
-// PreloadReadCache populates the read-through cache from externally loaded data.
-// Nodes already present in the staging buffer or read cache are not overwritten.
-func (ts *TransactionalStore) PreloadReadCache(data map[string][]byte) {
-	ts.mu.Lock()
-	defer ts.mu.Unlock()
-	for k, v := range data {
-		if _, ok := ts.cache.staging[k]; ok {
-			continue
-		}
-		if _, ok := ts.readCache[k]; ok {
-			continue
-		}
-		ts.readCache[k] = v
-	}
-}
-
-// ExportCaches returns a merged view of all node data currently held in memory
-// (both the staging buffer and the read cache). The caller can persist this to
-// avoid fetching the same nodes on the next run.
-func (ts *TransactionalStore) ExportCaches() map[string][]byte {
-	ts.mu.RLock()
-	out := make(map[string][]byte, len(ts.readCache)+len(ts.cache.staging))
-	for k, v := range ts.readCache {
-		out[k] = v
-	}
-	ts.mu.RUnlock()
-	for k, v := range ts.cache.staging {
-		out[k] = v
-	}
-	return out
-}
-
 // FlushReachable writes only the HAMT nodes reachable from rootRef to the persistent
 // store, ignoring intermediate nodes that were superseded during the
-// transaction. Returns the number of nodes written.
+// transaction.
 func (ts *TransactionalStore) FlushReachable(rootRef string) error {
 	if rootRef == "" {
 		return nil
 	}
+
+	stagedCount := len(ts.staging)
 
 	toWrite, err := ts.collectReachable(rootRef)
 	if err != nil {
 		return err
 	}
 
-	// Discard unreachable nodes from the staging buffer so ExportCaches
-	// does not persist orphaned intermediate tree states.
-	ts.cache.staging = toWrite
+	// Discard unreachable nodes from the staging buffer.
+	ts.staging = toWrite
 
-	fmt.Printf("Flushing HAMT: %d nodes (reduced from %d generated)\n", len(toWrite), len(ts.cache.staging))
+	discarded := stagedCount - len(toWrite)
+	fmt.Printf("Flushing HAMT: %d reachable nodes (%d intermediate discarded)\n", len(toWrite), discarded)
+	log.Debugf("flush: staged=%d reachable=%d discarded=%d root=%s", stagedCount, len(toWrite), discarded, rootRef)
 
 	return ts.writeParallel(toWrite)
 }
 
-// collectReachable performs a BFS from rootRef through the cache, collecting
-// every staged node reachable from the root. Nodes not in the cache are
-// already persistent and don't need writing.
+// collectReachable performs a BFS from rootRef through the staging buffer,
+// collecting every staged node reachable from the root. Nodes not in staging
+// are already persistent and don't need writing.
 func (ts *TransactionalStore) collectReachable(rootRef string) (map[string][]byte, error) {
 	queue := []string{rootRef}
 	visited := make(map[string]bool)
@@ -216,7 +131,7 @@ func (ts *TransactionalStore) collectReachable(rootRef string) (map[string][]byt
 		}
 		visited[ref] = true
 
-		data, ok := ts.cache.staging[ref]
+		data, ok := ts.staging[ref]
 		if !ok {
 			continue
 		}
@@ -253,6 +168,12 @@ func (ts *TransactionalStore) writeParallel(toWrite map[string][]byte) error {
 		data []byte
 	}
 
+	var totalBytes int
+	for _, data := range toWrite {
+		totalBytes += len(data)
+	}
+	log.Debugf("writeParallel: writing %d nodes (%d bytes total)", len(toWrite), totalBytes)
+
 	jobs := make(chan job, len(toWrite))
 	errs := make(chan error, len(toWrite))
 
@@ -260,10 +181,6 @@ func (ts *TransactionalStore) writeParallel(toWrite map[string][]byte) error {
 	for range workers {
 		go func() {
 			for j := range jobs {
-				if exists, _ := ts.persistent.Exists(ctx, j.key); exists {
-					errs <- nil
-					continue
-				}
 				errs <- ts.persistent.Put(ctx, j.key, j.data)
 			}
 		}()

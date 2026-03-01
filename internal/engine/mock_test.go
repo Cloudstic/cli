@@ -88,6 +88,10 @@ func (s *MockStore) TotalSize(_ context.Context) (int64, error) {
 	return total, nil
 }
 
+func (s *MockStore) Flush(_ context.Context) error {
+	return nil
+}
+
 // MockSource implements store.Source
 type MockSource struct {
 	Files map[string]MockFile

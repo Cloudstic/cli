@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -29,19 +30,24 @@ func NewKeyCacheStore(inner ObjectStore) *KeyCacheStore {
 }
 
 func (s *KeyCacheStore) PreloadKeys(ctx context.Context, prefixes ...string) error {
-	for _, prefix := range prefixes {
-		keys, err := s.inner.List(ctx, prefix)
-		if err != nil {
-			return err
-		}
-		s.mu.Lock()
-		for _, key := range keys {
-			s.knownKeys[key] = struct{}{}
-		}
-		s.listedPrefixes[prefix] = struct{}{}
-		s.mu.Unlock()
+	var g errgroup.Group
+	for _, p := range prefixes {
+		prefix := p
+		g.Go(func() error {
+			keys, err := s.inner.List(ctx, prefix)
+			if err != nil {
+				return err
+			}
+			s.mu.Lock()
+			for _, key := range keys {
+				s.knownKeys[key] = struct{}{}
+			}
+			s.listedPrefixes[prefix] = struct{}{}
+			s.mu.Unlock()
+			return nil
+		})
 	}
-	return nil
+	return g.Wait()
 }
 
 func (s *KeyCacheStore) Exists(ctx context.Context, key string) (bool, error) {
@@ -77,6 +83,7 @@ func (s *KeyCacheStore) Put(ctx context.Context, key string, data []byte) error 
 			if already {
 				return nil, nil
 			}
+
 			if err := s.inner.Put(ctx, key, data); err != nil {
 				return nil, err
 			}
@@ -126,4 +133,11 @@ func (s *KeyCacheStore) Size(ctx context.Context, key string) (int64, error) {
 
 func (s *KeyCacheStore) TotalSize(ctx context.Context) (int64, error) {
 	return s.inner.TotalSize(ctx)
+}
+
+func (s *KeyCacheStore) Flush(ctx context.Context) error {
+	if f, ok := s.inner.(interface{ Flush(context.Context) error }); ok {
+		return f.Flush(ctx)
+	}
+	return nil
 }

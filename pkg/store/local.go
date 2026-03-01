@@ -88,6 +88,10 @@ func (s *LocalStore) TotalSize(_ context.Context) (int64, error) {
 	return total, err
 }
 
+func (s *LocalStore) Flush(ctx context.Context) error {
+	return nil
+}
+
 // List returns all keys matching the given prefix. When a prefix is provided
 // the walk is scoped to just that subdirectory for efficiency.
 func (s *LocalStore) List(_ context.Context, prefix string) ([]string, error) {

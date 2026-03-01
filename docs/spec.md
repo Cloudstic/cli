@@ -203,7 +203,15 @@ The token format is source-specific:
 |------------------|--------------------------------------|
 | `gdrive-changes` | Google Drive Changes API start page token |
 
-### 6. Index
+### 6. Packfiles (`packs/` and `index/packs`)
+
+To avoid issuing hundreds of thousands of S3 `PUT` and `GET` requests for tiny metadata objects, the storage layer implements a stateless PackStore.
+
+* All small objects (< 512KB) like `filemeta/`, `node/`, and small `content/` objects are buffered in memory and flushed as aggregated 8MB `packs/<hash>` files. 
+* The `index/packs` catalog is then updated to record the exact byte offset and length of each logical object within its packfile.
+* When reading, the entire 8MB packfile is fetched and cached in an LRU, meaning thousands of subsequent metadata reads take 0 network requests.
+
+### 7. Index
 
 * A single `index/latest` pointer for quick access to the most recent snapshot.
 * Snapshot discovery uses `store.List("snapshot/")` — no per-sequence pointers needed.
@@ -232,7 +240,7 @@ Clients fetch `index/latest` to find the head. To list all snapshots, list the `
    - Create `content/<content-hash>` object.
    - Create `filemeta/<hash>` object referencing the content.
    - Insert into the new HAMT.
-4. **Persist**: create `snapshot/<hash>`, update `index/latest`.
+4. **Persist**: create `snapshot/<hash>`, update `index/latest`. (Metadata is bundled into `packs/` automatically by the store layer).
 5. **Flush HAMT**: only reachable new nodes are written to the persistent store (BFS from root through the transactional cache).
 
 ---
@@ -264,8 +272,8 @@ The `diff` command leverages the HAMT's `Diff(root1, root2)` primitive, which pe
 3. Optionally run prune.
 
 **Prune** (mark-and-sweep GC):
-1. **Mark**: list `snapshot/` to find all live snapshots, then walk each snapshot → HAMT nodes → filemeta → content → chunks. Collect all reachable keys. Chunk reachability is resolved from a cached content-to-chunks mapping (`index/content`) to avoid fetching every content object.
-2. **Sweep**: list all keys under `chunk/`, `content/`, `filemeta/`, `node/`, `snapshot/`. Delete any key not in the reachable set.
+1. **Mark**: list `snapshot/` to find all live snapshots, then walk each snapshot → HAMT nodes → filemeta → content → chunks. Collect all reachable keys.
+2. **Sweep**: list all keys under `chunk/`, `content/`, `filemeta/`, `node/`, `snapshot/`, and `packs/`. Delete any key not in the reachable set. (Note: Pruning inside packfiles is currently not implemented; full packfiles are retained if they contain at least one live object).
 
 ---
 

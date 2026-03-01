@@ -138,6 +138,11 @@ func (fm *ForgetManager) Run(ctx context.Context, snapshotID string, opts ...For
 	}
 	phase.Done()
 
+	// Ensure changes to packstore catalog are persisted
+	if err := fm.store.Flush(ctx); err != nil {
+		return nil, fmt.Errorf("flush store: %w", err)
+	}
+
 	result := &ForgetResult{}
 	if cfg.prune {
 		pruneResult, err := fm.pruner.Run(ctx)
@@ -322,5 +327,10 @@ func (fm *ForgetManager) forgetBatch(ctx context.Context, entries []SnapshotEntr
 			best = e
 		}
 	}
-	return updateLatest(fm.store, best.Ref, best.Snap.Seq)
+	if err := updateLatest(fm.store, best.Ref, best.Snap.Seq); err != nil {
+		return err
+	}
+
+	// Ensure changes to packstore catalog are persisted
+	return fm.store.Flush(ctx)
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/pkg/crypto"
 	"github.com/cloudstic/cli/pkg/store"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/jotfs/fastcdc-go"
 )
@@ -57,30 +58,84 @@ func (c *Chunker) ProcessStream(r io.Reader, onProgress func(int64)) (refs []str
 	ctx := context.Background()
 	hasher := sha256.New()
 
-	for {
-		chunk, err := cdc.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, 0, "", err
-		}
+	type chunkJob struct {
+		index int
+		data  []byte
+	}
+	type chunkResult struct {
+		index int
+		ref   string
+	}
 
-		if _, err := hasher.Write(chunk.Data); err != nil {
-			return nil, 0, "", err
-		}
+	g, gCtx := errgroup.WithContext(ctx)
+	jobs := make(chan chunkJob, 32)
 
-		n := int64(chunk.Length)
-		size += n
-		if onProgress != nil {
-			onProgress(n)
-		}
+	// Collect results directly into a pre-allocated or dynamically grown slice
+	// protected by a mutex, avoiding complex channel synchronization deadlocks.
+	var resultsMu sync.Mutex
+	var collectedResults []chunkResult
 
-		ref, err := c.storeChunk(ctx, chunk.Data)
-		if err != nil {
-			return nil, 0, "", err
+	// Worker pool for storing chunks concurrently
+	const numWorkers = 10
+	for i := 0; i < numWorkers; i++ {
+		g.Go(func() error {
+			for job := range jobs {
+				ref, err := c.storeChunk(gCtx, job.data)
+				if err != nil {
+					return err
+				}
+				resultsMu.Lock()
+				collectedResults = append(collectedResults, chunkResult{index: job.index, ref: ref})
+				resultsMu.Unlock()
+			}
+			return nil
+		})
+	}
+
+	// Read chunks sequentially to maintain order and update overall hash
+	var totalChunks int
+	g.Go(func() error {
+		defer close(jobs)
+		for {
+			chunk, err := cdc.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return err
+			}
+
+			if _, err := hasher.Write(chunk.Data); err != nil {
+				return err
+			}
+
+			n := int64(chunk.Length)
+			size += n
+			if onProgress != nil {
+				onProgress(n)
+			}
+
+			// Copy data so it is safe to process asynchronously
+			dataCopy := make([]byte, len(chunk.Data))
+			copy(dataCopy, chunk.Data)
+
+			select {
+			case jobs <- chunkJob{index: totalChunks, data: dataCopy}:
+				totalChunks++
+			case <-gCtx.Done():
+				return gCtx.Err()
+			}
 		}
-		refs = append(refs, ref)
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
+		return nil, 0, "", err
+	}
+
+	refs = make([]string, totalChunks)
+	for _, res := range collectedResults {
+		refs[res.index] = res.ref
 	}
 
 	hash = hex.EncodeToString(hasher.Sum(nil))

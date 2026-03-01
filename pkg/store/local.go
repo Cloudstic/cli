@@ -5,11 +5,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // LocalStore implements ObjectStore for the local filesystem.
 type LocalStore struct {
-	BasePath string
+	BasePath  string
+	knownDirs sync.Map
 }
 
 func NewLocalStore(basePath string) (*LocalStore, error) {
@@ -27,9 +29,14 @@ func (s *LocalStore) getPath(key string) string {
 func (s *LocalStore) Put(_ context.Context, key string, data []byte) error {
 	fullPath := s.getPath(key)
 	dir := filepath.Dir(fullPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
+
+	if _, ok := s.knownDirs.Load(dir); !ok {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return err
+		}
+		s.knownDirs.Store(dir, struct{}{})
 	}
+
 	tmpFile := fullPath + ".tmp"
 	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
 		return err

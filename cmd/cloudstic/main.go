@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/pprof"
 	"sort"
 	"strings"
 	"time"
@@ -39,12 +40,79 @@ func main() {
 		os.Exit(1)
 	}
 
+	var cpuprofile string
+	var memprofile string
+	var newArgs []string
+	newArgs = append(newArgs, os.Args[0])
+	for i := 1; i < len(os.Args); i++ {
+		a := os.Args[i]
+		if strings.HasPrefix(a, "-cpuprofile=") {
+			cpuprofile = strings.TrimPrefix(a, "-cpuprofile=")
+		} else if a == "-cpuprofile" && i+1 < len(os.Args) {
+			cpuprofile = os.Args[i+1]
+			i++
+		} else if strings.HasPrefix(a, "-memprofile=") {
+			memprofile = strings.TrimPrefix(a, "-memprofile=")
+		} else if a == "-memprofile" && i+1 < len(os.Args) {
+			memprofile = os.Args[i+1]
+			i++
+		} else {
+			newArgs = append(newArgs, a)
+		}
+	}
+	os.Args = newArgs
+
+	if len(os.Args) < 2 {
+		printUsage()
+		os.Exit(1)
+	}
+
 	cmd := os.Args[1]
 
+	var profFile *os.File
+	if cpuprofile != "" {
+		var err error
+		profFile, err = os.Create(cpuprofile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "could not create CPU profile: %v\n", err)
+			os.Exit(1)
+		}
+		if err := pprof.StartCPUProfile(profFile); err != nil {
+			fmt.Fprintf(os.Stderr, "could not start CPU profile: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	exitCode := runCmd(cmd)
+
+	if profFile != nil {
+		pprof.StopCPUProfile()
+		_ = profFile.Close()
+	}
+
+	if memprofile != "" {
+		f, err := os.Create(memprofile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "could not create memory profile: %v\n", err)
+			os.Exit(1)
+		}
+		defer func() {
+			_ = f.Close()
+		}()
+		// runtime.GC() maybe? Not strictly necessary.
+		if err := pprof.WriteHeapProfile(f); err != nil {
+			fmt.Fprintf(os.Stderr, "could not write memory profile: %v\n", err)
+		}
+	}
+
+	os.Exit(exitCode)
+}
+
+func runCmd(cmd string) int {
 	switch cmd {
 	case "version", "--version", "-v":
 		fmt.Printf("cloudstic %s (commit %s, built %s)\n", version, commit, date)
-		return
+		return 0
 	case "init":
 		runInit()
 	case "backup":
@@ -67,11 +135,13 @@ func main() {
 		runAddRecoveryKey()
 	case "help", "--help", "-h":
 		printUsage()
+		return 0
 	default:
 		fmt.Printf("Unknown command: %s\n", cmd)
 		printUsage()
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 func printUsage() {

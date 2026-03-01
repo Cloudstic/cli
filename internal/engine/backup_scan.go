@@ -167,7 +167,10 @@ func (bm *BackupManager) insertFolder(_ context.Context, root string, meta *core
 	if err != nil {
 		return "", err
 	}
-	if _, exists := bm.metaCache[metaRef]; !exists {
+	bm.metaCacheMu.RLock()
+	_, inCache := bm.metaCache[metaRef]
+	bm.metaCacheMu.RUnlock()
+	if !inCache {
 		bm.pendingMetas[metaRef] = metaData
 	}
 	bm.trackFileMeta(metaRef, *meta)

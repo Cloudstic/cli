@@ -81,6 +81,13 @@ func (s *CompressedStore) TotalSize(ctx context.Context) (int64, error) {
 	return s.inner.TotalSize(ctx)
 }
 
+func (s *CompressedStore) Flush(ctx context.Context) error {
+	if f, ok := s.inner.(interface{ Flush(context.Context) error }); ok {
+		return f.Flush(ctx)
+	}
+	return nil
+}
+
 func maybeDecompress(data []byte) ([]byte, error) {
 	if len(data) < 2 {
 		return data, nil

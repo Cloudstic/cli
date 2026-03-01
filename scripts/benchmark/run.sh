@@ -3,12 +3,24 @@
 set -e
 
 TARGET=${1:-local} # Default to local
+TOOL=${2:-all}     # Default to all tools
 S3_BUCKET=${S3_BUCKET:-cloudstic-benchmark-681494392773-us-east-1}
 AWS_REGION=${AWS_REGION:-us-east-1}
 
 if [ "$TARGET" != "local" ] && [ "$TARGET" != "s3" ]; then
-    echo "Usage: $0 [local|s3]"
+    echo "Usage: $0 [local|s3] [cloudstic|restic|borg|all] [--debug]"
     exit 1
+fi
+
+if [ "$TOOL" != "cloudstic" ] && [ "$TOOL" != "restic" ] && [ "$TOOL" != "borg" ] && [ "$TOOL" != "all" ]; then
+    echo "Usage: $0 [local|s3] [cloudstic|restic|borg|all] [--debug]"
+    exit 1
+fi
+
+DEBUG_FLAG=""
+if [ "$3" == "--debug" ]; then
+    DEBUG_FLAG="-debug"
+    echo "Debug logging enabled for Cloudstic"
 fi
 
 # Export temporary AWS credentials for tools that don't support SSO natively (e.g. restic)
@@ -42,6 +54,15 @@ cleanup() {
     echo "Cleaning up temp directories..."
     rm -rf "$DATA_DIR"
     rm -rf "$REPO_DIR"
+    
+    if [ "$TARGET" == "s3" ]; then
+        echo "Cleaning up S3 benchmark prefixes..."
+        # Use env -u to avoid SSO issues if manual credentials were set
+        env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN \
+            aws s3 rm "s3://$S3_BUCKET/cloudstic/" --recursive >/dev/null 2>&1 || true
+        env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN \
+            aws s3 rm "s3://$S3_BUCKET/restic/" --recursive >/dev/null 2>&1 || true
+    fi
 }
 trap cleanup EXIT
 
@@ -68,6 +89,12 @@ run_bench() {
     
     # Run silently, capture /usr/bin/time -l output
     if /usr/bin/time -l "$@" > /dev/null 2> "$out_file"; then
+        if [ "$DEBUG_FLAG" == "-debug" ]; then
+            local safe_name=$(echo "$step_name" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
+            cp "$out_file" "/tmp/cloudstic-debug-${safe_name}.log"
+            # We don't print anything here so we don't break the Markdown table,
+            # but the user will be notified at the end.
+        fi
         local real_time=$(grep "real" "$out_file" | awk '{print $1}')
         local mem_bytes=$(grep "maximum resident set size" "$out_file" | awk '{print $1}')
         local mem_mb=$(echo "scale=2; $mem_bytes / 1024 / 1024" | bc)
@@ -93,22 +120,22 @@ benchmark_cloudstic() {
     
     if [ "$TARGET" == "local" ]; then
         $CLOUDSTIC_BIN init -store local -store-path "$repo" >/dev/null 2>&1
-        run_bench "Initial Backup" $CLOUDSTIC_BIN backup -store local -store-path "$repo" -source local -source-path "$DATA_DIR" -quiet -cpuprofile /tmp/cloudstic-bench.prof
-        run_bench "Incremental (No Changes)" $CLOUDSTIC_BIN backup -store local -store-path "$repo" -source local -source-path "$DATA_DIR" -quiet
+        run_bench "Initial Backup" $CLOUDSTIC_BIN backup -store local -store-path "$repo" -source local -source-path "$DATA_DIR" -quiet -cpuprofile /tmp/cloudstic-bench.prof $DEBUG_FLAG
+        run_bench "Incremental (No Changes)" $CLOUDSTIC_BIN backup -store local -store-path "$repo" -source local -source-path "$DATA_DIR" -quiet $DEBUG_FLAG
         
         echo "modified" >> "$DATA_DIR/small/file_1.txt"
         
-        run_bench "Incremental (1 File Changed)" $CLOUDSTIC_BIN backup -store local -store-path "$repo" -source local -source-path "$DATA_DIR" -quiet -memprofile /tmp/cloudstic-mem.prof
+        run_bench "Incremental (1 File Changed)" $CLOUDSTIC_BIN backup -store local -store-path "$repo" -source local -source-path "$DATA_DIR" -quiet -memprofile /tmp/cloudstic-mem.prof $DEBUG_FLAG
         
         local repo_size=$(du -sh "$repo" | cut -f1 | xargs)
         printf "| %-30s | %12s | %13s |\n" "Final Repo Size" "$repo_size" "-"
     else
         $CLOUDSTIC_BIN init -store s3 -encryption-password "$PASSWORD" -store-path "$S3_BUCKET" -store-prefix "cloudstic/" >/dev/null 2>&1 || true
-        run_bench "Initial Backup" $CLOUDSTIC_BIN backup -store s3 -encryption-password "$PASSWORD" -store-path "$S3_BUCKET" -store-prefix "cloudstic/" -source local -source-path "$DATA_DIR" -quiet
-        run_bench "Incremental (No Changes)" $CLOUDSTIC_BIN backup -store s3 -encryption-password "$PASSWORD" -store-path "$S3_BUCKET" -store-prefix "cloudstic/" -source local -source-path "$DATA_DIR" -quiet
+        run_bench "Initial Backup" $CLOUDSTIC_BIN backup -store s3 -encryption-password "$PASSWORD" -store-path "$S3_BUCKET" -store-prefix "cloudstic/" -source local -source-path "$DATA_DIR" -quiet -cpuprofile /tmp/cloudstic-bench-s3.prof $DEBUG_FLAG
+        run_bench "Incremental (No Changes)" $CLOUDSTIC_BIN backup -store s3 -encryption-password "$PASSWORD" -store-path "$S3_BUCKET" -store-prefix "cloudstic/" -source local -source-path "$DATA_DIR" -quiet $DEBUG_FLAG
         
         echo "modified" >> "$DATA_DIR/small/file_1.txt"
-        run_bench "Incremental (1 File Changed)" $CLOUDSTIC_BIN backup -store s3 -encryption-password "$PASSWORD" -store-path "$S3_BUCKET" -store-prefix "cloudstic/" -source local -source-path "$DATA_DIR" -quiet
+        run_bench "Incremental (1 File Changed)" $CLOUDSTIC_BIN backup -store s3 -encryption-password "$PASSWORD" -store-path "$S3_BUCKET" -store-prefix "cloudstic/" -source local -source-path "$DATA_DIR" -quiet -memprofile /tmp/cloudstic-mem-s3.prof $DEBUG_FLAG
     fi
     echo ""
 }
@@ -182,8 +209,24 @@ benchmark_borg() {
 }
 
 # Run benchmarks
-benchmark_cloudstic
-benchmark_restic
-benchmark_borg
+if [ "$TOOL" == "all" ] || [ "$TOOL" == "cloudstic" ]; then
+    benchmark_cloudstic
+fi
+
+if [ "$TOOL" == "all" ] || [ "$TOOL" == "restic" ]; then
+    benchmark_restic
+fi
+
+if [ "$TOOL" == "all" ] || [ "$TOOL" == "borg" ]; then
+    benchmark_borg
+fi
 
 echo "Done."
+
+if [ "$DEBUG_FLAG" == "-debug" ]; then
+    echo ""
+    echo "Debug logs have been saved to:"
+    echo "  /tmp/cloudstic-debug-initialbackup.log"
+    echo "  /tmp/cloudstic-debug-incremental(nochanges).log"
+    echo "  /tmp/cloudstic-debug-incremental(1filechanged).log"
+fi

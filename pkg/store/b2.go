@@ -155,6 +155,10 @@ func (s *B2Store) TotalSize(ctx context.Context) (int64, error) {
 	return total, nil
 }
 
+func (s *B2Store) Flush(ctx context.Context) error {
+	return nil
+}
+
 // DeletePrefix deletes all objects under the given prefix.
 func (s *B2Store) DeletePrefix(ctx context.Context, prefix string) error {
 	ctx, cancel := s.opCtx(ctx)

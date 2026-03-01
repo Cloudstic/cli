@@ -107,15 +107,6 @@ type SnapshotSummary struct {
 	ChangeToken string      `json:"change_token,omitempty"`
 }
 
-// SnapshotCatalog is the on-disk format for index/snapshots.
-type SnapshotCatalog struct {
-	Snapshots []SnapshotSummary `json:"snapshots"`
-}
-
-// FileMetaCatalog is the on-disk format for index/filemeta.
-// Keys are store refs ("filemeta/<hash>"), values are the full FileMeta.
-type FileMetaCatalog map[string]FileMeta
-
 // RepoConfig is the repository marker written by "init". It is stored as
 // plaintext at key "config" so it can be read without the encryption key.
 // Key: config

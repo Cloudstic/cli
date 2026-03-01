@@ -75,6 +75,8 @@ func (s *countingStore) Size(_ context.Context, key string) (int64, error) {
 
 func (s *countingStore) TotalSize(_ context.Context) (int64, error) { return 0, nil }
 
+func (s *countingStore) Flush(_ context.Context) error { return nil }
+
 var ErrNotFound = &notFoundError{}
 
 type notFoundError struct{}

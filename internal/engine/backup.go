@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
@@ -77,8 +80,8 @@ type BackupManager struct {
 	cfg        backupConfig
 
 	newMetas     map[string]core.FileMeta
+	metaCacheMu  sync.RWMutex
 	metaCache    map[string]core.FileMeta
-	contentCache ContentCatalog
 	pendingMetas map[string][]byte // deferred filemeta PUTs (ref → JSON)
 }
 
@@ -105,7 +108,7 @@ func NewBackupManager(src store.Source, dest store.ObjectStore, reporter ui.Repo
 		sourceInfo:   sourceInfo,
 		cfg:          cfg,
 		newMetas:     make(map[string]core.FileMeta),
-		contentCache: LoadContentCache(dest),
+		metaCache:    make(map[string]core.FileMeta),
 		pendingMetas: make(map[string][]byte),
 	}
 }
@@ -140,11 +143,31 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 		defer lock.Release()
 	}
 
-	bm.metaCache, _ = LoadFileMetaCache(bm.store)
-	bm.cache.PreloadReadCache(LoadNodeCache(bm.store))
+	defer func() {
+		if !bm.cfg.dryRun {
+			_ = bm.store.Flush(ctx)
+		}
+	}()
 
-	seq := bm.loadLatestSeq()
-	prevSnap := bm.findPreviousSnapshot(bm.sourceInfo)
+	var seq int
+	var prevSnap *core.Snapshot
+
+	var g errgroup.Group
+
+	g.Go(func() error {
+		seq = bm.loadLatestSeq()
+		return nil
+	})
+
+	g.Go(func() error {
+		prevSnap = bm.findPreviousSnapshot(bm.sourceInfo)
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
+		return nil, fmt.Errorf("initialization failed: %w", err)
+	}
+
 	bm.stats = &backupStats{startTime: time.Now()}
 
 	var oldRoot string
@@ -175,6 +198,7 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 		return nil, err
 	}
 
+	// Wait for key cache to finish preloading from inner lists.
 	if err := bm.keyCache.PreloadKeys(ctx, "chunk/", "content/", "node/"); err != nil {
 		return nil, fmt.Errorf("preload key cache: %w", err)
 	}
@@ -195,12 +219,9 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 		return nil, err
 	}
 
-	if err := bm.cache.Flush(newRoot); err != nil {
-		return nil, fmt.Errorf("flush hamt nodes: %w", err)
+	if err := bm.cache.FlushReachable(newRoot); err != nil {
+		return nil, fmt.Errorf("flush hamt: %w", err)
 	}
-
-	_ = SaveNodeCache(bm.store, bm.cache.ExportCaches())
-	_ = SaveContentCache(bm.store, bm.contentCache)
 
 	r := bm.buildResult()
 	r.SnapshotHash = snapHash
@@ -282,9 +303,6 @@ func (bm *BackupManager) saveSnapshot(ctx context.Context, root string, seq int,
 		return "", "", err
 	}
 
-	_ = AddSnapshotToIndex(bm.store, snap, ref)
-	_ = AddFileMetasToIndex(bm.store, bm.newMetas)
-
 	return ref, hash, nil
 }
 
@@ -293,17 +311,22 @@ func (bm *BackupManager) trackFileMeta(ref string, fm core.FileMeta) {
 }
 
 func (bm *BackupManager) loadMeta(ref string) (*core.FileMeta, error) {
-	if fm, ok := bm.metaCache[ref]; ok {
+	bm.metaCacheMu.RLock()
+	fm, ok := bm.metaCache[ref]
+	bm.metaCacheMu.RUnlock()
+	if ok {
 		return &fm, nil
 	}
-	debugf(dYellow+"cache miss"+dReset+" loadMeta %s", ref)
+
 	data, err := bm.store.Get(context.Background(), ref)
 	if err != nil {
 		return nil, err
 	}
-	var fm core.FileMeta
 	if err := json.Unmarshal(data, &fm); err != nil {
 		return nil, err
 	}
+	bm.metaCacheMu.Lock()
+	bm.metaCache[ref] = fm
+	bm.metaCacheMu.Unlock()
 	return &fm, nil
 }

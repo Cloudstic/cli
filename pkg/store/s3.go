@@ -188,6 +188,10 @@ func (s *S3Store) TotalSize(ctx context.Context) (int64, error) {
 	return total, nil
 }
 
+func (s *S3Store) Flush(ctx context.Context) error {
+	return nil
+}
+
 func (s *S3Store) List(ctx context.Context, prefix string) ([]string, error) {
 	fullPrefix := s.key(prefix)
 	var keys []string

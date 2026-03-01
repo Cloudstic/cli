@@ -56,7 +56,7 @@ type RestoreManager struct {
 func NewRestoreManager(s store.ObjectStore, reporter ui.Reporter) *RestoreManager {
 	return &RestoreManager{
 		store:    s,
-		tree:     NewCachedTree(s),
+		tree:     hamt.NewTree(hamt.NewTransactionalStore(s)),
 		reporter: reporter,
 	}
 }
@@ -75,7 +75,7 @@ func (rm *RestoreManager) Run(ctx context.Context, w io.Writer, snapshotRef stri
 	}
 	defer lock.Release()
 
-	rm.metaCache, _ = LoadFileMetaCache(rm.store)
+	rm.metaCache = make(map[string]core.FileMeta)
 
 	snap, snapshotRef, err := rm.resolveSnapshot(ctx, snapshotRef)
 	if err != nil {
@@ -293,7 +293,6 @@ func (rm *RestoreManager) loadMeta(ref string) (*core.FileMeta, error) {
 	if fm, ok := rm.metaCache[ref]; ok {
 		return &fm, nil
 	}
-	debugf(dYellow+"cache miss"+dReset+" loadMeta %s", ref)
 	data, err := rm.store.Get(context.Background(), ref)
 	if err != nil {
 		return nil, err

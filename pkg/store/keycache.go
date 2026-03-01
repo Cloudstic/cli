@@ -2,31 +2,73 @@ package store
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"strings"
 	"sync"
 
+	bolt "go.etcd.io/bbolt"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 )
 
+var keysBucket = []byte("k")
+
 // KeyCacheStore wraps an ObjectStore and caches key existence from List calls,
 // so that Exists returns immediately for known keys. Thread-safe.
+// Keys are stored in a temporary bbolt database to avoid holding potentially
+// millions of strings on the Go heap.
 type KeyCacheStore struct {
 	inner          ObjectStore
-	knownKeys      map[string]struct{}
+	db             *bolt.DB
+	dbPath         string
 	listedPrefixes map[string]struct{}
-	mu             sync.RWMutex
+	mu             sync.RWMutex // protects listedPrefixes only
 	putFlight      singleflight.Group
 }
 
 func (s *KeyCacheStore) Unwrap() ObjectStore { return s.inner }
 
-func NewKeyCacheStore(inner ObjectStore) *KeyCacheStore {
+func NewKeyCacheStore(inner ObjectStore) (*KeyCacheStore, error) {
+	f, err := os.CreateTemp("", "cloudstic-keycache-*.db")
+	if err != nil {
+		return nil, fmt.Errorf("keycache temp file: %w", err)
+	}
+	dbPath := f.Name()
+	_ = f.Close()
+
+	db, err := bolt.Open(dbPath, 0600, &bolt.Options{NoSync: true, NoFreelistSync: true})
+	if err != nil {
+		_ = os.Remove(dbPath)
+		return nil, fmt.Errorf("keycache bolt open: %w", err)
+	}
+
+	if err := db.Update(func(tx *bolt.Tx) error {
+		_, err := tx.CreateBucketIfNotExists(keysBucket)
+		return err
+	}); err != nil {
+		_ = db.Close()
+		_ = os.Remove(dbPath)
+		return nil, fmt.Errorf("keycache create bucket: %w", err)
+	}
+
 	return &KeyCacheStore{
 		inner:          inner,
-		knownKeys:      make(map[string]struct{}),
+		db:             db,
+		dbPath:         dbPath,
 		listedPrefixes: make(map[string]struct{}),
+	}, nil
+}
+
+// Close releases the bbolt database and removes the temp file.
+func (s *KeyCacheStore) Close() error {
+	if s.db != nil {
+		_ = s.db.Close()
 	}
+	if s.dbPath != "" {
+		_ = os.Remove(s.dbPath)
+	}
+	return nil
 }
 
 func (s *KeyCacheStore) PreloadKeys(ctx context.Context, prefixes ...string) error {
@@ -38,10 +80,18 @@ func (s *KeyCacheStore) PreloadKeys(ctx context.Context, prefixes ...string) err
 			if err != nil {
 				return err
 			}
-			s.mu.Lock()
-			for _, key := range keys {
-				s.knownKeys[key] = struct{}{}
+			if err := s.db.Update(func(tx *bolt.Tx) error {
+				b := tx.Bucket(keysBucket)
+				for _, key := range keys {
+					if err := b.Put([]byte(key), []byte{}); err != nil {
+						return err
+					}
+				}
+				return nil
+			}); err != nil {
+				return err
 			}
+			s.mu.Lock()
 			s.listedPrefixes[prefix] = struct{}{}
 			s.mu.Unlock()
 			return nil
@@ -50,13 +100,32 @@ func (s *KeyCacheStore) PreloadKeys(ctx context.Context, prefixes ...string) err
 	return g.Wait()
 }
 
+func (s *KeyCacheStore) hasKey(key string) bool {
+	var found bool
+	_ = s.db.View(func(tx *bolt.Tx) error {
+		found = tx.Bucket(keysBucket).Get([]byte(key)) != nil
+		return nil
+	})
+	return found
+}
+
+func (s *KeyCacheStore) addKey(key string) {
+	_ = s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(keysBucket).Put([]byte(key), []byte{})
+	})
+}
+
+func (s *KeyCacheStore) removeKey(key string) {
+	_ = s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(keysBucket).Delete([]byte(key))
+	})
+}
+
 func (s *KeyCacheStore) Exists(ctx context.Context, key string) (bool, error) {
-	s.mu.RLock()
-	_, ok := s.knownKeys[key]
-	if ok {
-		s.mu.RUnlock()
+	if s.hasKey(key) {
 		return true, nil
 	}
+	s.mu.RLock()
 	for prefix := range s.listedPrefixes {
 		if strings.HasPrefix(key, prefix) {
 			s.mu.RUnlock()
@@ -69,27 +138,19 @@ func (s *KeyCacheStore) Exists(ctx context.Context, key string) (bool, error) {
 
 func (s *KeyCacheStore) Put(ctx context.Context, key string, data []byte) error {
 	if s.isContentAddressed(key) {
-		s.mu.RLock()
-		_, known := s.knownKeys[key]
-		s.mu.RUnlock()
-		if known {
+		if s.hasKey(key) {
 			return nil
 		}
 
 		_, err, _ := s.putFlight.Do(key, func() (interface{}, error) {
-			s.mu.RLock()
-			_, already := s.knownKeys[key]
-			s.mu.RUnlock()
-			if already {
+			if s.hasKey(key) {
 				return nil, nil
 			}
 
 			if err := s.inner.Put(ctx, key, data); err != nil {
 				return nil, err
 			}
-			s.mu.Lock()
-			s.knownKeys[key] = struct{}{}
-			s.mu.Unlock()
+			s.addKey(key)
 			return nil, nil
 		})
 		return err
@@ -117,9 +178,7 @@ func (s *KeyCacheStore) Get(ctx context.Context, key string) ([]byte, error) {
 }
 
 func (s *KeyCacheStore) Delete(ctx context.Context, key string) error {
-	s.mu.Lock()
-	delete(s.knownKeys, key)
-	s.mu.Unlock()
+	s.removeKey(key)
 	return s.inner.Delete(ctx, key)
 }
 

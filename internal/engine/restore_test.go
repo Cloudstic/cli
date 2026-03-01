@@ -37,7 +37,11 @@ func TestRestoreManager_Run(t *testing.T) {
 		Content: []byte("nested content"),
 	}
 
-	bkMgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, WithVerbose())
+	bkMgr, err := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, WithVerbose())
+	if err != nil {
+		t.Fatalf("NewBackupManager: %v", err)
+	}
+	defer bkMgr.Close()
 	if _, err := bkMgr.Run(context.Background()); err != nil {
 		t.Fatalf("Backup setup failed: %v", err)
 	}

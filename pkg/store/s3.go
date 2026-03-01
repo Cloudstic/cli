@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -25,9 +27,20 @@ type S3Store struct {
 
 // NewS3Store creates a new S3Store.
 // It initializes the AWS SDK config and S3 client.
+const s3Concurrency = 128
+
 func NewS3Store(ctx context.Context, endpoint, region, bucketName, accessKey, secretKey, prefix string) (*S3Store, error) {
+	// Use a high-concurrency HTTP transport for S3. Go's default limits
+	// MaxIdleConnsPerHost to 2, which severely throttles parallel uploads.
+	httpClient := awshttp.NewBuildableClient().WithTransportOptions(func(t *http.Transport) {
+		t.MaxIdleConns = 256
+		t.MaxIdleConnsPerHost = s3Concurrency
+		t.MaxConnsPerHost = s3Concurrency
+	})
+
 	opts := []func(*config.LoadOptions) error{
 		config.WithRegion(region),
+		config.WithHTTPClient(httpClient),
 	}
 
 	if accessKey != "" && secretKey != "" {
@@ -53,6 +66,12 @@ func NewS3Store(ctx context.Context, endpoint, region, bucketName, accessKey, se
 		BucketName: bucketName,
 		Prefix:     prefix,
 	}, nil
+}
+
+// ConcurrencyHint implements ConcurrencyHinter. S3 benefits from highly
+// parallel uploads since each PUT is a separate HTTP round-trip.
+func (s *S3Store) ConcurrencyHint() int {
+	return s3Concurrency
 }
 
 func (s *S3Store) key(k string) string {

@@ -227,7 +227,7 @@ func (ts *TransactionalStore) writeParallel(toWrite map[string][]byte) error {
 	jobs := make(chan job, len(toWrite))
 	errs := make(chan error, len(toWrite))
 
-	workers := min(20, len(toWrite))
+	workers := min(store.GetConcurrencyHint(ts.persistent, 20), len(toWrite))
 	for range workers {
 		go func() {
 			for j := range jobs {

@@ -22,6 +22,8 @@ type HybridStore struct {
 	store ObjectStore
 }
 
+func (s *HybridStore) Unwrap() ObjectStore { return s.store }
+
 func NewHybridStore(db TxFunc, store ObjectStore) *HybridStore {
 	return &HybridStore{db: db, store: store}
 }

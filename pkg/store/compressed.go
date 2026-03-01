@@ -38,6 +38,8 @@ type CompressedStore struct {
 	inner ObjectStore
 }
 
+func (s *CompressedStore) Unwrap() ObjectStore { return s.inner }
+
 func NewCompressedStore(inner ObjectStore) *CompressedStore {
 	initZstd()
 	return &CompressedStore{inner: inner}

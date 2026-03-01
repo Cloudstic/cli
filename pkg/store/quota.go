@@ -17,6 +17,8 @@ type QuotaStore struct {
 	cancel  context.CancelCauseFunc
 }
 
+func (q *QuotaStore) Unwrap() ObjectStore { return q.ObjectStore }
+
 func NewQuotaStore(inner ObjectStore, budget int64, cancel context.CancelCauseFunc) *QuotaStore {
 	return &QuotaStore{ObjectStore: inner, budget: budget, cancel: cancel}
 }

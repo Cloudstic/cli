@@ -27,6 +27,8 @@ type DebugStore struct {
 	calls atomic.Int64
 }
 
+func (s *DebugStore) Unwrap() ObjectStore { return s.inner }
+
 func NewDebugStore(inner ObjectStore, w io.Writer) *DebugStore {
 	return &DebugStore{inner: inner, w: w}
 }

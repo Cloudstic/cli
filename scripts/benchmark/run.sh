@@ -3,13 +3,23 @@
 set -e
 
 TARGET=${1:-local} # Default to local
-S3_BUCKET=${S3_BUCKET:-my-benchmark-bucket}
+S3_BUCKET=${S3_BUCKET:-cloudstic-benchmark-681494392773-us-east-1}
 AWS_REGION=${AWS_REGION:-us-east-1}
 
 if [ "$TARGET" != "local" ] && [ "$TARGET" != "s3" ]; then
     echo "Usage: $0 [local|s3]"
     exit 1
 fi
+
+# Export temporary AWS credentials for tools that don't support SSO natively (e.g. restic)
+# if [ "$TARGET" == "s3" ]; then
+#     if [ -z "$AWS_ACCESS_KEY_ID" ]; then
+#         echo "Exporting AWS credentials from SSO session..."
+#         eval "$(aws configure export-credentials --format env 2>/dev/null)" || {
+#             echo "Warning: Could not export AWS credentials. Restic S3 benchmark may fail."
+#         }
+#     fi
+# fi
 
 echo "=== Cloudstic Benchmark ==="
 echo "Target: $TARGET"
@@ -93,12 +103,12 @@ benchmark_cloudstic() {
         local repo_size=$(du -sh "$repo" | cut -f1 | xargs)
         printf "| %-30s | %12s | %13s |\n" "Final Repo Size" "$repo_size" "-"
     else
-        $CLOUDSTIC_BIN init -store s3 -store-path "$S3_BUCKET" -store-prefix "cloudstic/" >/dev/null 2>&1
-        run_bench "Initial Backup" $CLOUDSTIC_BIN backup -store s3 -store-path "$S3_BUCKET" -store-prefix "cloudstic/" -source local -source-path "$DATA_DIR" -quiet
-        run_bench "Incremental (No Changes)" $CLOUDSTIC_BIN backup -store s3 -store-path "$S3_BUCKET" -store-prefix "cloudstic/" -source local -source-path "$DATA_DIR" -quiet
+        $CLOUDSTIC_BIN init -store s3 -encryption-password "$PASSWORD" -store-path "$S3_BUCKET" -store-prefix "cloudstic/" >/dev/null 2>&1 || true
+        run_bench "Initial Backup" $CLOUDSTIC_BIN backup -store s3 -encryption-password "$PASSWORD" -store-path "$S3_BUCKET" -store-prefix "cloudstic/" -source local -source-path "$DATA_DIR" -quiet
+        run_bench "Incremental (No Changes)" $CLOUDSTIC_BIN backup -store s3 -encryption-password "$PASSWORD" -store-path "$S3_BUCKET" -store-prefix "cloudstic/" -source local -source-path "$DATA_DIR" -quiet
         
         echo "modified" >> "$DATA_DIR/small/file_1.txt"
-        run_bench "Incremental (1 File Changed)" $CLOUDSTIC_BIN backup -store s3 -store-path "$S3_BUCKET" -store-prefix "cloudstic/" -source local -source-path "$DATA_DIR" -quiet
+        run_bench "Incremental (1 File Changed)" $CLOUDSTIC_BIN backup -store s3 -encryption-password "$PASSWORD" -store-path "$S3_BUCKET" -store-prefix "cloudstic/" -source local -source-path "$DATA_DIR" -quiet
     fi
     echo ""
 }
@@ -127,13 +137,12 @@ benchmark_restic() {
         local repo_size=$(du -sh "$repo" | cut -f1 | xargs)
         printf "| %-30s | %12s | %13s |\n" "Final Repo Size" "$repo_size" "-"
     else
-        # Assuming AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set
-        restic init -r "s3:s3.amazonaws.com/$S3_BUCKET/restic" >/dev/null 2>&1
-        run_bench "Initial Backup" restic backup -r "s3:s3.amazonaws.com/$S3_BUCKET/restic" "$DATA_DIR"
-        run_bench "Incremental (No Changes)" restic backup -r "s3:s3.amazonaws.com/$S3_BUCKET/restic" "$DATA_DIR"
+        restic init -r "s3:s3.$AWS_REGION.amazonaws.com/$S3_BUCKET/restic" >/dev/null 2>&1 || true
+        run_bench "Initial Backup" restic backup -r "s3:s3.$AWS_REGION.amazonaws.com/$S3_BUCKET/restic" "$DATA_DIR"
+        run_bench "Incremental (No Changes)" restic backup -r "s3:s3.$AWS_REGION.amazonaws.com/$S3_BUCKET/restic" "$DATA_DIR"
         
         echo "modified" >> "$DATA_DIR/small/file_2.txt"
-        run_bench "Incremental (1 File Changed)" restic backup -r "s3:s3.amazonaws.com/$S3_BUCKET/restic" "$DATA_DIR"
+        run_bench "Incremental (1 File Changed)" restic backup -r "s3:s3.$AWS_REGION.amazonaws.com/$S3_BUCKET/restic" "$DATA_DIR"
     fi
     echo ""
 }

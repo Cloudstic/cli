@@ -2,10 +2,12 @@ package engine
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"sync"
+
+	"golang.org/x/sync/semaphore"
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/ui"
@@ -46,13 +48,30 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 
 	concurrency := store.GetConcurrencyHint(bm.store, defaultUploadConcurrency)
 
+	// Cap max memory in-flight to 150 MB to prevent OOMs on highly concurrent stores (S3)
+	maxInFlight := int64(150 * 1024 * 1024)
+	sem := semaphore.NewWeighted(maxInFlight)
+
 	jobs := make(chan core.FileMeta, min(128, len(pending)))
 	results := make(chan uploadResult, min(128, len(pending)))
 
 	for range min(concurrency, len(pending)) {
 		go func() {
 			for meta := range jobs {
-				results <- bm.processFile(ctx, meta, phase)
+				weight := meta.Size
+				// Large files are streamed in chunks, so they don't consume `meta.Size` RAM all at once.
+				// Cap weight at 10MB to allow other files to process alongside large ones.
+				if weight > 10*1024*1024 {
+					weight = 10 * 1024 * 1024
+				} else if weight <= 0 {
+					weight = 1024 // min weight
+				}
+
+				_ = sem.Acquire(ctx, weight)
+				res := bm.processFile(ctx, meta, phase)
+				sem.Release(weight)
+
+				results <- res
 			}
 		}()
 	}
@@ -77,9 +96,6 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 			return "", fmt.Errorf("hamt insert: %w", err)
 		}
 		bm.newMetas[res.ref] = res.meta
-		if res.contentRef != "" {
-			bm.contentCache[res.contentRef] = res.contentChunks
-		}
 	}
 
 	phase.Done()
@@ -181,15 +197,16 @@ func (bm *BackupManager) uploadInline(ctx context.Context, r io.Reader, meta cor
 		return hash, size, "", nil, nil
 	}
 
-	content := core.Content{
-		Type:          core.ObjectTypeContent,
-		Size:          size,
-		DataInlineB64: data,
-	}
-	contentData, err := json.Marshal(content)
-	if err != nil {
-		return "", 0, "", nil, err
-	}
+	// Manually construct JSON to avoid json.Marshal allocating a huge string for the base64 data
+	encodedLen := base64.StdEncoding.EncodedLen(len(data))
+	prefix := fmt.Sprintf(`{"type":"content","size":%d,"data_inline_b64":"`, size)
+	suffix := `"}`
+
+	contentData := make([]byte, len(prefix)+encodedLen+len(suffix))
+	copy(contentData, prefix)
+	base64.StdEncoding.Encode(contentData[len(prefix):], data)
+	copy(contentData[len(prefix)+encodedLen:], suffix)
+
 	if err := bm.store.Put(ctx, contentKey, contentData); err != nil {
 		return "", 0, "", nil, err
 	}

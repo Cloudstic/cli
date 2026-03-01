@@ -50,13 +50,13 @@ type DiffManager struct {
 func NewDiffManager(s store.ObjectStore) *DiffManager {
 	return &DiffManager{
 		store: s,
-		tree:  NewCachedTree(s),
+		tree:  hamt.NewTree(hamt.NewTransactionalStore(s)),
 	}
 }
 
 // Run resolves two snapshot IDs and computes the diff.
 func (dm *DiffManager) Run(ctx context.Context, snapID1, snapID2 string, opts ...DiffOption) (*DiffResult, error) {
-	dm.metaCache, _ = LoadFileMetaCache(dm.store)
+	dm.metaCache = make(map[string]core.FileMeta)
 
 	root1, ref1, err := dm.loadRoot(ctx, snapID1)
 	if err != nil {
@@ -170,7 +170,6 @@ func (dm *DiffManager) loadMeta(ref string) (*core.FileMeta, error) {
 	if fm, ok := dm.metaCache[ref]; ok {
 		return &fm, nil
 	}
-	debugf(dYellow+"cache miss"+dReset+" loadMeta %s", ref)
 	data, err := dm.store.Get(context.Background(), ref)
 	if err != nil {
 		return nil, err

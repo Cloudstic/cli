@@ -131,7 +131,6 @@ func (fm *ForgetManager) Run(ctx context.Context, snapshotID string, opts ...For
 		phase.Error()
 		return nil, fmt.Errorf("delete snapshot %s: %w", targetRef, err)
 	}
-	_ = RemoveSnapshotFromIndex(fm.store, targetRef)
 
 	if err := fm.fixupLatest(targetRef); err != nil {
 		phase.Error()
@@ -305,7 +304,6 @@ func (fm *ForgetManager) forgetBatch(ctx context.Context, entries []SnapshotEntr
 
 	for _, e := range entries {
 		_ = fm.store.Delete(ctx, e.Ref)
-		_ = RemoveSnapshotFromIndex(fm.store, e.Ref)
 	}
 
 	// Elect new latest from the remaining snapshots.

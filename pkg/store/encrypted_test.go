@@ -66,6 +66,10 @@ func (m *memStore) TotalSize(_ context.Context) (int64, error) {
 	return total, nil
 }
 
+func (m *memStore) Flush(_ context.Context) error {
+	return nil
+}
+
 func testKey(t *testing.T) []byte {
 	t.Helper()
 	k, err := crypto.GenerateKey()

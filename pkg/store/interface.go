@@ -17,6 +17,7 @@ type ObjectStore interface {
 	List(ctx context.Context, prefix string) ([]string, error)
 	Size(ctx context.Context, key string) (int64, error)
 	TotalSize(ctx context.Context) (int64, error)
+	Flush(ctx context.Context) error
 }
 
 // ConcurrencyHinter is an optional interface that ObjectStore implementations

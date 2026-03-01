@@ -3,14 +3,16 @@ package ui
 import (
 	"fmt"
 	"io"
+
+	"github.com/cloudstic/cli/internal/logger"
 )
 
 const (
-	Bold  = "\033[1m"
-	Dim   = "\033[2m"
-	Cyan  = "\033[36m"
-	Green = "\033[32m"
-	Reset = "\033[0m"
+	Bold  = logger.ColorBold
+	Dim   = logger.ColorDim
+	Cyan  = logger.ColorCyan
+	Green = logger.ColorGreen
+	Reset = logger.ColorReset
 )
 
 // TermWriter provides helpers for styled terminal output.

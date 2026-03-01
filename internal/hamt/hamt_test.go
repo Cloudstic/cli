@@ -62,6 +62,10 @@ func (s *inMemoryStore) TotalSize(_ context.Context) (int64, error) {
 	return total, nil
 }
 
+func (s *inMemoryStore) Flush(_ context.Context) error {
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -377,7 +381,7 @@ func TestTransactionalStore(t *testing.T) {
 		t.Fatalf("expected empty persistent store before flush, got %d entries", len(persistent.data))
 	}
 
-	if err := ts.Flush(root); err != nil {
+	if err := ts.FlushReachable(root); err != nil {
 		t.Fatalf("Flush: %v", err)
 	}
 

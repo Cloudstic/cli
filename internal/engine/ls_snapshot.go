@@ -36,13 +36,13 @@ type LsSnapshotManager struct {
 func NewLsSnapshotManager(s store.ObjectStore) *LsSnapshotManager {
 	return &LsSnapshotManager{
 		store: s,
-		tree:  NewCachedTree(s),
+		tree:  hamt.NewTree(hamt.NewTransactionalStore(s)),
 	}
 }
 
 // Run resolves the snapshot, collects metadata, and returns the tree structure.
 func (lm *LsSnapshotManager) Run(ctx context.Context, snapshotID string, opts ...LsSnapshotOption) (*LsSnapshotResult, error) {
-	lm.metaCache, _ = LoadFileMetaCache(lm.store)
+	lm.metaCache = make(map[string]core.FileMeta)
 
 	snap, ref, err := lm.resolveSnapshot(ctx, snapshotID)
 	if err != nil {
@@ -117,7 +117,6 @@ func (lm *LsSnapshotManager) loadMeta(ctx context.Context, ref string) (*core.Fi
 	if fm, ok := lm.metaCache[ref]; ok {
 		return &fm, nil
 	}
-	debugf(dYellow+"cache miss"+dReset+" loadMeta %s", ref)
 	data, err := lm.store.Get(ctx, ref)
 	if err != nil {
 		return nil, err

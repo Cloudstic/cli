@@ -18,6 +18,8 @@ type KeyCacheStore struct {
 	putFlight      singleflight.Group
 }
 
+func (s *KeyCacheStore) Unwrap() ObjectStore { return s.inner }
+
 func NewKeyCacheStore(inner ObjectStore) *KeyCacheStore {
 	return &KeyCacheStore{
 		inner:          inner,

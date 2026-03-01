@@ -9,9 +9,10 @@ import (
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/ui"
+	"github.com/cloudstic/cli/pkg/store"
 )
 
-const uploadConcurrency = 10
+const defaultUploadConcurrency = 10
 
 // inlineThreshold is the maximum file size for which content is stored inline
 // in the Content object rather than as separate chunk objects.
@@ -43,10 +44,12 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 
 	phase := bm.reporter.StartPhase("Uploading", totalBytes, true)
 
+	concurrency := store.GetConcurrencyHint(bm.store, defaultUploadConcurrency)
+
 	jobs := make(chan core.FileMeta, min(128, len(pending)))
 	results := make(chan uploadResult, min(128, len(pending)))
 
-	for range min(uploadConcurrency, len(pending)) {
+	for range min(concurrency, len(pending)) {
 		go func() {
 			for meta := range jobs {
 				results <- bm.processFile(ctx, meta, phase)

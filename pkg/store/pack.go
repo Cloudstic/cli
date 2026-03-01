@@ -395,6 +395,121 @@ func (s *PackStore) Size(ctx context.Context, key string) (int64, error) {
 	return s.ObjectStore.Size(ctx, key)
 }
 
+// Repack analyzes the packfiles and repacks those that have too much wasted space.
+// Wasted space occurs when objects within a packfile are logically deleted (removed from catalog).
+// maxWastedRatio is the threshold (0.0 to 1.0) above which a pack is repacked.
+// For example, 0.3 means a pack is repacked if it is more than 30% empty.
+// Returns the number of bytes reclaimed, number of packs deleted, and error.
+func (s *PackStore) Repack(ctx context.Context, maxWastedRatio float64) (int64, int, error) {
+	// Ensure catalog is loaded
+	s.mu.Lock()
+	if !s.catalogLoaded {
+		_ = s.loadCatalogLocked(ctx)
+	}
+	s.mu.Unlock()
+
+	s.mu.RLock()
+	// Calculate active bytes per pack and map keys to packs
+	packActiveSizes := make(map[string]int64)
+	packToKeys := make(map[string][]string)
+	for key, entry := range s.catalog {
+		packActiveSizes[entry.PackRef] += entry.Length
+		packToKeys[entry.PackRef] = append(packToKeys[entry.PackRef], key)
+	}
+	s.mu.RUnlock()
+
+	// List all physical packfiles
+	packRefs, err := s.ObjectStore.List(ctx, packPrefix)
+	if err != nil {
+		return 0, 0, fmt.Errorf("list packs: %w", err)
+	}
+
+	var bytesReclaimed int64
+	var packsDeleted int
+
+	for _, packRef := range packRefs {
+		activeSize := packActiveSizes[packRef]
+
+		// 1. Orphaned pack (100% wasted)
+		if activeSize == 0 {
+			debugf("repack: deleting orphaned pack %s", packRef)
+			physicalSize, err := s.ObjectStore.Size(ctx, packRef)
+			if err == nil {
+				bytesReclaimed += physicalSize
+			}
+			if err := s.ObjectStore.Delete(ctx, packRef); err != nil {
+				return bytesReclaimed, packsDeleted, fmt.Errorf("delete orphaned pack %s: %w", packRef, err)
+			}
+			packsDeleted++
+			s.packCache.Remove(packRef)
+			continue
+		}
+
+		// 2. Check fragmentation
+		physicalSize, err := s.ObjectStore.Size(ctx, packRef)
+		if err != nil {
+			debugf("repack: failed to get size for pack %s: %v", packRef, err)
+			continue
+		}
+
+		wasted := physicalSize - activeSize
+		if wasted <= 0 {
+			continue // No waste or unexpected size
+		}
+
+		wastedRatio := float64(wasted) / float64(physicalSize)
+		if wastedRatio > maxWastedRatio {
+			debugf("repack: repacking %s (wasted: %.2f%%, %d bytes)", packRef, wastedRatio*100, wasted)
+
+			// Download the packfile
+			packData, err := s.ObjectStore.Get(ctx, packRef)
+			if err != nil {
+				return bytesReclaimed, packsDeleted, fmt.Errorf("get pack for repack %s: %w", packRef, err)
+			}
+
+			// Re-insert its active objects
+			keys := packToKeys[packRef]
+			for _, key := range keys {
+				s.mu.RLock()
+				entry, ok := s.catalog[key]
+				s.mu.RUnlock()
+
+				if !ok || entry.PackRef != packRef {
+					continue // Catalog changed concurrently? Shouldn't happen during prune, but safe.
+				}
+
+				if int64(len(packData)) < entry.Offset+entry.Length {
+					return bytesReclaimed, packsDeleted, fmt.Errorf("packfile %s is smaller than expected for key %s", packRef, key)
+				}
+
+				data := make([]byte, entry.Length)
+				copy(data, packData[entry.Offset:entry.Offset+entry.Length])
+
+				// Put back using PackStore.Put to bundle it into a new pack
+				if err := s.Put(ctx, key, data); err != nil {
+					return bytesReclaimed, packsDeleted, fmt.Errorf("repack put %s: %w", key, err)
+				}
+			}
+
+			// Delete the old packfile
+			if err := s.ObjectStore.Delete(ctx, packRef); err != nil {
+				return bytesReclaimed, packsDeleted, fmt.Errorf("delete old repacked pack %s: %w", packRef, err)
+			}
+
+			bytesReclaimed += wasted
+			packsDeleted++
+			s.packCache.Remove(packRef)
+		}
+	}
+
+	// Ensure any final repacked objects are flushed
+	if err := s.Flush(ctx); err != nil {
+		return bytesReclaimed, packsDeleted, fmt.Errorf("flush after repack: %w", err)
+	}
+
+	return bytesReclaimed, packsDeleted, nil
+}
+
 func (s *PackStore) TotalSize(ctx context.Context) (int64, error) {
 	return s.ObjectStore.TotalSize(ctx)
 }

@@ -252,7 +252,15 @@ func TestCLI_EndToEnd_Matrix(t *testing.T) {
 
 				// 9. Forget & Prune
 				forgetArgs := append([]string{"forget", "--keep-last", "1", "--prune"}, baseEncArgs...)
-				run(t, bin, forgetArgs...)
+				out = run(t, bin, forgetArgs...)
+
+				// Assert that prune output is visible and space was reclaimed
+				if !strings.Contains(out, "Objects deleted:") {
+					t.Errorf("Expected prune to delete objects, got: %s", out)
+				}
+				if !strings.Contains(out, "Space reclaimed:") {
+					t.Errorf("Expected prune to reclaim space, got: %s", out)
+				}
 
 				run(t, bin, append([]string{"list"}, baseEncArgs...)...)
 				// 10. Test Key Validation (Wrong Password)
@@ -367,7 +375,14 @@ func TestCLI_EndToEnd_Matrix(t *testing.T) {
 				}
 
 				// 15f. Forget + Prune — verify cleanup works without encryption
-				run(t, bin, append([]string{"forget", "--keep-last", "1", "--prune"}, unencStoreArgs...)...)
+				out = run(t, bin, append([]string{"forget", "--keep-last", "1", "--prune"}, unencStoreArgs...)...)
+				if !strings.Contains(out, "Objects deleted:") {
+					t.Errorf("Unencrypted: expected prune to delete objects, got: %s", out)
+				}
+				if !strings.Contains(out, "Space reclaimed:") {
+					t.Errorf("Unencrypted: expected prune to reclaim space, got: %s", out)
+				}
+
 				out = run(t, bin, append([]string{"list"}, unencStoreArgs...)...)
 				if !strings.Contains(out, "1 snapshot") {
 					t.Errorf("Unencrypted: expected 1 snapshot after prune, got: %s", out)

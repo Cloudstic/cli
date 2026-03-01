@@ -163,6 +163,13 @@ func (s *HybridStore) TotalSize(ctx context.Context) (int64, error) {
 	return s.store.TotalSize(ctx)
 }
 
+func (s *HybridStore) Flush(ctx context.Context) error {
+	if f, ok := s.store.(interface{ Flush(context.Context) error }); ok {
+		return f.Flush(ctx)
+	}
+	return nil
+}
+
 func isChunk(key string) bool {
 	return strings.HasPrefix(key, "chunk/")
 }

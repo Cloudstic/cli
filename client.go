@@ -7,10 +7,13 @@ import (
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/engine"
+	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/crypto"
 	"github.com/cloudstic/cli/pkg/store"
 )
+
+var log = logger.New("client", logger.ColorCyan)
 
 // ---------------------------------------------------------------------------
 // Re-exported types from internal packages
@@ -43,13 +46,19 @@ func WithEncryptionKey(key []byte) ClientOption {
 	return func(c *Client) { c.encryptionKey = key }
 }
 
+// WithPackfile enables bundling small objects into 8MB packs to save API calls.
+func WithPackfile(enable bool) ClientOption {
+	return func(c *Client) { c.enablePackfile = enable }
+}
+
 // Client is the high-level interface for using Cloudstic as a library.
 type Client struct {
-	store         store.ObjectStore
-	storedMeter   *store.MeteredStore
-	encryptionKey []byte
-	hmacKey       []byte
-	reporter      ui.Reporter
+	store          store.ObjectStore
+	storedMeter    *store.MeteredStore
+	encryptionKey  []byte
+	hmacKey        []byte
+	enablePackfile bool
+	reporter       ui.Reporter
 }
 
 func NewClient(base store.ObjectStore, opts ...ClientOption) (*Client, error) {
@@ -71,8 +80,19 @@ func NewClient(base store.ObjectStore, opts ...ClientOption) (*Client, error) {
 		c.hmacKey = hmacKey
 	}
 
-	storedMeter := store.NewMeteredStore(base)
-	var inner store.ObjectStore = storedMeter
+	inner := base
+
+	log.Debugf("packfile enabled: %v", c.enablePackfile)
+	if c.enablePackfile {
+		packStore, err := store.NewPackStore(inner)
+		if err != nil {
+			return nil, fmt.Errorf("init packstore: %w", err)
+		}
+		inner = packStore
+	}
+
+	storedMeter := store.NewMeteredStore(inner)
+	inner = storedMeter
 	if len(c.encryptionKey) > 0 {
 		inner = store.NewEncryptedStore(storedMeter, c.encryptionKey)
 	}

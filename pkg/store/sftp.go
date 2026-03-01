@@ -125,6 +125,10 @@ func (s *SFTPStore) TotalSize(_ context.Context) (int64, error) {
 	return total, nil
 }
 
+func (s *SFTPStore) Flush(ctx context.Context) error {
+	return nil
+}
+
 func (s *SFTPStore) List(_ context.Context, prefix string) ([]string, error) {
 	var keys []string
 	walker := s.client.Walk(s.basePath)

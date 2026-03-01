@@ -2,9 +2,10 @@ package hamt
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"sync"
 
+	"github.com/buger/jsonparser"
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/pkg/store"
 )
@@ -45,6 +46,10 @@ func (cs *cachingStore) List(_ context.Context, _ string) ([]string, error) {
 	return nil, fmt.Errorf("list not supported on cache")
 }
 
+func (cs *cachingStore) Flush(ctx context.Context) error {
+	return nil
+}
+
 func (cs *cachingStore) Size(_ context.Context, key string) (int64, error) {
 	data, ok := cs.staging[key]
 	if !ok {
@@ -65,6 +70,7 @@ func (cs *cachingStore) TotalSize(_ context.Context) (int64, error) {
 // reachable subset to the persistent store.
 type TransactionalStore struct {
 	cache      *cachingStore
+	mu         sync.RWMutex
 	readCache  map[string][]byte
 	persistent store.ObjectStore
 }
@@ -85,14 +91,19 @@ func (ts *TransactionalStore) Get(ctx context.Context, key string) ([]byte, erro
 	if data, err := ts.cache.Get(ctx, key); err == nil {
 		return data, nil
 	}
-	if data, ok := ts.readCache[key]; ok {
+	ts.mu.RLock()
+	data, ok := ts.readCache[key]
+	ts.mu.RUnlock()
+	if ok {
 		return data, nil
 	}
 	data, err := ts.persistent.Get(ctx, key)
 	if err != nil {
 		return nil, err
 	}
+	ts.mu.Lock()
 	ts.readCache[key] = data
+	ts.mu.Unlock()
 	return data, nil
 }
 
@@ -100,7 +111,10 @@ func (ts *TransactionalStore) Exists(ctx context.Context, key string) (bool, err
 	if ok, _ := ts.cache.Exists(ctx, key); ok {
 		return true, nil
 	}
-	if _, ok := ts.readCache[key]; ok {
+	ts.mu.RLock()
+	_, ok := ts.readCache[key]
+	ts.mu.RUnlock()
+	if ok {
 		return true, nil
 	}
 	return ts.persistent.Exists(ctx, key)
@@ -118,7 +132,10 @@ func (ts *TransactionalStore) Size(ctx context.Context, key string) (int64, erro
 	if size, err := ts.cache.Size(ctx, key); err == nil {
 		return size, nil
 	}
-	if data, ok := ts.readCache[key]; ok {
+	ts.mu.RLock()
+	data, ok := ts.readCache[key]
+	ts.mu.RUnlock()
+	if ok {
 		return int64(len(data)), nil
 	}
 	return ts.persistent.Size(ctx, key)
@@ -131,6 +148,8 @@ func (ts *TransactionalStore) TotalSize(ctx context.Context) (int64, error) {
 // PreloadReadCache populates the read-through cache from externally loaded data.
 // Nodes already present in the staging buffer or read cache are not overwritten.
 func (ts *TransactionalStore) PreloadReadCache(data map[string][]byte) {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
 	for k, v := range data {
 		if _, ok := ts.cache.staging[k]; ok {
 			continue
@@ -146,20 +165,22 @@ func (ts *TransactionalStore) PreloadReadCache(data map[string][]byte) {
 // (both the staging buffer and the read cache). The caller can persist this to
 // avoid fetching the same nodes on the next run.
 func (ts *TransactionalStore) ExportCaches() map[string][]byte {
+	ts.mu.RLock()
 	out := make(map[string][]byte, len(ts.readCache)+len(ts.cache.staging))
 	for k, v := range ts.readCache {
 		out[k] = v
 	}
+	ts.mu.RUnlock()
 	for k, v := range ts.cache.staging {
 		out[k] = v
 	}
 	return out
 }
 
-// Flush writes only the HAMT nodes reachable from rootRef to the persistent
+// FlushReachable writes only the HAMT nodes reachable from rootRef to the persistent
 // store, ignoring intermediate nodes that were superseded during the
 // transaction. Returns the number of nodes written.
-func (ts *TransactionalStore) Flush(rootRef string) error {
+func (ts *TransactionalStore) FlushReachable(rootRef string) error {
 	if rootRef == "" {
 		return nil
 	}
@@ -201,12 +222,20 @@ func (ts *TransactionalStore) collectReachable(rootRef string) (map[string][]byt
 		}
 		toWrite[ref] = data
 
-		var node core.HAMTNode
-		if err := json.Unmarshal(data, &node); err != nil {
-			return nil, fmt.Errorf("parse node %s during flush: %w", ref, err)
+		nodeType, err := jsonparser.GetString(data, "type")
+		if err != nil {
+			return nil, fmt.Errorf("parse node type %s during flush: %w", ref, err)
 		}
-		if node.Type == core.ObjectTypeInternal {
-			queue = append(queue, node.Children...)
+		if core.ObjectType(nodeType) == core.ObjectTypeInternal {
+			_, err = jsonparser.ArrayEach(data, func(value []byte, dataType jsonparser.ValueType, offset int, err error) {
+				if dataType == jsonparser.String {
+					str, _ := jsonparser.ParseString(value)
+					queue = append(queue, str)
+				}
+			}, "children")
+			if err != nil && err != jsonparser.KeyPathNotFoundError {
+				return nil, fmt.Errorf("parse node children %s during flush: %w", ref, err)
+			}
 		}
 	}
 	return toWrite, nil
@@ -251,4 +280,8 @@ func (ts *TransactionalStore) writeParallel(toWrite map[string][]byte) error {
 		}
 	}
 	return nil
+}
+
+func (ts *TransactionalStore) Flush(ctx context.Context) error {
+	return ts.persistent.Flush(ctx)
 }

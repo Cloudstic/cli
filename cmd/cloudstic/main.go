@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"runtime/pprof"
 	"sort"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/engine"
+	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/internal/paths"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/crypto"
@@ -71,6 +73,9 @@ func main() {
 
 	var profFile *os.File
 	if cpuprofile != "" {
+		runtime.SetBlockProfileRate(1)
+		runtime.SetMutexProfileFraction(1)
+
 		var err error
 		profFile, err = os.Create(cpuprofile)
 		if err != nil {
@@ -102,6 +107,27 @@ func main() {
 		// runtime.GC() maybe? Not strictly necessary.
 		if err := pprof.WriteHeapProfile(f); err != nil {
 			fmt.Fprintf(os.Stderr, "could not write memory profile: %v\n", err)
+		}
+	}
+
+	// Also dump a goroutine profile for debugging hangs/blocks
+	if cpuprofile != "" {
+		gf, err := os.Create(cpuprofile + ".goroutine")
+		if err == nil {
+			_ = pprof.Lookup("goroutine").WriteTo(gf, 1)
+			_ = gf.Close()
+		}
+
+		bf, err := os.Create(cpuprofile + ".block")
+		if err == nil {
+			_ = pprof.Lookup("block").WriteTo(bf, 0)
+			_ = bf.Close()
+		}
+
+		mf, err := os.Create(cpuprofile + ".mutex")
+		if err == nil {
+			_ = pprof.Lookup("mutex").WriteTo(mf, 0)
+			_ = mf.Close()
 		}
 	}
 
@@ -303,6 +329,7 @@ type globalFlags struct {
 	databaseURL, tenantID                             *string
 	encryptionKey, encryptionPassword                 *string
 	recoveryKey                                       *string
+	enablePackfile                                    *bool
 	verbose, quiet, debug                             *bool
 	debugLog                                          *ui.SafeLogWriter
 }
@@ -338,6 +365,7 @@ func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 	g.encryptionKey = fs.String("encryption-key", envDefault("CLOUDSTIC_ENCRYPTION_KEY", ""), "Platform key (hex-encoded, 32 bytes)")
 	g.encryptionPassword = fs.String("encryption-password", envDefault("CLOUDSTIC_ENCRYPTION_PASSWORD", ""), "Password for password-based encryption")
 	g.recoveryKey = fs.String("recovery-key", envDefault("CLOUDSTIC_RECOVERY_KEY", ""), "Recovery key (BIP39 24-word mnemonic)")
+	g.enablePackfile = fs.Bool("enable-packfile", true, "Bundle small objects into 8MB packs to save S3 PUTs")
 	g.verbose = fs.Bool("verbose", false, "Log detailed file-level operations")
 	g.quiet = fs.Bool("quiet", false, "Suppress progress bars (keeps final summary)")
 	g.debug = fs.Bool("debug", false, "Log every store request (network calls, timing, sizes)")
@@ -355,6 +383,7 @@ func (g *globalFlags) openStore() (store.ObjectStore, []byte, error) {
 		if g.debugLog == nil {
 			g.debugLog = &ui.SafeLogWriter{}
 		}
+		logger.Writer = g.debugLog
 		raw = store.NewDebugStore(raw, g.debugLog)
 	}
 
@@ -416,9 +445,9 @@ func (g *globalFlags) openClient() (*cloudstic.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	if g.debugLog != nil {
-		engine.DebugWriter = g.debugLog
-	}
+
+	packfileEnabled := g.enablePackfile != nil && *g.enablePackfile
+
 	var reporter cloudstic.Reporter
 	if *g.quiet {
 		reporter = ui.NewNoOpReporter()
@@ -432,6 +461,7 @@ func (g *globalFlags) openClient() (*cloudstic.Client, error) {
 	return cloudstic.NewClient(raw,
 		cloudstic.WithEncryptionKey(encKey),
 		cloudstic.WithReporter(reporter),
+		cloudstic.WithPackfile(packfileEnabled),
 	)
 }
 
@@ -707,32 +737,41 @@ func runAddRecoveryKey() {
 }
 
 func (g *globalFlags) initObjectStore() (store.ObjectStore, error) {
+	var inner store.ObjectStore
+	var err error
+
 	switch *g.storeType {
 	case "local":
-		return store.NewLocalStore(*g.storePath)
+		inner, err = store.NewLocalStore(*g.storePath)
 	case "b2":
 		keyID := os.Getenv("B2_KEY_ID")
 		appKey := os.Getenv("B2_APP_KEY")
 		if keyID == "" || appKey == "" {
 			return nil, fmt.Errorf("B2_KEY_ID and B2_APP_KEY env vars required for b2 store")
 		}
-		return store.NewB2StoreWithPrefix(keyID, appKey, *g.storePath, *g.storePrefix)
+		inner, err = store.NewB2StoreWithPrefix(keyID, appKey, *g.storePath, *g.storePrefix)
 	case "s3":
 		if *g.storePath == "" {
 			return nil, fmt.Errorf("-store-path must be set to the S3 bucket name")
 		}
-		return store.NewS3Store(context.Background(), *g.s3Endpoint, *g.s3Region, *g.storePath, *g.s3AccessKey, *g.s3SecretKey, *g.storePrefix)
+		inner, err = store.NewS3Store(context.Background(), *g.s3Endpoint, *g.s3Region, *g.storePath, *g.s3AccessKey, *g.s3SecretKey, *g.storePrefix)
 	case "sftp":
-		cfg, err := g.sftpConfig(g.storeSFTPHost, g.storeSFTPPort, g.storeSFTPUser, g.storeSFTPPassword, g.storeSFTPKey)
-		if err != nil {
-			return nil, err
+		cfg, sftpErr := g.sftpConfig(g.storeSFTPHost, g.storeSFTPPort, g.storeSFTPUser, g.storeSFTPPassword, g.storeSFTPKey)
+		if sftpErr != nil {
+			return nil, sftpErr
 		}
-		return store.NewSFTPStore(cfg, *g.storePath)
+		inner, err = store.NewSFTPStore(cfg, *g.storePath)
 	case "hybrid":
-		return g.initHybridStore()
+		inner, err = g.initHybridStore()
 	default:
 		return nil, fmt.Errorf("unsupported store type: %s", *g.storeType)
 	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return inner, nil
 }
 
 func (g *globalFlags) sftpConfig(host, port, user, pass, key *string) (store.SFTPConfig, error) {

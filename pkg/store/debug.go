@@ -6,16 +6,8 @@ import (
 	"io"
 	"sync/atomic"
 	"time"
-)
 
-const (
-	cBold   = "\033[1m"
-	cDim    = "\033[2m"
-	cRed    = "\033[31m"
-	cGreen  = "\033[32m"
-	cYellow = "\033[33m"
-	cCyan   = "\033[36m"
-	cReset  = "\033[0m"
+	"github.com/cloudstic/cli/internal/logger"
 )
 
 // DebugStore wraps an ObjectStore and logs every operation with timing
@@ -82,14 +74,30 @@ func (s *DebugStore) TotalSize(ctx context.Context) (int64, error) {
 	return size, err
 }
 
+func (s *DebugStore) Flush(ctx context.Context) error {
+	start := time.Now()
+	var err error
+	if f, ok := s.inner.(interface{ Flush(context.Context) error }); ok {
+		err = f.Flush(ctx)
+	}
+	s.log("FLUSH", "", 0, 0, time.Since(start), err)
+	return err
+}
+
 var opColor = map[string]string{
-	"GET":        cGreen,
-	"PUT":        cYellow,
-	"LIST":       cCyan,
-	"DELETE":     cRed,
-	"EXISTS":     cDim,
-	"SIZE":       cDim,
-	"TOTAL_SIZE": cDim,
+	"GET":        logger.ColorGreen,
+	"PUT":        logger.ColorYellow,
+	"LIST":       logger.ColorCyan,
+	"DELETE":     logger.ColorRed,
+	"EXISTS":     logger.ColorDim,
+	"SIZE":       logger.ColorDim,
+	"TOTAL_SIZE": logger.ColorDim,
+}
+
+var debugLog = logger.New("store", logger.ColorYellow)
+
+func debugf(format string, args ...any) {
+	debugLog.Debugf(format, args...)
 }
 
 func (s *DebugStore) log(op, key string, bytes, count int, d time.Duration, err error) {
@@ -101,18 +109,18 @@ func (s *DebugStore) log(op, key string, bytes, count int, d time.Duration, err 
 	detail := ""
 	switch {
 	case err != nil:
-		detail = fmt.Sprintf(" %serr=%s%s", cRed, err, cReset)
+		detail = fmt.Sprintf(" %serr=%s%s", logger.ColorRed, err, logger.ColorReset)
 	case count > 0:
-		detail = fmt.Sprintf(" %s%d keys%s", cDim, count, cReset)
+		detail = fmt.Sprintf(" %s%d keys%s", logger.ColorDim, count, logger.ColorReset)
 	case bytes > 0:
-		detail = fmt.Sprintf(" %s%s%s", cDim, fmtBytes(bytes), cReset)
+		detail = fmt.Sprintf(" %s%s%s", logger.ColorDim, fmtBytes(bytes), logger.ColorReset)
 	}
 
 	_, _ = fmt.Fprintf(s.w, "%s[store #%d]%s %s%-6s%s %-50s %s%7.1fms%s%s\n",
-		cDim, n, cReset,
-		oc, op, cReset,
+		logger.ColorDim, n, logger.ColorReset,
+		oc, op, logger.ColorReset,
 		key,
-		cDim, ms, cReset,
+		logger.ColorDim, ms, logger.ColorReset,
 		detail)
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/ui"
@@ -15,6 +16,14 @@ const uploadConcurrency = 10
 // inlineThreshold is the maximum file size for which content is stored inline
 // in the Content object rather than as separate chunk objects.
 const inlineThreshold = 512 * 1024 // 512 KiB (matches CDC min chunk size)
+
+var inlineBufferPool = sync.Pool{
+	New: func() interface{} {
+		// Pre-allocate a buffer large enough for inlineThreshold
+		b := make([]byte, inlineThreshold)
+		return &b
+	},
+}
 
 type uploadResult struct {
 	fileID        string
@@ -145,14 +154,19 @@ func (bm *BackupManager) uploadContent(ctx context.Context, meta core.FileMeta, 
 }
 
 // uploadInline reads the entire file into memory and stores it directly inside
-// the Content object, bypassing the chunker.
+// the Content object, bypassing the chunker. Uses a sync.Pool to minimize allocations.
 func (bm *BackupManager) uploadInline(ctx context.Context, r io.Reader, meta core.FileMeta, phase ui.Phase) (hash string, size int64, contentRef string, contentChunks []string, err error) {
-	data, err := io.ReadAll(r)
-	if err != nil {
+	bufPtr := inlineBufferPool.Get().(*[]byte)
+	buf := *bufPtr
+	defer inlineBufferPool.Put(bufPtr)
+
+	n, err := io.ReadFull(r, buf)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 		return "", 0, "", nil, fmt.Errorf("read %s: %w", meta.Name, err)
 	}
 
-	size = int64(len(data))
+	data := buf[:n]
+	size = int64(n)
 	phase.Increment(size)
 	hash = core.ComputeHash(data)
 

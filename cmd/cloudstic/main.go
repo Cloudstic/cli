@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -159,6 +160,8 @@ func runCmd(cmd string) int {
 		runBreakLock()
 	case "add-recovery-key":
 		runAddRecoveryKey()
+	case "cat":
+		runCat()
 	case "help", "--help", "-h":
 		printUsage()
 		return 0
@@ -190,6 +193,7 @@ func printUsage() {
 		{"diff", "Compare two snapshots or a snapshot against latest"},
 		{"break-lock", "Remove a stale repository lock left by a crashed process"},
 		{"add-recovery-key", "Generate a recovery key for an existing encrypted repository"},
+		{"cat", "Display raw JSON content of repository objects"},
 	})
 
 	t.HeadingSub("GLOBAL OPTIONS", "(also settable via env vars)")
@@ -293,6 +297,15 @@ func printUsage() {
 	t.Command("break-lock", "")
 	t.Note("  Remove a stale repository lock left by a crashed or killed process.",
 		"  Only use this if you are sure no other operation is running.")
+	t.Blank()
+
+	t.Command("cat", "<object_key> [object_key...]")
+	t.Flags([][2]string{
+		{"-json", "Suppress non-JSON output (alias for -quiet)"},
+	})
+	t.Note("  Display raw JSON for one or more repository objects.",
+		"  Object keys: snapshot/<hash>, filemeta/<hash>, content/<hash>,",
+		"  node/<hash>, chunk/<hash>, config, index/latest, keys/<slot>")
 
 	t.Heading("EXAMPLES")
 	t.Examples(
@@ -1231,6 +1244,74 @@ func runBreakLock() {
 		fmt.Fprintf(os.Stderr, "  Acquired:   %s\n", r.AcquiredAt)
 		fmt.Fprintf(os.Stderr, "  Expired at: %s\n", r.ExpiresAt)
 		fmt.Fprintf(os.Stderr, "  Shared:     %v\n\n", r.IsShared)
+	}
+}
+
+func runCat() {
+	catCmd := flag.NewFlagSet("cat", flag.ExitOnError)
+	g := addGlobalFlags(catCmd)
+	jsonFlag := catCmd.Bool("json", false, "Suppress non-JSON output (alias for -quiet)")
+
+	_ = catCmd.Parse(reorderArgs(catCmd, os.Args[2:]))
+
+	if catCmd.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "Usage: cloudstic cat [options] <object_key> [object_key...]")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Examples:")
+		fmt.Fprintln(os.Stderr, "  cloudstic cat config")
+		fmt.Fprintln(os.Stderr, "  cloudstic cat index/latest")
+		fmt.Fprintln(os.Stderr, "  cloudstic cat snapshot/abc123...")
+		fmt.Fprintln(os.Stderr, "  cloudstic cat filemeta/def456... node/789abc...")
+		os.Exit(1)
+	}
+
+	quiet := *g.quiet || *jsonFlag
+
+	ctx := context.Background()
+
+	// Open the store with potential decryption
+	store, encKey, err := g.openStore()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open store: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Build the store chain if encryption is enabled
+	if len(encKey) > 0 {
+		store = store // already decrypted by openStore
+	}
+
+	keys := catCmd.Args()
+
+	for i, key := range keys {
+		if !quiet && len(keys) > 1 {
+			fmt.Fprintf(os.Stderr, "==> %s <==\n", key)
+		}
+
+		data, err := store.Get(ctx, key)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to fetch object %q: %v\n", key, err)
+			os.Exit(1)
+		}
+
+		if data == nil {
+			fmt.Fprintf(os.Stderr, "Object not found: %q\n", key)
+			os.Exit(1)
+		}
+
+		// Pretty-print JSON
+		var indented bytes.Buffer
+		if err := json.Indent(&indented, data, "", "  "); err != nil {
+			// If it's not valid JSON, just output the raw data
+			fmt.Print(string(data))
+		} else {
+			fmt.Println(indented.String())
+		}
+
+		// Add spacing between multiple objects
+		if !quiet && i < len(keys)-1 {
+			fmt.Fprintln(os.Stderr)
+		}
 	}
 }
 

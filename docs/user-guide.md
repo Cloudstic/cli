@@ -18,6 +18,7 @@ Cloudstic is a content-addressable backup tool that creates encrypted, deduplica
   - [forget](#forget)
   - [prune](#prune)
   - [add-recovery-key](#add-recovery-key)
+  - [cat](#cat)
 - [Sources](#sources)
   - [Local Directory](#local-directory)
   - [SFTP](#sftp-source)
@@ -402,6 +403,74 @@ cloudstic add-recovery-key -encryption-password "my secret passphrase"
 ```
 
 The recovery key is displayed once. Write it down immediately.
+
+---
+
+### cat
+
+Display the raw JSON content of repository objects. This is useful for debugging, inspection, and understanding the internal structure of backups.
+
+```bash
+# Display repository configuration
+cloudstic cat config
+
+# Display the latest snapshot index
+cloudstic cat index/latest
+
+# Display a specific snapshot
+cloudstic cat snapshot/abc123def456...
+
+# Display multiple objects at once
+cloudstic cat config index/latest
+
+# Display a filemeta object
+cloudstic cat filemeta/789abc...
+
+# Display a HAMT node
+cloudstic cat node/def456...
+
+# Suppress non-JSON output for scripting
+cloudstic cat config --json
+```
+
+**Object key types:**
+
+| Key pattern | Description |
+|-------------|-------------|
+| `config` | Repository configuration (version, encryption status, creation time) |
+| `index/latest` | Pointer to the most recent snapshot |
+| `snapshot/<hash>` | Snapshot metadata (creation time, root node, source info, tags) |
+| `filemeta/<hash>` | File metadata (name, size, modification time, content hash) |
+| `content/<hash>` | Content manifest (list of chunk references or inline data) |
+| `node/<hash>` | HAMT tree node (internal or leaf) |
+| `chunk/<hash>` | Raw file data chunk |
+| `keys/<slot>` | Encryption key slot (stored unencrypted) |
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `-json` | Suppress non-JSON output (alias for `-quiet`) |
+
+The output is pretty-printed JSON by default. Use `-json` or `-quiet` to suppress header messages when fetching multiple objects, which is useful for piping to `jq` or other JSON processors.
+
+**Examples:**
+
+```bash
+# Pretty-print repository config
+cloudstic cat config
+
+# Extract version from config using jq
+cloudstic cat config --json | jq -r .version
+
+# List all snapshots from index
+cloudstic list --json | jq -r '.[] | .ref'
+
+# Inspect a specific snapshot's metadata
+cloudstic cat snapshot/abc123... | jq .
+```
+
+> **Note:** This command operates at the object store level and returns the raw JSON representation of repository objects. It does not reconstruct file contents — use `restore` for that.
 
 ---
 

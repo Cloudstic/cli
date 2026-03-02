@@ -250,3 +250,41 @@ func (c *Client) Diff(ctx context.Context, snap1, snap2 string, opts ...DiffOpti
 	mgr := engine.NewDiffManager(c.store)
 	return mgr.Run(ctx, snap1, snap2, opts...)
 }
+
+// ---------------------------------------------------------------------------
+// Cat
+// ---------------------------------------------------------------------------
+
+// CatResult contains the raw data for an object key.
+type CatResult struct {
+	Key  string // The object key requested
+	Data []byte // Raw object data (typically JSON)
+}
+
+// Cat fetches the raw data for one or more object keys from the repository.
+// Object keys can be snapshot/<hash>, filemeta/<hash>, content/<hash>,
+// node/<hash>, chunk/<hash>, config, index/latest, keys/<slot>, etc.
+//
+// This is useful for debugging, inspection, and understanding the internal
+// structure of the repository.
+func (c *Client) Cat(ctx context.Context, keys ...string) ([]*CatResult, error) {
+	if len(keys) == 0 {
+		return nil, fmt.Errorf("at least one object key is required")
+	}
+
+	results := make([]*CatResult, 0, len(keys))
+	for _, key := range keys {
+		data, err := c.store.Get(ctx, key)
+		if err != nil {
+			return nil, fmt.Errorf("fetch object %q: %w", key, err)
+		}
+		if data == nil {
+			return nil, fmt.Errorf("object not found: %q", key)
+		}
+		results = append(results, &CatResult{
+			Key:  key,
+			Data: data,
+		})
+	}
+	return results, nil
+}

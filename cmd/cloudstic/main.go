@@ -1269,47 +1269,35 @@ func runCat() {
 
 	ctx := context.Background()
 
-	// Open the store with potential decryption
-	store, encKey, err := g.openStore()
+	client, err := g.openClient()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to open store: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Failed to init store: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Build the store chain if encryption is enabled
-	if len(encKey) > 0 {
-		store = store // already decrypted by openStore
+	keys := catCmd.Args()
+	results, err := client.Cat(ctx, keys...)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to fetch objects: %v\n", err)
+		os.Exit(1)
 	}
 
-	keys := catCmd.Args()
-
-	for i, key := range keys {
-		if !quiet && len(keys) > 1 {
-			fmt.Fprintf(os.Stderr, "==> %s <==\n", key)
-		}
-
-		data, err := store.Get(ctx, key)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to fetch object %q: %v\n", key, err)
-			os.Exit(1)
-		}
-
-		if data == nil {
-			fmt.Fprintf(os.Stderr, "Object not found: %q\n", key)
-			os.Exit(1)
+	for i, result := range results {
+		if !quiet && len(results) > 1 {
+			fmt.Fprintf(os.Stderr, "==> %s <==\n", result.Key)
 		}
 
 		// Pretty-print JSON
 		var indented bytes.Buffer
-		if err := json.Indent(&indented, data, "", "  "); err != nil {
+		if err := json.Indent(&indented, result.Data, "", "  "); err != nil {
 			// If it's not valid JSON, just output the raw data
-			fmt.Print(string(data))
+			fmt.Print(string(result.Data))
 		} else {
 			fmt.Println(indented.String())
 		}
 
 		// Add spacing between multiple objects
-		if !quiet && i < len(keys)-1 {
+		if !quiet && i < len(results)-1 {
 			fmt.Fprintln(os.Stderr)
 		}
 	}

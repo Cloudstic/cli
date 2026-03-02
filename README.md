@@ -4,13 +4,13 @@ Content-addressable, encrypted backup tool for Google Drive, OneDrive, and local
 
 ## Features
 
-- **Encrypted by default** — AES-256-GCM encryption with password, platform key, or recovery key slots
-- **Content-addressable storage** — Deduplication across sources; identical files stored only once
-- **Incremental backups** — Only changed files are stored
-- **Multiple sources** — Google Drive, Google Drive Changes API, OneDrive, local directories
-- **Multiple backends** — Local filesystem, Amazon S3 (and compatibles like R2, MinIO), or Backblaze B2
-- **Retention policies** — Keep-last, hourly, daily, weekly, monthly, yearly
-- **Point-in-time restore** — Restore any snapshot, any file, any time
+- **Encrypted by default:** AES-256-GCM encryption with password, platform key, or recovery key slots
+- **Content-addressable storage:** Deduplication across sources; identical files stored only once
+- **Incremental backups:** Only changed files are stored
+- **Multiple sources:** Google Drive, Google Drive Changes API, OneDrive, local directories
+- **Multiple backends:** Local filesystem, Amazon S3 (and compatibles like R2, MinIO), or Backblaze B2
+- **Retention policies:** Keep-last, hourly, daily, weekly, monthly, yearly
+- **Point-in-time restore:** Restore any snapshot, any file, any time
 
 ## Supported Sources
 
@@ -22,7 +22,7 @@ Content-addressable, encrypted backup tool for Google Drive, OneDrive, and local
 | OneDrive | `-source onedrive` | Full scan of a Microsoft OneDrive account |
 | OneDrive (Changes) | `-source onedrive-changes` | **Recommended.** Fast incremental backup via the Delta API |
 
-Google Drive and OneDrive work out of the box — no API keys or credentials setup needed. On first run, Cloudstic opens your browser for authorization and caches the token locally. See the [User Guide — Sources](docs/user-guide.md#sources) for details.
+Google Drive and OneDrive work out of the box. On first run, Cloudstic opens your browser for authorization and caches the token locally. See the [User Guide — Sources](docs/user-guide.md#sources) for details.
 
 ## Install
 
@@ -59,11 +59,11 @@ cloudstic backup -source local -source-path ~/Documents -dry-run
 
 ## Documentation
 
-- [User Guide](docs/user-guide.md) — commands, setup, encryption, retention policies
-- [Source API](docs/sources.md) — source interface, implementations, and how to add a new source
-- [Specification](docs/spec.md) — object types, backup/restore flow, HAMT structure
-- [Encryption](docs/encryption.md) — key slot design, AES-256-GCM, recovery keys
-- [Storage Model](docs/storage-model.md) — content-addressable storage layout
+- [User Guide](docs/user-guide.md): commands, setup, encryption, retention policies
+- [Source API](docs/sources.md): source interface, implementations, and how to add a new source
+- [Specification](docs/spec.md): object types, backup/restore flow, HAMT structure
+- [Encryption](docs/encryption.md): key slot design, AES-256-GCM, recovery keys
+- [Storage Model](docs/storage-model.md): content-addressable storage layout
 
 ## Cloud Service
 

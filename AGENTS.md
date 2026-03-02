@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file provides guidance to WARP (warp.dev) when working with code in this repository.
+This file provides guidance to agents when working with code in this repository.
 
 ## Project Overview
 
@@ -95,3 +95,44 @@ All objects are addressed by `<type>/<sha256>`:
 ### HybridStore
 
 Routes metadata objects to PostgreSQL (with RLS tenant isolation via `SET LOCAL cloudstic.tenant_id`) and chunk data to B2. Metadata is also written through to B2 for disaster recovery.
+
+## Development Best Practices
+
+### When Adding New Features
+
+When implementing new functionality, always consider the following:
+
+1. **Documentation** — Check if user-facing documentation needs to be updated:
+   - `docs/user-guide.md` — Add command documentation with usage examples, flags, and descriptions.
+   - `README.md` — Update if the feature changes the quick start or high-level overview.
+   - Code comments — Document public APIs, especially in `client.go` and package interfaces.
+
+2. **Unit Tests** — Add test coverage when it makes sense:
+   - Always add tests for new public API methods (e.g., `Client.*()` methods).
+   - Test both success and error cases.
+   - Test integration with encryption/compression if applicable.
+   - Use the existing test patterns (see `client_test.go`, `internal/engine/*_test.go`).
+   - Mock stores are available in `internal/engine/mock_test.go` for testing.
+
+3. **Client API** — For new operations, expose them via the `Client` struct:
+   - CLI commands should use `Client` methods, not directly access stores.
+   - This allows library users to programmatically use the functionality.
+   - Follow the pattern: define types/options, add a `Client.*()` method, implement in `internal/engine/` if complex.
+
+4. **CLI Integration** — For new commands:
+   - Add a `run*()` function in `cmd/cloudstic/main.go`.
+   - Add the command to the switch case in `runCmd()`.
+   - Add command documentation to `printUsage()`.
+   - Use the `reorderArgs()` helper for proper flag parsing.
+
+5. **Error Handling** — Return descriptive errors:
+   - Wrap errors with context using `fmt.Errorf("context: %w", err)`.
+   - Provide actionable error messages to users.
+   - Distinguish between user errors and system errors.
+
+### Testing Guidelines
+
+- Run `go test -v -count=1 ./...` before committing to ensure all tests pass.
+- E2E tests require Docker for Testcontainers (MinIO, SFTP). They skip gracefully if Docker is unavailable.
+- Use `-race` flag during development to catch race conditions.
+- Hermetic tests (default) use local filesystem + containers; no cloud credentials needed.

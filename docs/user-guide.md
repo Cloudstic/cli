@@ -20,6 +20,8 @@ Cloudstic is a content-addressable backup tool that creates encrypted, deduplica
   - [check](#check)
   - [add-recovery-key](#add-recovery-key)
   - [cat](#cat)
+  - [completion](#completion)
+- [Shell Completions](#shell-completions)
 - [Sources](#sources)
   - [Local Directory](#local-directory)
   - [SFTP](#sftp-source)
@@ -536,6 +538,66 @@ cloudstic cat snapshot/abc123... | jq .
 ```
 
 > **Note:** This command operates at the object store level and returns the raw JSON representation of repository objects. It does not reconstruct file contents — use `restore` for that.
+
+---
+
+### completion
+
+Generate shell completion scripts for bash, zsh, or fish.
+
+```bash
+cloudstic completion bash
+cloudstic completion zsh
+cloudstic completion fish
+```
+
+See [Shell Completions](#shell-completions) below for setup instructions.
+
+---
+
+## Shell Completions
+
+Cloudstic can generate tab-completion scripts for popular shells. Once set up, pressing `Tab` will complete commands, flags, and flag values (like `-store local|b2|s3|sftp` and `-source local|sftp|gdrive|...`).
+
+### Bash
+
+```bash
+# Load for current session
+source <(cloudstic completion bash)
+
+# Load permanently (add to ~/.bashrc)
+echo 'source <(cloudstic completion bash)' >> ~/.bashrc
+```
+
+> **Note:** Bash completions require the `bash-completion` package. Install it via your package manager if not already present (`brew install bash-completion` on macOS, `apt install bash-completion` on Debian/Ubuntu).
+
+### Zsh
+
+```zsh
+# Load for current session
+source <(cloudstic completion zsh)
+
+# Load permanently (add to ~/.zshrc)
+echo 'source <(cloudstic completion zsh)' >> ~/.zshrc
+```
+
+Alternatively, place the output in your `$fpath`:
+
+```zsh
+cloudstic completion zsh > "${fpath[1]}/_cloudstic"
+```
+
+> **Note:** You may need to start a new shell or run `compinit` for changes to take effect.
+
+### Fish
+
+```fish
+# Load for current session
+cloudstic completion fish | source
+
+# Load permanently
+cloudstic completion fish > ~/.config/fish/completions/cloudstic.fish
+```
 
 ---
 

@@ -407,18 +407,25 @@ func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 
 const configKey = "config"
 
+// applyDebug wraps a store with a DebugStore and enables the global debug
+// logger when --debug is set. It returns the (possibly wrapped) store.
+func (g *globalFlags) applyDebug(s store.ObjectStore) store.ObjectStore {
+	if g.debug == nil || !*g.debug {
+		return s
+	}
+	if g.debugLog == nil {
+		g.debugLog = &ui.SafeLogWriter{}
+	}
+	logger.Writer = g.debugLog
+	return store.NewDebugStore(s, g.debugLog)
+}
+
 func (g *globalFlags) openClient() (*cloudstic.Client, error) {
 	raw, err := g.initObjectStore()
 	if err != nil {
 		return nil, err
 	}
-	if *g.debug {
-		if g.debugLog == nil {
-			g.debugLog = &ui.SafeLogWriter{}
-		}
-		logger.Writer = g.debugLog
-		raw = store.NewDebugStore(raw, g.debugLog)
-	}
+	raw = g.applyDebug(raw)
 
 	packfileEnabled := g.enablePackfile != nil && *g.enablePackfile
 
@@ -550,6 +557,7 @@ func runInit() {
 		fmt.Fprintf(os.Stderr, "Failed to init store: %v\n", err)
 		os.Exit(1)
 	}
+	raw = g.applyDebug(raw)
 
 	cfg, err := loadRepoConfig(raw)
 	if err != nil {
@@ -680,6 +688,7 @@ func runAddRecoveryKey() {
 		fmt.Fprintf(os.Stderr, "Failed to init store: %v\n", err)
 		os.Exit(1)
 	}
+	raw = g.applyDebug(raw)
 
 	cfg, err := loadRepoConfig(raw)
 	if err != nil {
@@ -902,7 +911,11 @@ func runDiff() {
 		fmt.Printf("Failed to init store: %v\n", err)
 		os.Exit(1)
 	}
-	result, err := client.Diff(ctx, snap1, snap2)
+	var diffOpts []cloudstic.DiffOption
+	if *g.verbose {
+		diffOpts = append(diffOpts, cloudstic.WithDiffVerbose())
+	}
+	result, err := client.Diff(ctx, snap1, snap2, diffOpts...)
 	if err != nil {
 		fmt.Printf("Diff failed: %v\n", err)
 		os.Exit(1)
@@ -963,6 +976,9 @@ func runForget() {
 		if *dryRun {
 			opts = append(opts, cloudstic.WithDryRun())
 		}
+		if *g.verbose {
+			opts = append(opts, cloudstic.WithForgetVerbose())
+		}
 		if *keepLast > 0 {
 			opts = append(opts, cloudstic.WithKeepLast(*keepLast))
 		}
@@ -1008,6 +1024,9 @@ func runForget() {
 	var forgetOpts []cloudstic.ForgetOption
 	if *prune {
 		forgetOpts = append(forgetOpts, cloudstic.WithPrune())
+	}
+	if *g.verbose {
+		forgetOpts = append(forgetOpts, cloudstic.WithForgetVerbose())
 	}
 	result, err := client.Forget(ctx, snapshotID, forgetOpts...)
 	if err != nil {
@@ -1522,7 +1541,11 @@ func runList() {
 		fmt.Printf("Failed to init store: %v\n", err)
 		os.Exit(1)
 	}
-	result, err := client.List(ctx)
+	var listOpts []cloudstic.ListOption
+	if *g.verbose {
+		listOpts = append(listOpts, cloudstic.WithListVerbose())
+	}
+	result, err := client.List(ctx, listOpts...)
 	if err != nil {
 		fmt.Printf("List failed: %v\n", err)
 		os.Exit(1)
@@ -1551,7 +1574,11 @@ func runLsSnapshot() {
 		os.Exit(1)
 	}
 	start := time.Now()
-	result, err := client.LsSnapshot(ctx, snapshotID)
+	var lsOpts []cloudstic.LsSnapshotOption
+	if *g.verbose {
+		lsOpts = append(lsOpts, cloudstic.WithLsVerbose())
+	}
+	result, err := client.LsSnapshot(ctx, snapshotID, lsOpts...)
 	if err != nil {
 		fmt.Printf("Ls failed: %v\n", err)
 		os.Exit(1)

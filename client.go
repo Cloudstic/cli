@@ -309,6 +309,8 @@ func (c *Client) Restore(ctx context.Context, w io.Writer, snapshotRef string, o
 type ListOption = engine.ListOption
 type ListResult = engine.ListResult
 
+var WithListVerbose = engine.WithListVerbose
+
 func (c *Client) List(ctx context.Context, opts ...ListOption) (*ListResult, error) {
 	mgr := engine.NewListManager(c.store)
 	return mgr.Run(ctx, opts...)
@@ -320,6 +322,8 @@ func (c *Client) List(ctx context.Context, opts ...ListOption) (*ListResult, err
 
 type LsSnapshotOption = engine.LsSnapshotOption
 type LsSnapshotResult = engine.LsSnapshotResult
+
+var WithLsVerbose = engine.WithLsVerbose
 
 func (c *Client) LsSnapshot(ctx context.Context, snapshotID string, opts ...LsSnapshotOption) (*LsSnapshotResult, error) {
 	mgr := engine.NewLsSnapshotManager(c.store)
@@ -353,6 +357,7 @@ type ForgetResult = engine.ForgetResult
 var (
 	WithPrune         = engine.WithPrune
 	WithDryRun        = engine.WithDryRun
+	WithForgetVerbose = engine.WithForgetVerbose
 	WithKeepLast      = engine.WithKeepLast
 	WithKeepHourly    = engine.WithKeepHourly
 	WithKeepDaily     = engine.WithKeepDaily
@@ -394,6 +399,8 @@ func (c *Client) BreakLock(ctx context.Context) ([]*RepoLock, error) {
 
 type DiffOption = engine.DiffOption
 type DiffResult = engine.DiffResult
+
+var WithDiffVerbose = engine.WithDiffVerbose
 
 func (c *Client) Diff(ctx context.Context, snap1, snap2 string, opts ...DiffOption) (*DiffResult, error) {
 	mgr := engine.NewDiffManager(c.store)

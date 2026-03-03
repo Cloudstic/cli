@@ -390,10 +390,10 @@ func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 
 const configKey = "config"
 
-func (g *globalFlags) openStore() (store.ObjectStore, []byte, error) {
+func (g *globalFlags) openClient() (*cloudstic.Client, error) {
 	raw, err := g.initObjectStore()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if *g.debug {
 		if g.debugLog == nil {
@@ -401,75 +401,6 @@ func (g *globalFlags) openStore() (store.ObjectStore, []byte, error) {
 		}
 		logger.Writer = g.debugLog
 		raw = store.NewDebugStore(raw, g.debugLog)
-	}
-
-	cfg, err := loadRepoConfig(raw)
-	if err != nil {
-		return nil, nil, err
-	}
-	if cfg == nil {
-		return nil, nil, fmt.Errorf("repository not initialized -- run 'cloudstic init' first")
-	}
-
-	if !cfg.Encrypted {
-		return raw, nil, nil
-	}
-
-	platformKey, err := g.parsePlatformKey()
-	if err != nil {
-		return nil, nil, err
-	}
-	slots, err := g.loadKeySlots(raw)
-	if err != nil {
-		return nil, nil, fmt.Errorf("load encryption key slots: %w", err)
-	}
-	if len(slots) == 0 {
-		return nil, nil, fmt.Errorf("repository is encrypted but no key slots found")
-	}
-
-	// Build KMS decrypter if a key ARN is provided.
-	var kmsDecrypter crypto.KMSDecrypter
-	if *g.kmsKeyARN != "" {
-		d, err := crypto.NewAWSKMSDecrypter(context.Background())
-		if err != nil {
-			return nil, nil, fmt.Errorf("create KMS decrypter: %w", err)
-		}
-		kmsDecrypter = d
-	}
-
-	if len(platformKey) == 0 && *g.encryptionPassword == "" && *g.recoveryKey == "" && kmsDecrypter == nil {
-		hasPasswordSlot := false
-		for _, s := range slots {
-			if s.SlotType == "password" {
-				hasPasswordSlot = true
-				break
-			}
-		}
-
-		if hasPasswordSlot && term.IsTerminal(os.Stdin.Fd()) {
-			pw, err := ui.PromptPassword("Repository password")
-			if err != nil {
-				return nil, nil, fmt.Errorf("read password: %w", err)
-			}
-			*g.encryptionPassword = pw
-		}
-
-		if *g.encryptionPassword == "" {
-			return nil, nil, fmt.Errorf("repository is encrypted -- provide --encryption-key, --encryption-password, --recovery-key, or --kms-key-arn")
-		}
-	}
-
-	encKey, err := openExistingSlots(slots, platformKey, *g.encryptionPassword, *g.recoveryKey, kmsDecrypter)
-	if err != nil {
-		return nil, nil, err
-	}
-	return raw, encKey, nil
-}
-
-func (g *globalFlags) openClient() (*cloudstic.Client, error) {
-	raw, encKey, err := g.openStore()
-	if err != nil {
-		return nil, err
 	}
 
 	packfileEnabled := g.enablePackfile != nil && *g.enablePackfile
@@ -484,11 +415,51 @@ func (g *globalFlags) openClient() (*cloudstic.Client, error) {
 		}
 		reporter = cr
 	}
+
+	kp, err := g.buildKeyProvider()
+	if err != nil {
+		return nil, err
+	}
+
 	return cloudstic.NewClient(raw,
-		cloudstic.WithEncryptionKey(encKey),
+		cloudstic.WithKeyProvider(kp),
 		cloudstic.WithReporter(reporter),
 		cloudstic.WithPackfile(packfileEnabled),
 	)
+}
+
+// buildKeyProvider constructs a Credentials key provider from the CLI flags.
+// The returned provider always attempts auto-detection: the client reads the
+// repo config and only calls ResolveKey when encryption is enabled.
+func (g *globalFlags) buildKeyProvider() (cloudstic.KeyProvider, error) {
+	platformKey, err := g.parsePlatformKey()
+	if err != nil {
+		return nil, err
+	}
+
+	var kmsDecrypter crypto.KMSDecrypter
+	if g.kmsKeyARN != nil && *g.kmsKeyARN != "" {
+		d, err := crypto.NewAWSKMSDecrypter(context.Background())
+		if err != nil {
+			return nil, fmt.Errorf("init KMS decrypter: %w", err)
+		}
+		kmsDecrypter = d
+	}
+
+	var passwordPrompt func() (string, error)
+	if term.IsTerminal(os.Stdin.Fd()) {
+		passwordPrompt = func() (string, error) {
+			return ui.PromptPassword("Repository password")
+		}
+	}
+
+	return &cloudstic.Credentials{
+		PlatformKey:      platformKey,
+		Password:         *g.encryptionPassword,
+		RecoveryMnemonic: *g.recoveryKey,
+		KMSDecrypter:     kmsDecrypter,
+		PasswordPrompt:   passwordPrompt,
+	}, nil
 }
 
 func loadRepoConfig(s store.ObjectStore) (*core.RepoConfig, error) {
@@ -531,28 +502,9 @@ func (g *globalFlags) parsePlatformKey() ([]byte, error) {
 	return platformKey, nil
 }
 
-func (g *globalFlags) loadKeySlots(rawStore store.ObjectStore) ([]store.KeySlot, error) {
-	if hybrid, ok := rawStore.(*store.HybridStore); ok {
-		slots, err := store.LoadKeySlotsFromDB(hybrid.DB())
-		if err == nil && len(slots) > 0 {
-			store.SyncKeySlots(hybrid.Store(), slots)
-			return slots, nil
-		}
-		slots, err = store.LoadKeySlots(hybrid.Store())
-		if err == nil && len(slots) > 0 {
-			return slots, nil
-		}
-	}
-	return store.LoadKeySlots(rawStore)
-}
-
-func openExistingSlots(slots []store.KeySlot, platformKey []byte, password, recoveryMnemonic string, kmsDecrypter crypto.KMSDecrypter) ([]byte, error) {
-	// Try KMS first — this is the preferred path after migration.
-	if kmsDecrypter != nil {
-		if key, err := store.OpenWithKMS(context.Background(), slots, kmsDecrypter); err == nil {
-			return key, nil
-		}
-	}
+// openExistingInitSlots is used only during "init" to verify that existing
+// key slots can be opened with the provided credentials.
+func openExistingInitSlots(slots []store.KeySlot, platformKey []byte, password string) ([]byte, error) {
 	if len(platformKey) > 0 {
 		if key, err := store.OpenWithPlatformKey(slots, platformKey); err == nil {
 			return key, nil
@@ -563,16 +515,7 @@ func openExistingSlots(slots []store.KeySlot, platformKey []byte, password, reco
 			return key, nil
 		}
 	}
-	if recoveryMnemonic != "" {
-		recoveryKey, err := crypto.MnemonicToKey(recoveryMnemonic)
-		if err != nil {
-			return nil, fmt.Errorf("invalid recovery key mnemonic: %w", err)
-		}
-		if key, err := store.OpenWithRecoveryKey(slots, recoveryKey); err == nil {
-			return key, nil
-		}
-	}
-	return nil, fmt.Errorf("could not open repository: no provided credential matches the stored key slots (types: %s)", store.SlotTypes(slots))
+	return nil, fmt.Errorf("could not open existing key slots: no provided credential matches (types: %s)", store.SlotTypes(slots))
 }
 
 // runInit bootstraps a new repository: creates encryption key slots and
@@ -643,14 +586,14 @@ func runInit() {
 	encrypted := hasEncryptionCreds
 
 	if encrypted {
-		slots, err := g.loadKeySlots(raw)
+	slots, err := store.AutoLoadKeySlots(raw)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to load key slots: %v\n", err)
 			os.Exit(1)
 		}
 
 		if len(slots) > 0 {
-	if _, err := openExistingSlots(slots, platformKey, password, "", nil); err != nil {
+			if _, err := openExistingInitSlots(slots, platformKey, password); err != nil {
 				fmt.Fprintf(os.Stderr, "Found existing key slots but cannot open them: %v\n", err)
 				os.Exit(1)
 			}
@@ -664,7 +607,7 @@ func runInit() {
 		}
 
 		if *recovery {
-			slots, err := g.loadKeySlots(raw)
+			slots, err := store.AutoLoadKeySlots(raw)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to reload key slots: %v\n", err)
 				os.Exit(1)
@@ -757,13 +700,13 @@ func runAddRecoveryKey() {
 		os.Exit(1)
 	}
 
-	slots, err := g.loadKeySlots(raw)
+	slots, err := store.AutoLoadKeySlots(raw)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load key slots: %v\n", err)
 		os.Exit(1)
 	}
 
-	masterKey, err := store.ExtractMasterKeyWithKMS(context.Background(), slots, kmsDecrypter, platformKey, password)
+	masterKey, err := store.ExtractMasterKey(slots, platformKey, password)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to extract master key: %v\n", err)
 		os.Exit(1)

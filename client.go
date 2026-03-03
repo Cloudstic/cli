@@ -265,6 +265,7 @@ var (
 	WithTags         = engine.WithTags
 	WithGenerator    = engine.WithGenerator
 	WithMeta         = engine.WithMeta
+	WithExcludeHash  = engine.WithExcludeHash
 )
 
 func (c *Client) Backup(ctx context.Context, src store.Source, opts ...BackupOption) (*BackupResult, error) {

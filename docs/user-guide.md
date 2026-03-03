@@ -18,7 +18,9 @@ Cloudstic is a content-addressable backup tool that creates encrypted, deduplica
   - [forget](#forget)
   - [prune](#prune)
   - [check](#check)
-  - [add-recovery-key](#add-recovery-key)
+  - [key list](#key-list)
+  - [key add-recovery](#key-add-recovery)
+  - [key passwd](#key-passwd)
   - [cat](#cat)
   - [completion](#completion)
 - [Shell Completions](#shell-completions)
@@ -534,15 +536,68 @@ Repository check complete.
 
 ---
 
-### add-recovery-key
+### key list
+
+List all encryption key slots present in the repository. This lets you see which credential types are configured (password, platform, kms-platform, recovery).
+
+```bash
+cloudstic key list
+```
+
+Example output:
+
+```
++──────────────+─────────+──────────+
+| TYPE         | LABEL   | KDF      |
++──────────────+─────────+──────────+
+| password     | default | argon2id |
+| recovery     | default | —        |
++──────────────+─────────+──────────+
+
+2 key slot(s) found.
+```
+
+> **Note:** `key list` does not require the encryption key — slot metadata is stored unencrypted.
+
+---
+
+### key add-recovery
 
 Generate a 24-word recovery key for an existing encrypted repository. Requires your current encryption credential to unlock the master key.
 
 ```bash
-cloudstic add-recovery-key -encryption-password "my secret passphrase"
+cloudstic key add-recovery -encryption-password "my secret passphrase"
+
+# For KMS-managed repositories
+cloudstic key add-recovery -kms-key-arn arn:aws:kms:us-east-1:123:key/abc
 ```
 
 The recovery key is displayed once. Write it down immediately.
+
+> The legacy `add-recovery-key` command is still accepted but deprecated.
+
+---
+
+### key passwd
+
+Change (or add) the repository password. You must provide your current credentials to unlock the master key.
+
+```bash
+# Interactive — prompts for current and new password
+cloudstic key passwd
+
+# Non-interactive
+cloudstic key passwd -encryption-password "old passphrase" -new-password "new passphrase"
+
+# Unlock with platform key, set a password
+cloudstic key passwd -encryption-key <hex> -new-password "my passphrase"
+```
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `-new-password` | New password (prompted interactively if not set) |
 
 ---
 
@@ -1021,10 +1076,16 @@ cloudstic restore -recovery-key "word1 word2 ... word24"
 ### Adding a recovery key later
 
 ```bash
-cloudstic add-recovery-key -encryption-password "my passphrase"
+cloudstic key add-recovery -encryption-password "my passphrase"
 
 # For KMS-managed repositories
-cloudstic add-recovery-key -kms-key-arn arn:aws:kms:us-east-1:123:key/abc
+cloudstic key add-recovery -kms-key-arn arn:aws:kms:us-east-1:123:key/abc
+```
+
+### Changing your password
+
+```bash
+cloudstic key passwd -encryption-password "old passphrase" -new-password "new passphrase"
 ```
 
 ---

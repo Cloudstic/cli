@@ -249,6 +249,17 @@ func writeRecoverySlot(s ObjectStore, masterKey, recoveryKey []byte) error {
 	})
 }
 
+// ChangePasswordSlot replaces (or creates) the password key slot for the
+// repository. masterKey is the unwrapped master key; newPassword is the new
+// password to wrap it with. The old password slot (keys/password-default) is
+// overwritten.
+func ChangePasswordSlot(s ObjectStore, masterKey []byte, newPassword string) error {
+	if newPassword == "" {
+		return fmt.Errorf("new password cannot be empty")
+	}
+	return writePasswordSlot(s, masterKey, newPassword)
+}
+
 // HasKeySlots reports whether the store contains any encryption key slots.
 func HasKeySlots(s ObjectStore) bool {
 	keys, err := s.List(context.Background(), KeySlotPrefix)

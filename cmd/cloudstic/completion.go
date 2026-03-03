@@ -13,7 +13,7 @@ _cloudstic() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="init backup restore list ls prune forget diff break-lock add-recovery-key cat completion version help"
+    local commands="init backup restore list ls prune forget diff break-lock key cat completion version help"
 
     local global_flags="-store -store-path -store-prefix -s3-endpoint -s3-region -s3-access-key -s3-secret-key -sftp-host -sftp-port -sftp-user -sftp-password -sftp-key -source-sftp-host -source-sftp-port -source-sftp-user -source-sftp-password -source-sftp-key -store-sftp-host -store-sftp-port -store-sftp-user -store-sftp-password -store-sftp-key -encryption-key -encryption-password -recovery-key -kms-key-arn -enable-packfile -verbose -quiet -debug"
 
@@ -60,7 +60,28 @@ _cloudstic() {
         completion)
             COMPREPLY=($(compgen -W "bash zsh fish" -- "$cur"))
             return ;;
-        list|ls|diff|break-lock|add-recovery-key|version|help)
+        key)
+            # Handle key subcommands
+            local key_sub=""
+            local j
+            for ((j=i+1; j < cword; j++)); do
+                case "${words[j]}" in
+                    -*) ;;
+                    *) key_sub="${words[j]}"; break ;;
+                esac
+            done
+            if [[ -z "$key_sub" ]]; then
+                COMPREPLY=($(compgen -W "list add-recovery passwd" -- "$cur"))
+                return
+            fi
+            case "$key_sub" in
+                passwd)
+                    cmd_flags="-new-password" ;;
+                *)
+                    cmd_flags="" ;;
+            esac
+            ;;
+        list|ls|diff|break-lock|version|help)
             cmd_flags="" ;;
     esac
 
@@ -105,7 +126,7 @@ _cloudstic() {
         'forget:Remove a specific snapshot from history'
         'diff:Compare two snapshots or a snapshot against latest'
         'break-lock:Remove a stale repository lock'
-        'add-recovery-key:Generate a recovery key for an encrypted repository'
+        'key:Manage encryption key slots'
         'cat:Display raw JSON content of repository objects'
         'completion:Generate shell completion scripts'
         'version:Print version information'
@@ -229,8 +250,36 @@ _cloudstic() {
         break-lock)
             _arguments $global_flags
             ;;
-        add-recovery-key)
-            _arguments $global_flags
+        key)
+            local -a key_commands
+            key_commands=(
+                'list:List all encryption key slots'
+                'add-recovery:Generate a 24-word recovery key'
+                'passwd:Change the repository password'
+            )
+            # Check if a key subcommand has been given
+            local key_sub
+            local -i ki=$((i+1))
+            while (( ki < CURRENT )); do
+                case "${words[ki]}" in
+                    -*) ;;
+                    *) key_sub="${words[ki]}"; break ;;
+                esac
+                (( ki++ ))
+            done
+            if [[ -z "$key_sub" ]]; then
+                _describe -t key-commands 'key subcommand' key_commands
+                return
+            fi
+            case "$key_sub" in
+                passwd)
+                    _arguments $global_flags \
+                        '-new-password[New repository password]:password:'
+                    ;;
+                *)
+                    _arguments $global_flags
+                    ;;
+            esac
             ;;
         cat)
             _arguments $global_flags \
@@ -264,7 +313,7 @@ complete -c cloudstic -n __fish_use_subcommand -a prune -d 'Remove unused data c
 complete -c cloudstic -n __fish_use_subcommand -a forget -d 'Remove a snapshot from history'
 complete -c cloudstic -n __fish_use_subcommand -a diff -d 'Compare two snapshots'
 complete -c cloudstic -n __fish_use_subcommand -a break-lock -d 'Remove a stale repository lock'
-complete -c cloudstic -n __fish_use_subcommand -a add-recovery-key -d 'Generate a recovery key'
+complete -c cloudstic -n __fish_use_subcommand -a key -d 'Manage encryption key slots'
 complete -c cloudstic -n __fish_use_subcommand -a cat -d 'Display raw JSON of repository objects'
 complete -c cloudstic -n __fish_use_subcommand -a completion -d 'Generate shell completion scripts'
 complete -c cloudstic -n __fish_use_subcommand -a version -d 'Print version information'
@@ -335,6 +384,12 @@ complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l source -x -d 'F
 complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l account -x -d 'Filter by account'
 complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l path -x -d 'Filter by path'
 complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l group-by -x -d 'Group snapshots by fields'
+
+# key subcommands
+complete -c cloudstic -n '__fish_seen_subcommand_from key; and not __fish_seen_subcommand_from list add-recovery passwd' -a list -d 'List all encryption key slots'
+complete -c cloudstic -n '__fish_seen_subcommand_from key; and not __fish_seen_subcommand_from list add-recovery passwd' -a add-recovery -d 'Generate a 24-word recovery key'
+complete -c cloudstic -n '__fish_seen_subcommand_from key; and not __fish_seen_subcommand_from list add-recovery passwd' -a passwd -d 'Change the repository password'
+complete -c cloudstic -n '__fish_seen_subcommand_from key; and __fish_seen_subcommand_from passwd' -l new-password -x -d 'New repository password'
 
 # cat
 complete -c cloudstic -n '__fish_seen_subcommand_from cat' -l json -d 'Suppress non-JSON output'

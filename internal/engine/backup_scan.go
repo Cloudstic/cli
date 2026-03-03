@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
@@ -40,6 +41,12 @@ func (bm *BackupManager) processEntry(ctx context.Context, meta *core.FileMeta, 
 	if meta.Type == core.FileTypeFolder {
 		meta.ContentHash = ""
 		meta.Size = 0
+	}
+
+	// Resolve Paths when the source hasn't populated it (incremental/changes
+	// sources only emit changed entries and can't build a full path map).
+	if len(meta.Paths) == 0 {
+		meta.Paths = []string{bm.buildPathFromTree(s.root, meta)}
 	}
 
 	changed, oldRef, err := bm.detectChange(oldRoot, meta)
@@ -237,6 +244,48 @@ func (bm *BackupManager) recordRemoved(ft core.FileType) {
 	} else {
 		bm.stats.filesRemoved.Add(1)
 	}
+}
+
+// buildPathFromTree reconstructs the full path for a FileMeta entry by walking
+// the parent chain in the HAMT tree. This is used for incremental/changes
+// sources that can't build a path map (the parent may not be in the change set).
+func (bm *BackupManager) buildPathFromTree(root string, meta *core.FileMeta) string {
+	const maxDepth = 50
+	parts := []string{meta.Name}
+	curParents := meta.Parents
+	for i := 0; i < maxDepth && len(curParents) > 0; i++ {
+		parent := bm.lookupMetaByFileID(root, curParents[0])
+		if parent == nil {
+			break
+		}
+		// Short-circuit: if parent already has a resolved path, prepend it.
+		if len(parent.Paths) > 0 {
+			return parent.Paths[0] + "/" + strings.Join(parts, "/")
+		}
+		parts = append(parts, parent.Name)
+		curParents = parent.Parents
+	}
+	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
+		parts[i], parts[j] = parts[j], parts[i]
+	}
+	return strings.Join(parts, "/")
+}
+
+// lookupMetaByFileID resolves a FileID to its FileMeta via the HAMT tree.
+// It checks newMetas (just inserted this scan) first, then falls back to the store.
+func (bm *BackupManager) lookupMetaByFileID(root, fileID string) *core.FileMeta {
+	ref, err := bm.tree.Lookup(root, fileID)
+	if err != nil || ref == "" {
+		return nil
+	}
+	if fm, ok := bm.newMetas[ref]; ok {
+		return &fm
+	}
+	fm, err := bm.loadMeta(ref)
+	if err != nil {
+		return nil
+	}
+	return fm
 }
 
 // countRemoved uses a structural HAMT diff to count entries present in oldRoot

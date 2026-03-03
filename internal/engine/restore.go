@@ -274,7 +274,9 @@ func filterByPath(sorted []core.FileMeta, byID map[string]core.FileMeta, pathFil
 				matched[meta.FileID] = true
 			}
 		} else {
-			if p == pathFilter {
+			// Exact match, or — when the target is a folder — include
+			// everything under it so the user doesn't need a trailing "/".
+			if p == pathFilter || strings.HasPrefix(p, pathFilter+"/") {
 				matched[meta.FileID] = true
 			}
 		}

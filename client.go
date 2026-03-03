@@ -122,7 +122,7 @@ func (c Credentials) ResolveKey(ctx context.Context, rawStore store.ObjectStore)
 		}
 	}
 
-	return nil, fmt.Errorf("could not open repository: no provided credential matches the stored key slots (types: %s)", store.SlotTypes(slots))
+	return nil, fmt.Errorf("repository is encrypted: no provided credential matches the stored key slots (types: %s)", store.SlotTypes(slots))
 }
 
 func hasSlotType(slots []store.KeySlot, slotType string) bool {

@@ -162,6 +162,8 @@ func runCmd(cmd string) int {
 		runCheck()
 	case "cat":
 		runCat()
+	case "completion":
+		runCompletion()
 	case "help", "--help", "-h":
 		printUsage()
 		return 0
@@ -195,6 +197,7 @@ func printUsage() {
 		{"add-recovery-key", "Generate a recovery key for an existing encrypted repository"},
 		{"check", "Verify repository integrity (reference chain, objects, data)"},
 		{"cat", "Display raw JSON content of repository objects"},
+		{"completion", "Generate shell completion scripts (bash, zsh, fish)"},
 	})
 
 	t.HeadingSub("GLOBAL OPTIONS", "(also settable via env vars)")
@@ -316,6 +319,11 @@ func printUsage() {
 	t.Note("  Display raw JSON for one or more repository objects.",
 		"  Object keys: snapshot/<hash>, filemeta/<hash>, content/<hash>,",
 		"  node/<hash>, chunk/<hash>, config, index/latest, keys/<slot>")
+
+	t.Command("completion", "<shell>")
+	t.Note("  Generate completion scripts for bash, zsh, or fish.",
+		"  See 'cloudstic completion --help' or the user guide for setup instructions.")
+	t.Blank()
 
 	t.Heading("EXAMPLES")
 	t.Examples(
@@ -592,7 +600,7 @@ func runInit() {
 	encrypted := hasEncryptionCreds
 
 	if encrypted {
-	slots, err := store.LoadKeySlots(raw)
+		slots, err := store.LoadKeySlots(raw)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to load key slots: %v\n", err)
 			os.Exit(1)
@@ -1154,6 +1162,33 @@ func runBreakLock() {
 		fmt.Fprintf(os.Stderr, "  Acquired:   %s\n", r.AcquiredAt)
 		fmt.Fprintf(os.Stderr, "  Expired at: %s\n", r.ExpiresAt)
 		fmt.Fprintf(os.Stderr, "  Shared:     %v\n\n", r.IsShared)
+	}
+}
+
+func runCompletion() {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "Usage: cloudstic completion <shell>")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Available shells: bash, zsh, fish")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Setup:")
+		fmt.Fprintln(os.Stderr, "  bash:  source <(cloudstic completion bash)")
+		fmt.Fprintln(os.Stderr, "  zsh:   source <(cloudstic completion zsh)")
+		fmt.Fprintln(os.Stderr, "  fish:  cloudstic completion fish | source")
+		os.Exit(1)
+	}
+
+	shell := os.Args[2]
+	switch shell {
+	case "bash":
+		completionBash(os.Stdout)
+	case "zsh":
+		completionZsh(os.Stdout)
+	case "fish":
+		completionFish(os.Stdout)
+	default:
+		fmt.Fprintf(os.Stderr, "Unsupported shell: %s\nAvailable shells: bash, zsh, fish\n", shell)
+		os.Exit(1)
 	}
 }
 

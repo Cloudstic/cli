@@ -512,7 +512,8 @@ cloudstic cat config --json
 | Key pattern | Description |
 |-------------|-------------|
 | `config` | Repository configuration (version, encryption status, creation time) |
-| `index/latest` | Pointer to the most recent snapshot |
+|| `index/latest` | Pointer to the most recent snapshot |
+|| `index/snapshots` | Snapshot catalog (lightweight summaries for fast listing) |
 | `snapshot/<hash>` | Snapshot metadata (creation time, root node, source info, tags) |
 | `filemeta/<hash>` | File metadata (name, size, modification time, content hash) |
 | `content/<hash>` | Content manifest (list of chunk references or inline data) |

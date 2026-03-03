@@ -88,9 +88,10 @@ All objects are addressed by `<type>/<sha256>`:
 
 ### Encryption Model
 
-- On `init`, a random 32-byte master key is generated and wrapped into key slots (password-based via scrypt, platform key, or BIP39 recovery key).
+- On `init`, a random 32-byte master key is generated and wrapped into key slots (password-based via scrypt, platform key, KMS-wrapped platform key, or BIP39 recovery key).
 - Key slots are stored under `keys/` prefix, which the `EncryptedStore` passes through unencrypted.
 - An HMAC dedup key is derived from the encryption key via HKDF for content-addressing without exposing plaintext hashes.
+- `kms-platform` slots use AWS KMS envelope encryption (master key wrapped by a KMS CMK). The CLI supports these via `-kms-key-arn` flag or `CLOUDSTIC_KMS_KEY_ARN` env var. See `pkg/store/kms.go`.
 
 ### HybridStore
 

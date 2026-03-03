@@ -222,6 +222,7 @@ func printUsage() {
 		{"-encryption-key <hex>", ui.Env("Platform key (64 hex chars = 32 bytes)", "CLOUDSTIC_ENCRYPTION_KEY")},
 		{"-encryption-password", ui.Env("Password for password-based encryption", "CLOUDSTIC_ENCRYPTION_PASSWORD")},
 		{"-recovery-key <words>", ui.Env("Recovery key (24-word seed phrase)", "CLOUDSTIC_RECOVERY_KEY")},
+		{"-kms-key-arn <arn>", ui.Env("AWS KMS key ARN for kms-platform slots", "CLOUDSTIC_KMS_KEY_ARN")},
 	})
 	t.Blank()
 	t.Note(
@@ -342,6 +343,7 @@ type globalFlags struct {
 	databaseURL, tenantID                             *string
 	encryptionKey, encryptionPassword                 *string
 	recoveryKey                                       *string
+	kmsKeyARN                                         *string
 	enablePackfile                                    *bool
 	verbose, quiet, debug                             *bool
 	debugLog                                          *ui.SafeLogWriter
@@ -378,6 +380,7 @@ func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 	g.encryptionKey = fs.String("encryption-key", envDefault("CLOUDSTIC_ENCRYPTION_KEY", ""), "Platform key (hex-encoded, 32 bytes)")
 	g.encryptionPassword = fs.String("encryption-password", envDefault("CLOUDSTIC_ENCRYPTION_PASSWORD", ""), "Password for password-based encryption")
 	g.recoveryKey = fs.String("recovery-key", envDefault("CLOUDSTIC_RECOVERY_KEY", ""), "Recovery key (BIP39 24-word mnemonic)")
+	g.kmsKeyARN = fs.String("kms-key-arn", envDefault("CLOUDSTIC_KMS_KEY_ARN", ""), "AWS KMS key ARN for kms-platform slots")
 	g.enablePackfile = fs.Bool("enable-packfile", true, "Bundle small objects into 8MB packs to save S3 PUTs")
 	g.verbose = fs.Bool("verbose", false, "Log detailed file-level operations")
 	g.quiet = fs.Bool("quiet", false, "Suppress progress bars (keeps final summary)")
@@ -424,7 +427,17 @@ func (g *globalFlags) openStore() (store.ObjectStore, []byte, error) {
 		return nil, nil, fmt.Errorf("repository is encrypted but no key slots found")
 	}
 
-	if len(platformKey) == 0 && *g.encryptionPassword == "" && *g.recoveryKey == "" {
+	// Build KMS decrypter if a key ARN is provided.
+	var kmsDecrypter crypto.KMSDecrypter
+	if *g.kmsKeyARN != "" {
+		d, err := crypto.NewAWSKMSDecrypter(context.Background())
+		if err != nil {
+			return nil, nil, fmt.Errorf("create KMS decrypter: %w", err)
+		}
+		kmsDecrypter = d
+	}
+
+	if len(platformKey) == 0 && *g.encryptionPassword == "" && *g.recoveryKey == "" && kmsDecrypter == nil {
 		hasPasswordSlot := false
 		for _, s := range slots {
 			if s.SlotType == "password" {
@@ -442,11 +455,11 @@ func (g *globalFlags) openStore() (store.ObjectStore, []byte, error) {
 		}
 
 		if *g.encryptionPassword == "" {
-			return nil, nil, fmt.Errorf("repository is encrypted -- provide --encryption-key, --encryption-password, or --recovery-key")
+			return nil, nil, fmt.Errorf("repository is encrypted -- provide --encryption-key, --encryption-password, --recovery-key, or --kms-key-arn")
 		}
 	}
 
-	encKey, err := openExistingSlots(slots, platformKey, *g.encryptionPassword, *g.recoveryKey)
+	encKey, err := openExistingSlots(slots, platformKey, *g.encryptionPassword, *g.recoveryKey, kmsDecrypter)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -533,7 +546,13 @@ func (g *globalFlags) loadKeySlots(rawStore store.ObjectStore) ([]store.KeySlot,
 	return store.LoadKeySlots(rawStore)
 }
 
-func openExistingSlots(slots []store.KeySlot, platformKey []byte, password, recoveryMnemonic string) ([]byte, error) {
+func openExistingSlots(slots []store.KeySlot, platformKey []byte, password, recoveryMnemonic string, kmsDecrypter crypto.KMSDecrypter) ([]byte, error) {
+	// Try KMS first — this is the preferred path after migration.
+	if kmsDecrypter != nil {
+		if key, err := store.OpenWithKMS(context.Background(), slots, kmsDecrypter); err == nil {
+			return key, nil
+		}
+	}
 	if len(platformKey) > 0 {
 		if key, err := store.OpenWithPlatformKey(slots, platformKey); err == nil {
 			return key, nil
@@ -631,7 +650,7 @@ func runInit() {
 		}
 
 		if len(slots) > 0 {
-			if _, err := openExistingSlots(slots, platformKey, password, ""); err != nil {
+	if _, err := openExistingSlots(slots, platformKey, password, "", nil); err != nil {
 				fmt.Fprintf(os.Stderr, "Found existing key slots but cannot open them: %v\n", err)
 				os.Exit(1)
 			}
@@ -722,8 +741,19 @@ func runAddRecoveryKey() {
 		os.Exit(1)
 	}
 	password := *g.encryptionPassword
-	if len(platformKey) == 0 && password == "" {
-		fmt.Fprintln(os.Stderr, "Provide --encryption-key or --encryption-password to unlock the master key.")
+
+	var kmsDecrypter crypto.KMSDecrypter
+	if *g.kmsKeyARN != "" {
+		d, err := crypto.NewAWSKMSDecrypter(context.Background())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to create KMS decrypter: %v\n", err)
+			os.Exit(1)
+		}
+		kmsDecrypter = d
+	}
+
+	if len(platformKey) == 0 && password == "" && kmsDecrypter == nil {
+		fmt.Fprintln(os.Stderr, "Provide --encryption-key, --encryption-password, or --kms-key-arn to unlock the master key.")
 		os.Exit(1)
 	}
 
@@ -733,7 +763,7 @@ func runAddRecoveryKey() {
 		os.Exit(1)
 	}
 
-	masterKey, err := store.ExtractMasterKey(slots, platformKey, password)
+	masterKey, err := store.ExtractMasterKeyWithKMS(context.Background(), slots, kmsDecrypter, platformKey, password)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to extract master key: %v\n", err)
 		os.Exit(1)

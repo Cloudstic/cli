@@ -17,6 +17,7 @@ Cloudstic is a content-addressable backup tool that creates encrypted, deduplica
   - [diff](#diff)
   - [forget](#forget)
   - [prune](#prune)
+  - [check](#check)
   - [add-recovery-key](#add-recovery-key)
   - [cat](#cat)
 - [Sources](#sources)
@@ -391,6 +392,70 @@ cloudstic prune -verbose
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-dry-run` | `false` | Show what would be deleted without deleting |
+
+---
+
+### check
+
+Verify the integrity of a repository by walking the full reference chain and checking that every referenced object exists, can be read, decrypts successfully, and decompresses correctly.
+
+```bash
+# Check all snapshots (structure verification)
+cloudstic check
+
+# Full byte-level verification (re-hash all chunk data)
+cloudstic check -read-data
+
+# Check a specific snapshot
+cloudstic check <snapshot-hash>
+cloudstic check -snapshot latest
+
+# Verbose output — log each verified object
+cloudstic check -verbose
+```
+
+**What it verifies:**
+
+1. **Reference chain** — `index/latest` → `snapshot` → HAMT nodes → `filemeta` → `content` → `chunk`
+2. **Object readability** — Every referenced object exists, decrypts, and decompresses without error
+3. **Data integrity** (with `-read-data`) — Re-hashes chunk data and verifies it matches the content-addressed key
+
+**Flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-read-data` | `false` | Re-hash all chunk data for full byte-level verification |
+| `-snapshot` | (all) | Check a specific snapshot instead of all |
+
+The snapshot can also be passed as a positional argument.
+
+**Output:**
+
+On success, the command prints a summary and exits with code 0:
+
+```
+Repository check complete.
+  Snapshots checked:  3
+  Objects verified:   1247
+  Errors found:       0
+
+No errors found — repository is healthy.
+```
+
+If errors are found, they are listed and the command exits with code 1:
+
+```
+Repository check complete.
+  Snapshots checked:  3
+  Objects verified:   1244
+  Errors found:       3
+
+  [missing] chunk/abc123...: chunk not found or unreadable: ...
+  [corrupt] chunk/def456...: hash mismatch: expected def456..., got 789abc...
+  [missing] content/ghi789...: content object not found or unreadable: ...
+```
+
+> **Tip:** Run `cloudstic check` periodically (e.g. via cron) to catch silent corruption early. Use `-read-data` for thorough verification at the cost of reading all data from the backend.
 
 ---
 
@@ -847,7 +912,7 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 
 | Variable | Flag equivalent | Description |
 |----------|----------------|-------------|
-| `CLOUDSTIC_STORE` | `-store` | Storage backend: `local`, `s3`, `b2`, `sftp`, `hybrid` |
+| `CLOUDSTIC_STORE` | `-store` | Storage backend: `local`, `s3`, `b2`, `sftp` |
 | `CLOUDSTIC_STORE_PATH` | `-store-path` | Local/SFTP path or S3/B2 bucket name |
 | `CLOUDSTIC_STORE_PREFIX` | `-store-prefix` | Key prefix for S3/B2 objects |
 | `CLOUDSTIC_S3_ENDPOINT` | `-s3-endpoint` | S3 compatible endpoint (for MinIO, R2, etc.) |
@@ -858,8 +923,6 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 | `CLOUDSTIC_SOURCE_PATH` | `-source-path` | Source directory path (local or SFTP remote) |
 | `CLOUDSTIC_DRIVE_ID` | `-drive-id` | Shared drive ID for Google Drive |
 | `CLOUDSTIC_ROOT_FOLDER` | `-root-folder` | Root folder ID for Google Drive |
-| `CLOUDSTIC_DATABASE_URL` | `-database-url` | PostgreSQL URL (hybrid store) |
-| `CLOUDSTIC_TENANT_ID` | `-tenant-id` | Tenant ID (hybrid store) |
 | `CLOUDSTIC_ENCRYPTION_KEY` | `-encryption-key` | Platform key (hex) |
 | `CLOUDSTIC_ENCRYPTION_PASSWORD` | `-encryption-password` | Encryption password |
 | `CLOUDSTIC_RECOVERY_KEY` | `-recovery-key` | Recovery seed phrase |

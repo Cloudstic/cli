@@ -43,6 +43,7 @@ brews:
     license: "MIT"
     install: |
       bin.install "cloudstic"
+      generate_completions_from_executable(bin/"cloudstic", "completion")
     test: |
       system "#{bin}/cloudstic", "version"
 

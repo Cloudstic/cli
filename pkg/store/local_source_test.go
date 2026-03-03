@@ -10,6 +10,93 @@ import (
 	"github.com/cloudstic/cli/internal/core"
 )
 
+func TestLocalSource_WithExcludes(t *testing.T) {
+	ctx := context.Background()
+	tmpDir, err := os.MkdirTemp("", "cloudstic-exclude-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	// Create filesystem structure.
+	for _, dir := range []string{"src", ".git/objects", "node_modules/pkg", "build"} {
+		if err := os.MkdirAll(filepath.Join(tmpDir, dir), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range []struct{ path, data string }{
+		{"src/main.go", "package main"},
+		{"src/app.log", "log data"},
+		{".git/config", "[core]"},
+		{".git/objects/abc", "blob"},
+		{"node_modules/pkg/index.js", "module.exports = {}"},
+		{"build/output.bin", "binary"},
+		{"README.md", "hello"},
+		{"notes.tmp", "temp"},
+	} {
+		if err := os.WriteFile(filepath.Join(tmpDir, f.path), []byte(f.data), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	src := NewLocalSource(tmpDir, ".git/", "node_modules/", "*.tmp", "*.log")
+
+	// Test Walk() — excluded files/dirs should not appear.
+	var walked []string
+	err = src.Walk(ctx, func(fm core.FileMeta) error {
+		walked = append(walked, fm.FileID)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Walk() failed: %v", err)
+	}
+
+	// Should see: src, src/main.go, build, build/output.bin, README.md
+	// Should NOT see: .git/*, node_modules/*, notes.tmp, src/app.log
+	excluded := map[string]bool{
+		".git":                        true,
+		".git/config":                  true,
+		".git/objects":                 true,
+		".git/objects/abc":             true,
+		"node_modules":                 true,
+		"node_modules/pkg":             true,
+		"node_modules/pkg/index.js":    true,
+		"notes.tmp":                    true,
+		"src/app.log":                  true,
+	}
+	for _, w := range walked {
+		if excluded[w] {
+			t.Errorf("Walk() should have excluded %q", w)
+		}
+	}
+	expected := map[string]bool{
+		"src":              true,
+		"src/main.go":      true,
+		"build":            true,
+		"build/output.bin": true,
+		"README.md":        true,
+	}
+	for _, w := range walked {
+		delete(expected, w)
+	}
+	for missing := range expected {
+		t.Errorf("Walk() missing expected entry %q", missing)
+	}
+
+	// Test Size() — should only count non-excluded files.
+	size, err := src.Size(ctx)
+	if err != nil {
+		t.Fatalf("Size() failed: %v", err)
+	}
+	// Expected files: src/main.go (12), build/output.bin (6), README.md (5) = 3 files, 23 bytes
+	if size.Files != 3 {
+		t.Errorf("Size().Files = %d, want 3", size.Files)
+	}
+	if size.Bytes != 23 {
+		t.Errorf("Size().Bytes = %d, want 23", size.Bytes)
+	}
+}
+
 func TestLocalSource(t *testing.T) {
 	ctx := context.Background()
 	tmpDir, err := os.MkdirTemp("", "cloudstic-source-test-*")

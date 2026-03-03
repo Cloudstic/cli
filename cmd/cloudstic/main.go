@@ -256,6 +256,8 @@ func printUsage() {
 		{"-drive-id <id>", "Shared drive ID for gdrive (omit for My Drive)"},
 		{"-root-folder <id>", "Root folder ID for gdrive (defaults to entire drive)"},
 		{"-tag <tag>", "Tag to apply to the snapshot (repeatable)"},
+		{"-exclude <pattern>", "Exclude pattern, gitignore syntax (repeatable, local/sftp only)"},
+		{"-exclude-file <path>", "Load exclude patterns from file (one per line, gitignore syntax)"},
 		{"-dry-run", "Scan source and report changes without writing to the store"},
 	})
 	t.Blank()
@@ -813,10 +815,10 @@ func (g *globalFlags) sftpConfig(host, port, user, pass, key *string) (store.SFT
 	}, nil
 }
 
-func initSource(sourceType, sourcePath, driveID, rootFolder string, g *globalFlags) (store.Source, error) {
+func initSource(sourceType, sourcePath, driveID, rootFolder string, g *globalFlags, excludePatterns []string) (store.Source, error) {
 	switch sourceType {
 	case "local":
-		return store.NewLocalSource(sourcePath), nil
+		return store.NewLocalSource(sourcePath, excludePatterns...), nil
 	case "sftp":
 		cfg, err := g.sftpConfig(g.sourceSFTPHost, g.sourceSFTPPort, g.sourceSFTPUser, g.sourceSFTPPassword, g.sourceSFTPKey)
 		if err != nil {
@@ -825,7 +827,7 @@ func initSource(sourceType, sourcePath, driveID, rootFolder string, g *globalFla
 		if sourcePath == "" {
 			return nil, fmt.Errorf("-source-path is required for sftp source")
 		}
-		return store.NewSFTPSource(cfg, sourcePath)
+		return store.NewSFTPSource(cfg, sourcePath, excludePatterns...)
 	case "gdrive":
 		creds := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") // optional; uses built-in OAuth client when empty
 		tokenPath, err := resolveTokenPath("GOOGLE_TOKEN_FILE", "google_token.json")
@@ -1404,15 +1406,30 @@ func runBackup() {
 	rootFolder := bkCmd.String("root-folder", envDefault("CLOUDSTIC_ROOT_FOLDER", ""), "Root folder ID for gdrive source (defaults to entire drive)")
 	g := addGlobalFlags(bkCmd)
 	dryRun := bkCmd.Bool("dry-run", false, "Scan source and report changes without writing to the store")
+	excludeFile := bkCmd.String("exclude-file", "", "Path to file with exclude patterns (one per line, gitignore syntax)")
 
 	var tags stringArrayFlags
 	bkCmd.Var(&tags, "tag", "Tag to apply to the snapshot (can be specified multiple times)")
 
+	var excludes stringArrayFlags
+	bkCmd.Var(&excludes, "exclude", "Exclude pattern (gitignore syntax, repeatable)")
+
 	_ = bkCmd.Parse(os.Args[2:])
+
+	// Collect exclude patterns from -exclude flags and -exclude-file.
+	excludePatterns := []string(excludes)
+	if *excludeFile != "" {
+		filePatterns, err := store.ParseExcludeFile(*excludeFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to read exclude file: %v\n", err)
+			os.Exit(1)
+		}
+		excludePatterns = append(excludePatterns, filePatterns...)
+	}
 
 	ctx := context.Background()
 
-	src, err := initSource(*sourceType, *sourcePath, *driveID, *rootFolder, g)
+	src, err := initSource(*sourceType, *sourcePath, *driveID, *rootFolder, g, excludePatterns)
 	if err != nil {
 		fmt.Printf("Failed to init source: %v\n", err)
 		os.Exit(1)

@@ -4,7 +4,7 @@ set -e
 
 TARGET=${1:-local} # Default to local
 TOOL=${2:-all}     # Default to all tools
-S3_BUCKET=${S3_BUCKET:-cloudstic-benchmark-681494392773-us-east-1}
+S3_BUCKET=${S3_BUCKET:-cloudstic-benchmark-734836384094-us-east-1}
 AWS_REGION=${AWS_REGION:-us-east-1}
 
 if [ "$TARGET" != "local" ] && [ "$TARGET" != "s3" ]; then

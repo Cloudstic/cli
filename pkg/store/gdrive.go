@@ -213,10 +213,15 @@ func (s *GDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) er
 		}
 	}
 
+	// pathMap tracks fileID → full path for all emitted entries.
+	// Folders are topo-sorted (parents before children) so the parent
+	// path is always known when we compute the child path.
+	pathMap := make(map[string]string, len(folders))
+
 	// Emit folders first (topo-sorted so parents before children).
 	folders = topoSortFolders(folders)
 	for _, f := range folders {
-		if err := s.visitEntry(f, callback); err != nil {
+		if err := s.visitEntryWithPath(f, pathMap, callback); err != nil {
 			return err
 		}
 	}
@@ -245,7 +250,7 @@ func (s *GDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) er
 		}
 
 		for _, f := range r.Files {
-			if err := s.visitEntry(f, callback); err != nil {
+			if err := s.visitEntryWithPath(f, pathMap, callback); err != nil {
 				return err
 			}
 		}
@@ -291,13 +296,19 @@ func topoSortFolders(folders []*drive.File) []*drive.File {
 	return sorted
 }
 
-func (s *GDriveSource) visitEntry(f *drive.File, callback func(core.FileMeta) error) error {
+func (s *GDriveSource) visitEntryWithPath(f *drive.File, pathMap map[string]string, callback func(core.FileMeta) error) error {
 	meta := s.toFileMeta(f)
 
-	// Filter out parents that are outside the backed-up set (e.g. the Drive
-	// root folder). Only keep parents whose ID is a real folder we've seen.
-	// Since toFileMeta already sets Parents to raw Drive IDs, we just emit
-	// as-is. The consumer resolves FileIDs when building the hierarchy.
+	// Compute full path from parent path map.
+	p := meta.Name
+	if len(f.Parents) > 0 {
+		if parentPath, ok := pathMap[f.Parents[0]]; ok {
+			p = parentPath + "/" + meta.Name
+		}
+	}
+	meta.Paths = []string{p}
+	pathMap[f.Id] = p
+
 	return callback(meta)
 }
 

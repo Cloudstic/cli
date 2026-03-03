@@ -291,6 +291,7 @@ type RestoreResult = engine.RestoreResult
 var (
 	WithRestoreDryRun  = engine.WithRestoreDryRun
 	WithRestoreVerbose = engine.WithRestoreVerbose
+	WithRestorePath    = engine.WithRestorePath
 )
 
 // Restore writes the snapshot's file tree as a ZIP archive to w.

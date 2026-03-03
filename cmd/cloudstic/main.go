@@ -828,7 +828,10 @@ func (g *globalFlags) sftpConfig(host, port, user, pass, key *string) (store.SFT
 func initSource(sourceType, sourcePath, driveID, rootFolder string, g *globalFlags, excludePatterns []string) (store.Source, error) {
 	switch sourceType {
 	case "local":
-		return store.NewLocalSource(sourcePath, excludePatterns...), nil
+		return store.NewLocalSource(store.LocalSourceConfig{
+			RootPath:        sourcePath,
+			ExcludePatterns: excludePatterns,
+		}), nil
 	case "sftp":
 		cfg, err := g.sftpConfig(g.sourceSFTPHost, g.sourceSFTPPort, g.sourceSFTPUser, g.sourceSFTPPassword, g.sourceSFTPKey)
 		if err != nil {
@@ -837,47 +840,59 @@ func initSource(sourceType, sourcePath, driveID, rootFolder string, g *globalFla
 		if sourcePath == "" {
 			return nil, fmt.Errorf("-source-path is required for sftp source")
 		}
-		return store.NewSFTPSource(cfg, sourcePath, excludePatterns...)
+		return store.NewSFTPSource(store.SFTPSourceConfig{
+			SFTPConfig:      cfg,
+			RootPath:        sourcePath,
+			ExcludePatterns: excludePatterns,
+		})
 	case "gdrive":
 		creds := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") // optional; uses built-in OAuth client when empty
 		tokenPath, err := resolveTokenPath("GOOGLE_TOKEN_FILE", "google_token.json")
 		if err != nil {
 			return nil, err
 		}
-		src, err := store.NewGDriveSource(creds, tokenPath, excludePatterns...)
-		if err != nil {
-			return nil, err
-		}
-		src.DriveID = driveID
-		src.RootFolderID = rootFolder
-		return src, nil
+		return store.NewGDriveSource(store.GDriveSourceConfig{
+			CredsPath:       creds,
+			TokenPath:       tokenPath,
+			DriveID:         driveID,
+			RootFolderID:    rootFolder,
+			ExcludePatterns: excludePatterns,
+		})
 	case "gdrive-changes":
 		creds := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") // optional; uses built-in OAuth client when empty
 		tokenPath, err := resolveTokenPath("GOOGLE_TOKEN_FILE", "google_token.json")
 		if err != nil {
 			return nil, err
 		}
-		src, err := store.NewGDriveChangeSource(creds, tokenPath, excludePatterns...)
-		if err != nil {
-			return nil, err
-		}
-		src.DriveID = driveID
-		src.RootFolderID = rootFolder
-		return src, nil
+		return store.NewGDriveChangeSource(store.GDriveSourceConfig{
+			CredsPath:       creds,
+			TokenPath:       tokenPath,
+			DriveID:         driveID,
+			RootFolderID:    rootFolder,
+			ExcludePatterns: excludePatterns,
+		})
 	case "onedrive":
 		clientID := os.Getenv("ONEDRIVE_CLIENT_ID") // optional; uses built-in OAuth client when empty
 		tokenPath, err := resolveTokenPath("ONEDRIVE_TOKEN_FILE", "onedrive_token.json")
 		if err != nil {
 			return nil, err
 		}
-		return store.NewOneDriveSource(clientID, tokenPath, excludePatterns...)
+		return store.NewOneDriveSource(store.OneDriveSourceConfig{
+			ClientID:        clientID,
+			TokenPath:       tokenPath,
+			ExcludePatterns: excludePatterns,
+		})
 	case "onedrive-changes":
 		clientID := os.Getenv("ONEDRIVE_CLIENT_ID") // optional; uses built-in OAuth client when empty
 		tokenPath, err := resolveTokenPath("ONEDRIVE_TOKEN_FILE", "onedrive_token.json")
 		if err != nil {
 			return nil, err
 		}
-		return store.NewOneDriveChangeSource(clientID, tokenPath, excludePatterns...)
+		return store.NewOneDriveChangeSource(store.OneDriveSourceConfig{
+			ClientID:        clientID,
+			TokenPath:       tokenPath,
+			ExcludePatterns: excludePatterns,
+		})
 	default:
 		return nil, fmt.Errorf("unsupported source type: %s", sourceType)
 	}

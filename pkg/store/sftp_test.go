@@ -199,7 +199,7 @@ func TestSFTPSource(t *testing.T) {
 	_ = seedClient.Close()
 
 	// Create SFTPSource
-	src, err := NewSFTPSource(cfg, rootPath)
+	src, err := NewSFTPSource(SFTPSourceConfig{SFTPConfig: cfg, RootPath: rootPath})
 	if err != nil {
 		t.Fatalf("NewSFTPSource failed: %v", err)
 	}

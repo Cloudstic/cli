@@ -10,6 +10,13 @@ import (
 	"github.com/pkg/sftp"
 )
 
+// SFTPSourceConfig holds configuration for an SFTP filesystem source.
+type SFTPSourceConfig struct {
+	SFTPConfig             // connection parameters
+	RootPath        string // remote directory to back up
+	ExcludePatterns []string
+}
+
 // SFTPSource implements Source for a remote SFTP filesystem.
 type SFTPSource struct {
 	client   *sftp.Client
@@ -19,14 +26,13 @@ type SFTPSource struct {
 }
 
 // NewSFTPSource connects to the SFTP server described by cfg and returns a
-// source rooted at rootPath. Optional exclude patterns use gitignore-style
-// syntax to skip files and directories during Walk and Size.
-func NewSFTPSource(cfg SFTPConfig, rootPath string, excludePatterns ...string) (*SFTPSource, error) {
-	client, err := dialSFTP(cfg)
+// source rooted at cfg.RootPath.
+func NewSFTPSource(cfg SFTPSourceConfig) (*SFTPSource, error) {
+	client, err := dialSFTP(cfg.SFTPConfig)
 	if err != nil {
 		return nil, fmt.Errorf("sftp source connect: %w", err)
 	}
-	return &SFTPSource{client: client, rootPath: rootPath, cfg: cfg, exclude: NewExcludeMatcher(excludePatterns)}, nil
+	return &SFTPSource{client: client, rootPath: cfg.RootPath, cfg: cfg.SFTPConfig, exclude: NewExcludeMatcher(cfg.ExcludePatterns)}, nil
 }
 
 // Close releases the underlying SFTP and SSH connections.

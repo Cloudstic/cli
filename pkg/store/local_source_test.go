@@ -39,7 +39,10 @@ func TestLocalSource_WithExcludes(t *testing.T) {
 		}
 	}
 
-	src := NewLocalSource(tmpDir, ".git/", "node_modules/", "*.tmp", "*.log")
+	src := NewLocalSource(LocalSourceConfig{
+		RootPath:        tmpDir,
+		ExcludePatterns: []string{".git/", "node_modules/", "*.tmp", "*.log"},
+	})
 
 	// Test Walk() — excluded files/dirs should not appear.
 	var walked []string
@@ -119,7 +122,7 @@ func TestLocalSource(t *testing.T) {
 		t.Fatalf("Failed to write file2: %v", err)
 	}
 
-	src := NewLocalSource(tmpDir)
+	src := NewLocalSource(LocalSourceConfig{RootPath: tmpDir})
 
 	// Test Info()
 	info := src.Info()

@@ -782,7 +782,8 @@ Encryption is **required by default**. All backup data is encrypted with AES-256
 | Slot type | Credential | Use case |
 |-----------|-----------|----------|
 | `password` | `--encryption-password` | Day-to-day personal use |
-| `platform` | `--encryption-key` | Automation, CI/CD, platform integration |
+| `platform` | `--encryption-key` | Automation, CI/CD, platform integration (legacy) |
+| `kms-platform` | `--kms-key-arn` | HSM-backed platform integration via AWS KMS |
 | `recovery` | `--recovery-key` | Emergency access when password is lost |
 
 ### Recommended setup
@@ -807,6 +808,9 @@ cloudstic restore -recovery-key "word1 word2 ... word24"
 
 ```bash
 cloudstic add-recovery-key -encryption-password "my passphrase"
+
+# For KMS-managed repositories
+cloudstic add-recovery-key -kms-key-arn arn:aws:kms:us-east-1:123:key/abc
 ```
 
 ---
@@ -859,6 +863,7 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 | `CLOUDSTIC_ENCRYPTION_KEY` | `-encryption-key` | Platform key (hex) |
 | `CLOUDSTIC_ENCRYPTION_PASSWORD` | `-encryption-password` | Encryption password |
 | `CLOUDSTIC_RECOVERY_KEY` | `-recovery-key` | Recovery seed phrase |
+| `CLOUDSTIC_KMS_KEY_ARN` | `-kms-key-arn` | AWS KMS key ARN for kms-platform slots |
 | `CLOUDSTIC_CONFIG_DIR` | — | Override config directory path |
 | `GOOGLE_APPLICATION_CREDENTIALS` | — | Path to your own Google OAuth credentials file (optional, overrides built-in) |
 | `GOOGLE_TOKEN_FILE` | — | Override Google OAuth token path |

@@ -68,11 +68,12 @@ A key slot stores the master key encrypted ("wrapped") by a wrapping key.
 Multiple slots can coexist for the same tenant, each using a different wrapping
 key.
 
-| Slot type  | Wrapping key source                  | Purpose                                  |
-|------------|--------------------------------------|------------------------------------------|
-| `platform` | `PLATFORM_ENCRYPTION_KEY` env var    | Always present; platform recovery        |
-| `password` | Argon2id(user password)              | Zero-knowledge; user controls access     |
-| `recovery` | Random 256-bit key (BIP39 mnemonic)  | Offline backup; printed / stored safely  |
+| Slot type      | Wrapping key source                  | Purpose                                  |
+|----------------|--------------------------------------|------------------------------------------|
+| `platform`     | `PLATFORM_ENCRYPTION_KEY` env var    | Legacy platform recovery (plaintext key) |
+| `kms-platform` | AWS KMS CMK (envelope encryption)    | HSM-backed platform recovery             |
+| `password`     | Argon2id(user password)              | Zero-knowledge; user controls access     |
+| `recovery`     | Random 256-bit key (BIP39 mnemonic)  | Offline backup; printed / stored safely  |
 
 ### Key slot storage
 
@@ -201,7 +202,7 @@ for security incidents.
 CREATE TABLE app.encryption_key_slots (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id     UUID NOT NULL REFERENCES app.tenants(id) ON DELETE CASCADE,
-    slot_type     TEXT NOT NULL CHECK (slot_type IN ('platform', 'password', 'recovery')),
+    slot_type     TEXT NOT NULL CHECK (slot_type IN ('platform', 'kms-platform', 'password', 'recovery')),
     wrapped_key   TEXT NOT NULL,  -- base64(nonce || encrypted_master_key || tag)
     kdf_params    JSONB,          -- for password slots: {algorithm, salt, n, r, p}
     label         TEXT NOT NULL DEFAULT '',
@@ -286,19 +287,38 @@ repositories are interoperable if you have the key.
 ### CLI flow
 
 1. List `keys/*` objects from B2 to discover available slots
-2. Try platform key, password, or recovery key based on provided credentials
-3. Unwrap the master key, derive the encryption key via HKDF
-4. Create `EncryptedStore` with that key — same code path as the web
+2. If `-kms-key-arn` is provided, try `kms-platform` slots first (AWS KMS decryption)
+3. Try platform key, password, or recovery key based on provided credentials
+4. Unwrap the master key, derive the encryption key via HKDF
+5. Create `EncryptedStore` with that key — same code path as the web
 
 ## Platform Key Management
 
+### KMS-backed keys (recommended)
+
+The preferred approach uses AWS KMS Customer Managed Keys (CMKs) for
+envelope encryption. The master key is wrapped by KMS (`kms-platform`
+slots), so the plaintext wrapping key never leaves the HSM.
+
+- The web server uses `PLATFORM_KMS_KEY_ARN` and `TOKEN_KMS_KEY_ARN`
+  environment variables pointing to KMS key ARNs
+- The CLI uses `-kms-key-arn` flag or `CLOUDSTIC_KMS_KEY_ARN` env var
+- KMS keys are configured with automatic annual rotation
+- IAM policies restrict access to Encrypt/Decrypt/GenerateDataKey/DescribeKey
+- No plaintext key material is stored in environment variables or secrets
+
+### Legacy plaintext keys
+
 The `PLATFORM_ENCRYPTION_KEY` environment variable holds a 32-byte
-hex-encoded key. This is the single secret that protects all tenant master
-keys.
+hex-encoded key. This is supported for backward compatibility.
 
 - Store in a secrets manager (Vault, AWS Secrets Manager, etc.)
 - Back up securely — losing this key means generating new master keys for all
   tenants (existing encrypted data becomes unreadable)
 - Rotate with the platform key rotation flow described above
-- For v1, an env var is sufficient. KMS integration can be added later by
-  replacing the unwrap function.
+
+### Migration
+
+Both key types can coexist. When KMS is configured, new tenants get
+`kms-platform` slots. Existing `platform` slots remain readable with the
+legacy key. The system tries KMS slots first, then falls back to legacy.

@@ -107,8 +107,9 @@ func (s *PackStore) Put(ctx context.Context, key string, data []byte) error {
 
 // isSmallObject determines if a key/data pair should be bundled into a packfile.
 func (s *PackStore) isSmallObject(key string, data []byte) bool {
-	// Don't pack the pack index itself or lock files
-	if key == indexPacksKey || strings.HasPrefix(key, "index/lock") {
+	// Don't pack the pack index itself, lock files, or the snapshot catalog
+	// (mutable indexes that are read on every operation).
+	if key == indexPacksKey || key == "index/snapshots" || strings.HasPrefix(key, "index/lock") {
 		return false
 	}
 	// We only pack metadata to keep data files randomly accessible natively.

@@ -214,10 +214,13 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 		}
 	}
 
-	snapRef, snapHash, err := bm.saveSnapshot(ctx, newRoot, seq+1, newToken)
+	snapRef, snapHash, snap, err := bm.saveSnapshot(ctx, newRoot, seq+1, newToken)
 	if err != nil {
 		return nil, err
 	}
+
+	// Update snapshot catalog (best-effort).
+	AppendSnapshotCatalog(bm.store, snapshotToSummary(snapRef, snap))
 
 	if err := bm.cache.FlushReachable(newRoot); err != nil {
 		return nil, fmt.Errorf("flush hamt: %w", err)
@@ -255,7 +258,7 @@ func (bm *BackupManager) loadLatestSeq() int {
 // whose Source matches the given info (Type + Account + Path).
 // Returns nil when no matching snapshot exists.
 func (bm *BackupManager) findPreviousSnapshot(info core.SourceInfo) *core.Snapshot {
-	entries, err := ListAllSnapshots(bm.store)
+	entries, err := LoadSnapshotCatalog(bm.store)
 	if err != nil {
 		return nil
 	}
@@ -271,14 +274,14 @@ func (bm *BackupManager) findPreviousSnapshot(info core.SourceInfo) *core.Snapsh
 	return nil
 }
 
-func (bm *BackupManager) saveSnapshot(ctx context.Context, root string, seq int, changeToken string) (ref, hash string, err error) {
+func (bm *BackupManager) saveSnapshot(ctx context.Context, root string, seq int, changeToken string) (ref, hash string, snap core.Snapshot, err error) {
 	meta := make(map[string]string, len(bm.cfg.meta)+1)
 	for k, v := range bm.cfg.meta {
 		meta[k] = v
 	}
 	meta["generator"] = bm.cfg.generator
 
-	snap := core.Snapshot{
+	snap = core.Snapshot{
 		Version:     1,
 		Created:     time.Now().Format(time.RFC3339),
 		Root:        root,
@@ -291,19 +294,19 @@ func (bm *BackupManager) saveSnapshot(ctx context.Context, root string, seq int,
 
 	hash, snapData, err := core.ComputeJSONHash(&snap)
 	if err != nil {
-		return "", "", err
+		return "", "", snap, err
 	}
 
 	ref = "snapshot/" + hash
 	if err := bm.store.Put(ctx, ref, snapData); err != nil {
-		return "", "", err
+		return "", "", snap, err
 	}
 
 	if err := updateLatest(bm.store, ref, seq); err != nil {
-		return "", "", err
+		return "", "", snap, err
 	}
 
-	return ref, hash, nil
+	return ref, hash, snap, nil
 }
 
 func (bm *BackupManager) trackFileMeta(ref string, fm core.FileMeta) {

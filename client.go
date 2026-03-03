@@ -69,7 +69,7 @@ type Credentials struct {
 }
 
 func (c Credentials) ResolveKey(ctx context.Context, rawStore store.ObjectStore) ([]byte, error) {
-	slots, err := store.AutoLoadKeySlots(rawStore)
+	slots, err := store.LoadKeySlots(rawStore)
 	if err != nil {
 		return nil, fmt.Errorf("load encryption key slots: %w", err)
 	}

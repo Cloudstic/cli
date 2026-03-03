@@ -132,6 +132,9 @@ func (fm *ForgetManager) Run(ctx context.Context, snapshotID string, opts ...For
 		return nil, fmt.Errorf("delete snapshot %s: %w", targetRef, err)
 	}
 
+	// Update snapshot catalog (best-effort).
+	RemoveFromSnapshotCatalog(fm.store, targetRef)
+
 	if err := fm.fixupLatest(targetRef); err != nil {
 		phase.Error()
 		return nil, err
@@ -186,7 +189,7 @@ func (fm *ForgetManager) fixupLatest(deletedRef string) error {
 		return nil
 	}
 
-	entries, err := ListAllSnapshots(fm.store)
+	entries, err := LoadSnapshotCatalog(fm.store)
 	if err != nil {
 		return err
 	}
@@ -233,7 +236,7 @@ func (fm *ForgetManager) RunPolicy(ctx context.Context, opts ...ForgetOption) (*
 		return nil, fmt.Errorf("empty policy: specify at least one --keep-* option")
 	}
 
-	entries, err := ListAllSnapshots(fm.store)
+	entries, err := LoadSnapshotCatalog(fm.store)
 	if err != nil {
 		return nil, err
 	}
@@ -307,12 +310,17 @@ func (fm *ForgetManager) forgetBatch(ctx context.Context, entries []SnapshotEntr
 		toRemove[e.Ref] = true
 	}
 
+	var removedRefs []string
 	for _, e := range entries {
 		_ = fm.store.Delete(ctx, e.Ref)
+		removedRefs = append(removedRefs, e.Ref)
 	}
 
+	// Update snapshot catalog (best-effort).
+	RemoveFromSnapshotCatalog(fm.store, removedRefs...)
+
 	// Elect new latest from the remaining snapshots.
-	remaining, err := ListAllSnapshots(fm.store)
+	remaining, err := LoadSnapshotCatalog(fm.store)
 	if err != nil {
 		return err
 	}

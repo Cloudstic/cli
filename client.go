@@ -61,10 +61,10 @@ func (k StaticKey) ResolveKey(_ context.Context, _ store.ObjectStore) ([]byte, e
 // repository's stored key slots. The resolution order is:
 // KMS → platform key → password → recovery mnemonic → password prompt.
 type Credentials struct {
-	PlatformKey      []byte              // Raw 32-byte platform key
-	Password         string              // Password for password-based slots
-	RecoveryMnemonic string              // BIP39 24-word recovery phrase
-	KMSDecrypter     crypto.KMSDecrypter // For kms-platform slots (optional)
+	PlatformKey      []byte                 // Raw 32-byte platform key
+	Password         string                 // Password for password-based slots
+	RecoveryMnemonic string                 // BIP39 24-word recovery phrase
+	KMSDecrypter     crypto.KMSDecrypter    // For kms-platform slots (optional)
 	PasswordPrompt   func() (string, error) // Interactive password fallback (optional)
 }
 
@@ -180,7 +180,8 @@ type Client struct {
 
 func NewClient(base store.ObjectStore, opts ...ClientOption) (*Client, error) {
 	c := &Client{
-		reporter: ui.NewNoOpReporter(),
+		enablePackfile: true, // Packfile is enabled by default
+		reporter:       ui.NewNoOpReporter(),
 	}
 	for _, opt := range opts {
 		opt(c)

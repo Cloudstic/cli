@@ -19,19 +19,23 @@ func (s *LocalSource) Info() core.SourceInfo {
 	}
 }
 
-// LocalSource implements Source for local filesystem
+// LocalSourceConfig holds configuration for a local filesystem source.
+type LocalSourceConfig struct {
+	RootPath        string
+	ExcludePatterns []string
+}
+
+// LocalSource implements Source for local filesystem.
 type LocalSource struct {
 	RootPath string
 	exclude  *ExcludeMatcher
 }
 
-// NewLocalSource creates a local filesystem source rooted at rootPath.
-// Optional exclude patterns use gitignore-style syntax to skip files and
-// directories during Walk and Size.
-func NewLocalSource(rootPath string, excludePatterns ...string) *LocalSource {
+// NewLocalSource creates a local filesystem source from the given config.
+func NewLocalSource(cfg LocalSourceConfig) *LocalSource {
 	return &LocalSource{
-		RootPath: rootPath,
-		exclude:  NewExcludeMatcher(excludePatterns),
+		RootPath: cfg.RootPath,
+		exclude:  NewExcludeMatcher(cfg.ExcludePatterns),
 	}
 }
 

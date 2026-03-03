@@ -16,8 +16,8 @@ type GDriveChangeSource struct {
 	GDriveSource
 }
 
-func NewGDriveChangeSource(credsPath, tokenPath string, excludePatterns ...string) (*GDriveChangeSource, error) {
-	base, err := NewGDriveSource(credsPath, tokenPath, excludePatterns...)
+func NewGDriveChangeSource(cfg GDriveSourceConfig) (*GDriveChangeSource, error) {
+	base, err := NewGDriveSource(cfg)
 	if err != nil {
 		return nil, err
 	}

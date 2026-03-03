@@ -27,7 +27,7 @@ func NewListManager(s store.ObjectStore) *ListManager {
 
 // Run lists every snapshot in the store.
 func (lm *ListManager) Run(ctx context.Context, opts ...ListOption) (*ListResult, error) {
-	entries, err := ListAllSnapshots(lm.store)
+	entries, err := LoadSnapshotCatalog(lm.store)
 	if err != nil {
 		return nil, err
 	}

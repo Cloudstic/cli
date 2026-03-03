@@ -74,6 +74,7 @@ All objects are addressed by `<type>/<sha256>`:
 - `node/<hash>` — HAMT internal/leaf nodes
 - `snapshot/<hash>` — Point-in-time backup snapshots
 - `index/latest` — Mutable pointer to latest snapshot
+- `index/snapshots` — Snapshot catalog: lightweight summaries of all snapshots, used to avoid fetching each snapshot object individually. Self-heals via reconciliation with `LIST snapshot/` on load.
 - `index/packs` — Pack catalog (when packfiles enabled)
 - `keys/<slot>` — Encryption key slots (stored unencrypted)
 - `config` — Repository marker (unencrypted)

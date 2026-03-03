@@ -21,7 +21,9 @@ func TestCompletionBash(t *testing.T) {
 		"complete -F _cloudstic cloudstic",
 		// All commands are listed
 		"init", "backup", "restore", "list", "ls", "prune", "forget",
-		"diff", "break-lock", "add-recovery-key", "cat", "completion",
+		"diff", "break-lock", "key", "cat", "completion",
+		// Key subcommands
+		"list add-recovery passwd",
 		// Global flags
 		"-store", "-encryption-password", "-verbose",
 		// Command-specific flags
@@ -52,7 +54,13 @@ func TestCompletionZsh(t *testing.T) {
 		// Commands with descriptions
 		"init:Initialize a new repository",
 		"backup:Create a new backup snapshot",
+		"key:Manage encryption key slots",
 		"completion:Generate shell completion scripts",
+		// Key subcommands
+		"list:List all encryption key slots",
+		"add-recovery:Generate a 24-word recovery key",
+		"passwd:Change the repository password",
+		"-new-password[New repository password]",
 		// Global flags with descriptions
 		"-store[Storage backend]",
 		"-verbose[Log detailed operations]",
@@ -85,7 +93,13 @@ func TestCompletionFish(t *testing.T) {
 		// Subcommands
 		"complete -c cloudstic -n __fish_use_subcommand -a init",
 		"complete -c cloudstic -n __fish_use_subcommand -a backup",
+		"complete -c cloudstic -n __fish_use_subcommand -a key",
 		"complete -c cloudstic -n __fish_use_subcommand -a completion",
+		// Key subcommands
+		"-a list -d 'List all encryption key slots'",
+		"-a add-recovery -d 'Generate a 24-word recovery key'",
+		"-a passwd -d 'Change the repository password'",
+		"-l new-password",
 		// Global flags
 		"complete -c cloudstic -l store -x",
 		"complete -c cloudstic -l verbose",

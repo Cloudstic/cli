@@ -16,13 +16,22 @@ import (
 	"golang.org/x/oauth2/microsoft"
 )
 
+// OneDriveSourceConfig holds configuration for a OneDrive source.
+type OneDriveSourceConfig struct {
+	ClientID        string // empty uses built-in OAuth client
+	TokenPath       string // where the OAuth token is cached
+	ExcludePatterns []string
+}
+
 type OneDriveSource struct {
 	Client  *http.Client
 	account string // cached user principal name; populated lazily by Info()
 	exclude *ExcludeMatcher
 }
 
-func NewOneDriveSource(clientID, tokenPath string, excludePatterns ...string) (*OneDriveSource, error) {
+// NewOneDriveSource creates a new OneDriveSource from the given config.
+func NewOneDriveSource(cfg OneDriveSourceConfig) (*OneDriveSource, error) {
+	clientID := cfg.ClientID
 	if clientID == "" {
 		clientID = defaultOneDriveClientID
 	}
@@ -34,17 +43,17 @@ func NewOneDriveSource(clientID, tokenPath string, excludePatterns ...string) (*
 		Endpoint: microsoft.AzureADEndpoint("common"),
 	}
 
-	token, err := loadToken(tokenPath)
+	token, err := loadToken(cfg.TokenPath)
 	if err != nil {
 		token, err = exchangeWithLocalServer(conf, oauth2.AccessTypeOffline)
 		if err != nil {
 			return nil, fmt.Errorf("onedrive auth: %w", err)
 		}
-		_ = saveTokenJSON(tokenPath, token)
+		_ = saveTokenJSON(cfg.TokenPath, token)
 	}
 
 	client := conf.Client(ctx, token)
-	return &OneDriveSource{Client: client, exclude: NewExcludeMatcher(excludePatterns)}, nil
+	return &OneDriveSource{Client: client, exclude: NewExcludeMatcher(cfg.ExcludePatterns)}, nil
 }
 
 func (s *OneDriveSource) Info() core.SourceInfo {

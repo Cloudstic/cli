@@ -80,7 +80,7 @@ type FileChange struct {
 	Meta core.FileMeta
 }
 
-// IncrementalSource extends Source with delta-based walking using a change
+// IncrementalSource
 // token stored in the snapshot. On the first run (empty token) the engine
 // falls back to the full Walk; on subsequent runs only changed entries are
 // emitted.

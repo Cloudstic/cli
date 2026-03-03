@@ -20,8 +20,9 @@ import (
 type RestoreOption func(*restoreConfig)
 
 type restoreConfig struct {
-	dryRun  bool
-	verbose bool
+	dryRun     bool
+	verbose    bool
+	pathFilter string
 }
 
 // WithRestoreDryRun resolves the snapshot and reports what would be restored without writing the archive.
@@ -32,6 +33,13 @@ func WithRestoreDryRun() RestoreOption {
 // WithRestoreVerbose logs each file/dir being written.
 func WithRestoreVerbose() RestoreOption {
 	return func(cfg *restoreConfig) { cfg.verbose = true }
+}
+
+// WithRestorePath limits the restore to files matching the given path.
+// If the path ends with "/", all files under that subtree are included.
+// Otherwise, only the file with the exact path is restored.
+func WithRestorePath(p string) RestoreOption {
+	return func(cfg *restoreConfig) { cfg.pathFilter = p }
 }
 
 // RestoreResult holds the outcome of a restore operation.
@@ -88,6 +96,10 @@ func (rm *RestoreManager) Run(ctx context.Context, w io.Writer, snapshotRef stri
 	}
 
 	sorted := topoSort(byID)
+
+	if cfg.pathFilter != "" {
+		sorted = filterByPath(sorted, byID, cfg.pathFilter)
+	}
 
 	if cfg.dryRun {
 		return rm.dryRunRestore(sorted, byID, snapshotRef, snap.Root), nil
@@ -227,6 +239,60 @@ func buildZipPath(meta core.FileMeta, byID map[string]core.FileMeta) string {
 		parts[i], parts[j] = parts[j], parts[i]
 	}
 	return path.Join(parts...)
+}
+
+// filterByPath returns only the entries whose zip path matches the given filter.
+// If the filter ends with "/", it matches all entries under that subtree.
+// Otherwise it matches only the entry with the exact path.
+// Ancestor directories of matched entries are always included.
+func filterByPath(sorted []core.FileMeta, byID map[string]core.FileMeta, pathFilter string) []core.FileMeta {
+	isSubtree := strings.HasSuffix(pathFilter, "/")
+	prefix := pathFilter
+	if isSubtree {
+		prefix = strings.TrimSuffix(pathFilter, "/")
+	}
+
+	// Build a set of zip paths for each entry.
+	zipPaths := make(map[string]string, len(sorted))
+	for _, meta := range sorted {
+		zipPaths[meta.FileID] = buildZipPath(meta, byID)
+	}
+
+	// Determine which entries are matched.
+	matched := make(map[string]bool)
+	for _, meta := range sorted {
+		p := zipPaths[meta.FileID]
+		if isSubtree {
+			// Match the directory itself and anything under it.
+			if p == prefix || strings.HasPrefix(p, prefix+"/") {
+				matched[meta.FileID] = true
+			}
+		} else {
+			if p == pathFilter {
+				matched[meta.FileID] = true
+			}
+		}
+	}
+
+	// Include ancestor directories of matched entries.
+	for _, meta := range sorted {
+		if !matched[meta.FileID] {
+			continue
+		}
+		for _, parentID := range meta.Parents {
+			if _, ok := byID[parentID]; ok {
+				matched[parentID] = true
+			}
+		}
+	}
+
+	var filtered []core.FileMeta
+	for _, meta := range sorted {
+		if matched[meta.FileID] {
+			filtered = append(filtered, meta)
+		}
+	}
+	return filtered
 }
 
 // ---------------------------------------------------------------------------

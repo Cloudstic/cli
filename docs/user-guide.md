@@ -244,9 +244,75 @@ cloudstic backup -source local -source-path ~/Documents -dry-run
 | `-drive-id` | | Shared drive ID for Google Drive (omit for My Drive) |
 | `-root-folder` | | Root folder ID for Google Drive (defaults to entire drive) |
 | `-tag` | | Tag to apply to the snapshot (repeatable) |
+|| `-exclude` | | Exclude pattern using gitignore syntax (repeatable) |
+| `-exclude-file` | | Path to file containing exclude patterns, one per line |
 | `-dry-run` | `false` | Scan source and report changes without writing to the store |
 
 The `gdrive-changes` and `onedrive-changes` source types use their respective change/delta APIs for faster incremental backups after the first full backup.
+
+#### Exclude patterns
+
+You can exclude files and directories from the backup using gitignore-style patterns. This works with all source types — local, SFTP, Google Drive, and OneDrive. This is essential for skipping development directories that contain `.git/`, `node_modules/`, build artifacts, etc.
+
+```bash
+# Exclude specific directories and file types
+cloudstic backup -source local -source-path ~/project \
+  -exclude ".git/" -exclude "node_modules/" -exclude "*.tmp" -exclude "*.log"
+
+# Works with cloud sources too
+cloudstic backup -source gdrive-changes -exclude "node_modules/" -exclude "*.tmp"
+
+# Load patterns from a file
+cloudstic backup -source local -source-path ~/project -exclude-file ~/project/.backupignore
+
+# Combine both
+cloudstic backup -source local -source-path ~/project \
+  -exclude "build/" -exclude-file .backupignore
+```
+
+**Supported pattern syntax:**
+
+| Pattern | Meaning |
+|---------|--------|
+| `*.tmp` | Exclude all `.tmp` files in any directory |
+| `.git/` | Exclude the `.git` directory (trailing `/` = directories only) |
+| `node_modules/` | Exclude `node_modules` directories anywhere in the tree |
+| `**/*.log` | Exclude all `.log` files at any depth |
+| `build/output` | Exclude `build/output` anchored at root (patterns with `/` are anchored) |
+| `!important.log` | Re-include `important.log` even if a previous pattern excluded `*.log` |
+| `# comment` | Lines starting with `#` are comments (ignored) |
+
+**Exclude file format** (`-exclude-file`):
+
+```
+# Development artifacts
+.git/
+node_modules/
+__pycache__/
+
+# Build output
+build/
+dist/
+*.o
+
+# Temporary files
+*.tmp
+*.swp
+*~
+
+# But keep this one
+!important.tmp
+```
+
+Patterns are evaluated in order; the last matching rule wins. This allows negation (`!`) to override earlier excludes.
+
+For cloud sources (Google Drive, OneDrive), exclude patterns are matched against the full path of each file as it appears in the drive (e.g. `Documents/Reports/draft.docx`).
+
+> **Automatic rescan when exclude patterns change**
+>
+> When using incremental sources (`gdrive-changes`, `onedrive-changes`), Cloudstic stores a hash of the active exclude patterns in each snapshot. If the patterns change between runs (added, removed, or reordered), the next backup automatically performs a full rescan instead of an incremental one. This ensures the new patterns are applied comprehensively. The full rescan also captures a fresh change token, so subsequent runs resume incremental mode from that point.
+>
+> No manual intervention is required — just update your `-exclude` / `-exclude-file` flags and run the backup as usual.
 
 ---
 
@@ -632,13 +698,24 @@ Back up files from a local filesystem path. No authentication or environment var
 
 ```bash
 cloudstic backup -source local -source-path /path/to/directory
+
+# Skip common development directories
+cloudstic backup -source local -source-path ~/project \
+  -exclude ".git/" -exclude "node_modules/" -exclude "*.tmp"
+
+# Use an exclude file
+cloudstic backup -source local -source-path ~/project -exclude-file .backupignore
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-source-path` | `.` | Root directory to back up |
+| `-exclude` | | Exclude pattern, gitignore syntax (repeatable) |
+| `-exclude-file` | | File containing exclude patterns (one per line) |
 
 Cloudstic walks the directory recursively. Symbolic links are not followed. File permissions are not preserved — only name, size, modification time, and content are captured.
+
+See [Exclude patterns](#exclude-patterns) for the full pattern syntax reference.
 
 ### SFTP Source
 
@@ -671,6 +748,8 @@ cloudstic backup -source sftp -source-path /home/user/files \
 If neither `-sftp-password` nor `-sftp-key` is provided, Cloudstic will fall back to your `SSH_AUTH_SOCK` agent.
 
 Cloudstic walks the remote directory recursively. File permissions are not preserved — only name, size, modification time, and content are captured.
+
+The `-exclude` and `-exclude-file` flags work with SFTP sources. See [Exclude patterns](#exclude-patterns) for the full pattern syntax.
 
 ### Google Drive
 

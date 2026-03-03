@@ -22,10 +22,17 @@ func (s *LocalSource) Info() core.SourceInfo {
 // LocalSource implements Source for local filesystem
 type LocalSource struct {
 	RootPath string
+	exclude  *ExcludeMatcher
 }
 
-func NewLocalSource(rootPath string) *LocalSource {
-	return &LocalSource{RootPath: rootPath}
+// NewLocalSource creates a local filesystem source rooted at rootPath.
+// Optional exclude patterns use gitignore-style syntax to skip files and
+// directories during Walk and Size.
+func NewLocalSource(rootPath string, excludePatterns ...string) *LocalSource {
+	return &LocalSource{
+		RootPath: rootPath,
+		exclude:  NewExcludeMatcher(excludePatterns),
+	}
 }
 
 func (s *LocalSource) Walk(ctx context.Context, callback func(core.FileMeta) error) error {
@@ -40,6 +47,14 @@ func (s *LocalSource) Walk(ctx context.Context, callback func(core.FileMeta) err
 		}
 
 		if relPath == "." {
+			return nil
+		}
+
+		// Apply exclude patterns.
+		if !s.exclude.Empty() && s.exclude.Excludes(filepath.ToSlash(relPath), info.IsDir()) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 
@@ -71,12 +86,23 @@ func (s *LocalSource) Walk(ctx context.Context, callback func(core.FileMeta) err
 
 func (s *LocalSource) Size(ctx context.Context) (*SourceSize, error) {
 	var totalBytes, totalFiles int64
-	err := filepath.Walk(s.RootPath, func(_ string, info os.FileInfo, err error) error {
+	err := filepath.Walk(s.RootPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if !s.exclude.Empty() {
+			relPath, relErr := filepath.Rel(s.RootPath, path)
+			if relErr == nil && relPath != "." {
+				if s.exclude.Excludes(filepath.ToSlash(relPath), info.IsDir()) {
+					if info.IsDir() {
+						return filepath.SkipDir
+					}
+					return nil
+				}
+			}
 		}
 		if !info.IsDir() {
 			totalBytes += info.Size()

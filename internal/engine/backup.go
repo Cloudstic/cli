@@ -12,9 +12,12 @@ import (
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
+	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/store"
 )
+
+var backupLog = logger.New("backup", logger.ColorGreen)
 
 // backupStats holds atomic counters accumulated during a backup run.
 type backupStats struct {
@@ -33,11 +36,12 @@ type backupStats struct {
 type BackupOption func(*backupConfig)
 
 type backupConfig struct {
-	verbose   bool
-	dryRun    bool
-	tags      []string
-	generator string
-	meta      map[string]string
+	verbose     bool
+	dryRun      bool
+	tags        []string
+	generator   string
+	meta        map[string]string
+	excludeHash string
 }
 
 // WithBackupDryRun scans the source and reports what would change without writing to the store.
@@ -63,6 +67,12 @@ func WithGenerator(name string) BackupOption {
 // WithMeta adds a key-value pair to the snapshot metadata.
 func WithMeta(key, value string) BackupOption {
 	return func(cfg *backupConfig) { cfg.meta[key] = value }
+}
+
+// WithExcludeHash records the hash of the active exclude patterns. When this
+// differs from the previous snapshot the engine forces a full rescan.
+func WithExcludeHash(hash string) BackupOption {
+	return func(cfg *backupConfig) { cfg.excludeHash = hash }
 }
 
 // BackupManager orchestrates a backup: scanning a source for changes, uploading
@@ -175,6 +185,23 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 	if prevSnap != nil {
 		oldRoot = prevSnap.Root
 		changeToken = prevSnap.ChangeToken
+	}
+
+	// Force a full rescan when exclude patterns changed since the last
+	// snapshot. Clearing the change token makes scanSource fall through
+	// to the full Walk path, which also captures a fresh token for the
+	// next incremental run.
+	if changeToken != "" && prevSnap != nil {
+		oldHash := prevSnap.ExcludeHash
+		newHash := bm.cfg.excludeHash
+		if oldHash != newHash {
+			backupLog.Debugf("exclude patterns changed (old=%q new=%q), forcing full rescan", oldHash, newHash)
+			changeToken = ""
+		} else if newHash != "" {
+			backupLog.Debugf("exclude patterns unchanged (hash=%q), continuing incremental", newHash)
+		}
+	} else if prevSnap == nil {
+		backupLog.Debugf("no previous snapshot found, running full scan")
 	}
 
 	newRoot, pending, totalBytes, newToken, usedFullScan, err := bm.scanSource(ctx, oldRoot, changeToken)
@@ -290,6 +317,7 @@ func (bm *BackupManager) saveSnapshot(ctx context.Context, root string, seq int,
 		Tags:        bm.cfg.tags,
 		Meta:        meta,
 		ChangeToken: changeToken,
+		ExcludeHash: bm.cfg.excludeHash,
 	}
 
 	hash, snapData, err := core.ComputeJSONHash(&snap)

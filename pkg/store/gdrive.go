@@ -27,13 +27,14 @@ type GDriveSource struct {
 	DriveID      string // shared drive ID; empty means "My Drive"
 	RootFolderID string // if empty, defaults to "root" (entire drive)
 	Account      string // Google account email; populated automatically if empty
+	exclude      *ExcludeMatcher
 }
 
 // NewGDriveSource creates a new GDriveSource. If credsPath is non-empty it is
 // used as a Google credentials JSON file (user OAuth or service-account). When
 // credsPath is empty the built-in OAuth client credentials are used instead.
 // tokenPath is where the OAuth token will be cached.
-func NewGDriveSource(credsPath, tokenPath string) (*GDriveSource, error) {
+func NewGDriveSource(credsPath, tokenPath string, excludePatterns ...string) (*GDriveSource, error) {
 	ctx := context.Background()
 
 	var srv *drive.Service
@@ -76,7 +77,7 @@ func NewGDriveSource(credsPath, tokenPath string) (*GDriveSource, error) {
 		}
 	}
 
-	return &GDriveSource{Service: srv}, nil
+	return &GDriveSource{Service: srv, exclude: NewExcludeMatcher(excludePatterns)}, nil
 }
 
 func (s *GDriveSource) Info() core.SourceInfo {
@@ -217,11 +218,14 @@ func (s *GDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) er
 	// Folders are topo-sorted (parents before children) so the parent
 	// path is always known when we compute the child path.
 	pathMap := make(map[string]string, len(folders))
+	// excludedPaths tracks Drive file IDs of excluded directories so
+	// their children are also skipped.
+	excludedPaths := make(map[string]bool)
 
 	// Emit folders first (topo-sorted so parents before children).
 	folders = topoSortFolders(folders)
 	for _, f := range folders {
-		if err := s.visitEntryWithPath(f, pathMap, callback); err != nil {
+		if err := s.visitEntryWithPath(f, pathMap, excludedPaths, callback); err != nil {
 			return err
 		}
 	}
@@ -250,7 +254,7 @@ func (s *GDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) er
 		}
 
 		for _, f := range r.Files {
-			if err := s.visitEntryWithPath(f, pathMap, callback); err != nil {
+			if err := s.visitEntryWithPath(f, pathMap, excludedPaths, callback); err != nil {
 				return err
 			}
 		}
@@ -296,7 +300,7 @@ func topoSortFolders(folders []*drive.File) []*drive.File {
 	return sorted
 }
 
-func (s *GDriveSource) visitEntryWithPath(f *drive.File, pathMap map[string]string, callback func(core.FileMeta) error) error {
+func (s *GDriveSource) visitEntryWithPath(f *drive.File, pathMap map[string]string, excludedPaths map[string]bool, callback func(core.FileMeta) error) error {
 	meta := s.toFileMeta(f)
 
 	// Compute full path from parent path map.
@@ -308,6 +312,25 @@ func (s *GDriveSource) visitEntryWithPath(f *drive.File, pathMap map[string]stri
 	}
 	meta.Paths = []string{p}
 	pathMap[f.Id] = p
+
+	// Skip entries under an already-excluded directory.
+	if len(f.Parents) > 0 && excludedPaths[f.Parents[0]] {
+		if meta.Type == core.FileTypeFolder {
+			excludedPaths[f.Id] = true
+		}
+		return nil
+	}
+
+	// Apply exclude patterns.
+	if !s.exclude.Empty() {
+		isDir := meta.Type == core.FileTypeFolder
+		if s.exclude.Excludes(p, isDir) {
+			if isDir {
+				excludedPaths[f.Id] = true
+			}
+			return nil
+		}
+	}
 
 	return callback(meta)
 }

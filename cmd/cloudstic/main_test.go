@@ -439,6 +439,103 @@ func TestCLI_EndToEnd_Matrix(t *testing.T) {
 	}
 }
 
+// zipFileExists checks if a file exists in the zip archive.
+func zipFileExists(t *testing.T, zipPath, name string) bool {
+	t.Helper()
+	zr, err := zip.OpenReader(zipPath)
+	if err != nil {
+		t.Fatalf("open zip %s: %v", zipPath, err)
+	}
+	defer func() { _ = zr.Close() }()
+	for _, f := range zr.File {
+		if f.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// TestCLI_BackupExcludePatterns tests -exclude and -exclude-file flags.
+func TestCLI_BackupExcludePatterns(t *testing.T) {
+	if !shouldRun(Hermetic) {
+		t.Skip("skipping hermetic test")
+	}
+
+	bin := buildBinary(t)
+	srcDir := t.TempDir()
+	storeDir := t.TempDir()
+	restoreDir := t.TempDir()
+
+	// Create source files.
+	for _, d := range []string{"src", ".git/objects", "node_modules/pkg", "logs"} {
+		writeFile(t, srcDir, filepath.Join(d, ".keep"), "")
+	}
+	writeFile(t, srcDir, "src/main.go", "package main")
+	writeFile(t, srcDir, "src/debug.log", "log line")
+	writeFile(t, srcDir, ".git/config", "[core]")
+	writeFile(t, srcDir, ".git/objects/abc", "blob")
+	writeFile(t, srcDir, "node_modules/pkg/index.js", "exports")
+	writeFile(t, srcDir, "logs/app.log", "log")
+	writeFile(t, srcDir, "README.md", "hello")
+	writeFile(t, srcDir, "notes.tmp", "temp")
+
+	// Create an exclude file.
+	excludeFilePath := filepath.Join(srcDir, ".backupignore")
+	if err := os.WriteFile(excludeFilePath, []byte("# Skip logs dir\nlogs/\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	password := "test-exclude-pass"
+	storeArgs := []string{"--store", "local", "--store-path", storeDir}
+	baseArgs := append(storeArgs, "--encryption-password", password)
+
+	// Init repo.
+	run(t, bin, append([]string{"init"}, baseArgs...)...)
+
+	// Backup with -exclude flags and -exclude-file.
+	backupArgs := append([]string{"backup",
+		"-source", "local",
+		"-source-path", srcDir,
+		"-exclude", ".git/",
+		"-exclude", "node_modules/",
+		"-exclude", "*.tmp",
+		"-exclude", "*.log",
+		"-exclude-file", excludeFilePath,
+	}, baseArgs...)
+	run(t, bin, backupArgs...)
+
+	// Restore and verify.
+	zipPath := filepath.Join(restoreDir, "exclude_restore.zip")
+	restoreArgs := append([]string{"restore", "--output", zipPath}, baseArgs...)
+	run(t, bin, restoreArgs...)
+
+	// Files that SHOULD be in the restore.
+	for _, f := range []string{"src/main.go", "README.md"} {
+		if !zipFileExists(t, zipPath, f) {
+			t.Errorf("expected %q in restore archive", f)
+		}
+	}
+
+	// Files that should NOT be in the restore.
+	for _, f := range []string{
+		".git/config", ".git/objects/abc",
+		"node_modules/pkg/index.js",
+		"notes.tmp", "src/debug.log", "logs/app.log",
+	} {
+		if zipFileExists(t, zipPath, f) {
+			t.Errorf("excluded file %q should NOT be in restore archive", f)
+		}
+	}
+
+	// Verify included file contents.
+	if got := readZipFile(t, zipPath, "src/main.go"); got != "package main" {
+		t.Errorf("src/main.go content = %q, want %q", got, "package main")
+	}
+	if got := readZipFile(t, zipPath, "README.md"); got != "hello" {
+		t.Errorf("README.md content = %q, want %q", got, "hello")
+	}
+}
+
 // readZipFile reads a single file's content from a zip archive.
 func readZipFile(t *testing.T, zipPath, name string) string {
 	t.Helper()

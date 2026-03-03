@@ -16,8 +16,8 @@ type GDriveChangeSource struct {
 	GDriveSource
 }
 
-func NewGDriveChangeSource(credsPath, tokenPath string) (*GDriveChangeSource, error) {
-	base, err := NewGDriveSource(credsPath, tokenPath)
+func NewGDriveChangeSource(credsPath, tokenPath string, excludePatterns ...string) (*GDriveChangeSource, error) {
+	base, err := NewGDriveSource(credsPath, tokenPath, excludePatterns...)
 	if err != nil {
 		return nil, err
 	}
@@ -82,12 +82,45 @@ func (s *GDriveChangeSource) WalkChanges(ctx context.Context, token string, call
 			// before children, ensuring resolveParents sees up-to-date refs.
 			folderChanges = topoSortFolderChanges(folderChanges)
 
+			// Resolve paths and apply exclude filtering.
+			pathMap := make(map[string]string)
+			excludedIDs := make(map[string]bool)
+			hasExclude := !s.exclude.Empty()
+
+			for i := range folderChanges {
+				fc := &folderChanges[i]
+				if fc.Type != ChangeUpsert {
+					continue
+				}
+				p, err := s.resolveChangePath(ctx, fc.Meta, pathMap)
+				if err == nil && p != "" {
+					fc.Meta.Paths = []string{p}
+					pathMap[fc.Meta.FileID] = p
+				}
+			}
+			for i := range fileChanges {
+				fc := &fileChanges[i]
+				if fc.Type != ChangeUpsert {
+					continue
+				}
+				p, err := s.resolveChangePath(ctx, fc.Meta, pathMap)
+				if err == nil && p != "" {
+					fc.Meta.Paths = []string{p}
+				}
+			}
+
 			for _, fc := range folderChanges {
+				if hasExclude && fc.Type == ChangeUpsert && s.shouldExcludeChange(fc, excludedIDs) {
+					continue
+				}
 				if err := callback(fc); err != nil {
 					return "", err
 				}
 			}
 			for _, fc := range fileChanges {
+				if hasExclude && fc.Type == ChangeUpsert && s.shouldExcludeChange(fc, excludedIDs) {
+					continue
+				}
 				if err := callback(fc); err != nil {
 					return "", err
 				}
@@ -127,6 +160,76 @@ func topoSortFolderChanges(changes []FileChange) []FileChange {
 		visit(i)
 	}
 	return sorted
+}
+
+// resolveChangePath computes the full path for a changed entry by looking up
+// its parent in pathMap. If the parent is not in the map, it walks up the
+// Drive hierarchy via API calls and caches every resolved segment.
+func (s *GDriveChangeSource) resolveChangePath(ctx context.Context, meta core.FileMeta, pathMap map[string]string) (string, error) {
+	if len(meta.Parents) == 0 {
+		return meta.Name, nil
+	}
+	parentPath, err := s.resolveDrivePath(ctx, meta.Parents[0], pathMap)
+	if err != nil {
+		return "", err
+	}
+	if parentPath == "" {
+		return meta.Name, nil
+	}
+	return parentPath + "/" + meta.Name, nil
+}
+
+// resolveDrivePath resolves a Drive folder ID to its full path by walking
+// up the parent chain via the Files.Get API. Results are cached in pathMap.
+func (s *GDriveChangeSource) resolveDrivePath(ctx context.Context, folderID string, pathMap map[string]string) (string, error) {
+	if p, ok := pathMap[folderID]; ok {
+		return p, nil
+	}
+
+	call := s.Service.Files.Get(folderID).
+		Fields("id, name, parents").
+		SupportsAllDrives(true)
+	f, err := driveCallWithRetry(ctx, func() (*drive.File, error) { return call.Do() })
+	if err != nil {
+		return "", fmt.Errorf("resolve drive path for %s: %w", folderID, err)
+	}
+
+	p := f.Name
+	if len(f.Parents) > 0 {
+		parentPath, err := s.resolveDrivePath(ctx, f.Parents[0], pathMap)
+		if err != nil {
+			return "", err
+		}
+		if parentPath != "" {
+			p = parentPath + "/" + f.Name
+		}
+	}
+	pathMap[folderID] = p
+	return p, nil
+}
+
+// shouldExcludeChange checks whether a change entry should be excluded.
+// For excluded directories, their ID is added to excludedIDs so children
+// are also suppressed.
+func (s *GDriveChangeSource) shouldExcludeChange(fc FileChange, excludedIDs map[string]bool) bool {
+	// Check if parent is excluded.
+	if len(fc.Meta.Parents) > 0 && excludedIDs[fc.Meta.Parents[0]] {
+		if fc.Meta.Type == core.FileTypeFolder {
+			excludedIDs[fc.Meta.FileID] = true
+		}
+		return true
+	}
+	if len(fc.Meta.Paths) == 0 {
+		return false // can't evaluate without a path
+	}
+	isDir := fc.Meta.Type == core.FileTypeFolder
+	if s.exclude.Excludes(fc.Meta.Paths[0], isDir) {
+		if isDir {
+			excludedIDs[fc.Meta.FileID] = true
+		}
+		return true
+	}
+	return false
 }
 
 func (s *GDriveChangeSource) changeToFileChange(ch *drive.Change) FileChange {

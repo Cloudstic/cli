@@ -19,9 +19,10 @@ import (
 type OneDriveSource struct {
 	Client  *http.Client
 	account string // cached user principal name; populated lazily by Info()
+	exclude *ExcludeMatcher
 }
 
-func NewOneDriveSource(clientID, tokenPath string) (*OneDriveSource, error) {
+func NewOneDriveSource(clientID, tokenPath string, excludePatterns ...string) (*OneDriveSource, error) {
 	if clientID == "" {
 		clientID = defaultOneDriveClientID
 	}
@@ -43,7 +44,7 @@ func NewOneDriveSource(clientID, tokenPath string) (*OneDriveSource, error) {
 	}
 
 	client := conf.Client(ctx, token)
-	return &OneDriveSource{Client: client}, nil
+	return &OneDriveSource{Client: client, exclude: NewExcludeMatcher(excludePatterns)}, nil
 }
 
 func (s *OneDriveSource) Info() core.SourceInfo {
@@ -127,7 +128,8 @@ type graphFolder struct {
 }
 
 type graphParentRef struct {
-	ID string `json:"id"`
+	ID   string `json:"id"`
+	Path string `json:"path"` // e.g. "/drive/root:/Documents/Reports"
 }
 
 type graphPackage struct {
@@ -239,6 +241,14 @@ func (s *OneDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) 
 				}
 				meta.Paths = []string{p}
 				pathMap[item.ID] = p
+
+				// Apply exclude patterns.
+				if !s.exclude.Empty() {
+					isDir := meta.Type == core.FileTypeFolder
+					if s.exclude.Excludes(p, isDir) {
+						continue // skip entry; excluded dirs won't be pushed onto stack
+					}
+				}
 
 				if err := callback(meta); err != nil {
 					return err

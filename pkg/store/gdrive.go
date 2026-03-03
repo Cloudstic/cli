@@ -19,34 +19,41 @@ import (
 	"google.golang.org/api/option"
 )
 
+// GDriveSourceConfig holds configuration for a Google Drive source.
+type GDriveSourceConfig struct {
+	CredsPath       string // path to credentials JSON; empty uses built-in OAuth client
+	TokenPath       string // where the OAuth token is cached
+	DriveID         string // shared drive ID; empty means "My Drive"
+	RootFolderID    string // restrict to a specific folder; empty means entire drive
+	ExcludePatterns []string
+}
+
 // GDriveSource implements Source for Google Drive. By default it backs up the
-// entire "My Drive" root. Set DriveID to back up a shared drive instead, and/or
-// set RootFolderID to restrict to a specific folder within the selected drive.
+// entire "My Drive" root. Set DriveID in GDriveSourceConfig to back up a
+// shared drive instead, and/or set RootFolderID to restrict to a specific
+// folder within the selected drive.
 type GDriveSource struct {
 	Service      *drive.Service
 	DriveID      string // shared drive ID; empty means "My Drive"
 	RootFolderID string // if empty, defaults to "root" (entire drive)
-	Account      string // Google account email; populated automatically if empty
+	account      string // Google account email; populated automatically
 	exclude      *ExcludeMatcher
 }
 
-// NewGDriveSource creates a new GDriveSource. If credsPath is non-empty it is
-// used as a Google credentials JSON file (user OAuth or service-account). When
-// credsPath is empty the built-in OAuth client credentials are used instead.
-// tokenPath is where the OAuth token will be cached.
-func NewGDriveSource(credsPath, tokenPath string, excludePatterns ...string) (*GDriveSource, error) {
+// NewGDriveSource creates a new GDriveSource from the given config.
+func NewGDriveSource(cfg GDriveSourceConfig) (*GDriveSource, error) {
 	ctx := context.Background()
 
 	var srv *drive.Service
 
-	if credsPath != "" {
-		b, err := os.ReadFile(credsPath)
+	if cfg.CredsPath != "" {
+		b, err := os.ReadFile(cfg.CredsPath)
 		if err != nil {
 			return nil, fmt.Errorf("read credentials file: %w", err)
 		}
 		config, err := google.ConfigFromJSON(b, drive.DriveReadonlyScope)
 		if err == nil {
-			client, err := oauthClient(config, tokenPath)
+			client, err := oauthClient(config, cfg.TokenPath)
 			if err != nil {
 				return nil, err
 			}
@@ -55,7 +62,7 @@ func NewGDriveSource(credsPath, tokenPath string, excludePatterns ...string) (*G
 				return nil, fmt.Errorf("create drive client (user auth): %w", err)
 			}
 		} else {
-			srv, err = drive.NewService(ctx, option.WithCredentialsFile(credsPath))
+			srv, err = drive.NewService(ctx, option.WithCredentialsFile(cfg.CredsPath))
 			if err != nil {
 				return nil, fmt.Errorf("create drive client: %w", err)
 			}
@@ -67,7 +74,7 @@ func NewGDriveSource(credsPath, tokenPath string, excludePatterns ...string) (*G
 			Scopes:       []string{drive.DriveReadonlyScope},
 			Endpoint:     google.Endpoint,
 		}
-		client, err := oauthClient(config, tokenPath)
+		client, err := oauthClient(config, cfg.TokenPath)
 		if err != nil {
 			return nil, err
 		}
@@ -77,11 +84,16 @@ func NewGDriveSource(credsPath, tokenPath string, excludePatterns ...string) (*G
 		}
 	}
 
-	return &GDriveSource{Service: srv, exclude: NewExcludeMatcher(excludePatterns)}, nil
+	return &GDriveSource{
+		Service:      srv,
+		DriveID:      cfg.DriveID,
+		RootFolderID: cfg.RootFolderID,
+		exclude:      NewExcludeMatcher(cfg.ExcludePatterns),
+	}, nil
 }
 
 func (s *GDriveSource) Info() core.SourceInfo {
-	account := s.Account
+	account := s.account
 	if account == "" {
 		if about, err := s.Service.About.Get().Fields("user(emailAddress)").Do(); err == nil && about.User != nil {
 			account = about.User.EmailAddress

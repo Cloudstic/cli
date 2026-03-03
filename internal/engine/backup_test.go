@@ -11,6 +11,81 @@ import (
 	"github.com/cloudstic/cli/pkg/store"
 )
 
+// TestBackupManager_ResolvesPathsForOpaqueIDs verifies that when a source
+// emits FileMeta without Paths (e.g. incremental/changes sources with opaque
+// cloud IDs), the backup engine resolves Paths by walking the HAMT parent chain.
+func TestBackupManager_ResolvesPathsForOpaqueIDs(t *testing.T) {
+	ctx := context.Background()
+	src := NewMockSource()
+	dest := NewMockStore()
+
+	// Simulate a cloud drive tree with opaque IDs and NO Paths set.
+	// The backup engine should resolve them.
+	//   Documents/           (FOLDER_A)
+	//   Documents/Photos/    (FOLDER_B)
+	//   Documents/Photos/pic.jpg  (FILE_C)
+	src.Files["FOLDER_A"] = MockFile{
+		Meta: core.FileMeta{
+			FileID: "FOLDER_A",
+			Name:   "Documents",
+			Type:   core.FileTypeFolder,
+			Extra:  map[string]interface{}{"mimeType": "folder"},
+		},
+	}
+	src.Files["FOLDER_B"] = MockFile{
+		Meta: core.FileMeta{
+			FileID:  "FOLDER_B",
+			Name:    "Photos",
+			Type:    core.FileTypeFolder,
+			Parents: []string{"FOLDER_A"},
+			Extra:   map[string]interface{}{"mimeType": "folder"},
+		},
+	}
+	src.Files["FILE_C"] = MockFile{
+		Meta: core.FileMeta{
+			FileID:  "FILE_C",
+			Name:    "pic.jpg",
+			Parents: []string{"FOLDER_B"},
+		},
+		Content: []byte("jpeg"),
+	}
+
+	mgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil)
+	result, err := mgr.Run(ctx)
+	if err != nil {
+		t.Fatalf("Backup failed: %v", err)
+	}
+
+	// Read back the stored FileMeta and verify Paths were resolved.
+	readStore := store.NewCompressedStore(dest)
+	tree := hamt.NewTree(readStore)
+
+	checkPath := func(fileID, expectedPath string) {
+		t.Helper()
+		ref, err := tree.Lookup(result.Root, fileID)
+		if err != nil || ref == "" {
+			t.Fatalf("Lookup %s: ref=%q err=%v", fileID, ref, err)
+		}
+		data, err := readStore.Get(ctx, ref)
+		if err != nil {
+			t.Fatalf("Get %s: %v", ref, err)
+		}
+		var fm core.FileMeta
+		if err := json.Unmarshal(data, &fm); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if len(fm.Paths) == 0 {
+			t.Errorf("%s: Paths is empty, expected %q", fileID, expectedPath)
+		} else if fm.Paths[0] != expectedPath {
+			t.Errorf("%s: Paths[0]=%q, expected %q", fileID, fm.Paths[0], expectedPath)
+		}
+	}
+
+	checkPath("FOLDER_A", "Documents")
+	checkPath("FOLDER_B", "Documents/Photos")
+	checkPath("FILE_C", "Documents/Photos/pic.jpg")
+}
+
 func TestBackupManager_Run(t *testing.T) {
 	ctx := context.Background()
 	src := NewMockSource()

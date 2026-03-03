@@ -265,6 +265,32 @@ func TestCLI_EndToEnd_Matrix(t *testing.T) {
 					}
 				}
 
+				// 8a. Partial Restore — single file
+				partialFilePath := filepath.Join(restoreDir, "partial_file.zip")
+				partialFileArgs := append([]string{"restore"}, baseEncArgs...)
+				partialFileArgs = append(partialFileArgs, "-output", partialFilePath, "-path", "file1.txt")
+				run(t, bin, partialFileArgs...)
+
+				if got := readZipFile(t, partialFilePath, "file1.txt"); got != "hello world" {
+					t.Errorf("Partial restore single file mismatch: got %q, want %q", got, "hello world")
+				}
+				// Verify other files are NOT in the zip.
+				assertZipMissing(t, partialFilePath, "file2.txt")
+				assertZipMissing(t, partialFilePath, "subdir/nested.txt")
+
+				// 8b. Partial Restore — subtree
+				partialSubtreePath := filepath.Join(restoreDir, "partial_subtree.zip")
+				partialSubtreeArgs := append([]string{"restore"}, baseEncArgs...)
+				partialSubtreeArgs = append(partialSubtreeArgs, "-output", partialSubtreePath, "-path", "subdir/")
+				run(t, bin, partialSubtreeArgs...)
+
+				if got := readZipFile(t, partialSubtreePath, "subdir/nested.txt"); got != "nested content" {
+					t.Errorf("Partial restore subtree mismatch for subdir/nested.txt: got %q, want %q", got, "nested content")
+				}
+				// Verify root-level files are NOT in the zip.
+				assertZipMissing(t, partialSubtreePath, "file1.txt")
+				assertZipMissing(t, partialSubtreePath, "file2.txt")
+
 				// 9. Forget & Prune
 				forgetArgs := append([]string{"forget", "--keep-last", "1", "--prune"}, baseEncArgs...)
 				out = run(t, bin, forgetArgs...)
@@ -437,6 +463,22 @@ func readZipFile(t *testing.T, zipPath, name string) string {
 	}
 	t.Fatalf("file %s not found in zip %s", name, zipPath)
 	return ""
+}
+
+// assertZipMissing verifies that a file is NOT present in a zip archive.
+func assertZipMissing(t *testing.T, zipPath, name string) {
+	t.Helper()
+	zr, err := zip.OpenReader(zipPath)
+	if err != nil {
+		t.Fatalf("open zip %s: %v", zipPath, err)
+	}
+	defer func() { _ = zr.Close() }()
+	for _, f := range zr.File {
+		if f.Name == name {
+			t.Errorf("file %s should NOT be present in zip %s", name, zipPath)
+			return
+		}
+	}
 }
 
 // extractMnemonic pulls the 24-word BIP39 mnemonic from the recovery key

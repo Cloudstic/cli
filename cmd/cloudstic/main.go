@@ -263,6 +263,7 @@ func printUsage() {
 	t.Command("restore", "[snapshot_id]")
 	t.Flags([][2]string{
 		{"-output <path>", "Output ZIP file path (default: ./restore.zip)"},
+		{"-path <path>", "Restore only the given file or subtree (e.g. Documents/report.pdf or Documents/)"},
 		{"-dry-run", "Show what would be restored without writing the archive"},
 	})
 	t.Blank()
@@ -334,6 +335,8 @@ func printUsage() {
 		"cloudstic list",
 		"cloudstic restore",
 		"cloudstic restore abc123 -output ./my-backup.zip",
+		"cloudstic restore abc123 -path Documents/report.pdf",
+		"cloudstic restore abc123 -path Documents/",
 		"cloudstic backup -source local -source-path ./documents -dry-run",
 		"cloudstic prune -dry-run -verbose",
 	)
@@ -1444,6 +1447,7 @@ func runRestore() {
 	g := addGlobalFlags(rsCmd)
 	output := rsCmd.String("output", "./restore.zip", "Output ZIP file path")
 	dryRun := rsCmd.Bool("dry-run", false, "Show what would be restored without writing the archive")
+	pathFilter := rsCmd.String("path", "", "Restore only the given file or subtree (e.g. Documents/report.pdf or Documents/)")
 
 	_ = rsCmd.Parse(reorderArgs(rsCmd, os.Args[2:]))
 
@@ -1466,6 +1470,9 @@ func runRestore() {
 	}
 	if *g.verbose {
 		restoreOpts = append(restoreOpts, engine.WithRestoreVerbose())
+	}
+	if *pathFilter != "" {
+		restoreOpts = append(restoreOpts, engine.WithRestorePath(*pathFilter))
 	}
 
 	if *dryRun {

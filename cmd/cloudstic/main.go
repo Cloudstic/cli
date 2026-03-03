@@ -428,9 +428,9 @@ func (g *globalFlags) openStore() (store.ObjectStore, []byte, error) {
 	}
 
 	// Build KMS decrypter if a key ARN is provided.
-	var kmsDecrypter store.KMSDecrypter
+	var kmsDecrypter crypto.KMSDecrypter
 	if *g.kmsKeyARN != "" {
-		d, err := store.NewAWSKMSDecrypter(context.Background())
+		d, err := crypto.NewAWSKMSDecrypter(context.Background())
 		if err != nil {
 			return nil, nil, fmt.Errorf("create KMS decrypter: %w", err)
 		}
@@ -546,7 +546,7 @@ func (g *globalFlags) loadKeySlots(rawStore store.ObjectStore) ([]store.KeySlot,
 	return store.LoadKeySlots(rawStore)
 }
 
-func openExistingSlots(slots []store.KeySlot, platformKey []byte, password, recoveryMnemonic string, kmsDecrypter store.KMSDecrypter) ([]byte, error) {
+func openExistingSlots(slots []store.KeySlot, platformKey []byte, password, recoveryMnemonic string, kmsDecrypter crypto.KMSDecrypter) ([]byte, error) {
 	// Try KMS first — this is the preferred path after migration.
 	if kmsDecrypter != nil {
 		if key, err := store.OpenWithKMS(context.Background(), slots, kmsDecrypter); err == nil {
@@ -742,9 +742,9 @@ func runAddRecoveryKey() {
 	}
 	password := *g.encryptionPassword
 
-	var kmsDecrypter store.KMSDecrypter
+	var kmsDecrypter crypto.KMSDecrypter
 	if *g.kmsKeyARN != "" {
-		d, err := store.NewAWSKMSDecrypter(context.Background())
+		d, err := crypto.NewAWSKMSDecrypter(context.Background())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to create KMS decrypter: %v\n", err)
 			os.Exit(1)

@@ -230,6 +230,21 @@ func TestCLI_EndToEnd_Matrix(t *testing.T) {
 					t.Fatalf("Expected tags 'daily, important' in output: %s", out)
 				}
 
+				// 7a. Check repository integrity
+				out = run(t, bin, append([]string{"check"}, baseEncArgs...)...)
+				if !strings.Contains(out, "repository is healthy") {
+					t.Errorf("Expected healthy check output, got: %s", out)
+				}
+
+				// 7b. Check with --read-data for full byte-level verification
+				out = run(t, bin, append([]string{"check", "--read-data"}, baseEncArgs...)...)
+				if !strings.Contains(out, "repository is healthy") {
+					t.Errorf("Expected healthy check --read-data output, got: %s", out)
+				}
+				if !strings.Contains(out, "Snapshots checked:") {
+					t.Errorf("Expected check summary in output, got: %s", out)
+				}
+
 				// 8. Restore Latest -> Validates bits
 				zipPath := filepath.Join(restoreDir, "restore.zip")
 				restoreArgs := append([]string{"restore"}, baseEncArgs...)
@@ -372,6 +387,12 @@ func TestCLI_EndToEnd_Matrix(t *testing.T) {
 					if got := readZipFile(t, unencZipPath, tc.path); got != tc.content {
 						t.Errorf("Unencrypted restore mismatch for %s: got %q, want %q", tc.path, got, tc.content)
 					}
+				}
+
+				// 15e2. Check unencrypted repository integrity
+				out = run(t, bin, append([]string{"check", "--read-data"}, unencStoreArgs...)...)
+				if !strings.Contains(out, "repository is healthy") {
+					t.Errorf("Unencrypted: expected healthy check output, got: %s", out)
 				}
 
 				// 15f. Forget + Prune — verify cleanup works without encryption

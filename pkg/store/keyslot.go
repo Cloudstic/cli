@@ -10,8 +10,6 @@ import (
 	"strings"
 
 	"github.com/cloudstic/cli/pkg/crypto"
-
-	"github.com/jackc/pgx/v5"
 )
 
 // KeySlot is the JSON representation of an encryption key slot stored in B2.
@@ -53,30 +51,6 @@ func LoadKeySlots(s ObjectStore) ([]KeySlot, error) {
 	return slots, nil
 }
 
-// LoadKeySlotsFromDB reads key slots directly from the encryption_key_slots
-// PostgreSQL table via a TxFunc. This is needed for HybridStore because the
-// web writes key slots to this table (not to app.objects).
-func LoadKeySlotsFromDB(db TxFunc) ([]KeySlot, error) {
-	var slots []KeySlot
-	err := db(func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `
-			SELECT slot_type, wrapped_key, COALESCE(label, '') FROM app.encryption_key_slots
-		`)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var s KeySlot
-			if err := rows.Scan(&s.SlotType, &s.WrappedKey, &s.Label); err != nil {
-				return err
-			}
-			slots = append(slots, s)
-		}
-		return rows.Err()
-	})
-	return slots, err
-}
 
 func slotObjectKey(slotType, label string) string {
 	return KeySlotPrefix + slotType + "-" + label
@@ -275,36 +249,10 @@ func writeRecoverySlot(s ObjectStore, masterKey, recoveryKey []byte) error {
 	})
 }
 
-// SyncKeySlots writes the given key slots to the store (best-effort).
-// This is used to keep B2 in sync with the authoritative DB slots so that
-// B2-only mode can find the correct key.
-func SyncKeySlots(s ObjectStore, slots []KeySlot) {
-	for _, slot := range slots {
-		_ = writeSlot(s, slot)
-	}
-}
-
 // HasKeySlots reports whether the store contains any encryption key slots.
 func HasKeySlots(s ObjectStore) bool {
 	keys, err := s.List(context.Background(), KeySlotPrefix)
 	return err == nil && len(keys) > 0
-}
-
-// AutoLoadKeySlots loads key slots from the store, automatically handling
-// HybridStore by trying the database first, then falling back to B2/object store.
-func AutoLoadKeySlots(s ObjectStore) ([]KeySlot, error) {
-	if hybrid, ok := s.(*HybridStore); ok {
-		slots, err := LoadKeySlotsFromDB(hybrid.DB())
-		if err == nil && len(slots) > 0 {
-			SyncKeySlots(hybrid.Store(), slots)
-			return slots, nil
-		}
-		slots, err = LoadKeySlots(hybrid.Store())
-		if err == nil && len(slots) > 0 {
-			return slots, nil
-		}
-	}
-	return LoadKeySlots(s)
 }
 
 // SlotTypes returns the slot types present among the given slots.

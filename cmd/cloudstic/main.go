@@ -25,8 +25,6 @@ import (
 	"github.com/cloudstic/cli/pkg/store"
 	"github.com/moby/term"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jedib0t/go-pretty/v6/list"
 	"github.com/jedib0t/go-pretty/v6/table"
 )
@@ -198,7 +196,7 @@ func printUsage() {
 
 	t.HeadingSub("GLOBAL OPTIONS", "(also settable via env vars)")
 	t.Flags([][2]string{
-		{"-store <type>", ui.Env("Storage backend: local, b2, s3, sftp, hybrid", "CLOUDSTIC_STORE")},
+		{"-store <type>", ui.Env("Storage backend: local, b2, s3, sftp", "CLOUDSTIC_STORE")},
 		{"-store-path <path>", ui.Env("Local/SFTP path or B2/S3 bucket name", "CLOUDSTIC_STORE_PATH")},
 		{"-store-prefix <pfx>", ui.Env("Key prefix for B2/S3 objects", "CLOUDSTIC_STORE_PREFIX")},
 		{"-s3-endpoint <url>", ui.Env("S3 compatible endpoint (for MinIO, R2, etc.)", "CLOUDSTIC_S3_ENDPOINT")},
@@ -210,8 +208,6 @@ func printUsage() {
 		{"-sftp-user <user>", ui.Env("SFTP username", "CLOUDSTIC_SFTP_USER")},
 		{"-sftp-password <pw>", ui.Env("SFTP password", "CLOUDSTIC_SFTP_PASSWORD")},
 		{"-sftp-key <path>", ui.Env("Path to SSH private key", "CLOUDSTIC_SFTP_KEY")},
-		{"-database-url <url>", ui.Env("PostgreSQL URL (hybrid store)", "CLOUDSTIC_DATABASE_URL")},
-		{"-tenant-id <uuid>", ui.Env("Tenant ID for hybrid store RLS", "CLOUDSTIC_TENANT_ID")},
 		{"-verbose", "Log detailed file-level operations"},
 		{"-quiet", "Suppress progress bars (keeps final summary)"},
 		{"-debug", "Log every store request (network calls, timing, sizes)"},
@@ -340,7 +336,6 @@ type globalFlags struct {
 	sourceSFTPUser, sourceSFTPPassword, sourceSFTPKey *string
 	storeSFTPHost, storeSFTPPort                      *string
 	storeSFTPUser, storeSFTPPassword, storeSFTPKey    *string
-	databaseURL, tenantID                             *string
 	encryptionKey, encryptionPassword                 *string
 	recoveryKey                                       *string
 	kmsKeyARN                                         *string
@@ -351,7 +346,7 @@ type globalFlags struct {
 
 func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 	g := &globalFlags{}
-	g.storeType = fs.String("store", envDefault("CLOUDSTIC_STORE", "local"), "store type (local, b2, s3, sftp, hybrid)")
+	g.storeType = fs.String("store", envDefault("CLOUDSTIC_STORE", "local"), "store type (local, b2, s3, sftp)")
 	g.storePath = fs.String("store-path", envDefault("CLOUDSTIC_STORE_PATH", "./backup_store"), "Local/SFTP path or B2/S3 bucket name")
 	g.storePrefix = fs.String("store-prefix", envDefault("CLOUDSTIC_STORE_PREFIX", ""), "Key prefix for B2/S3 objects")
 	g.s3Endpoint = fs.String("s3-endpoint", envDefault("CLOUDSTIC_S3_ENDPOINT", ""), "S3 compatible endpoint URL")
@@ -375,8 +370,6 @@ func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 	g.storeSFTPUser = fs.String("store-sftp-user", "", "Override: SFTP store username")
 	g.storeSFTPPassword = fs.String("store-sftp-password", "", "Override: SFTP store password")
 	g.storeSFTPKey = fs.String("store-sftp-key", "", "Override: SFTP store private key")
-	g.databaseURL = fs.String("database-url", envDefault("CLOUDSTIC_DATABASE_URL", ""), "PostgreSQL URL (required for hybrid store)")
-	g.tenantID = fs.String("tenant-id", envDefault("CLOUDSTIC_TENANT_ID", ""), "Tenant ID for hybrid store RLS")
 	g.encryptionKey = fs.String("encryption-key", envDefault("CLOUDSTIC_ENCRYPTION_KEY", ""), "Platform key (hex-encoded, 32 bytes)")
 	g.encryptionPassword = fs.String("encryption-password", envDefault("CLOUDSTIC_ENCRYPTION_PASSWORD", ""), "Password for password-based encryption")
 	g.recoveryKey = fs.String("recovery-key", envDefault("CLOUDSTIC_RECOVERY_KEY", ""), "Recovery key (BIP39 24-word mnemonic)")
@@ -586,7 +579,7 @@ func runInit() {
 	encrypted := hasEncryptionCreds
 
 	if encrypted {
-	slots, err := store.AutoLoadKeySlots(raw)
+	slots, err := store.LoadKeySlots(raw)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to load key slots: %v\n", err)
 			os.Exit(1)
@@ -607,7 +600,7 @@ func runInit() {
 		}
 
 		if *recovery {
-			slots, err := store.AutoLoadKeySlots(raw)
+			slots, err := store.LoadKeySlots(raw)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to reload key slots: %v\n", err)
 				os.Exit(1)
@@ -700,7 +693,7 @@ func runAddRecoveryKey() {
 		os.Exit(1)
 	}
 
-	slots, err := store.AutoLoadKeySlots(raw)
+	slots, err := store.LoadKeySlots(raw)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load key slots: %v\n", err)
 		os.Exit(1)
@@ -747,8 +740,6 @@ func (g *globalFlags) initObjectStore() (store.ObjectStore, error) {
 			return nil, sftpErr
 		}
 		inner, err = store.NewSFTPStore(cfg, *g.storePath)
-	case "hybrid":
-		inner, err = g.initHybridStore()
 	default:
 		return nil, fmt.Errorf("unsupported store type: %s", *g.storeType)
 	}
@@ -796,73 +787,6 @@ func (g *globalFlags) sftpConfig(host, port, user, pass, key *string) (store.SFT
 		Password:       pw,
 		PrivateKeyPath: k,
 	}, nil
-}
-
-func (g *globalFlags) initHybridStore() (store.ObjectStore, error) {
-	if *g.databaseURL == "" {
-		return nil, fmt.Errorf("--database-url (or CLOUDSTIC_DATABASE_URL) required for hybrid store")
-	}
-	tenantID := *g.tenantID
-	if tenantID == "" {
-		tenantID = extractTenantID(*g.storePrefix)
-	}
-	if tenantID == "" {
-		return nil, fmt.Errorf("--tenant-id (or CLOUDSTIC_TENANT_ID) required for hybrid store; or use --store-prefix backups/<uuid>/")
-	}
-
-	keyID := os.Getenv("B2_KEY_ID")
-	appKey := os.Getenv("B2_APP_KEY")
-	if keyID == "" || appKey == "" {
-		return nil, fmt.Errorf("B2_KEY_ID and B2_APP_KEY env vars required for hybrid store")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	pool, err := pgxpool.New(ctx, *g.databaseURL)
-	if err != nil {
-		return nil, fmt.Errorf("connect to database: %w", err)
-	}
-
-	b2, err := store.NewB2StoreWithPrefix(keyID, appKey, *g.storePath, *g.storePrefix)
-	if err != nil {
-		pool.Close()
-		return nil, err
-	}
-
-	txFunc := newTenantTxFunc(pool, tenantID)
-	return store.NewHybridStore(txFunc, b2), nil
-}
-
-// newTenantTxFunc returns a TxFunc that runs each callback in a PostgreSQL
-// transaction with the RLS tenant_id set.
-func newTenantTxFunc(pool *pgxpool.Pool, tenantID string) store.TxFunc {
-	safe := strings.ReplaceAll(tenantID, "'", "''")
-	return func(fn func(ctx context.Context, tx pgx.Tx) error) error {
-		ctx := context.Background()
-		tx, err := pool.Begin(ctx)
-		if err != nil {
-			return fmt.Errorf("begin tx: %w", err)
-		}
-		defer tx.Rollback(ctx) //nolint:errcheck
-
-		if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL cloudstic.tenant_id = '%s'", safe)); err != nil {
-			return fmt.Errorf("set tenant_id: %w", err)
-		}
-		if err := fn(ctx, tx); err != nil {
-			return err
-		}
-		return tx.Commit(ctx)
-	}
-}
-
-// extractTenantID parses a tenant UUID from a store prefix like "backups/<uuid>/".
-func extractTenantID(prefix string) string {
-	prefix = strings.TrimSuffix(prefix, "/")
-	parts := strings.Split(prefix, "/")
-	if len(parts) >= 2 && parts[0] == "backups" {
-		return parts[1]
-	}
-	return ""
 }
 
 func initSource(sourceType, sourcePath, driveID, rootFolder string, g *globalFlags) (store.Source, error) {

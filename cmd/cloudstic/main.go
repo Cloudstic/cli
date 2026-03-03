@@ -158,6 +158,8 @@ func runCmd(cmd string) int {
 		runBreakLock()
 	case "add-recovery-key":
 		runAddRecoveryKey()
+	case "check":
+		runCheck()
 	case "cat":
 		runCat()
 	case "help", "--help", "-h":
@@ -191,6 +193,7 @@ func printUsage() {
 		{"diff", "Compare two snapshots or a snapshot against latest"},
 		{"break-lock", "Remove a stale repository lock left by a crashed process"},
 		{"add-recovery-key", "Generate a recovery key for an existing encrypted repository"},
+		{"check", "Verify repository integrity (reference chain, objects, data)"},
 		{"cat", "Display raw JSON content of repository objects"},
 	})
 
@@ -294,6 +297,16 @@ func printUsage() {
 	t.Command("break-lock", "")
 	t.Note("  Remove a stale repository lock left by a crashed or killed process.",
 		"  Only use this if you are sure no other operation is running.")
+	t.Blank()
+
+	t.Command("check", "[snapshot_id]")
+	t.Flags([][2]string{
+		{"-read-data", "Re-hash all chunk data for full byte-level verification"},
+		{"-snapshot <ref>", "Check a specific snapshot (default: all)"},
+	})
+	t.Note("  Verify the integrity of the repository by walking the full reference",
+		"  chain: index/latest → snapshot → HAMT nodes → filemeta → content → chunks.",
+		"  Reports missing, corrupt, or unreadable objects.")
 	t.Blank()
 
 	t.Command("cat", "<object_key> [object_key...]")
@@ -1142,6 +1155,62 @@ func runBreakLock() {
 		fmt.Fprintf(os.Stderr, "  Expired at: %s\n", r.ExpiresAt)
 		fmt.Fprintf(os.Stderr, "  Shared:     %v\n\n", r.IsShared)
 	}
+}
+
+func runCheck() {
+	checkCmd := flag.NewFlagSet("check", flag.ExitOnError)
+	g := addGlobalFlags(checkCmd)
+	readData := checkCmd.Bool("read-data", false, "Re-hash all chunk data for full byte-level verification")
+	snapshotFlag := checkCmd.String("snapshot", "", "Check a specific snapshot (default: all)")
+
+	_ = checkCmd.Parse(reorderArgs(checkCmd, os.Args[2:]))
+
+	// Allow snapshot as positional arg too
+	snapshotRef := *snapshotFlag
+	if snapshotRef == "" && checkCmd.NArg() > 0 {
+		snapshotRef = checkCmd.Arg(0)
+	}
+
+	ctx := context.Background()
+
+	client, err := g.openClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to init store: %v\n", err)
+		os.Exit(1)
+	}
+
+	var checkOpts []cloudstic.CheckOption
+	if *readData {
+		checkOpts = append(checkOpts, cloudstic.WithReadData())
+	}
+	if *g.verbose {
+		checkOpts = append(checkOpts, cloudstic.WithCheckVerbose())
+	}
+	if snapshotRef != "" {
+		checkOpts = append(checkOpts, cloudstic.WithSnapshotRef(snapshotRef))
+	}
+
+	result, err := client.Check(ctx, checkOpts...)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Check failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Fprintf(os.Stderr, "\nRepository check complete.\n")
+	fmt.Fprintf(os.Stderr, "  Snapshots checked:  %d\n", result.SnapshotsChecked)
+	fmt.Fprintf(os.Stderr, "  Objects verified:   %d\n", result.ObjectsVerified)
+
+	if len(result.Errors) > 0 {
+		fmt.Fprintf(os.Stderr, "  Errors found:       %d\n\n", len(result.Errors))
+		for _, e := range result.Errors {
+			fmt.Fprintf(os.Stderr, "  [%s] %s: %s\n", e.Type, e.Key, e.Message)
+		}
+		fmt.Fprintln(os.Stderr)
+		os.Exit(1)
+	}
+
+	fmt.Fprintf(os.Stderr, "  Errors found:       0\n")
+	fmt.Fprintf(os.Stderr, "\nNo errors found — repository is healthy.\n")
 }
 
 func runCat() {

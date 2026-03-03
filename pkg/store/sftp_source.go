@@ -15,16 +15,18 @@ type SFTPSource struct {
 	client   *sftp.Client
 	rootPath string
 	cfg      SFTPConfig
+	exclude  *ExcludeMatcher
 }
 
 // NewSFTPSource connects to the SFTP server described by cfg and returns a
-// source rooted at rootPath.
-func NewSFTPSource(cfg SFTPConfig, rootPath string) (*SFTPSource, error) {
+// source rooted at rootPath. Optional exclude patterns use gitignore-style
+// syntax to skip files and directories during Walk and Size.
+func NewSFTPSource(cfg SFTPConfig, rootPath string, excludePatterns ...string) (*SFTPSource, error) {
 	client, err := dialSFTP(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("sftp source connect: %w", err)
 	}
-	return &SFTPSource{client: client, rootPath: rootPath, cfg: cfg}, nil
+	return &SFTPSource{client: client, rootPath: rootPath, cfg: cfg, exclude: NewExcludeMatcher(excludePatterns)}, nil
 }
 
 // Close releases the underlying SFTP and SSH connections.
@@ -42,6 +44,9 @@ func (s *SFTPSource) Info() core.SourceInfo {
 
 func (s *SFTPSource) Walk(ctx context.Context, callback func(core.FileMeta) error) error {
 	walker := s.client.Walk(s.rootPath)
+	// Track excluded directory prefixes so we can skip their children
+	// (the sftp walker does not support SkipDir).
+	var excludedDirs []string
 	for walker.Step() {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -58,6 +63,19 @@ func (s *SFTPSource) Walk(ctx context.Context, callback func(core.FileMeta) erro
 			continue // skip root itself
 		}
 		if rel == "" {
+			continue
+		}
+
+		// Check if this entry is inside a previously excluded directory.
+		if isUnderExcludedDir(rel, excludedDirs) {
+			continue
+		}
+
+		// Apply exclude patterns.
+		if !s.exclude.Empty() && s.exclude.Excludes(rel, info.IsDir()) {
+			if info.IsDir() {
+				excludedDirs = append(excludedDirs, rel+"/")
+			}
 			continue
 		}
 
@@ -92,6 +110,7 @@ func (s *SFTPSource) Walk(ctx context.Context, callback func(core.FileMeta) erro
 
 func (s *SFTPSource) Size(ctx context.Context) (*SourceSize, error) {
 	var totalBytes, totalFiles int64
+	var excludedDirs []string
 	walker := s.client.Walk(s.rootPath)
 	for walker.Step() {
 		if ctx.Err() != nil {
@@ -100,8 +119,24 @@ func (s *SFTPSource) Size(ctx context.Context) (*SourceSize, error) {
 		if err := walker.Err(); err != nil {
 			return nil, err
 		}
-		if !walker.Stat().IsDir() {
-			totalBytes += walker.Stat().Size()
+		info := walker.Stat()
+		p := walker.Path()
+		if !s.exclude.Empty() {
+			rel, relErr := relPath(s.rootPath, p)
+			if relErr == nil && rel != "" {
+				if isUnderExcludedDir(rel, excludedDirs) {
+					continue
+				}
+				if s.exclude.Excludes(rel, info.IsDir()) {
+					if info.IsDir() {
+						excludedDirs = append(excludedDirs, rel+"/")
+					}
+					continue
+				}
+			}
+		}
+		if !info.IsDir() {
+			totalBytes += info.Size()
 			totalFiles++
 		}
 	}

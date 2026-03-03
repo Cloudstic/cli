@@ -2,6 +2,7 @@ package cloudstic
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 
@@ -28,6 +29,111 @@ type Reporter = ui.Reporter
 // Phase represents an active progress tracking phase.
 type Phase = ui.Phase
 
+// KeySlot is re-exported for callers that need to inspect slot metadata.
+type KeySlot = store.KeySlot
+
+// KMSDecrypter is re-exported for callers that provide KMS credentials.
+type KMSDecrypter = crypto.KMSDecrypter
+
+// ---------------------------------------------------------------------------
+// KeyProvider
+// ---------------------------------------------------------------------------
+
+// KeyProvider resolves the encryption key for a repository. It is called
+// during NewClient when the repository config indicates encryption is enabled.
+type KeyProvider interface {
+	ResolveKey(ctx context.Context, rawStore store.ObjectStore) ([]byte, error)
+}
+
+// StaticKey is a KeyProvider that returns a pre-resolved encryption key.
+// Use this when the key has already been unwrapped externally (e.g. the
+// SaaS product passes the derived key directly).
+type StaticKey []byte
+
+func (k StaticKey) ResolveKey(_ context.Context, _ store.ObjectStore) ([]byte, error) {
+	if len(k) != crypto.KeySize {
+		return nil, fmt.Errorf("static key must be %d bytes, got %d", crypto.KeySize, len(k))
+	}
+	return []byte(k), nil
+}
+
+// Credentials resolves the encryption key by trying credentials against the
+// repository's stored key slots. The resolution order is:
+// KMS → platform key → password → recovery mnemonic → password prompt.
+type Credentials struct {
+	PlatformKey      []byte              // Raw 32-byte platform key
+	Password         string              // Password for password-based slots
+	RecoveryMnemonic string              // BIP39 24-word recovery phrase
+	KMSDecrypter     crypto.KMSDecrypter // For kms-platform slots (optional)
+	PasswordPrompt   func() (string, error) // Interactive password fallback (optional)
+}
+
+func (c Credentials) ResolveKey(ctx context.Context, rawStore store.ObjectStore) ([]byte, error) {
+	slots, err := store.AutoLoadKeySlots(rawStore)
+	if err != nil {
+		return nil, fmt.Errorf("load encryption key slots: %w", err)
+	}
+	if len(slots) == 0 {
+		return nil, fmt.Errorf("repository is encrypted but no key slots found")
+	}
+
+	// Try KMS first.
+	if c.KMSDecrypter != nil {
+		if key, err := store.OpenWithKMS(ctx, slots, c.KMSDecrypter); err == nil {
+			return key, nil
+		}
+	}
+
+	// Try platform key.
+	if len(c.PlatformKey) > 0 {
+		if key, err := store.OpenWithPlatformKey(slots, c.PlatformKey); err == nil {
+			return key, nil
+		}
+	}
+
+	// Try password.
+	if c.Password != "" {
+		if key, err := store.OpenWithPassword(slots, c.Password); err == nil {
+			return key, nil
+		}
+	}
+
+	// Try recovery mnemonic.
+	if c.RecoveryMnemonic != "" {
+		recoveryKey, err := crypto.MnemonicToKey(c.RecoveryMnemonic)
+		if err != nil {
+			return nil, fmt.Errorf("invalid recovery key mnemonic: %w", err)
+		}
+		if key, err := store.OpenWithRecoveryKey(slots, recoveryKey); err == nil {
+			return key, nil
+		}
+	}
+
+	// Try interactive password prompt as last resort.
+	if c.PasswordPrompt != nil && hasSlotType(slots, "password") {
+		pw, err := c.PasswordPrompt()
+		if err != nil {
+			return nil, fmt.Errorf("read password: %w", err)
+		}
+		if pw != "" {
+			if key, err := store.OpenWithPassword(slots, pw); err == nil {
+				return key, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("could not open repository: no provided credential matches the stored key slots (types: %s)", store.SlotTypes(slots))
+}
+
+func hasSlotType(slots []store.KeySlot, slotType string) bool {
+	for _, s := range slots {
+		if s.SlotType == slotType {
+			return true
+		}
+	}
+	return false
+}
+
 // ---------------------------------------------------------------------------
 // Client
 // ---------------------------------------------------------------------------
@@ -40,10 +146,20 @@ func WithReporter(r Reporter) ClientOption {
 	return func(c *Client) { c.reporter = r }
 }
 
-// WithEncryptionKey enables AES-256-GCM encryption. Key must be 32 bytes.
+// WithEncryptionKey directly sets the AES-256-GCM encryption key (32 bytes).
+// This bypasses repo config detection and unconditionally applies encryption.
 // The HMAC deduplication key is automatically derived from this key.
+// Use this for the SaaS product where the key is already resolved externally.
 func WithEncryptionKey(key []byte) ClientOption {
 	return func(c *Client) { c.encryptionKey = key }
+}
+
+// WithKeyProvider sets a KeyProvider for automatic key resolution. During
+// NewClient, the repo config is read from the store; if the repository is
+// encrypted, ResolveKey is called to obtain the encryption key. If the
+// repository is not encrypted, the provider is silently ignored.
+func WithKeyProvider(kp KeyProvider) ClientOption {
+	return func(c *Client) { c.keyProvider = kp }
 }
 
 // WithPackfile enables bundling small objects into 8MB packs to save API calls.
@@ -57,6 +173,7 @@ type Client struct {
 	storedMeter    *store.MeteredStore
 	encryptionKey  []byte
 	hmacKey        []byte
+	keyProvider    KeyProvider
 	enablePackfile bool
 	reporter       ui.Reporter
 }
@@ -67,6 +184,15 @@ func NewClient(base store.ObjectStore, opts ...ClientOption) (*Client, error) {
 	}
 	for _, opt := range opts {
 		opt(c)
+	}
+
+	// If a KeyProvider is set, auto-detect encryption from the repo config.
+	if c.keyProvider != nil && len(c.encryptionKey) == 0 {
+		encKey, err := c.resolveKeyFromConfig(base)
+		if err != nil {
+			return nil, err
+		}
+		c.encryptionKey = encKey
 	}
 
 	// Derive HMAC dedup key from the encryption key.
@@ -100,6 +226,27 @@ func NewClient(base store.ObjectStore, opts ...ClientOption) (*Client, error) {
 	c.store = store.NewCompressedStore(inner)
 	c.storedMeter = storedMeter
 	return c, nil
+}
+
+// resolveKeyFromConfig reads the repo config and, if the repository is
+// encrypted, calls the KeyProvider to resolve the encryption key.
+func (c *Client) resolveKeyFromConfig(base store.ObjectStore) ([]byte, error) {
+	ctx := context.Background()
+	data, err := base.Get(ctx, "config")
+	if err != nil {
+		return nil, fmt.Errorf("read repo config: %w", err)
+	}
+	if data == nil {
+		return nil, fmt.Errorf("repository not initialized -- run 'cloudstic init' first")
+	}
+	var cfg core.RepoConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("parse repo config: %w", err)
+	}
+	if !cfg.Encrypted {
+		return nil, nil
+	}
+	return c.keyProvider.ResolveKey(ctx, base)
 }
 
 func (c *Client) Store() store.ObjectStore { return c.store }

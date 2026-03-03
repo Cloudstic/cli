@@ -290,6 +290,23 @@ func HasKeySlots(s ObjectStore) bool {
 	return err == nil && len(keys) > 0
 }
 
+// AutoLoadKeySlots loads key slots from the store, automatically handling
+// HybridStore by trying the database first, then falling back to B2/object store.
+func AutoLoadKeySlots(s ObjectStore) ([]KeySlot, error) {
+	if hybrid, ok := s.(*HybridStore); ok {
+		slots, err := LoadKeySlotsFromDB(hybrid.DB())
+		if err == nil && len(slots) > 0 {
+			SyncKeySlots(hybrid.Store(), slots)
+			return slots, nil
+		}
+		slots, err = LoadKeySlots(hybrid.Store())
+		if err == nil && len(slots) > 0 {
+			return slots, nil
+		}
+	}
+	return LoadKeySlots(s)
+}
+
 // SlotTypes returns the slot types present among the given slots.
 func SlotTypes(slots []KeySlot) string {
 	types := make(map[string]bool)

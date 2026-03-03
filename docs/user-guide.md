@@ -249,7 +249,7 @@ The `gdrive-changes` and `onedrive-changes` source types use their respective ch
 
 ### restore
 
-Restore a snapshot as a ZIP archive.
+Restore a snapshot as a ZIP archive. By default the entire snapshot is restored; use `-path` to restore a single file or subtree.
 
 ```bash
 # Restore the latest snapshot
@@ -261,6 +261,12 @@ cloudstic restore <snapshot-hash>
 # Restore to a custom output path
 cloudstic restore <snapshot-hash> -output ./my-backup.zip
 
+# Restore a single file
+cloudstic restore <snapshot-hash> -path Documents/report.pdf
+
+# Restore a subtree (trailing slash)
+cloudstic restore <snapshot-hash> -path Documents/
+
 # Dry run — see what would be restored without writing the archive
 cloudstic restore -dry-run
 ```
@@ -270,6 +276,7 @@ cloudstic restore -dry-run
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-output` | `./restore.zip` | Output ZIP file path |
+| `-path` | | Restore only the given file or subtree. Use a trailing `/` to select an entire directory (e.g. `Documents/`). Without a trailing slash, the exact file path is matched (e.g. `Documents/report.pdf`). |
 | `-dry-run` | `false` | Show what would be restored without writing the archive |
 
 The snapshot ID is a positional argument (defaults to latest if omitted).

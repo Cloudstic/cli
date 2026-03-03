@@ -224,6 +224,12 @@ func (rm *RestoreManager) writeFileContent(ctx context.Context, w io.Writer, con
 }
 
 func buildZipPath(meta core.FileMeta, byID map[string]core.FileMeta) string {
+	// Fast path: use stored Paths when available (new snapshots).
+	if len(meta.Paths) > 0 {
+		return meta.Paths[0]
+	}
+
+	// Fallback: reconstruct from parent chain (old snapshots).
 	const maxDepth = 50
 	parts := []string{meta.Name}
 	cur := meta
@@ -274,15 +280,27 @@ func filterByPath(sorted []core.FileMeta, byID map[string]core.FileMeta, pathFil
 		}
 	}
 
-	// Include ancestor directories of matched entries.
-	for _, meta := range sorted {
-		if !matched[meta.FileID] {
-			continue
+	// Include all ancestor directories of matched entries by walking
+	// up the full parent chain (not just immediate parents).
+	var walkAncestors func(id string)
+	walkAncestors = func(id string) {
+		meta, ok := byID[id]
+		if !ok {
+			return
 		}
 		for _, parentID := range meta.Parents {
+			if matched[parentID] {
+				continue
+			}
 			if _, ok := byID[parentID]; ok {
 				matched[parentID] = true
+				walkAncestors(parentID)
 			}
+		}
+	}
+	for _, meta := range sorted {
+		if matched[meta.FileID] {
+			walkAncestors(meta.FileID)
 		}
 	}
 

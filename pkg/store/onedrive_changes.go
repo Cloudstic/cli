@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/retry"
@@ -18,8 +19,8 @@ type OneDriveChangeSource struct {
 	OneDriveSource
 }
 
-func NewOneDriveChangeSource(clientID, tokenPath string) (*OneDriveChangeSource, error) {
-	base, err := NewOneDriveSource(clientID, tokenPath)
+func NewOneDriveChangeSource(clientID, tokenPath string, excludePatterns ...string) (*OneDriveChangeSource, error) {
+	base, err := NewOneDriveSource(clientID, tokenPath, excludePatterns...)
 	if err != nil {
 		return nil, err
 	}
@@ -77,12 +78,23 @@ func (s *OneDriveChangeSource) WalkChanges(ctx context.Context, token string, ca
 
 		folderChanges = topoSortFolderChanges(folderChanges)
 
+		// Resolve paths and apply exclude filtering.
+		hasExclude := !s.exclude.Empty()
+		excludedIDs := make(map[string]bool)
+
+
 		for _, fc := range folderChanges {
+			if hasExclude && fc.Type == ChangeUpsert && shouldExcludeOneDriveChange(s.exclude, fc, excludedIDs) {
+				continue
+			}
 			if err := callback(fc); err != nil {
 				return "", err
 			}
 		}
 		for _, fc := range fileChanges {
+			if hasExclude && fc.Type == ChangeUpsert && shouldExcludeOneDriveChange(s.exclude, fc, excludedIDs) {
+				continue
+			}
 			if err := callback(fc); err != nil {
 				return "", err
 			}
@@ -98,10 +110,59 @@ func (s *OneDriveChangeSource) itemToFileChange(item graphItem) FileChange {
 			Meta: core.FileMeta{FileID: item.ID},
 		}
 	}
+	meta := s.toFileMeta(item)
+	// Resolve full path from parentReference.path (provided by the delta API).
+	if item.ParentReference != nil && item.ParentReference.Path != "" {
+		parentPath := stripOneDriveRootPrefix(item.ParentReference.Path)
+		if parentPath != "" {
+			meta.Paths = []string{parentPath + "/" + meta.Name}
+		} else {
+			meta.Paths = []string{meta.Name}
+		}
+	}
 	return FileChange{
 		Type: ChangeUpsert,
-		Meta: s.toFileMeta(item),
+		Meta: meta,
 	}
+}
+
+// stripOneDriveRootPrefix strips the "/drive/root:" or "/drive/root:/" prefix
+// from a OneDrive parentReference.path, returning the relative path.
+func stripOneDriveRootPrefix(p string) string {
+	// The path format is "/drive/root:" for items directly under root,
+	// or "/drive/root:/path/to/folder" for nested items.
+	if idx := strings.Index(p, ":/"); idx >= 0 {
+		return p[idx+2:]
+	}
+	// "/drive/root:" means directly under root.
+	if strings.HasSuffix(p, ":") {
+		return ""
+	}
+	return p
+}
+
+// shouldExcludeOneDriveChange checks whether a change entry should be excluded.
+// For excluded directories, their ID is added to excludedIDs so children
+// are also suppressed.
+func shouldExcludeOneDriveChange(m *ExcludeMatcher, fc FileChange, excludedIDs map[string]bool) bool {
+	// Check if parent is excluded.
+	if len(fc.Meta.Parents) > 0 && excludedIDs[fc.Meta.Parents[0]] {
+		if fc.Meta.Type == core.FileTypeFolder {
+			excludedIDs[fc.Meta.FileID] = true
+		}
+		return true
+	}
+	if len(fc.Meta.Paths) == 0 {
+		return false
+	}
+	isDir := fc.Meta.Type == core.FileTypeFolder
+	if m.Excludes(fc.Meta.Paths[0], isDir) {
+		if isDir {
+			excludedIDs[fc.Meta.FileID] = true
+		}
+		return true
+	}
+	return false
 }
 
 type graphDeltaResponse struct {

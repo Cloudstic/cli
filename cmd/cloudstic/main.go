@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -256,7 +257,7 @@ func printUsage() {
 		{"-drive-id <id>", "Shared drive ID for gdrive (omit for My Drive)"},
 		{"-root-folder <id>", "Root folder ID for gdrive (defaults to entire drive)"},
 		{"-tag <tag>", "Tag to apply to the snapshot (repeatable)"},
-		{"-exclude <pattern>", "Exclude pattern, gitignore syntax (repeatable, local/sftp only)"},
+		{"-exclude <pattern>", "Exclude pattern, gitignore syntax (repeatable)"},
 		{"-exclude-file <path>", "Load exclude patterns from file (one per line, gitignore syntax)"},
 		{"-dry-run", "Scan source and report changes without writing to the store"},
 	})
@@ -834,7 +835,7 @@ func initSource(sourceType, sourcePath, driveID, rootFolder string, g *globalFla
 		if err != nil {
 			return nil, err
 		}
-		src, err := store.NewGDriveSource(creds, tokenPath)
+		src, err := store.NewGDriveSource(creds, tokenPath, excludePatterns...)
 		if err != nil {
 			return nil, err
 		}
@@ -847,7 +848,7 @@ func initSource(sourceType, sourcePath, driveID, rootFolder string, g *globalFla
 		if err != nil {
 			return nil, err
 		}
-		src, err := store.NewGDriveChangeSource(creds, tokenPath)
+		src, err := store.NewGDriveChangeSource(creds, tokenPath, excludePatterns...)
 		if err != nil {
 			return nil, err
 		}
@@ -860,14 +861,14 @@ func initSource(sourceType, sourcePath, driveID, rootFolder string, g *globalFla
 		if err != nil {
 			return nil, err
 		}
-		return store.NewOneDriveSource(clientID, tokenPath)
+		return store.NewOneDriveSource(clientID, tokenPath, excludePatterns...)
 	case "onedrive-changes":
 		clientID := os.Getenv("ONEDRIVE_CLIENT_ID") // optional; uses built-in OAuth client when empty
 		tokenPath, err := resolveTokenPath("ONEDRIVE_TOKEN_FILE", "onedrive_token.json")
 		if err != nil {
 			return nil, err
 		}
-		return store.NewOneDriveChangeSource(clientID, tokenPath)
+		return store.NewOneDriveChangeSource(clientID, tokenPath, excludePatterns...)
 	default:
 		return nil, fmt.Errorf("unsupported source type: %s", sourceType)
 	}
@@ -1450,6 +1451,10 @@ func runBackup() {
 	}
 	if len(tags) > 0 {
 		backupOpts = append(backupOpts, cloudstic.WithTags(tags...))
+	}
+	if len(excludePatterns) > 0 {
+		h := sha256.Sum256([]byte(strings.Join(excludePatterns, "\n")))
+		backupOpts = append(backupOpts, cloudstic.WithExcludeHash(hex.EncodeToString(h[:])))
 	}
 	result, err := client.Backup(ctx, src, backupOpts...)
 	if err != nil {

@@ -85,6 +85,7 @@ type Snapshot struct {
 	Meta        map[string]string `json:"meta,omitempty"`
 	Tags        []string          `json:"tags,omitempty"`
 	ChangeToken string            `json:"change_token,omitempty"`
+	ExcludeHash string            `json:"exclude_hash,omitempty"`
 }
 
 // Index represents a pointer to the latest snapshot
@@ -105,6 +106,7 @@ type SnapshotSummary struct {
 	Source      *SourceInfo `json:"source,omitempty"`
 	Tags        []string    `json:"tags,omitempty"`
 	ChangeToken string      `json:"change_token,omitempty"`
+	ExcludeHash string      `json:"exclude_hash,omitempty"`
 }
 
 // RepoConfig is the repository marker written by "init". It is stored as

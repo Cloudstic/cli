@@ -244,7 +244,7 @@ cloudstic backup -source local -source-path ~/Documents -dry-run
 | `-drive-id` | | Shared drive ID for Google Drive (omit for My Drive) |
 | `-root-folder` | | Root folder ID for Google Drive (defaults to entire drive) |
 | `-tag` | | Tag to apply to the snapshot (repeatable) |
-| `-exclude` | | Exclude pattern using gitignore syntax (repeatable, local/sftp only) |
+|| `-exclude` | | Exclude pattern using gitignore syntax (repeatable) |
 | `-exclude-file` | | Path to file containing exclude patterns, one per line |
 | `-dry-run` | `false` | Scan source and report changes without writing to the store |
 
@@ -252,12 +252,15 @@ The `gdrive-changes` and `onedrive-changes` source types use their respective ch
 
 #### Exclude patterns
 
-When using `local` or `sftp` sources, you can exclude files and directories from the backup using gitignore-style patterns. This is essential for development directories that contain `.git/`, `node_modules/`, build artifacts, etc.
+You can exclude files and directories from the backup using gitignore-style patterns. This works with all source types — local, SFTP, Google Drive, and OneDrive. This is essential for skipping development directories that contain `.git/`, `node_modules/`, build artifacts, etc.
 
 ```bash
 # Exclude specific directories and file types
 cloudstic backup -source local -source-path ~/project \
   -exclude ".git/" -exclude "node_modules/" -exclude "*.tmp" -exclude "*.log"
+
+# Works with cloud sources too
+cloudstic backup -source gdrive-changes -exclude "node_modules/" -exclude "*.tmp"
 
 # Load patterns from a file
 cloudstic backup -source local -source-path ~/project -exclude-file ~/project/.backupignore
@@ -302,6 +305,14 @@ dist/
 ```
 
 Patterns are evaluated in order; the last matching rule wins. This allows negation (`!`) to override earlier excludes.
+
+For cloud sources (Google Drive, OneDrive), exclude patterns are matched against the full path of each file as it appears in the drive (e.g. `Documents/Reports/draft.docx`).
+
+> **Automatic rescan when exclude patterns change**
+>
+> When using incremental sources (`gdrive-changes`, `onedrive-changes`), Cloudstic stores a hash of the active exclude patterns in each snapshot. If the patterns change between runs (added, removed, or reordered), the next backup automatically performs a full rescan instead of an incremental one. This ensures the new patterns are applied comprehensively. The full rescan also captures a fresh change token, so subsequent runs resume incremental mode from that point.
+>
+> No manual intervention is required — just update your `-exclude` / `-exclude-file` flags and run the backup as usual.
 
 ---
 
@@ -738,7 +749,7 @@ If neither `-sftp-password` nor `-sftp-key` is provided, Cloudstic will fall bac
 
 Cloudstic walks the remote directory recursively. File permissions are not preserved — only name, size, modification time, and content are captured.
 
-The `-exclude` and `-exclude-file` flags also work with SFTP sources. See [Exclude patterns](#exclude-patterns) for the full pattern syntax.
+The `-exclude` and `-exclude-file` flags work with SFTP sources. See [Exclude patterns](#exclude-patterns) for the full pattern syntax.
 
 ### Google Drive
 

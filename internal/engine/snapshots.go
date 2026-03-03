@@ -102,6 +102,7 @@ func LoadSnapshotCatalog(s store.ObjectStore) ([]SnapshotEntry, error) {
 				Source:      cs.Source,
 				Tags:        cs.Tags,
 				ChangeToken: cs.ChangeToken,
+				ExcludeHash: cs.ExcludeHash,
 			},
 			Created: created,
 		})
@@ -183,6 +184,7 @@ func snapshotToSummary(ref string, snap core.Snapshot) core.SnapshotSummary {
 		Source:      snap.Source,
 		Tags:        snap.Tags,
 		ChangeToken: snap.ChangeToken,
+		ExcludeHash: snap.ExcludeHash,
 	}
 }
 

@@ -260,6 +260,178 @@ func TestRestoreManager_PathFilter_NoMatch(t *testing.T) {
 	}
 }
 
+// TestRestoreManager_PathFilter_DeepSingleFile verifies that filtering for a
+// deeply nested file (3+ levels) includes ALL ancestor directories, not just
+// the immediate parent.
+func TestRestoreManager_PathFilter_DeepSingleFile(t *testing.T) {
+	dest := setupBackupForRestore(t)
+	rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())
+
+	var buf bytes.Buffer
+	result, err := rsMgr.Run(context.Background(), &buf, "", WithRestorePath("subdir/deep/file.txt"))
+	if err != nil {
+		t.Fatalf("Restore failed: %v", err)
+	}
+
+	if result.FilesWritten != 1 {
+		t.Errorf("Expected 1 file written, got %d", result.FilesWritten)
+	}
+
+	entries := zipEntries(t, &buf)
+
+	if content, ok := entries["subdir/deep/file.txt"]; !ok {
+		t.Error("subdir/deep/file.txt not found in zip")
+	} else if content != "deep content" {
+		t.Errorf("Content mismatch: got %q", content)
+	}
+
+	// Both ancestor dirs must be included.
+	if _, ok := entries["subdir/"]; !ok {
+		t.Error("ancestor dir subdir/ not found in zip")
+	}
+	if _, ok := entries["subdir/deep/"]; !ok {
+		t.Error("ancestor dir subdir/deep/ not found in zip")
+	}
+
+	// Siblings must not appear.
+	if _, ok := entries["restore_me.txt"]; ok {
+		t.Error("restore_me.txt should not be in filtered zip")
+	}
+	if _, ok := entries["subdir/nested.txt"]; ok {
+		t.Error("subdir/nested.txt should not be in filtered zip")
+	}
+}
+
+// TestRestoreManager_PathFilter_CloudLikeIDs simulates a Google Drive / OneDrive
+// backup where FileIDs and Parents are opaque API identifiers (not filesystem
+// paths). Verifies that selective restore works correctly with such metadata.
+func TestRestoreManager_PathFilter_CloudLikeIDs(t *testing.T) {
+	src := NewMockSource()
+	dest := NewMockStore()
+
+	// Simulate a cloud drive tree:
+	//   My Documents/             (id: FOLDER_AAA)
+	//   My Documents/Photos/      (id: FOLDER_BBB)
+	//   My Documents/Photos/img.jpg  (id: FILE_CCC)
+	//   My Documents/report.pdf   (id: FILE_DDD)
+	//   Music/                    (id: FOLDER_EEE)
+	//   Music/song.mp3            (id: FILE_FFF)
+
+	src.Files["FOLDER_AAA"] = MockFile{
+		Meta: core.FileMeta{
+			FileID: "FOLDER_AAA",
+			Name:   "My Documents",
+			Type:   core.FileTypeFolder,
+			Paths:  []string{"My Documents"},
+			Extra:  map[string]interface{}{"mimeType": "application/vnd.google-apps.folder"},
+		},
+	}
+	src.Files["FOLDER_BBB"] = MockFile{
+		Meta: core.FileMeta{
+			FileID:  "FOLDER_BBB",
+			Name:    "Photos",
+			Type:    core.FileTypeFolder,
+			Parents: []string{"FOLDER_AAA"},
+			Paths:   []string{"My Documents/Photos"},
+			Extra:   map[string]interface{}{"mimeType": "application/vnd.google-apps.folder"},
+		},
+	}
+	src.Files["FILE_CCC"] = MockFile{
+		Meta: core.FileMeta{
+			FileID:  "FILE_CCC",
+			Name:    "img.jpg",
+			Parents: []string{"FOLDER_BBB"},
+			Paths:   []string{"My Documents/Photos/img.jpg"},
+		},
+		Content: []byte("jpeg-data"),
+	}
+	src.Files["FILE_DDD"] = MockFile{
+		Meta: core.FileMeta{
+			FileID:  "FILE_DDD",
+			Name:    "report.pdf",
+			Parents: []string{"FOLDER_AAA"},
+			Paths:   []string{"My Documents/report.pdf"},
+		},
+		Content: []byte("pdf-data"),
+	}
+	src.Files["FOLDER_EEE"] = MockFile{
+		Meta: core.FileMeta{
+			FileID: "FOLDER_EEE",
+			Name:   "Music",
+			Type:   core.FileTypeFolder,
+			Paths:  []string{"Music"},
+			Extra:  map[string]interface{}{"mimeType": "application/vnd.google-apps.folder"},
+		},
+	}
+	src.Files["FILE_FFF"] = MockFile{
+		Meta: core.FileMeta{
+			FileID:  "FILE_FFF",
+			Name:    "song.mp3",
+			Parents: []string{"FOLDER_EEE"},
+			Paths:   []string{"Music/song.mp3"},
+		},
+		Content: []byte("mp3-data"),
+	}
+
+	bkMgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil)
+	if _, err := bkMgr.Run(context.Background()); err != nil {
+		t.Fatalf("Backup failed: %v", err)
+	}
+
+	t.Run("subtree filter", func(t *testing.T) {
+		rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())
+		var buf bytes.Buffer
+		result, err := rsMgr.Run(context.Background(), &buf, "", WithRestorePath("My Documents/"))
+		if err != nil {
+			t.Fatalf("Restore failed: %v", err)
+		}
+
+		if result.FilesWritten != 2 {
+			t.Errorf("Expected 2 files (img.jpg + report.pdf), got %d", result.FilesWritten)
+		}
+
+		entries := zipEntries(t, &buf)
+		if _, ok := entries["My Documents/Photos/img.jpg"]; !ok {
+			t.Error("My Documents/Photos/img.jpg not found")
+		}
+		if _, ok := entries["My Documents/report.pdf"]; !ok {
+			t.Error("My Documents/report.pdf not found")
+		}
+		if _, ok := entries["Music/song.mp3"]; ok {
+			t.Error("Music/song.mp3 should not be in filtered zip")
+		}
+	})
+
+	t.Run("single deep file", func(t *testing.T) {
+		rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())
+		var buf bytes.Buffer
+		result, err := rsMgr.Run(context.Background(), &buf, "", WithRestorePath("My Documents/Photos/img.jpg"))
+		if err != nil {
+			t.Fatalf("Restore failed: %v", err)
+		}
+
+		if result.FilesWritten != 1 {
+			t.Errorf("Expected 1 file, got %d", result.FilesWritten)
+		}
+
+		entries := zipEntries(t, &buf)
+		if _, ok := entries["My Documents/Photos/img.jpg"]; !ok {
+			t.Error("My Documents/Photos/img.jpg not found")
+		}
+		// Both ancestor dirs must be included.
+		if _, ok := entries["My Documents/"]; !ok {
+			t.Error("ancestor My Documents/ not found")
+		}
+		if _, ok := entries["My Documents/Photos/"]; !ok {
+			t.Error("ancestor My Documents/Photos/ not found")
+		}
+		// Siblings must not appear.
+		if _, ok := entries["My Documents/report.pdf"]; ok {
+			t.Error("report.pdf should not be in filtered zip")
+		}
+	})
+}
+
 func TestRestoreManager_PathFilter_DryRun(t *testing.T) {
 	dest := setupBackupForRestore(t)
 	rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())

@@ -78,6 +78,7 @@ func (s *SFTPSource) Walk(ctx context.Context, callback func(core.FileMeta) erro
 			Name:    path.Base(p),
 			Type:    fileType,
 			Parents: parents,
+			Paths:   []string{rel},
 			Size:    info.Size(),
 			Mtime:   info.ModTime().Unix(),
 		}

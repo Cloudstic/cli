@@ -202,6 +202,9 @@ func (s *OneDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) 
 		return err
 	}
 
+	// pathMap tracks itemID → full path for all emitted entries.
+	pathMap := make(map[string]string)
+
 	// Iterative DFS using an explicit stack instead of recursion.
 	type stackEntry struct {
 		folderID string
@@ -226,6 +229,16 @@ func (s *OneDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) 
 					continue
 				}
 				meta := s.toFileMeta(item)
+
+				// Compute full path from parent path map.
+				p := meta.Name
+				if item.ParentReference != nil && item.ParentReference.ID != "" {
+					if parentPath, ok := pathMap[item.ParentReference.ID]; ok {
+						p = parentPath + "/" + meta.Name
+					}
+				}
+				meta.Paths = []string{p}
+				pathMap[item.ID] = p
 
 				if err := callback(meta); err != nil {
 					return err

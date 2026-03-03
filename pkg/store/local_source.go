@@ -60,6 +60,7 @@ func (s *LocalSource) Walk(ctx context.Context, callback func(core.FileMeta) err
 			Name:    filepath.Base(path),
 			Type:    fileType,
 			Parents: parents,
+			Paths:   []string{relPath},
 			Size:    info.Size(),
 			Mtime:   info.ModTime().Unix(),
 		}

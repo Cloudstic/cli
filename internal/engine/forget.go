@@ -16,6 +16,7 @@ type ForgetOption func(*forgetConfig)
 type forgetConfig struct {
 	prune      bool
 	dryRun     bool
+	verbose    bool
 	policy     ForgetPolicy
 	groupBy    string
 	groupBySet bool
@@ -30,6 +31,11 @@ func WithPrune() ForgetOption {
 // WithDryRun shows what would be removed without actually removing anything.
 func WithDryRun() ForgetOption {
 	return func(cfg *forgetConfig) { cfg.dryRun = true }
+}
+
+// WithForgetVerbose enables verbose output for the forget operation.
+func WithForgetVerbose() ForgetOption {
+	return func(cfg *forgetConfig) { cfg.verbose = true }
 }
 
 // WithKeepLast keeps the n most recent snapshots.
@@ -125,7 +131,9 @@ func (fm *ForgetManager) Run(ctx context.Context, snapshotID string, opts ...For
 	}
 
 	phase := fm.reporter.StartPhase("Forgetting snapshot", 0, false)
-	phase.Log(fmt.Sprintf("Forgetting %s", targetRef))
+	if cfg.verbose {
+		phase.Log(fmt.Sprintf("Forgetting %s", targetRef))
+	}
 
 	if err := fm.store.Delete(ctx, targetRef); err != nil {
 		phase.Error()

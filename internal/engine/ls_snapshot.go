@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -15,7 +16,14 @@ import (
 // LsSnapshotOption configures an ls-snapshot operation.
 type LsSnapshotOption func(*lsSnapshotConfig)
 
-type lsSnapshotConfig struct{}
+type lsSnapshotConfig struct {
+	verbose bool
+}
+
+// WithLsVerbose enables verbose output for the ls-snapshot operation.
+func WithLsVerbose() LsSnapshotOption {
+	return func(cfg *lsSnapshotConfig) { cfg.verbose = true }
+}
 
 // LsSnapshotResult holds the data returned by an ls-snapshot operation.
 type LsSnapshotResult struct {
@@ -42,16 +50,38 @@ func NewLsSnapshotManager(s store.ObjectStore) *LsSnapshotManager {
 
 // Run resolves the snapshot, collects metadata, and returns the tree structure.
 func (lm *LsSnapshotManager) Run(ctx context.Context, snapshotID string, opts ...LsSnapshotOption) (*LsSnapshotResult, error) {
+	var cfg lsSnapshotConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
 	lm.metaCache = make(map[string]core.FileMeta)
 
+	if cfg.verbose {
+		fmt.Fprintf(os.Stderr, "Resolving snapshot %q...\n", snapshotID)
+	}
 	snap, ref, err := lm.resolveSnapshot(ctx, snapshotID)
 	if err != nil {
 		return nil, err
+	}
+	if cfg.verbose {
+		fmt.Fprintf(os.Stderr, "Resolved to %s (created %s, root %s)\n", ref, snap.Created, snap.Root)
 	}
 
 	refToMeta, err := lm.collectMeta(ctx, snap.Root)
 	if err != nil {
 		return nil, err
+	}
+	if cfg.verbose {
+		var files, dirs int
+		for _, m := range refToMeta {
+			if m.Type == core.FileTypeFolder {
+				dirs++
+			} else {
+				files++
+			}
+		}
+		fmt.Fprintf(os.Stderr, "Collected %d files, %d directories\n", files, dirs)
 	}
 
 	roots, children := lm.buildHierarchy(refToMeta)

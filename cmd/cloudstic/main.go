@@ -157,7 +157,10 @@ func runCmd(cmd string) int {
 		runDiff()
 	case "break-lock":
 		runBreakLock()
+	case "key":
+		runKey()
 	case "add-recovery-key":
+		fmt.Fprintln(os.Stderr, "Note: 'add-recovery-key' is deprecated. Use 'cloudstic key add-recovery' instead.")
 		runAddRecoveryKey()
 	case "check":
 		runCheck()
@@ -195,7 +198,9 @@ func printUsage() {
 		{"forget", "Remove a specific snapshot from history"},
 		{"diff", "Compare two snapshots or a snapshot against latest"},
 		{"break-lock", "Remove a stale repository lock left by a crashed process"},
-		{"add-recovery-key", "Generate a recovery key for an existing encrypted repository"},
+		{"key list", "List all encryption key slots in the repository"},
+		{"key add-recovery", "Generate a 24-word recovery key for an encrypted repository"},
+		{"key passwd", "Change the repository password"},
 		{"check", "Verify repository integrity (reference chain, objects, data)"},
 		{"cat", "Display raw JSON content of repository objects"},
 		{"completion", "Generate shell completion scripts (bash, zsh, fish)"},
@@ -243,10 +248,24 @@ func printUsage() {
 	})
 	t.Blank()
 
-	t.Command("add-recovery-key", "")
+	t.Command("key list", "")
+	t.Note("  List all encryption key slots present in the repository.")
+	t.Blank()
+
+	t.Command("key add-recovery", "")
 	t.Note(
 		"  Generate a 24-word recovery key for an existing encrypted repository.",
 		"  Requires -encryption-key or -encryption-password to unlock the master key.",
+	)
+	t.Blank()
+
+	t.Command("key passwd", "")
+	t.Flags([][2]string{
+		{"-new-password <pw>", "New password (prompted interactively if not set)"},
+	})
+	t.Note(
+		"  Change the repository password. Provide current credentials via",
+		"  -encryption-password, -encryption-key, or -kms-key-arn to unlock.",
 	)
 	t.Blank()
 
@@ -679,6 +698,198 @@ func printRecoveryKey(mnemonic string) {
 	fmt.Fprintln(os.Stderr, "║                                                              ║")
 	fmt.Fprintln(os.Stderr, "╚══════════════════════════════════════════════════════════════╝")
 	fmt.Fprintln(os.Stderr)
+}
+
+// ---------------------------------------------------------------------------
+// key <subcommand>
+// ---------------------------------------------------------------------------
+
+func runKey() {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "Usage: cloudstic key <subcommand>")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Subcommands:")
+		fmt.Fprintln(os.Stderr, "  list           List all encryption key slots in the repository")
+		fmt.Fprintln(os.Stderr, "  add-recovery   Generate a 24-word recovery key")
+		fmt.Fprintln(os.Stderr, "  passwd         Change the repository password")
+		os.Exit(1)
+	}
+
+	sub := os.Args[2]
+	// Shift os.Args so subcommand flag parsing works correctly:
+	// "cloudstic key list -store ..." → args[0]="cloudstic" args[1]="key" args[2]="list" ...
+	// After shift: args become ["cloudstic", "list", "-store", ...] and flags parse from args[2:].
+	os.Args = append(os.Args[:2], os.Args[3:]...)
+
+	switch sub {
+	case "list":
+		runKeyList()
+	case "add-recovery":
+		runAddRecoveryKey()
+	case "passwd":
+		runKeyPasswd()
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown key subcommand: %s\n", sub)
+		os.Exit(1)
+	}
+}
+
+func runKeyList() {
+	listCmd := flag.NewFlagSet("key list", flag.ExitOnError)
+	g := addGlobalFlags(listCmd)
+	_ = listCmd.Parse(os.Args[2:])
+
+	raw, err := g.initObjectStore()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to init store: %v\n", err)
+		os.Exit(1)
+	}
+	raw = g.applyDebug(raw)
+
+	cfg, err := loadRepoConfig(raw)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to read config: %v\n", err)
+		os.Exit(1)
+	}
+	if cfg == nil {
+		fmt.Fprintln(os.Stderr, "Repository not initialized -- run 'cloudstic init' first.")
+		os.Exit(1)
+	}
+	if !cfg.Encrypted {
+		fmt.Fprintln(os.Stderr, "Repository is not encrypted -- no key slots to list.")
+		return
+	}
+
+	slots, err := store.LoadKeySlots(raw)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load key slots: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(slots) == 0 {
+		fmt.Fprintln(os.Stderr, "No key slots found.")
+		return
+	}
+
+	t := table.NewWriter()
+	t.SetOutputMirror(os.Stdout)
+	t.AppendHeader(table.Row{"Type", "Label", "KDF"})
+	for _, slot := range slots {
+		kdf := "—"
+		if slot.KDFParams != nil {
+			kdf = slot.KDFParams.Algorithm
+		}
+		t.AppendRow(table.Row{slot.SlotType, slot.Label, kdf})
+	}
+	t.Render()
+	fmt.Fprintf(os.Stderr, "\n%d key slot(s) found.\n", len(slots))
+}
+
+func runKeyPasswd() {
+	passwdCmd := flag.NewFlagSet("key passwd", flag.ExitOnError)
+	g := addGlobalFlags(passwdCmd)
+	newPassword := passwdCmd.String("new-password", "", "New repository password (prompted interactively if not set)")
+	_ = passwdCmd.Parse(os.Args[2:])
+
+	raw, err := g.initObjectStore()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to init store: %v\n", err)
+		os.Exit(1)
+	}
+	raw = g.applyDebug(raw)
+
+	cfg, err := loadRepoConfig(raw)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to read config: %v\n", err)
+		os.Exit(1)
+	}
+	if cfg == nil {
+		fmt.Fprintln(os.Stderr, "Repository not initialized -- run 'cloudstic init' first.")
+		os.Exit(1)
+	}
+	if !cfg.Encrypted {
+		fmt.Fprintln(os.Stderr, "Repository is not encrypted -- nothing to change.")
+		os.Exit(1)
+	}
+
+	platformKey, err := g.parsePlatformKey()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
+	password := *g.encryptionPassword
+
+	var kmsDecrypter crypto.KMSDecrypter
+	if *g.kmsKeyARN != "" {
+		d, err := crypto.NewAWSKMSDecrypter(context.Background())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to create KMS decrypter: %v\n", err)
+			os.Exit(1)
+		}
+		kmsDecrypter = d
+	}
+
+	// If no credential flags provided, prompt for current password.
+	if len(platformKey) == 0 && password == "" && kmsDecrypter == nil {
+		if term.IsTerminal(os.Stdin.Fd()) {
+			pw, err := ui.PromptPassword("Current repository password")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to read password: %v\n", err)
+				os.Exit(1)
+			}
+			password = pw
+		} else {
+			fmt.Fprintln(os.Stderr, "Provide --encryption-key, --encryption-password, or --kms-key-arn to unlock the master key.")
+			os.Exit(1)
+		}
+	}
+
+	slots, err := store.LoadKeySlots(raw)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load key slots: %v\n", err)
+		os.Exit(1)
+	}
+
+	masterKey, err := store.ExtractMasterKeyWithKMS(context.Background(), slots, kmsDecrypter, platformKey, password)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to unlock repository: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Resolve new password.
+	newPw := *newPassword
+	if newPw == "" {
+		if !term.IsTerminal(os.Stdin.Fd()) {
+			fmt.Fprintln(os.Stderr, "Provide --new-password or run interactively.")
+			os.Exit(1)
+		}
+		p1, err := ui.PromptPassword("Enter new repository password")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to read password: %v\n", err)
+			os.Exit(1)
+		}
+		if p1 == "" {
+			fmt.Fprintln(os.Stderr, "Error: password cannot be empty.")
+			os.Exit(1)
+		}
+		p2, err := ui.PromptPassword("Confirm new repository password")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to read password confirmation: %v\n", err)
+			os.Exit(1)
+		}
+		if p1 != p2 {
+			fmt.Fprintln(os.Stderr, "Error: passwords do not match.")
+			os.Exit(1)
+		}
+		newPw = p1
+	}
+
+	if err := store.ChangePasswordSlot(raw, masterKey, newPw); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to change password: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Fprintln(os.Stderr, "Repository password has been changed.")
 }
 
 func runAddRecoveryKey() {

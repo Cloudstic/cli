@@ -277,6 +277,52 @@ func TestExtractMasterKey_NoMatch(t *testing.T) {
 	}
 }
 
+func TestChangePasswordSlot(t *testing.T) {
+	inner := newMemStore()
+	oldPassword := "old-password"
+	newPassword := "new-password"
+
+	encKey, err := InitEncryptionKey(inner, nil, oldPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	slots, _ := LoadKeySlots(inner)
+	mk, err := ExtractMasterKey(slots, nil, oldPassword)
+	if err != nil {
+		t.Fatalf("ExtractMasterKey: %v", err)
+	}
+
+	if err := ChangePasswordSlot(inner, mk, newPassword); err != nil {
+		t.Fatalf("ChangePasswordSlot: %v", err)
+	}
+
+	// Old password should no longer work.
+	slots, _ = LoadKeySlots(inner)
+	if _, err := OpenWithPassword(slots, oldPassword); err == nil {
+		t.Fatal("old password should no longer open the repo")
+	}
+
+	// New password should work and produce the same encryption key.
+	opened, err := OpenWithPassword(slots, newPassword)
+	if err != nil {
+		t.Fatalf("OpenWithPassword with new password: %v", err)
+	}
+	for i := range encKey {
+		if encKey[i] != opened[i] {
+			t.Fatalf("key mismatch at byte %d after password change", i)
+		}
+	}
+}
+
+func TestChangePasswordSlot_EmptyPassword(t *testing.T) {
+	inner := newMemStore()
+	mk, _ := crypto.GenerateKey()
+	if err := ChangePasswordSlot(inner, mk, ""); err == nil {
+		t.Fatal("expected error for empty password")
+	}
+}
+
 func TestHasKeySlots(t *testing.T) {
 	inner := newMemStore()
 	if HasKeySlots(inner) {

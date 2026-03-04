@@ -289,8 +289,9 @@ repositories are interoperable if you have the key.
 1. List `keys/*` objects from B2 to discover available slots
 2. If `-kms-key-arn` is provided, try `kms-platform` slots first (AWS KMS decryption)
 3. Try platform key, password, or recovery key based on provided credentials
-4. Unwrap the master key, derive the encryption key via HKDF
-5. Create `EncryptedStore` with that key — same code path as the web
+4. If no credential matched and stdin is a terminal, prompt the user for the repository password interactively
+5. Unwrap the master key, derive the encryption key via HKDF
+6. Create `EncryptedStore` with that key — same code path as the web
 
 ## Platform Key Management
 

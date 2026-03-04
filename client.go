@@ -70,17 +70,17 @@ func ListKeySlots(ctx context.Context, rawStore store.ObjectStore) ([]KeySlot, e
 
 // ChangePassword replaces the password key slot using the provided credentials
 // to authenticate and newPassword as the new passphrase.
-func ChangePassword(ctx context.Context, rawStore store.ObjectStore, creds Credentials, newPassword string) error {
+func ChangePassword(ctx context.Context, rawStore store.ObjectStore, creds KeyProvider, pwd PasswordProvider) error {
 	if err := requireEncryptedRepo(ctx, rawStore); err != nil {
 		return err
 	}
-	slots, err := store.LoadKeySlots(rawStore)
-	if err != nil {
-		return fmt.Errorf("load key slots: %w", err)
-	}
-	masterKey, err := creds.extractMasterKey(ctx, slots)
+	masterKey, err := creds.ResolveKey(ctx, rawStore)
 	if err != nil {
 		return fmt.Errorf("unlock repository: %w", err)
+	}
+	newPassword, err := pwd.NewPassword(ctx)
+	if err != nil {
+		return err
 	}
 	return store.ChangePasswordSlot(rawStore, masterKey, newPassword)
 }
@@ -88,25 +88,15 @@ func ChangePassword(ctx context.Context, rawStore store.ObjectStore, creds Crede
 // AddRecoveryKey generates a BIP39 recovery key for the repository,
 // authenticating with creds to obtain the master key.
 // Returns the 24-word mnemonic phrase.
-func AddRecoveryKey(ctx context.Context, rawStore store.ObjectStore, creds Credentials) (string, error) {
+func AddRecoveryKey(ctx context.Context, rawStore store.ObjectStore, creds KeyProvider) (string, error) {
 	if err := requireEncryptedRepo(ctx, rawStore); err != nil {
 		return "", err
 	}
-	slots, err := store.LoadKeySlots(rawStore)
-	if err != nil {
-		return "", fmt.Errorf("load key slots: %w", err)
-	}
-	masterKey, err := creds.extractMasterKey(ctx, slots)
+	masterKey, err := creds.ResolveKey(ctx, rawStore)
 	if err != nil {
 		return "", fmt.Errorf("unlock repository: %w", err)
 	}
 	return store.AddRecoverySlot(rawStore, masterKey)
-}
-
-// extractMasterKey resolves the raw master key from the stored key slots
-// using the credentials. Tries KMS first, then platform key, then password.
-func (c Credentials) extractMasterKey(ctx context.Context, slots []store.KeySlot) ([]byte, error) {
-	return store.ExtractMasterKeyWithKMS(ctx, slots, c.KMSDecrypter, c.PlatformKey, c.Password)
 }
 
 // LoadRepoConfig reads the repository marker from a raw (undecorated) store.
@@ -148,6 +138,32 @@ type KMSDecrypter = crypto.KMSDecrypter
 
 // KMSEncrypter is re-exported for callers that need to wrap keys via KMS.
 type KMSEncrypter = crypto.KMSEncrypter
+
+// PasswordProvider supplies a new password when prompted. It is used by
+// ChangePassword to obtain the replacement passphrase. Implementations may
+// prompt the user interactively, derive a password programmatically, or
+// return a static value.
+type PasswordProvider interface {
+	NewPassword(ctx context.Context) (string, error)
+}
+
+// PasswordProviderFunc is a function adapter for PasswordProvider.
+// Any func(context.Context) (string, error) can be used as a PasswordProvider:
+//
+//	client.ChangePassword(ctx, store, creds, cloudstic.PasswordProviderFunc(func(ctx context.Context) (string, error) {
+//		return promptUser("New password: ")
+//	}))
+type PasswordProviderFunc func(ctx context.Context) (string, error)
+
+func (f PasswordProviderFunc) NewPassword(ctx context.Context) (string, error) { return f(ctx) }
+
+// PasswordString is a PasswordProvider that returns a fixed string.
+// Use this when the new password is already known at call time:
+//
+//	client.ChangePassword(ctx, store, creds, cloudstic.PasswordString("my-new-password"))
+type PasswordString string
+
+func (p PasswordString) NewPassword(ctx context.Context) (string, error) { return string(p), nil }
 
 // ---------------------------------------------------------------------------
 // KeyProvider

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -72,7 +73,6 @@ func runKeyList() {
 	printKeySlots(slots)
 }
 
-// printKeySlots renders the key slot table to stdout.
 func printKeySlots(slots []cloudstic.KeySlot) {
 	if len(slots) == 0 {
 		fmt.Fprintln(os.Stderr, "No key slots found.")
@@ -119,41 +119,39 @@ func runKeyPasswd() {
 	}
 	raw = a.g.applyDebug(raw)
 
-	creds, err := a.g.buildCredentials(ctx)
+	creds, err := a.g.buildKeyProvider(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
 
-	// Resolve new password.
-	newPw := a.newPassword
-	if newPw == "" {
-		if !term.IsTerminal(os.Stdin.Fd()) {
-			fmt.Fprintln(os.Stderr, "Provide --new-password or run interactively.")
-			os.Exit(1)
+	newPassword := cloudstic.PasswordProviderFunc(func(ctx context.Context) (string, error) {
+		// Resolve new password.
+		newPw := a.newPassword
+		if newPw == "" {
+			if !term.IsTerminal(os.Stdin.Fd()) {
+				return "", errors.New("provide --new-password or run interactively")
+			}
+			p1, err := ui.PromptPassword("Enter new repository password")
+			if err != nil {
+				return "", fmt.Errorf("failed to read password: %w", err)
+			}
+			if p1 == "" {
+				return "", errors.New("password cannot be empty")
+			}
+			p2, err := ui.PromptPassword("Confirm new repository password")
+			if err != nil {
+				return "", fmt.Errorf("failed to read confirmation: %w", err)
+			}
+			if p1 != p2 {
+				return "", errors.New("passwords do not match")
+			}
+			newPw = p1
 		}
-		p1, err := ui.PromptPassword("Enter new repository password")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to read password: %v\n", err)
-			os.Exit(1)
-		}
-		if p1 == "" {
-			fmt.Fprintln(os.Stderr, "Error: password cannot be empty.")
-			os.Exit(1)
-		}
-		p2, err := ui.PromptPassword("Confirm new repository password")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to read password confirmation: %v\n", err)
-			os.Exit(1)
-		}
-		if p1 != p2 {
-			fmt.Fprintln(os.Stderr, "Error: passwords do not match.")
-			os.Exit(1)
-		}
-		newPw = p1
-	}
+		return newPw, nil
+	})
 
-	if err := cloudstic.ChangePassword(ctx, raw, creds, newPw); err != nil {
+	if err := cloudstic.ChangePassword(ctx, raw, creds, newPassword); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to change password: %v\n", err)
 		os.Exit(1)
 	}
@@ -184,7 +182,7 @@ func runAddRecoveryKey() {
 	}
 	raw = a.g.applyDebug(raw)
 
-	creds, err := a.g.buildCredentials(ctx)
+	creds, err := a.g.buildKeyProvider(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)

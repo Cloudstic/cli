@@ -45,12 +45,13 @@ func startSFTPContainer(t *testing.T, ctx context.Context) (testcontainers.Conta
 	return container, host, mappedPort.Port()
 }
 
-func sftpTestConfig(host, port string) SFTPConfig {
+func sftpTestConfig(host, port, basePath string) SFTPConfig {
 	return SFTPConfig{
 		Host:     host,
 		Port:     port,
 		User:     "test",
 		Password: "test",
+		BasePath: basePath,
 	}
 }
 
@@ -70,10 +71,9 @@ func TestSFTPStore(t *testing.T) {
 		}
 	}()
 
-	cfg := sftpTestConfig(host, port)
-	basePath := "/upload/store"
+	cfg := sftpTestConfig(host, port, "/upload/store")
 
-	st, err := NewSFTPStore(cfg, basePath)
+	st, err := NewSFTPStore(cfg)
 	if err != nil {
 		t.Fatalf("NewSFTPStore failed: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestSFTPSource(t *testing.T) {
 		}
 	}()
 
-	cfg := sftpTestConfig(host, port)
+	cfg := sftpTestConfig(host, port, "/upload/source")
 
 	// Seed some files via a direct SFTP connection.
 	seedClient, err := dialSFTP(cfg)
@@ -180,13 +180,12 @@ func TestSFTPSource(t *testing.T) {
 		t.Fatalf("seed dialSFTP: %v", err)
 	}
 
-	rootPath := "/upload/source"
-	if err := seedClient.MkdirAll(rootPath + "/subdir"); err != nil {
+	if err := seedClient.MkdirAll(cfg.BasePath + "/subdir"); err != nil {
 		t.Fatalf("seed mkdir: %v", err)
 	}
 
 	for _, rel := range []string{"file1.txt", "subdir/file2.txt"} {
-		f, err := seedClient.Create(fmt.Sprintf("%s/%s", rootPath, rel))
+		f, err := seedClient.Create(fmt.Sprintf("%s/%s", cfg.BasePath, rel))
 		if err != nil {
 			t.Fatalf("seed create %s: %v", rel, err)
 		}
@@ -199,7 +198,7 @@ func TestSFTPSource(t *testing.T) {
 	_ = seedClient.Close()
 
 	// Create SFTPSource
-	src, err := NewSFTPSource(SFTPSourceConfig{SFTPConfig: cfg, RootPath: rootPath})
+	src, err := NewSFTPSource(SFTPSourceConfig{SFTPConfig: cfg})
 	if err != nil {
 		t.Fatalf("NewSFTPSource failed: %v", err)
 	}
@@ -210,8 +209,8 @@ func TestSFTPSource(t *testing.T) {
 	if info.Type != "sftp" {
 		t.Errorf("Expected type 'sftp', got %s", info.Type)
 	}
-	if info.Path != rootPath {
-		t.Errorf("Expected Path %q, got %q", rootPath, info.Path)
+	if info.Path != cfg.BasePath {
+		t.Errorf("Expected Path %q, got %q", cfg.BasePath, info.Path)
 	}
 
 	// Test Size()

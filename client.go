@@ -110,10 +110,14 @@ func (c Credentials) extractMasterKey(ctx context.Context, slots []store.KeySlot
 }
 
 // LoadRepoConfig reads the repository marker from a raw (undecorated) store.
-// Returns nil, nil if the repository has not been initialized yet.
+// Returns (nil, nil) if the repository has not been initialized yet.
+// Returns an error if the store is unreachable (e.g. invalid credentials).
 func LoadRepoConfig(ctx context.Context, rawStore store.ObjectStore) (*RepoConfig, error) {
 	data, err := rawStore.Get(ctx, "config")
-	if err != nil || data == nil {
+	if err != nil {
+		return nil, err
+	}
+	if data == nil {
 		return nil, nil
 	}
 	var cfg core.RepoConfig

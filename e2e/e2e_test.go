@@ -1,4 +1,4 @@
-package main
+package e2e
 
 import (
 	"archive/zip"
@@ -10,25 +10,6 @@ import (
 	"strings"
 	"testing"
 )
-
-// TestEnv classifies a test integration environment.
-type TestEnv string
-
-const (
-	// Hermetic runs entirely local (e.g., TempDir, Testcontainers). Safe for all machines.
-	Hermetic TestEnv = "hermetic"
-	// Live runs against real cloud vendor APIs (e.g., real AWS S3, real Google Drive). Requires secrets.
-	Live TestEnv = "live"
-)
-
-// currentE2EMode returns the current test mode ("hermetic", "live", "all").
-// Defaults to hermetic if unset.
-func currentE2EMode() string {
-	if mode := os.Getenv("CLOUDSTIC_E2E_MODE"); mode != "" {
-		return strings.ToLower(mode)
-	}
-	return "hermetic"
-}
 
 // shouldRun returns true if the given environment should run under the current E2E mode.
 func shouldRun(e TestEnv) bool {
@@ -43,7 +24,7 @@ func buildBinary(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "cloudstic")
-	cmd := exec.Command("go", "build", "-o", bin, ".")
+	cmd := exec.Command("go", "build", "-o", bin, "../cmd/cloudstic")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Build failed: %v\n%s", err, out)
 	}
@@ -92,60 +73,6 @@ func writeFile(t *testing.T, dir, name, content string) {
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
-}
-
-// ----------------------------------------------------------------------------
-// E2E Testing Matrix Interfaces
-// ----------------------------------------------------------------------------
-
-// TestSource encapsulates the origin of data to be backed up.
-type TestSource interface {
-	Name() string
-	Env() TestEnv
-	Setup(t *testing.T) (sourceArgs []string)
-	WriteFile(t *testing.T, relPath, content string)
-}
-
-// TestStore encapsulates the content-addressable storage backend.
-type TestStore interface {
-	Name() string
-	Env() TestEnv
-	Setup(t *testing.T) (storeArgs []string)
-}
-
-// ----------------------------------------------------------------------------
-// Local Filesystem Implementations
-// ----------------------------------------------------------------------------
-
-type localSource struct {
-	dir string
-}
-
-func newLocalSource(t *testing.T) *localSource {
-	return &localSource{dir: t.TempDir()}
-}
-
-func (s *localSource) Name() string { return "local" }
-func (s *localSource) Env() TestEnv { return Hermetic }
-func (s *localSource) Setup(t *testing.T) []string {
-	return []string{"-source", "local", "-source-path", s.dir}
-}
-func (s *localSource) WriteFile(t *testing.T, relPath, content string) {
-	writeFile(t, s.dir, relPath, content)
-}
-
-type localStore struct {
-	dir string
-}
-
-func newLocalStore(t *testing.T) *localStore {
-	return &localStore{dir: t.TempDir()}
-}
-
-func (s *localStore) Name() string { return "local" }
-func (s *localStore) Env() TestEnv { return Hermetic }
-func (s *localStore) Setup(t *testing.T) []string {
-	return []string{"-store", "local", "-store-path", s.dir}
 }
 
 // ----------------------------------------------------------------------------
@@ -439,24 +366,8 @@ func TestCLI_EndToEnd_Matrix(t *testing.T) {
 	}
 }
 
-// zipFileExists checks if a file exists in the zip archive.
-func zipFileExists(t *testing.T, zipPath, name string) bool {
-	t.Helper()
-	zr, err := zip.OpenReader(zipPath)
-	if err != nil {
-		t.Fatalf("open zip %s: %v", zipPath, err)
-	}
-	defer func() { _ = zr.Close() }()
-	for _, f := range zr.File {
-		if f.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-// TestCLI_BackupExcludePatterns tests -exclude and -exclude-file flags.
-func TestCLI_BackupExcludePatterns(t *testing.T) {
+// TestCLI_EndToEnd_BackupExcludePatterns tests -exclude and -exclude-file flags.
+func TestCLI_EndToEnd_BackupExcludePatterns(t *testing.T) {
 	if !shouldRun(Hermetic) {
 		t.Skip("skipping hermetic test")
 	}
@@ -534,6 +445,56 @@ func TestCLI_BackupExcludePatterns(t *testing.T) {
 	if got := readZipFile(t, zipPath, "README.md"); got != "hello" {
 		t.Errorf("README.md content = %q, want %q", got, "hello")
 	}
+}
+
+func TestCLI_EndToEnd_Completion(t *testing.T) {
+	if !shouldRun(Hermetic) {
+		t.Skip("skipping hermetic test")
+	}
+
+	bin := buildBinary(t)
+
+	// Test each shell
+	for _, shell := range []string{"bash", "zsh", "fish"} {
+		t.Run(shell, func(t *testing.T) {
+			out := run(t, bin, "completion", shell)
+			if out == "" {
+				t.Fatalf("completion %s produced empty output", shell)
+			}
+			// Verify it contains the command name at minimum
+			if !strings.Contains(out, "cloudstic") {
+				t.Errorf("completion %s output missing 'cloudstic'", shell)
+			}
+		})
+	}
+
+	// Test unsupported shell
+	out := runExpectFail(t, bin, "completion", "powershell")
+	if !strings.Contains(out, "Unsupported shell") {
+		t.Errorf("Expected unsupported shell error, got: %s", out)
+	}
+
+	// Test no shell argument
+	out = runExpectFail(t, bin, "completion")
+	if !strings.Contains(out, "Usage:") {
+		t.Errorf("Expected usage message, got: %s", out)
+	}
+}
+
+// zipFileExists checks if a file exists in the zip archive.
+func zipFileExists(t *testing.T, zipPath, name string) bool {
+	t.Helper()
+	zr, err := zip.OpenReader(zipPath)
+	if err != nil {
+		t.Fatalf("open zip %s: %v", zipPath, err)
+	}
+	defer func() { _ = zr.Close() }()
+	for _, f := range zr.File {
+		if f.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // readZipFile reads a single file's content from a zip archive.

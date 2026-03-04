@@ -196,7 +196,7 @@ func (bm *BackupManager) flushPendingMetas(ctx context.Context) error {
 
 	jobs := make(chan job, len(bm.pendingMetas))
 	errs := make(chan error, len(bm.pendingMetas))
-	workers := min(20, len(bm.pendingMetas))
+	workers := min(store.GetConcurrencyHint(bm.store, 20), len(bm.pendingMetas))
 
 	for range workers {
 		go func() {

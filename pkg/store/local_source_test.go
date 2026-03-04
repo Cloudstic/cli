@@ -57,15 +57,15 @@ func TestLocalSource_WithExcludes(t *testing.T) {
 	// Should see: src, src/main.go, build, build/output.bin, README.md
 	// Should NOT see: .git/*, node_modules/*, notes.tmp, src/app.log
 	excluded := map[string]bool{
-		".git":                        true,
-		".git/config":                  true,
-		".git/objects":                 true,
-		".git/objects/abc":             true,
-		"node_modules":                 true,
-		"node_modules/pkg":             true,
-		"node_modules/pkg/index.js":    true,
-		"notes.tmp":                    true,
-		"src/app.log":                  true,
+		".git":                      true,
+		".git/config":               true,
+		".git/objects":              true,
+		".git/objects/abc":          true,
+		"node_modules":              true,
+		"node_modules/pkg":          true,
+		"node_modules/pkg/index.js": true,
+		"notes.tmp":                 true,
+		"src/app.log":               true,
 	}
 	for _, w := range walked {
 		if excluded[w] {

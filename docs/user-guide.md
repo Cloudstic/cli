@@ -2,6 +2,8 @@
 
 Cloudstic is a content-addressable backup tool that creates encrypted, deduplicated snapshots of your files — from local directories, SFTP servers, Google Drive, or OneDrive — and stores them locally, on Amazon S3, Backblaze B2, or a remote SFTP server.
 
+> Full documentation (with guides, examples, and API reference) is available at **[docs.cloudstic.com](https://docs.cloudstic.com)**.
+
 ## Table of Contents
 
 - [Quick Start](#quick-start)
@@ -1105,6 +1107,10 @@ cloudstic restore -recovery-key "word1 word2 ... word24"
 ### Adding a recovery key later
 
 ```bash
+# Interactive — prompts for current password
+cloudstic key add-recovery
+
+# Non-interactive
 cloudstic key add-recovery -encryption-password "my passphrase"
 
 # For KMS-managed repositories

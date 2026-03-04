@@ -249,6 +249,87 @@ func writeRecoverySlot(s ObjectStore, masterKey, recoveryKey []byte) error {
 	})
 }
 
+// OpenWithKMS finds a kms-platform slot, unwraps the master key using the
+// given KMS decrypter, and returns the derived encryption key.
+func OpenWithKMS(ctx context.Context, slots []KeySlot, decrypter crypto.KMSDecrypter) ([]byte, error) {
+	for _, slot := range slots {
+		if slot.SlotType != "kms-platform" {
+			continue
+		}
+		wrapped, err := base64.StdEncoding.DecodeString(slot.WrappedKey)
+		if err != nil {
+			continue
+		}
+		masterKey, err := decrypter.Decrypt(ctx, wrapped)
+		if err != nil {
+			continue
+		}
+		return deriveEncryptionKey(masterKey)
+	}
+	return nil, fmt.Errorf("no compatible kms-platform key slot found")
+}
+
+// WriteKMSSlot wraps the master key using a KMS encrypter and writes a
+// kms-platform slot to the store.
+func WriteKMSSlot(ctx context.Context, s ObjectStore, masterKey []byte, encrypter crypto.KMSEncrypter, keyARN string) error {
+	ciphertext, err := encrypter.Encrypt(ctx, keyARN, masterKey)
+	if err != nil {
+		return fmt.Errorf("kms encrypt master key: %w", err)
+	}
+	return writeSlot(s, KeySlot{
+		SlotType:   "kms-platform",
+		WrappedKey: base64.StdEncoding.EncodeToString(ciphertext),
+		Label:      "default",
+	})
+}
+
+// InitKMSEncryptionKey initializes encryption for a new repository using KMS.
+// It generates a master key, wraps it with KMS, and optionally creates
+// additional password/platform slots. Returns the derived encryption key.
+func InitKMSEncryptionKey(ctx context.Context, s ObjectStore, encrypter crypto.KMSEncrypter, keyARN string, platformKey []byte, password string) ([]byte, error) {
+	masterKey, err := crypto.GenerateKey()
+	if err != nil {
+		return nil, fmt.Errorf("generate master key: %w", err)
+	}
+	if err := WriteKMSSlot(ctx, s, masterKey, encrypter, keyARN); err != nil {
+		return nil, err
+	}
+	// Also create platform/password slots if provided.
+	if len(platformKey) > 0 {
+		if err := writePlatformSlot(s, masterKey, platformKey); err != nil {
+			return nil, err
+		}
+	}
+	if password != "" {
+		if err := writePasswordSlot(s, masterKey, password); err != nil {
+			return nil, err
+		}
+	}
+	return deriveEncryptionKey(masterKey)
+}
+
+// ExtractMasterKeyWithKMS is like ExtractMasterKey but also supports
+// kms-platform slots via a crypto.KMSDecrypter.
+func ExtractMasterKeyWithKMS(ctx context.Context, slots []KeySlot, decrypter crypto.KMSDecrypter, platformKey []byte, password string) ([]byte, error) {
+	// Try KMS slots first.
+	if decrypter != nil {
+		for _, slot := range slots {
+			if slot.SlotType != "kms-platform" {
+				continue
+			}
+			wrapped, err := base64.StdEncoding.DecodeString(slot.WrappedKey)
+			if err != nil {
+				continue
+			}
+			if mk, err := decrypter.Decrypt(ctx, wrapped); err == nil {
+				return mk, nil
+			}
+		}
+	}
+	// Fall back to legacy credentials.
+	return ExtractMasterKey(slots, platformKey, password)
+}
+
 // ChangePasswordSlot replaces (or creates) the password key slot for the
 // repository. masterKey is the unwrapped master key; newPassword is the new
 // password to wrap it with. The old password slot (keys/password-default) is

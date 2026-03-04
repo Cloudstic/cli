@@ -37,24 +37,30 @@ Or download a binary from [Releases](https://github.com/cloudstic/cli/releases).
 ## Quick Start
 
 ```bash
+# Initialize an encrypted repository (prompts for password interactively)
+cloudstic init
 
-# Initialize an encrypted repository
-cloudstic init -encryption-password "my passphrase"
-
-# Back up a local directory
-cloudstic backup -source local -source-path ~/Documents -encryption-password "my passphrase"
+# Back up a local directory (prompts for password if not set via flag or env)
+cloudstic backup -source local -source-path ~/Documents
 
 # Back up Google Drive (opens browser for auth on first run)
-cloudstic backup -source gdrive-changes -encryption-password "my passphrase"
+cloudstic backup -source gdrive-changes
 
 # List snapshots
-cloudstic list -encryption-password "my passphrase"
+cloudstic list
 
 # Restore latest snapshot to a zip file
-cloudstic restore -encryption-password "my passphrase"
+cloudstic restore
 
 # Preview what a backup would do (dry run)
 cloudstic backup -source local -source-path ~/Documents -dry-run
+```
+
+When running interactively, Cloudstic prompts for the repository password if no credential is provided via flags or environment variables. For non-interactive use (scripts, cron), pass `-encryption-password` or set `CLOUDSTIC_ENCRYPTION_PASSWORD`:
+
+```bash
+cloudstic init -encryption-password "my passphrase"
+cloudstic backup -source local -source-path ~/Documents -encryption-password "my passphrase"
 ```
 
 ## Documentation

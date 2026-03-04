@@ -45,17 +45,24 @@ Cloudstic is a content-addressable backup tool that creates encrypted, deduplica
 ## Quick Start
 
 ```bash
-# 1. Initialize an encrypted repository (encryption is required by default)
-cloudstic init -encryption-password "my secret passphrase"
+# 1. Initialize an encrypted repository (prompts for password interactively)
+cloudstic init
 
-# 2. Back up a local directory
-cloudstic backup -source local -source-path ~/Documents -encryption-password "my secret passphrase"
+# 2. Back up a local directory (prompts for password)
+cloudstic backup -source local -source-path ~/Documents
 
 # 3. List snapshots
-cloudstic list -encryption-password "my secret passphrase"
+cloudstic list
 
 # 4. Restore the latest snapshot
-cloudstic restore -encryption-password "my secret passphrase"
+cloudstic restore
+```
+
+When running in a terminal, Cloudstic prompts for the repository password if no credential is provided via flags or environment variables. For non-interactive use (scripts, cron), pass the password explicitly:
+
+```bash
+cloudstic init -encryption-password "my secret passphrase"
+cloudstic backup -source local -source-path ~/Documents -encryption-password "my secret passphrase"
 ```
 
 ## Installation
@@ -184,10 +191,16 @@ These flags apply to all commands:
 Initialize a new repository. Encryption is **required by default**.
 
 ```bash
-# Password-based encryption (recommended)
+# Interactive — prompts for password (recommended for personal use)
+cloudstic init
+
+# Interactive with a recovery key (strongly recommended)
+cloudstic init -recovery
+
+# Non-interactive — password provided via flag
 cloudstic init -encryption-password "my secret passphrase"
 
-# With a recovery key (strongly recommended for personal use)
+# Non-interactive with a recovery key
 cloudstic init -encryption-password "my secret passphrase" -recovery
 
 # Platform key encryption (for automation)
@@ -199,6 +212,8 @@ cloudstic init -encryption-password "passphrase" -encryption-key <hex>
 # Unencrypted (must be explicit — not recommended)
 cloudstic init -no-encryption
 ```
+
+When no encryption credential is provided and stdin is a terminal, `init` prompts for a new password with confirmation. In non-interactive environments (piped input, cron jobs), you must pass `-encryption-password`, `-encryption-key`, or `-no-encryption` explicitly.
 
 **Flags:**
 
@@ -566,6 +581,10 @@ Example output:
 Generate a 24-word recovery key for an existing encrypted repository. Requires your current encryption credential to unlock the master key.
 
 ```bash
+# Interactive — prompts for current password
+cloudstic key add-recovery
+
+# Non-interactive
 cloudstic key add-recovery -encryption-password "my secret passphrase"
 
 # For KMS-managed repositories
@@ -1039,6 +1058,16 @@ The `-store-path` is the remote directory path on the SFTP server where backup o
 
 Encryption is **required by default**. All backup data is encrypted with AES-256-GCM before being written to storage.
 
+### Interactive password prompt
+
+When running in a terminal, Cloudstic prompts for the repository password if no credential is provided via flags (`-encryption-password`, `-encryption-key`, `-recovery-key`, `-kms-key-arn`) or environment variables (`CLOUDSTIC_ENCRYPTION_PASSWORD`, etc.).
+
+This applies to all commands that access an encrypted repository — `backup`, `restore`, `list`, `ls`, `diff`, `check`, `cat`, `key passwd`, `key add-recovery`, and `init`.
+
+For `init`, the prompt asks for a new password with confirmation. For all other commands, it asks for the existing repository password.
+
+In non-interactive environments (piped input, cron, CI), you must provide credentials explicitly or the command will fail with an error.
+
 ### How it works
 
 1. A random **master key** is generated during `cloudstic init`
@@ -1085,6 +1114,10 @@ cloudstic key add-recovery -kms-key-arn arn:aws:kms:us-east-1:123:key/abc
 ### Changing your password
 
 ```bash
+# Interactive — prompts for current and new password
+cloudstic key passwd
+
+# Non-interactive
 cloudstic key passwd -encryption-password "old passphrase" -new-password "new passphrase"
 ```
 

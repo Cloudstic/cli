@@ -149,7 +149,7 @@ func TestChangePassword(t *testing.T) {
 		t.Fatalf("InitRepo: %v", err)
 	}
 
-	if err := ChangePassword(ctx, s, Credentials{Password: "old-pass"}, "new-pass"); err != nil {
+	if err := ChangePassword(ctx, s, Credentials{Password: "old-pass"}, PasswordString("new-pass")); err != nil {
 		t.Fatalf("ChangePassword: %v", err)
 	}
 
@@ -168,7 +168,7 @@ func TestChangePassword_WrongCredentials(t *testing.T) {
 	if _, err := InitRepo(ctx, s, WithInitPassword("correct-pass")); err != nil {
 		t.Fatalf("InitRepo: %v", err)
 	}
-	if err := ChangePassword(ctx, s, Credentials{Password: "wrong-pass"}, "new-pass"); err == nil {
+	if err := ChangePassword(ctx, s, Credentials{Password: "wrong-pass"}, PasswordString("new-pass")); err == nil {
 		t.Error("expected error with wrong credentials")
 	}
 }

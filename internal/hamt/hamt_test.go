@@ -476,11 +476,17 @@ func (s *countingStore) Exists(ctx context.Context, key string) (bool, error) {
 	s.mu.Unlock()
 	return ok, nil
 }
-func (s *countingStore) Delete(ctx context.Context, key string) error         { return s.inner.Delete(ctx, key) }
-func (s *countingStore) List(ctx context.Context, p string) ([]string, error) { return s.inner.List(ctx, p) }
-func (s *countingStore) Size(ctx context.Context, key string) (int64, error)  { return s.inner.Size(ctx, key) }
-func (s *countingStore) TotalSize(ctx context.Context) (int64, error)         { return s.inner.TotalSize(ctx) }
-func (s *countingStore) Flush(_ context.Context) error                        { return nil }
+func (s *countingStore) Delete(ctx context.Context, key string) error {
+	return s.inner.Delete(ctx, key)
+}
+func (s *countingStore) List(ctx context.Context, p string) ([]string, error) {
+	return s.inner.List(ctx, p)
+}
+func (s *countingStore) Size(ctx context.Context, key string) (int64, error) {
+	return s.inner.Size(ctx, key)
+}
+func (s *countingStore) TotalSize(ctx context.Context) (int64, error) { return s.inner.TotalSize(ctx) }
+func (s *countingStore) Flush(_ context.Context) error                { return nil }
 
 func (s *countingStore) reset() {
 	s.mu.Lock()

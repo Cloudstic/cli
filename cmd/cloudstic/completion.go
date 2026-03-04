@@ -3,7 +3,35 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
 )
+
+func runCompletion() {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "Usage: cloudstic completion <shell>")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Available shells: bash, zsh, fish")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Setup:")
+		fmt.Fprintln(os.Stderr, "  bash:  source <(cloudstic completion bash)")
+		fmt.Fprintln(os.Stderr, "  zsh:   source <(cloudstic completion zsh)")
+		fmt.Fprintln(os.Stderr, "  fish:  cloudstic completion fish | source")
+		os.Exit(1)
+	}
+
+	shell := os.Args[2]
+	switch shell {
+	case "bash":
+		completionBash(os.Stdout)
+	case "zsh":
+		completionZsh(os.Stdout)
+	case "fish":
+		completionFish(os.Stdout)
+	default:
+		fmt.Fprintf(os.Stderr, "Unsupported shell: %s\nAvailable shells: bash, zsh, fish\n", shell)
+		os.Exit(1)
+	}
+}
 
 // completionBash writes a bash completion script to w.
 func completionBash(w io.Writer) {

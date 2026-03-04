@@ -27,20 +27,21 @@ type SFTPConfig struct {
 	User           string
 	Password       string // password auth (optional if key is set)
 	PrivateKeyPath string // path to PEM-encoded private key (optional if password is set)
+	BasePath       string
 }
 
 // NewSFTPStore connects to the SFTP server described by cfg and returns a
 // store rooted at basePath. The directory is created if it does not exist.
-func NewSFTPStore(cfg SFTPConfig, basePath string) (*SFTPStore, error) {
+func NewSFTPStore(cfg SFTPConfig) (*SFTPStore, error) {
 	client, err := dialSFTP(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("sftp connect: %w", err)
 	}
-	if err := mkdirAllSFTP(client, basePath); err != nil {
+	if err := mkdirAllSFTP(client, cfg.BasePath); err != nil {
 		_ = client.Close()
-		return nil, fmt.Errorf("sftp mkdir %s: %w", basePath, err)
+		return nil, fmt.Errorf("sftp mkdir %s: %w", cfg.BasePath, err)
 	}
-	return &SFTPStore{client: client, basePath: basePath}, nil
+	return &SFTPStore{client: client, basePath: cfg.BasePath}, nil
 }
 
 // Close releases the underlying SFTP and SSH connections.

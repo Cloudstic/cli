@@ -100,8 +100,11 @@ run_bench() {
         local mem_mb=$(echo "scale=2; $mem_bytes / 1024 / 1024" | bc)
         printf "| %-30s | %10s s | %10.2f MB |\n" "$step_name" "$real_time" "$mem_mb"
     else
-        echo "Command failed: $@"
-        cat "$out_file"
+        echo "" >&2
+        echo "ERROR: '$step_name' failed" >&2
+        echo "Command: $*" >&2
+        # Show command error output (strip time's numeric stats lines)
+        grep -v '^[[:space:]]*[0-9]' "$out_file" >&2 || true
     fi
     rm "$out_file"
 }
@@ -119,7 +122,7 @@ benchmark_cloudstic() {
     local repo="$REPO_DIR/cloudstic"
     
     if [ "$TARGET" == "local" ]; then
-        $CLOUDSTIC_BIN init -store local -store-path "$repo" >/dev/null 2>&1
+        $CLOUDSTIC_BIN init -store local -store-path "$repo" >/dev/null
         run_bench "Initial Backup" $CLOUDSTIC_BIN backup -store local -store-path "$repo" -source local -source-path "$DATA_DIR" -quiet -cpuprofile /tmp/cloudstic-bench.prof $DEBUG_FLAG
         run_bench "Incremental (No Changes)" $CLOUDSTIC_BIN backup -store local -store-path "$repo" -source local -source-path "$DATA_DIR" -quiet $DEBUG_FLAG
         
@@ -130,7 +133,7 @@ benchmark_cloudstic() {
         local repo_size=$(du -sh "$repo" | cut -f1 | xargs)
         printf "| %-30s | %12s | %13s |\n" "Final Repo Size" "$repo_size" "-"
     else
-        $CLOUDSTIC_BIN init -store s3 -encryption-password "$PASSWORD" -store-path "$S3_BUCKET" -store-prefix "cloudstic/" >/dev/null 2>&1 || true
+        $CLOUDSTIC_BIN init -store s3 -encryption-password "$PASSWORD" -store-path "$S3_BUCKET" -store-prefix "cloudstic/" >/dev/null || true
         run_bench "Initial Backup" $CLOUDSTIC_BIN backup -store s3 -encryption-password "$PASSWORD" -store-path "$S3_BUCKET" -store-prefix "cloudstic/" -source local -source-path "$DATA_DIR" -quiet -cpuprofile /tmp/cloudstic-bench-s3.prof $DEBUG_FLAG
         run_bench "Incremental (No Changes)" $CLOUDSTIC_BIN backup -store s3 -encryption-password "$PASSWORD" -store-path "$S3_BUCKET" -store-prefix "cloudstic/" -source local -source-path "$DATA_DIR" -quiet $DEBUG_FLAG
         

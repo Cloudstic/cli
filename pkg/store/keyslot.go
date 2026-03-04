@@ -51,7 +51,6 @@ func LoadKeySlots(s ObjectStore) ([]KeySlot, error) {
 	return slots, nil
 }
 
-
 func slotObjectKey(slotType, label string) string {
 	return KeySlotPrefix + slotType + "-" + label
 }

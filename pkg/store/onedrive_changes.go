@@ -82,7 +82,6 @@ func (s *OneDriveChangeSource) WalkChanges(ctx context.Context, token string, ca
 		hasExclude := !s.exclude.Empty()
 		excludedIDs := make(map[string]bool)
 
-
 		for _, fc := range folderChanges {
 			if hasExclude && fc.Type == ChangeUpsert && shouldExcludeOneDriveChange(s.exclude, fc, excludedIDs) {
 				continue

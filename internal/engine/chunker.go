@@ -76,7 +76,7 @@ func (c *Chunker) ProcessStream(r io.Reader, onProgress func(int64)) (refs []str
 	var collectedResults []chunkResult
 
 	// Worker pool for storing chunks concurrently
-	const numWorkers = 10
+	numWorkers := store.GetConcurrencyHint(c.store, 10)
 	for i := 0; i < numWorkers; i++ {
 		g.Go(func() error {
 			for job := range jobs {

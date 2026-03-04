@@ -19,13 +19,13 @@ import (
 type InitOption func(*initConfig)
 
 type initConfig struct {
-	platformKey   []byte
-	password      string
-	recovery      bool
-	noEncryption  bool
-	kmsEncrypter  crypto.KMSEncrypter
-	kmsDecrypter  crypto.KMSDecrypter
-	kmsKeyARN     string
+	platformKey  []byte
+	password     string
+	recovery     bool
+	noEncryption bool
+	kmsEncrypter crypto.KMSEncrypter
+	kmsDecrypter crypto.KMSDecrypter
+	kmsKeyARN    string
 }
 
 // WithInitPlatformKey sets the platform key for encryption.

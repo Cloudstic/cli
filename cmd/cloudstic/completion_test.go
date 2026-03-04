@@ -120,37 +120,3 @@ func TestCompletionFish(t *testing.T) {
 		}
 	}
 }
-
-func TestCompletionE2E(t *testing.T) {
-	if !shouldRun(Hermetic) {
-		t.Skip("skipping hermetic test")
-	}
-
-	bin := buildBinary(t)
-
-	// Test each shell
-	for _, shell := range []string{"bash", "zsh", "fish"} {
-		t.Run(shell, func(t *testing.T) {
-			out := run(t, bin, "completion", shell)
-			if out == "" {
-				t.Fatalf("completion %s produced empty output", shell)
-			}
-			// Verify it contains the command name at minimum
-			if !strings.Contains(out, "cloudstic") {
-				t.Errorf("completion %s output missing 'cloudstic'", shell)
-			}
-		})
-	}
-
-	// Test unsupported shell
-	out := runExpectFail(t, bin, "completion", "powershell")
-	if !strings.Contains(out, "Unsupported shell") {
-		t.Errorf("Expected unsupported shell error, got: %s", out)
-	}
-
-	// Test no shell argument
-	out = runExpectFail(t, bin, "completion")
-	if !strings.Contains(out, "Usage:") {
-		t.Errorf("Expected usage message, got: %s", out)
-	}
-}

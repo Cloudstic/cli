@@ -12,8 +12,7 @@ import (
 
 // SFTPSourceConfig holds configuration for an SFTP filesystem source.
 type SFTPSourceConfig struct {
-	SFTPConfig             // connection parameters
-	RootPath        string // remote directory to back up
+	SFTPConfig      // connection parameters
 	ExcludePatterns []string
 }
 
@@ -32,7 +31,7 @@ func NewSFTPSource(cfg SFTPSourceConfig) (*SFTPSource, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sftp source connect: %w", err)
 	}
-	return &SFTPSource{client: client, rootPath: cfg.RootPath, cfg: cfg.SFTPConfig, exclude: NewExcludeMatcher(cfg.ExcludePatterns)}, nil
+	return &SFTPSource{client: client, rootPath: cfg.BasePath, cfg: cfg.SFTPConfig, exclude: NewExcludeMatcher(cfg.ExcludePatterns)}, nil
 }
 
 // Close releases the underlying SFTP and SSH connections.

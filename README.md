@@ -65,6 +65,10 @@ cloudstic backup -source local -source-path ~/Documents -encryption-password "my
 
 ## Documentation
 
+Full documentation is available at **[docs.cloudstic.com](https://docs.cloudstic.com)**.
+
+This repository also contains developer-focused reference docs:
+
 - [User Guide](docs/user-guide.md): commands, setup, encryption, retention policies
 - [Source API](docs/sources.md): source interface, implementations, and how to add a new source
 - [Specification](docs/spec.md): object types, backup/restore flow, HAMT structure

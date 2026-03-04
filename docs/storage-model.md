@@ -12,7 +12,9 @@ stored under a key derived from its hash. Objects are immutable once written.
 | `filemeta/`  | File metadata (name, size, mod time, content hash)    |
 | `node/`      | HAMT tree nodes (directory structure)                 |
 | `snapshot/`  | Root object tying a tree to a point in time           |
-| `index/`     | Mutable pointers (`latest`, `packs` catalog)           |
+| `index/latest`     | Mutable pointer to the most recent snapshot            |
+| `index/snapshots`  | Snapshot catalog (lightweight summaries, self-healing) |
+| `index/packs`      | Pack catalog — offset map for objects inside packfiles  |
 
 ## Write Order During Backup
 

@@ -54,7 +54,9 @@ Cloudstic is a content-addressable backup system designed for flat cloud storage
 | `forget`           | Remove a snapshot (and optionally prune afterwards)      |
 | `prune`            | Mark-and-sweep garbage collection of unreachable objects |
 | `break-lock`       | Force-remove a stale repository lock                     |
-| `add-recovery-key` | Add a BIP39 recovery key slot to the repository          |
+| `key list`         | List all encryption key slots in the repository          |
+| `key passwd`       | Change (rotate) the repository password                  |
+| `key add-recovery` | Add a BIP39 recovery key slot to the repository          |
 
 ---
 
@@ -185,7 +187,8 @@ Object key: `node/<sha256-of-serialized-json>`
     "generator": "cloudstic-cli"
   },
   "tags": ["daily", "important"],
-  "change_token": "12345"
+  "change_token": "12345",
+  "exclude_hash": "d4c3b2a1..."
 }
 ```
 
@@ -196,6 +199,7 @@ Object key: `node/<sha256-of-serialized-json>`
 | `meta`         | Free-form key-value metadata (generator, etc.)                       |
 | `tags`         | User-defined labels for retention policies                           |
 | `change_token` | Opaque token for incremental sources (omitted when not applicable)   |
+| `exclude_hash` | SHA-256 of the concatenated exclude patterns used for this snapshot  |
 
 * Every snapshot is a **complete checkpoint** — no delta replay needed.
 * Structural sharing via the HAMT minimises the number of new nodes.
@@ -206,9 +210,10 @@ Incremental sources (`gdrive-changes`) record an opaque `change_token` in each s
 
 The token format is source-specific:
 
-| Source           | Token type                           |
-|------------------|--------------------------------------|
-| `gdrive-changes` | Google Drive Changes API start page token |
+| Source              | Token type                                    |
+|---------------------|-----------------------------------------------|
+| `gdrive-changes`    | Google Drive Changes API start page token     |
+| `onedrive-changes`  | Microsoft OneDrive delta API next-link/token  |
 
 ### 6. Packfiles (`packs/` and `index/packs`)
 
@@ -220,8 +225,9 @@ To avoid issuing hundreds of thousands of S3 `PUT` and `GET` requests for tiny m
 
 ### 7. Index
 
-* A single `index/latest` pointer for quick access to the most recent snapshot.
-* Snapshot discovery uses `store.List("snapshot/")` — no per-sequence pointers needed.
+#### index/latest
+
+A mutable pointer to the most recent snapshot:
 
 ```json
 {
@@ -230,7 +236,13 @@ To avoid issuing hundreds of thousands of S3 `PUT` and `GET` requests for tiny m
 }
 ```
 
-Clients fetch `index/latest` to find the head. To list all snapshots, list the `snapshot/` prefix directly.
+#### index/snapshots
+
+A catalog of lightweight snapshot summaries used to avoid fetching each full snapshot object individually. Stored as a JSON array of `SnapshotSummary` objects (same fields as `Snapshot` minus the HAMT root detail). Self-heals via reconciliation with `LIST snapshot/` on load — if the catalog is missing or stale it is rebuilt automatically.
+
+#### index/packs
+
+When packfiles are enabled, a bbolt database mapping logical object keys to their byte offset and length within a packfile. Rebuilt automatically if stale.
 
 ---
 

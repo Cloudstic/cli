@@ -47,7 +47,7 @@ func (g *globalFlags) openClient() (*cloudstic.Client, error) {
 		reporter = cr
 	}
 
-	kp, err := g.buildKeyProvider()
+	kp, err := g.buildKeyProvider(context.Background())
 	if err != nil {
 		return nil, err
 	}
@@ -75,15 +75,22 @@ func (g *globalFlags) buildKMSClient(ctx context.Context) (*crypto.AWSKMSClient,
 // buildKeyProvider constructs a Credentials key provider from the CLI flags.
 // The returned provider always attempts auto-detection: the client reads the
 // repo config and only calls ResolveKey when encryption is enabled.
-func (g *globalFlags) buildKeyProvider() (cloudstic.KeyProvider, error) {
+func (g *globalFlags) buildKeyProvider(ctx context.Context) (cloudstic.KeyProvider, error) {
 	platformKey, err := g.parsePlatformKey()
 	if err != nil {
 		return nil, err
 	}
 
-	kmsClient, err := g.buildKMSClient(context.Background())
+	kmsClient, err := g.buildKMSClient(ctx)
 	if err != nil {
 		return nil, err
+	}
+
+	// Avoid assigning a typed nil *AWSKMSClient to the interface field;
+	// a non-nil interface wrapping a nil pointer would bypass nil checks.
+	var kmsDecrypter cloudstic.KMSDecrypter
+	if kmsClient != nil {
+		kmsDecrypter = kmsClient
 	}
 
 	var passwordPrompt func() (string, error)
@@ -97,7 +104,7 @@ func (g *globalFlags) buildKeyProvider() (cloudstic.KeyProvider, error) {
 		PlatformKey:      platformKey,
 		Password:         *g.encryptionPassword,
 		RecoveryMnemonic: *g.recoveryKey,
-		KMSDecrypter:     kmsClient,
+		KMSDecrypter:     kmsDecrypter,
 		PasswordPrompt:   passwordPrompt,
 	}, nil
 }
@@ -115,37 +122,6 @@ func (g *globalFlags) parsePlatformKey() ([]byte, error) {
 		return nil, fmt.Errorf("--encryption-key must be %d bytes (%d hex chars), got %d bytes", crypto.KeySize, crypto.KeySize*2, len(platformKey))
 	}
 	return platformKey, nil
-}
-
-// buildCredentials parses key management credentials from CLI flags.
-// If no credential flag is set and stdin is a terminal, the user is
-// interactively prompted for the current repository password.
-func (g *globalFlags) buildCredentials(ctx context.Context) (cloudstic.Credentials, error) {
-	platformKey, err := g.parsePlatformKey()
-	if err != nil {
-		return cloudstic.Credentials{}, err
-	}
-	password := *g.encryptionPassword
-	kmsClient, err := g.buildKMSClient(ctx)
-	if err != nil {
-		return cloudstic.Credentials{}, err
-	}
-	if len(platformKey) == 0 && password == "" && kmsClient == nil {
-		if term.IsTerminal(os.Stdin.Fd()) {
-			pw, err := ui.PromptPassword("Current repository password")
-			if err != nil {
-				return cloudstic.Credentials{}, fmt.Errorf("read password: %w", err)
-			}
-			password = pw
-		} else {
-			return cloudstic.Credentials{}, fmt.Errorf("provide --encryption-key, --encryption-password, or --kms-key-arn to unlock the master key")
-		}
-	}
-	return cloudstic.Credentials{
-		PlatformKey:  platformKey,
-		Password:     password,
-		KMSDecrypter: kmsClient,
-	}, nil
 }
 
 func (g *globalFlags) initObjectStore() (store.ObjectStore, error) {

@@ -14,23 +14,32 @@ type KMSDecrypter interface {
 	Decrypt(ctx context.Context, ciphertext []byte) ([]byte, error)
 }
 
-// AWSKMSDecrypter wraps the AWS KMS SDK v2 client.
-type AWSKMSDecrypter struct {
+// KMSEncrypter can encrypt plaintext using a KMS key.
+// Implementations must be safe for concurrent use.
+type KMSEncrypter interface {
+	Encrypt(ctx context.Context, keyARN string, plaintext []byte) ([]byte, error)
+}
+
+// AWSKMSClient wraps the AWS KMS SDK v2 client and implements both
+// KMSEncrypter and KMSDecrypter.
+type AWSKMSClient struct {
 	client *kms.Client
 }
 
-// NewAWSKMSDecrypter creates a KMS decrypter using the default AWS credential
-// chain. The key ARN is embedded in the ciphertext blob so it does not need
-// to be supplied at decryption time.
-func NewAWSKMSDecrypter(ctx context.Context) (*AWSKMSDecrypter, error) {
+// AWSKMSDecrypter is an alias for backward compatibility.
+type AWSKMSDecrypter = AWSKMSClient
+
+// NewAWSKMSDecrypter creates a KMS client using the default AWS credential
+// chain. The returned client implements both KMSDecrypter and KMSEncrypter.
+func NewAWSKMSDecrypter(ctx context.Context) (*AWSKMSClient, error) {
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load aws config for kms: %w", err)
 	}
-	return &AWSKMSDecrypter{client: kms.NewFromConfig(cfg)}, nil
+	return &AWSKMSClient{client: kms.NewFromConfig(cfg)}, nil
 }
 
-func (d *AWSKMSDecrypter) Decrypt(ctx context.Context, ciphertext []byte) ([]byte, error) {
+func (d *AWSKMSClient) Decrypt(ctx context.Context, ciphertext []byte) ([]byte, error) {
 	out, err := d.client.Decrypt(ctx, &kms.DecryptInput{
 		CiphertextBlob: ciphertext,
 	})
@@ -38,4 +47,15 @@ func (d *AWSKMSDecrypter) Decrypt(ctx context.Context, ciphertext []byte) ([]byt
 		return nil, fmt.Errorf("kms decrypt: %w", err)
 	}
 	return out.Plaintext, nil
+}
+
+func (d *AWSKMSClient) Encrypt(ctx context.Context, keyARN string, plaintext []byte) ([]byte, error) {
+	out, err := d.client.Encrypt(ctx, &kms.EncryptInput{
+		KeyId:     &keyARN,
+		Plaintext: plaintext,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("kms encrypt: %w", err)
+	}
+	return out.CiphertextBlob, nil
 }

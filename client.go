@@ -17,6 +17,113 @@ import (
 var log = logger.New("client", logger.ColorCyan)
 
 // ---------------------------------------------------------------------------
+// Init (operates on the raw store, before encryption is set up)
+// ---------------------------------------------------------------------------
+
+type InitOption = engine.InitOption
+type InitResult = engine.InitResult
+
+var (
+	WithInitPlatformKey  = engine.WithInitPlatformKey
+	WithInitPassword     = engine.WithInitPassword
+	WithInitRecovery     = engine.WithInitRecovery
+	WithInitNoEncryption = engine.WithInitNoEncryption
+	WithInitKMS          = engine.WithInitKMS
+)
+
+// InitRepo bootstraps a new repository on the given raw (undecorated) store.
+// This is a package-level function because init runs before the full
+// Client decorator chain (encryption, compression, packfiles) is set up.
+func InitRepo(ctx context.Context, rawStore store.ObjectStore, opts ...InitOption) (*InitResult, error) {
+	mgr := engine.NewInitManager(rawStore)
+	return mgr.Run(ctx, opts...)
+}
+
+// requireEncryptedRepo loads the repository config and returns an error if
+// the repository has not been initialized or does not use encryption.
+func requireEncryptedRepo(ctx context.Context, rawStore store.ObjectStore) error {
+	cfg, err := LoadRepoConfig(ctx, rawStore)
+	if err != nil {
+		return fmt.Errorf("read repository config: %w", err)
+	}
+	if cfg == nil {
+		return fmt.Errorf("repository not initialized -- run 'cloudstic init' first")
+	}
+	if !cfg.Encrypted {
+		return fmt.Errorf("repository is not encrypted")
+	}
+	return nil
+}
+
+// ListKeySlots returns all encryption key slots in the repository.
+// Returns an error if the repository is not initialized or not encrypted.
+func ListKeySlots(ctx context.Context, rawStore store.ObjectStore) ([]KeySlot, error) {
+	if err := requireEncryptedRepo(ctx, rawStore); err != nil {
+		return nil, err
+	}
+	slots, err := store.LoadKeySlots(rawStore)
+	if err != nil {
+		return nil, fmt.Errorf("load key slots: %w", err)
+	}
+	return slots, nil
+}
+
+// ChangePassword replaces the password key slot using the provided credentials
+// to authenticate and newPassword as the new passphrase.
+func ChangePassword(ctx context.Context, rawStore store.ObjectStore, creds Credentials, newPassword string) error {
+	if err := requireEncryptedRepo(ctx, rawStore); err != nil {
+		return err
+	}
+	slots, err := store.LoadKeySlots(rawStore)
+	if err != nil {
+		return fmt.Errorf("load key slots: %w", err)
+	}
+	masterKey, err := creds.extractMasterKey(ctx, slots)
+	if err != nil {
+		return fmt.Errorf("unlock repository: %w", err)
+	}
+	return store.ChangePasswordSlot(rawStore, masterKey, newPassword)
+}
+
+// AddRecoveryKey generates a BIP39 recovery key for the repository,
+// authenticating with creds to obtain the master key.
+// Returns the 24-word mnemonic phrase.
+func AddRecoveryKey(ctx context.Context, rawStore store.ObjectStore, creds Credentials) (string, error) {
+	if err := requireEncryptedRepo(ctx, rawStore); err != nil {
+		return "", err
+	}
+	slots, err := store.LoadKeySlots(rawStore)
+	if err != nil {
+		return "", fmt.Errorf("load key slots: %w", err)
+	}
+	masterKey, err := creds.extractMasterKey(ctx, slots)
+	if err != nil {
+		return "", fmt.Errorf("unlock repository: %w", err)
+	}
+	return store.AddRecoverySlot(rawStore, masterKey)
+}
+
+// extractMasterKey resolves the raw master key from the stored key slots
+// using the credentials. Tries KMS first, then platform key, then password.
+func (c Credentials) extractMasterKey(ctx context.Context, slots []store.KeySlot) ([]byte, error) {
+	return store.ExtractMasterKeyWithKMS(ctx, slots, c.KMSDecrypter, c.PlatformKey, c.Password)
+}
+
+// LoadRepoConfig reads the repository marker from a raw (undecorated) store.
+// Returns nil, nil if the repository has not been initialized yet.
+func LoadRepoConfig(ctx context.Context, rawStore store.ObjectStore) (*RepoConfig, error) {
+	data, err := rawStore.Get(ctx, "config")
+	if err != nil || data == nil {
+		return nil, nil
+	}
+	var cfg core.RepoConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("parse repo config: %w", err)
+	}
+	return &cfg, nil
+}
+
+// ---------------------------------------------------------------------------
 // Re-exported types from internal packages
 // ---------------------------------------------------------------------------
 
@@ -34,6 +141,9 @@ type KeySlot = store.KeySlot
 
 // KMSDecrypter is re-exported for callers that provide KMS credentials.
 type KMSDecrypter = crypto.KMSDecrypter
+
+// KMSEncrypter is re-exported for callers that need to wrap keys via KMS.
+type KMSEncrypter = crypto.KMSEncrypter
 
 // ---------------------------------------------------------------------------
 // KeyProvider
@@ -233,16 +343,12 @@ func NewClient(base store.ObjectStore, opts ...ClientOption) (*Client, error) {
 // encrypted, calls the KeyProvider to resolve the encryption key.
 func (c *Client) resolveKeyFromConfig(base store.ObjectStore) ([]byte, error) {
 	ctx := context.Background()
-	data, err := base.Get(ctx, "config")
+	cfg, err := LoadRepoConfig(ctx, base)
 	if err != nil {
 		return nil, fmt.Errorf("read repo config: %w", err)
 	}
-	if data == nil {
+	if cfg == nil {
 		return nil, fmt.Errorf("repository not initialized -- run 'cloudstic init' first")
-	}
-	var cfg core.RepoConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parse repo config: %w", err)
 	}
 	if !cfg.Encrypted {
 		return nil, nil

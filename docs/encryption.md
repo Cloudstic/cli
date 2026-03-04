@@ -196,25 +196,6 @@ When a tenant's master key must change (security incident):
 This is expensive (reads + re-encrypts every object) and should only be needed
 for security incidents.
 
-## Database Schema
-
-```sql
-CREATE TABLE app.encryption_key_slots (
-    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id     UUID NOT NULL REFERENCES app.tenants(id) ON DELETE CASCADE,
-    slot_type     TEXT NOT NULL CHECK (slot_type IN ('platform', 'kms-platform', 'password', 'recovery')),
-    wrapped_key   TEXT NOT NULL,  -- base64(nonce || encrypted_master_key || tag)
-    kdf_params    JSONB,          -- for password slots: {algorithm, salt, n, r, p}
-    label         TEXT NOT NULL DEFAULT '',
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (tenant_id, slot_type, label)
-);
-```
-
-This table uses RLS for tenant isolation. Key slots are also written to B2
-as `keys/<slot_type>-<label>` objects (best-effort) to enable CLI access
-and disaster recovery.
-
 ## Recovery Key
 
 The recovery key is a 256-bit random key encoded as a **BIP39 24-word

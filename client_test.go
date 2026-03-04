@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/pkg/crypto"
+	"github.com/cloudstic/cli/pkg/store"
 )
 
 // mockStore is a simple in-memory store for testing
@@ -71,6 +73,160 @@ func (s *mockStore) TotalSize(_ context.Context) (int64, error) {
 func (s *mockStore) Flush(_ context.Context) error {
 	return nil
 }
+
+// ---------------------------------------------------------------------------
+// LoadRepoConfig
+// ---------------------------------------------------------------------------
+
+func TestLoadRepoConfig_Uninitialized(t *testing.T) {
+	ctx := context.Background()
+	cfg, err := LoadRepoConfig(ctx, newMockStore())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg != nil {
+		t.Error("expected nil config for uninitialized repo")
+	}
+}
+
+func TestLoadRepoConfig_Unencrypted(t *testing.T) {
+	ctx := context.Background()
+	s := newMockStore()
+	if _, err := InitRepo(ctx, s, WithInitNoEncryption()); err != nil {
+		t.Fatalf("InitRepo: %v", err)
+	}
+	cfg, err := LoadRepoConfig(ctx, s)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected config, got nil")
+	}
+	if cfg.Version != 1 {
+		t.Errorf("version = %d, want 1", cfg.Version)
+	}
+	if cfg.Encrypted {
+		t.Error("expected unencrypted config")
+	}
+}
+
+func TestLoadRepoConfig_Encrypted(t *testing.T) {
+	ctx := context.Background()
+	s := newMockStore()
+	if _, err := InitRepo(ctx, s, WithInitPassword("test-pass")); err != nil {
+		t.Fatalf("InitRepo: %v", err)
+	}
+	cfg, err := LoadRepoConfig(ctx, s)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected config, got nil")
+	}
+	if !cfg.Encrypted {
+		t.Error("expected encrypted config")
+	}
+}
+
+func TestLoadRepoConfig_Malformed(t *testing.T) {
+	ctx := context.Background()
+	s := newMockStore()
+	_ = s.Put(ctx, "config", []byte("not json"))
+	_, err := LoadRepoConfig(ctx, s)
+	if err == nil {
+		t.Error("expected error for malformed config")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ChangePassword
+// ---------------------------------------------------------------------------
+
+func TestChangePassword(t *testing.T) {
+	ctx := context.Background()
+	s := newMockStore()
+	if _, err := InitRepo(ctx, s, WithInitPassword("old-pass")); err != nil {
+		t.Fatalf("InitRepo: %v", err)
+	}
+
+	if err := ChangePassword(ctx, s, Credentials{Password: "old-pass"}, "new-pass"); err != nil {
+		t.Fatalf("ChangePassword: %v", err)
+	}
+
+	slots, _ := store.LoadKeySlots(s)
+	if _, err := store.OpenWithPassword(slots, "old-pass"); err == nil {
+		t.Error("old password should no longer work")
+	}
+	if _, err := store.OpenWithPassword(slots, "new-pass"); err != nil {
+		t.Errorf("new password should work: %v", err)
+	}
+}
+
+func TestChangePassword_WrongCredentials(t *testing.T) {
+	ctx := context.Background()
+	s := newMockStore()
+	if _, err := InitRepo(ctx, s, WithInitPassword("correct-pass")); err != nil {
+		t.Fatalf("InitRepo: %v", err)
+	}
+	if err := ChangePassword(ctx, s, Credentials{Password: "wrong-pass"}, "new-pass"); err == nil {
+		t.Error("expected error with wrong credentials")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// AddRecoveryKey
+// ---------------------------------------------------------------------------
+
+func TestAddRecoveryKey(t *testing.T) {
+	ctx := context.Background()
+	s := newMockStore()
+	if _, err := InitRepo(ctx, s, WithInitPassword("test-pass")); err != nil {
+		t.Fatalf("InitRepo: %v", err)
+	}
+
+	mnemonic, err := AddRecoveryKey(ctx, s, Credentials{Password: "test-pass"})
+	if err != nil {
+		t.Fatalf("AddRecoveryKey: %v", err)
+	}
+	if mnemonic == "" {
+		t.Error("expected non-empty mnemonic")
+	}
+
+	slots, _ := store.LoadKeySlots(s)
+	hasRecovery := false
+	for _, slot := range slots {
+		if slot.SlotType == "recovery" {
+			hasRecovery = true
+		}
+	}
+	if !hasRecovery {
+		t.Error("expected a recovery slot after AddRecoveryKey")
+	}
+
+	// Verify the mnemonic can actually open the repo.
+	recoveryKey, err := crypto.MnemonicToKey(mnemonic)
+	if err != nil {
+		t.Fatalf("MnemonicToKey: %v", err)
+	}
+	if _, err := store.OpenWithRecoveryKey(slots, recoveryKey); err != nil {
+		t.Errorf("OpenWithRecoveryKey: %v", err)
+	}
+}
+
+func TestAddRecoveryKey_WrongCredentials(t *testing.T) {
+	ctx := context.Background()
+	s := newMockStore()
+	if _, err := InitRepo(ctx, s, WithInitPassword("correct-pass")); err != nil {
+		t.Fatalf("InitRepo: %v", err)
+	}
+	if _, err := AddRecoveryKey(ctx, s, Credentials{Password: "wrong-pass"}); err == nil {
+		t.Error("expected error with wrong credentials")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Cat
+// ---------------------------------------------------------------------------
 
 func TestClient_Cat_SingleObject(t *testing.T) {
 	ctx := context.Background()

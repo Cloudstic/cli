@@ -10,8 +10,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"runtime"
-	"runtime/pprof"
 	"sort"
 	"strings"
 	"time"
@@ -37,98 +35,22 @@ var (
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		printUsage()
-		os.Exit(1)
-	}
-
-	var cpuprofile string
-	var memprofile string
-	var newArgs []string
-	newArgs = append(newArgs, os.Args[0])
-	for i := 1; i < len(os.Args); i++ {
-		a := os.Args[i]
-		if strings.HasPrefix(a, "-cpuprofile=") {
-			cpuprofile = strings.TrimPrefix(a, "-cpuprofile=")
-		} else if a == "-cpuprofile" && i+1 < len(os.Args) {
-			cpuprofile = os.Args[i+1]
-			i++
-		} else if strings.HasPrefix(a, "-memprofile=") {
-			memprofile = strings.TrimPrefix(a, "-memprofile=")
-		} else if a == "-memprofile" && i+1 < len(os.Args) {
-			memprofile = os.Args[i+1]
-			i++
-		} else {
-			newArgs = append(newArgs, a)
-		}
-	}
-	os.Args = newArgs
+	cpuprofile, memprofile := parseProfileFlags()
 
 	if len(os.Args) < 2 {
 		printUsage()
 		os.Exit(1)
 	}
 
-	cmd := os.Args[1]
-
-	var profFile *os.File
 	if cpuprofile != "" {
-		runtime.SetBlockProfileRate(1)
-		runtime.SetMutexProfileFraction(1)
-
-		var err error
-		profFile, err = os.Create(cpuprofile)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "could not create CPU profile: %v\n", err)
-			os.Exit(1)
-		}
-		if err := pprof.StartCPUProfile(profFile); err != nil {
-			fmt.Fprintf(os.Stderr, "could not start CPU profile: %v\n", err)
-			os.Exit(1)
-		}
+		stop := startCPUProfile(cpuprofile)
+		defer stop()
 	}
 
-	exitCode := runCmd(cmd)
-
-	if profFile != nil {
-		pprof.StopCPUProfile()
-		_ = profFile.Close()
-	}
+	exitCode := runCmd(os.Args[1])
 
 	if memprofile != "" {
-		f, err := os.Create(memprofile)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "could not create memory profile: %v\n", err)
-			os.Exit(1)
-		}
-		defer func() {
-			_ = f.Close()
-		}()
-		// runtime.GC() maybe? Not strictly necessary.
-		if err := pprof.WriteHeapProfile(f); err != nil {
-			fmt.Fprintf(os.Stderr, "could not write memory profile: %v\n", err)
-		}
-	}
-
-	// Also dump a goroutine profile for debugging hangs/blocks
-	if cpuprofile != "" {
-		gf, err := os.Create(cpuprofile + ".goroutine")
-		if err == nil {
-			_ = pprof.Lookup("goroutine").WriteTo(gf, 1)
-			_ = gf.Close()
-		}
-
-		bf, err := os.Create(cpuprofile + ".block")
-		if err == nil {
-			_ = pprof.Lookup("block").WriteTo(bf, 0)
-			_ = bf.Close()
-		}
-
-		mf, err := os.Create(cpuprofile + ".mutex")
-		if err == nil {
-			_ = pprof.Lookup("mutex").WriteTo(mf, 0)
-			_ = mf.Close()
-		}
+		writeMemProfile(memprofile)
 	}
 
 	os.Exit(exitCode)
@@ -159,9 +81,6 @@ func runCmd(cmd string) int {
 		runBreakLock()
 	case "key":
 		runKey()
-	case "add-recovery-key":
-		fmt.Fprintln(os.Stderr, "Note: 'add-recovery-key' is deprecated. Use 'cloudstic key add-recovery' instead.")
-		runAddRecoveryKey()
 	case "check":
 		runCheck()
 	case "cat":
@@ -427,8 +346,6 @@ func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 	return g
 }
 
-const configKey = "config"
-
 // applyDebug wraps a store with a DebugStore and enables the global debug
 // logger when --debug is set. It returns the (possibly wrapped) store.
 func (g *globalFlags) applyDebug(s store.ObjectStore) store.ObjectStore {
@@ -474,6 +391,19 @@ func (g *globalFlags) openClient() (*cloudstic.Client, error) {
 	)
 }
 
+// buildKMSClient creates an AWS KMS client if -kms-key-arn is set, otherwise
+// returns nil. The returned client implements both KMSEncrypter and KMSDecrypter.
+func (g *globalFlags) buildKMSClient(ctx context.Context) (*crypto.AWSKMSClient, error) {
+	if g.kmsKeyARN == nil || *g.kmsKeyARN == "" {
+		return nil, nil
+	}
+	client, err := crypto.NewAWSKMSDecrypter(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("init KMS client: %w", err)
+	}
+	return client, nil
+}
+
 // buildKeyProvider constructs a Credentials key provider from the CLI flags.
 // The returned provider always attempts auto-detection: the client reads the
 // repo config and only calls ResolveKey when encryption is enabled.
@@ -483,13 +413,9 @@ func (g *globalFlags) buildKeyProvider() (cloudstic.KeyProvider, error) {
 		return nil, err
 	}
 
-	var kmsDecrypter crypto.KMSDecrypter
-	if g.kmsKeyARN != nil && *g.kmsKeyARN != "" {
-		d, err := crypto.NewAWSKMSDecrypter(context.Background())
-		if err != nil {
-			return nil, fmt.Errorf("init KMS decrypter: %w", err)
-		}
-		kmsDecrypter = d
+	kmsClient, err := g.buildKMSClient(context.Background())
+	if err != nil {
+		return nil, err
 	}
 
 	var passwordPrompt func() (string, error)
@@ -503,34 +429,9 @@ func (g *globalFlags) buildKeyProvider() (cloudstic.KeyProvider, error) {
 		PlatformKey:      platformKey,
 		Password:         *g.encryptionPassword,
 		RecoveryMnemonic: *g.recoveryKey,
-		KMSDecrypter:     kmsDecrypter,
+		KMSDecrypter:     kmsClient,
 		PasswordPrompt:   passwordPrompt,
 	}, nil
-}
-
-func loadRepoConfig(s store.ObjectStore) (*core.RepoConfig, error) {
-	data, err := s.Get(context.Background(), configKey)
-	if err != nil {
-		return nil, nil
-	}
-	var cfg core.RepoConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parse repo config: %w", err)
-	}
-	return &cfg, nil
-}
-
-func writeRepoConfig(s store.ObjectStore, encrypted bool) error {
-	cfg := core.RepoConfig{
-		Version:   1,
-		Created:   time.Now().UTC().Format(time.RFC3339),
-		Encrypted: encrypted,
-	}
-	data, err := json.Marshal(cfg)
-	if err != nil {
-		return fmt.Errorf("marshal repo config: %w", err)
-	}
-	return s.Put(context.Background(), configKey, data)
 }
 
 func (g *globalFlags) parsePlatformKey() ([]byte, error) {
@@ -546,22 +447,6 @@ func (g *globalFlags) parsePlatformKey() ([]byte, error) {
 		return nil, fmt.Errorf("--encryption-key must be %d bytes (%d hex chars), got %d bytes", crypto.KeySize, crypto.KeySize*2, len(platformKey))
 	}
 	return platformKey, nil
-}
-
-// openExistingInitSlots is used only during "init" to verify that existing
-// key slots can be opened with the provided credentials.
-func openExistingInitSlots(slots []store.KeySlot, platformKey []byte, password string) ([]byte, error) {
-	if len(platformKey) > 0 {
-		if key, err := store.OpenWithPlatformKey(slots, platformKey); err == nil {
-			return key, nil
-		}
-	}
-	if password != "" {
-		if key, err := store.OpenWithPassword(slots, password); err == nil {
-			return key, nil
-		}
-	}
-	return nil, fmt.Errorf("could not open existing key slots: no provided credential matches (types: %s)", store.SlotTypes(slots))
 }
 
 // runInit bootstraps a new repository: creates encryption key slots and
@@ -581,23 +466,17 @@ func runInit() {
 	}
 	raw = g.applyDebug(raw)
 
-	cfg, err := loadRepoConfig(raw)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to read config: %v\n", err)
-		os.Exit(1)
-	}
-	if cfg != nil {
-		fmt.Fprintln(os.Stderr, "Repository is already initialized.")
-		os.Exit(1)
-	}
-
 	platformKey, err := g.parsePlatformKey()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
 	password := *g.encryptionPassword
-	hasEncryptionCreds := len(platformKey) > 0 || password != ""
+	kmsARN := ""
+	if g.kmsKeyARN != nil {
+		kmsARN = *g.kmsKeyARN
+	}
+	hasEncryptionCreds := len(platformKey) > 0 || password != "" || kmsARN != ""
 
 	if !hasEncryptionCreds && !*noEncryption {
 		if term.IsTerminal(os.Stdin.Fd()) {
@@ -610,7 +489,6 @@ func runInit() {
 				fmt.Fprintln(os.Stderr, "Error: encryption password cannot be empty.")
 				os.Exit(1)
 			}
-			// Confirm password
 			pw2, err := ui.PromptPassword("Confirm repository password")
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to read password confirmation: %v\n", err)
@@ -621,7 +499,6 @@ func runInit() {
 				os.Exit(1)
 			}
 			password = pw
-			hasEncryptionCreds = true
 		} else {
 			fmt.Fprintln(os.Stderr, "Error: encryption is required by default.")
 			fmt.Fprintln(os.Stderr, "Provide --encryption-password or --encryption-key to encrypt your repository.")
@@ -630,57 +507,49 @@ func runInit() {
 		}
 	}
 
-	encrypted := hasEncryptionCreds
-
-	if encrypted {
-		slots, err := store.LoadKeySlots(raw)
+	// Build init options.
+	var initOpts []cloudstic.InitOption
+	if len(platformKey) > 0 {
+		initOpts = append(initOpts, cloudstic.WithInitPlatformKey(platformKey))
+	}
+	if password != "" {
+		initOpts = append(initOpts, cloudstic.WithInitPassword(password))
+	}
+	if kmsARN != "" {
+		kmsClient, err := g.buildKMSClient(context.Background())
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to load key slots: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Failed to init KMS client: %v\n", err)
 			os.Exit(1)
 		}
+		initOpts = append(initOpts, cloudstic.WithInitKMS(kmsClient, kmsClient, kmsARN))
+	}
+	if *recovery {
+		initOpts = append(initOpts, cloudstic.WithInitRecovery())
+	}
+	if *noEncryption {
+		initOpts = append(initOpts, cloudstic.WithInitNoEncryption())
+	}
 
-		if len(slots) > 0 {
-			if _, err := openExistingInitSlots(slots, platformKey, password); err != nil {
-				fmt.Fprintf(os.Stderr, "Found existing key slots but cannot open them: %v\n", err)
-				os.Exit(1)
-			}
+	result, err := cloudstic.InitRepo(context.Background(), raw, initOpts...)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Init failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	if result.Encrypted {
+		if result.AdoptedSlots {
 			fmt.Fprintln(os.Stderr, "Adopted existing encryption key slots.")
 		} else {
-			if _, err := store.InitEncryptionKey(raw, platformKey, password); err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to initialize encryption: %v\n", err)
-				os.Exit(1)
-			}
 			fmt.Fprintln(os.Stderr, "Created new encryption key slots.")
 		}
-
-		if *recovery {
-			slots, err := store.LoadKeySlots(raw)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to reload key slots: %v\n", err)
-				os.Exit(1)
-			}
-			masterKey, err := store.ExtractMasterKey(slots, platformKey, password)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to extract master key for recovery slot: %v\n", err)
-				os.Exit(1)
-			}
-			mnemonic, err := store.AddRecoverySlot(raw, masterKey)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to create recovery key: %v\n", err)
-				os.Exit(1)
-			}
-			printRecoveryKey(mnemonic)
+		if result.RecoveryKey != "" {
+			printRecoveryKey(result.RecoveryKey)
 		}
 	} else {
 		fmt.Fprintln(os.Stderr, "WARNING: creating unencrypted repository. Your backups will NOT be encrypted at rest.")
 	}
 
-	if err := writeRepoConfig(raw, encrypted); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to write config: %v\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Fprintf(os.Stderr, "Repository initialized (encrypted: %v).\n", encrypted)
+	fmt.Fprintf(os.Stderr, "Repository initialized (encrypted: %v).\n", result.Encrypted)
 }
 
 func printRecoveryKey(mnemonic string) {
@@ -746,23 +615,9 @@ func runKeyList() {
 	}
 	raw = g.applyDebug(raw)
 
-	cfg, err := loadRepoConfig(raw)
+	slots, err := cloudstic.ListKeySlots(context.Background(), raw)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to read config: %v\n", err)
-		os.Exit(1)
-	}
-	if cfg == nil {
-		fmt.Fprintln(os.Stderr, "Repository not initialized -- run 'cloudstic init' first.")
-		os.Exit(1)
-	}
-	if !cfg.Encrypted {
-		fmt.Fprintln(os.Stderr, "Repository is not encrypted -- no key slots to list.")
-		return
-	}
-
-	slots, err := store.LoadKeySlots(raw)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to load key slots: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Failed to list key slots: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -785,11 +640,44 @@ func runKeyList() {
 	fmt.Fprintf(os.Stderr, "\n%d key slot(s) found.\n", len(slots))
 }
 
+// buildCredentials parses key management credentials from CLI flags.
+// If no credential flag is set and stdin is a terminal, the user is
+// interactively prompted for the current repository password.
+func (g *globalFlags) buildCredentials(ctx context.Context) (cloudstic.Credentials, error) {
+	platformKey, err := g.parsePlatformKey()
+	if err != nil {
+		return cloudstic.Credentials{}, err
+	}
+	password := *g.encryptionPassword
+	kmsClient, err := g.buildKMSClient(ctx)
+	if err != nil {
+		return cloudstic.Credentials{}, err
+	}
+	if len(platformKey) == 0 && password == "" && kmsClient == nil {
+		if term.IsTerminal(os.Stdin.Fd()) {
+			pw, err := ui.PromptPassword("Current repository password")
+			if err != nil {
+				return cloudstic.Credentials{}, fmt.Errorf("read password: %w", err)
+			}
+			password = pw
+		} else {
+			return cloudstic.Credentials{}, fmt.Errorf("provide --encryption-key, --encryption-password, or --kms-key-arn to unlock the master key")
+		}
+	}
+	return cloudstic.Credentials{
+		PlatformKey:  platformKey,
+		Password:     password,
+		KMSDecrypter: kmsClient,
+	}, nil
+}
+
 func runKeyPasswd() {
 	passwdCmd := flag.NewFlagSet("key passwd", flag.ExitOnError)
 	g := addGlobalFlags(passwdCmd)
 	newPassword := passwdCmd.String("new-password", "", "New repository password (prompted interactively if not set)")
 	_ = passwdCmd.Parse(os.Args[2:])
+
+	ctx := context.Background()
 
 	raw, err := g.initObjectStore()
 	if err != nil {
@@ -798,61 +686,9 @@ func runKeyPasswd() {
 	}
 	raw = g.applyDebug(raw)
 
-	cfg, err := loadRepoConfig(raw)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to read config: %v\n", err)
-		os.Exit(1)
-	}
-	if cfg == nil {
-		fmt.Fprintln(os.Stderr, "Repository not initialized -- run 'cloudstic init' first.")
-		os.Exit(1)
-	}
-	if !cfg.Encrypted {
-		fmt.Fprintln(os.Stderr, "Repository is not encrypted -- nothing to change.")
-		os.Exit(1)
-	}
-
-	platformKey, err := g.parsePlatformKey()
+	creds, err := g.buildCredentials(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
-		os.Exit(1)
-	}
-	password := *g.encryptionPassword
-
-	var kmsDecrypter crypto.KMSDecrypter
-	if *g.kmsKeyARN != "" {
-		d, err := crypto.NewAWSKMSDecrypter(context.Background())
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to create KMS decrypter: %v\n", err)
-			os.Exit(1)
-		}
-		kmsDecrypter = d
-	}
-
-	// If no credential flags provided, prompt for current password.
-	if len(platformKey) == 0 && password == "" && kmsDecrypter == nil {
-		if term.IsTerminal(os.Stdin.Fd()) {
-			pw, err := ui.PromptPassword("Current repository password")
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to read password: %v\n", err)
-				os.Exit(1)
-			}
-			password = pw
-		} else {
-			fmt.Fprintln(os.Stderr, "Provide --encryption-key, --encryption-password, or --kms-key-arn to unlock the master key.")
-			os.Exit(1)
-		}
-	}
-
-	slots, err := store.LoadKeySlots(raw)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to load key slots: %v\n", err)
-		os.Exit(1)
-	}
-
-	masterKey, err := store.ExtractMasterKeyWithKMS(context.Background(), slots, kmsDecrypter, platformKey, password)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to unlock repository: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -884,7 +720,7 @@ func runKeyPasswd() {
 		newPw = p1
 	}
 
-	if err := store.ChangePasswordSlot(raw, masterKey, newPw); err != nil {
+	if err := cloudstic.ChangePassword(ctx, raw, creds, newPw); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to change password: %v\n", err)
 		os.Exit(1)
 	}
@@ -897,6 +733,8 @@ func runAddRecoveryKey() {
 	g := addGlobalFlags(addCmd)
 	_ = addCmd.Parse(os.Args[2:])
 
+	ctx := context.Background()
+
 	raw, err := g.initObjectStore()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to init store: %v\n", err)
@@ -904,55 +742,13 @@ func runAddRecoveryKey() {
 	}
 	raw = g.applyDebug(raw)
 
-	cfg, err := loadRepoConfig(raw)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to read config: %v\n", err)
-		os.Exit(1)
-	}
-	if cfg == nil {
-		fmt.Fprintln(os.Stderr, "Repository not initialized -- run 'cloudstic init' first.")
-		os.Exit(1)
-	}
-	if !cfg.Encrypted {
-		fmt.Fprintln(os.Stderr, "Repository is not encrypted -- recovery keys are only for encrypted repositories.")
-		os.Exit(1)
-	}
-
-	platformKey, err := g.parsePlatformKey()
+	creds, err := g.buildCredentials(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
-	password := *g.encryptionPassword
 
-	var kmsDecrypter crypto.KMSDecrypter
-	if *g.kmsKeyARN != "" {
-		d, err := crypto.NewAWSKMSDecrypter(context.Background())
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to create KMS decrypter: %v\n", err)
-			os.Exit(1)
-		}
-		kmsDecrypter = d
-	}
-
-	if len(platformKey) == 0 && password == "" && kmsDecrypter == nil {
-		fmt.Fprintln(os.Stderr, "Provide --encryption-key, --encryption-password, or --kms-key-arn to unlock the master key.")
-		os.Exit(1)
-	}
-
-	slots, err := store.LoadKeySlots(raw)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to load key slots: %v\n", err)
-		os.Exit(1)
-	}
-
-	masterKey, err := store.ExtractMasterKey(slots, platformKey, password)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to extract master key: %v\n", err)
-		os.Exit(1)
-	}
-
-	mnemonic, err := store.AddRecoverySlot(raw, masterKey)
+	mnemonic, err := cloudstic.AddRecoveryKey(ctx, raw, creds)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create recovery key: %v\n", err)
 		os.Exit(1)

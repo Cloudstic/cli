@@ -8,9 +8,9 @@ import (
 
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/logger"
-	intsftp "github.com/cloudstic/cli/internal/sftp"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/crypto"
+	"github.com/cloudstic/cli/pkg/source"
 	"github.com/cloudstic/cli/pkg/store"
 	"github.com/moby/term"
 )
@@ -138,18 +138,25 @@ func (g *globalFlags) initObjectStore() (store.ObjectStore, error) {
 		if keyID == "" || appKey == "" {
 			return nil, fmt.Errorf("B2_KEY_ID and B2_APP_KEY env vars required for b2 store")
 		}
-		inner, err = store.NewB2StoreWithPrefix(keyID, appKey, *g.storePath, *g.storePrefix)
+		inner, err = store.NewB2Store(*g.storePath, store.WithCredentials(keyID, appKey), store.WithPrefix(*g.storePrefix))
 	case "s3":
 		if *g.storePath == "" {
 			return nil, fmt.Errorf("-store-path must be set to the S3 bucket name")
 		}
-		inner, err = store.NewS3Store(context.Background(), *g.s3Endpoint, *g.s3Region, *g.storePath, *g.s3AccessKey, *g.s3SecretKey, *g.storePrefix)
+		inner, err = store.NewS3Store(
+			context.Background(),
+			*g.storePath,
+			store.WithS3Endpoint(*g.s3Endpoint),
+			store.WithS3Region(*g.s3Region),
+			store.WithS3Credentials(*g.s3AccessKey, *g.s3SecretKey),
+			store.WithS3Prefix(*g.storePrefix),
+		)
 	case "sftp":
-		cfg, sftpErr := g.sftpConfig(g.storeSFTPHost, g.storeSFTPPort, g.storeSFTPUser, g.storeSFTPPassword, g.storeSFTPKey, g.storePath)
-		if sftpErr != nil {
-			return nil, sftpErr
+		sftpHost, sftpOpts := g.sftpStoreOpts(g.storeSFTPHost, g.storeSFTPPort, g.storeSFTPUser, g.storeSFTPPassword, g.storeSFTPKey, g.storePath)
+		if sftpHost == "" {
+			return nil, fmt.Errorf("--sftp-host is required for sftp store")
 		}
-		inner, err = store.NewSFTPStore(cfg)
+		inner, err = store.NewSFTPStore(sftpHost, sftpOpts...)
 	default:
 		return nil, fmt.Errorf("unsupported store type: %s", *g.storeType)
 	}
@@ -161,7 +168,7 @@ func (g *globalFlags) initObjectStore() (store.ObjectStore, error) {
 	return inner, nil
 }
 
-func (g *globalFlags) sftpConfig(host, port, user, pass, key, path *string) (intsftp.Config, error) {
+func (g *globalFlags) sftpStoreOpts(host, port, user, pass, key, path *string) (string, []store.SFTPStoreOption) {
 	h := *host
 	if h == "" {
 		h = *g.sftpHost
@@ -185,18 +192,68 @@ func (g *globalFlags) sftpConfig(host, port, user, pass, key, path *string) (int
 	bp := *path
 
 	if h == "" {
-		return intsftp.Config{}, fmt.Errorf("--sftp-host (or CLOUDSTIC_SFTP_HOST) is required for sftp")
-	}
-	if u == "" {
-		return intsftp.Config{}, fmt.Errorf("--sftp-user (or CLOUDSTIC_SFTP_USER) is required for sftp")
+		return "", nil
 	}
 
-	return intsftp.Config{
-		Host:           h,
-		Port:           p,
-		User:           u,
-		Password:       pw,
-		PrivateKeyPath: k,
-		BasePath:       bp,
-	}, nil
+	opts := []store.SFTPStoreOption{
+		store.WithSFTPBasePath(bp),
+	}
+	if p != "" {
+		opts = append(opts, store.WithSFTPPort(p))
+	}
+	if u != "" {
+		opts = append(opts, store.WithSFTPUser(u))
+	}
+	if pw != "" {
+		opts = append(opts, store.WithSFTPPassword(pw))
+	}
+	if k != "" {
+		opts = append(opts, store.WithSFTPKey(k))
+	}
+	return h, opts
+}
+
+func (g *globalFlags) sftpSourceOpts(host, port, user, pass, key, path *string) (string, []source.SFTPOption) {
+	h := *host
+	if h == "" {
+		h = *g.sftpHost
+	}
+	p := *port
+	if p == "" {
+		p = *g.sftpPort
+	}
+	u := *user
+	if u == "" {
+		u = *g.sftpUser
+	}
+	pw := *pass
+	if pw == "" {
+		pw = *g.sftpPassword
+	}
+	k := *key
+	if k == "" {
+		k = *g.sftpKey
+	}
+	bp := *path
+
+	if h == "" {
+		return "", nil
+	}
+
+	opts := []source.SFTPOption{
+		source.WithSFTPSourceBasePath(bp),
+	}
+	if p != "" {
+		opts = append(opts, source.WithSFTPSourcePort(p))
+	}
+	if u != "" {
+		opts = append(opts, source.WithSFTPSourceUser(u))
+	}
+	if pw != "" {
+		opts = append(opts, source.WithSFTPSourcePassword(pw))
+	}
+	if k != "" {
+		opts = append(opts, source.WithSFTPSourceKey(k))
+	}
+	return h, opts
 }

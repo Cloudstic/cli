@@ -5,7 +5,6 @@ import (
 	"os/exec"
 	"testing"
 
-	intsftp "github.com/cloudstic/cli/internal/sftp"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -43,16 +42,6 @@ func startSFTPContainer(t *testing.T, ctx context.Context) (testcontainers.Conta
 	return container, host, mappedPort.Port()
 }
 
-func sftpTestConfig(host, port, basePath string) intsftp.Config {
-	return intsftp.Config{
-		Host:     host,
-		Port:     port,
-		User:     "test",
-		Password: "test",
-		BasePath: basePath,
-	}
-}
-
 func TestSFTPStore(t *testing.T) {
 	// Check if docker is available
 	cmd := exec.Command("docker", "info")
@@ -69,9 +58,13 @@ func TestSFTPStore(t *testing.T) {
 		}
 	}()
 
-	cfg := sftpTestConfig(host, port, "/upload/store")
-
-	st, err := NewSFTPStore(cfg)
+	st, err := NewSFTPStore(
+		host,
+		WithSFTPPort(port),
+		WithSFTPUser("test"),
+		WithSFTPPassword("test"),
+		WithSFTPBasePath("/upload/store"),
+	)
 	if err != nil {
 		t.Fatalf("NewSFTPStore failed: %v", err)
 	}

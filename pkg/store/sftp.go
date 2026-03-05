@@ -12,24 +12,99 @@ import (
 	"github.com/pkg/sftp"
 )
 
+type sftpStoreOptions struct {
+	port, user     string
+	password       string
+	privateKeyPath string
+	basePath       string
+	client         *sftp.Client
+}
+
+// SFTPStoreOption configures an SFTP store.
+type SFTPStoreOption func(*sftpStoreOptions)
+
+// WithSFTPPort sets the SSH port. Defaults to "22" when empty.
+func WithSFTPPort(port string) SFTPStoreOption {
+	return func(o *sftpStoreOptions) {
+		o.port = port
+	}
+}
+
+// WithSFTPUser sets the SSH user for authentication.
+func WithSFTPUser(user string) SFTPStoreOption {
+	return func(o *sftpStoreOptions) {
+		o.user = user
+	}
+}
+
+// WithSFTPPassword sets password authentication.
+func WithSFTPPassword(password string) SFTPStoreOption {
+	return func(o *sftpStoreOptions) {
+		o.password = password
+	}
+}
+
+// WithSFTPKey sets the path to a PEM-encoded private key for authentication.
+func WithSFTPKey(keyPath string) SFTPStoreOption {
+	return func(o *sftpStoreOptions) {
+		o.privateKeyPath = keyPath
+	}
+}
+
+// WithSFTPBasePath sets the root directory on the SFTP server.
+func WithSFTPBasePath(basePath string) SFTPStoreOption {
+	return func(o *sftpStoreOptions) {
+		o.basePath = basePath
+	}
+}
+
+// WithSFTPClient provides a pre-configured SFTP client, skipping
+// internal connection setup. When set, server and auth options are ignored.
+func WithSFTPClient(client *sftp.Client) SFTPStoreOption {
+	return func(o *sftpStoreOptions) {
+		o.client = client
+	}
+}
+
 // SFTPStore implements ObjectStore backed by an SFTP server.
 type SFTPStore struct {
 	client   *sftp.Client
 	basePath string
 }
 
-// NewSFTPStore connects to the SFTP server described by cfg and returns a
-// store rooted at basePath. The directory is created if it does not exist.
-func NewSFTPStore(cfg intsftp.Config) (*SFTPStore, error) {
-	client, err := intsftp.Dial(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("sftp connect: %w", err)
+// NewSFTPStore creates an SFTP-backed store for the given host.
+// Either WithSFTPClient or authentication options must be provided.
+// The base path directory is created if it does not exist.
+func NewSFTPStore(host string, opts ...SFTPStoreOption) (*SFTPStore, error) {
+	var o sftpStoreOptions
+	for _, opt := range opts {
+		opt(&o)
 	}
-	if err := mkdirAllSFTP(client, cfg.BasePath); err != nil {
-		_ = client.Close()
-		return nil, fmt.Errorf("sftp mkdir %s: %w", cfg.BasePath, err)
+
+	client := o.client
+	if client == nil {
+		cfg := intsftp.Config{
+			Host:           host,
+			Port:           o.port,
+			User:           o.user,
+			Password:       o.password,
+			PrivateKeyPath: o.privateKeyPath,
+			BasePath:       o.basePath,
+		}
+		var err error
+		client, err = intsftp.Dial(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("sftp connect: %w", err)
+		}
 	}
-	return &SFTPStore{client: client, basePath: cfg.BasePath}, nil
+
+	if o.basePath != "" {
+		if err := mkdirAllSFTP(client, o.basePath); err != nil {
+			_ = client.Close()
+			return nil, fmt.Errorf("sftp mkdir %s: %w", o.basePath, err)
+		}
+	}
+	return &SFTPStore{client: client, basePath: o.basePath}, nil
 }
 
 // Close releases the underlying SFTP and SSH connections.

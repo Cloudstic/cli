@@ -8,13 +8,14 @@ import (
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
 	"github.com/cloudstic/cli/internal/ui"
+	"github.com/cloudstic/cli/pkg/source"
 	"github.com/cloudstic/cli/pkg/store"
 )
 
 // scanSource chooses the right scan strategy (full or incremental) and returns
 // the new HAMT root, files pending upload, and a change token for the next run.
 func (bm *BackupManager) scanSource(ctx context.Context, oldRoot, changeToken string) (newRoot string, pending []core.FileMeta, totalBytes int64, newToken string, usedFullScan bool, err error) {
-	incSrc, isIncremental := bm.source.(store.IncrementalSource)
+	incSrc, isIncremental := bm.source.(source.IncrementalSource)
 	if isIncremental && changeToken != "" {
 		newRoot, pending, totalBytes, newToken, err = bm.scanIncremental(ctx, oldRoot, incSrc, changeToken)
 		return newRoot, pending, totalBytes, newToken, false, err
@@ -95,21 +96,21 @@ func (bm *BackupManager) scan(ctx context.Context, oldRoot string) (newRoot stri
 	return s.root, s.pending, s.totalBytes, nil
 }
 
-func (bm *BackupManager) scanIncremental(ctx context.Context, oldRoot string, incSrc store.IncrementalSource, token string) (newRoot string, pending []core.FileMeta, totalBytes int64, newToken string, err error) {
+func (bm *BackupManager) scanIncremental(ctx context.Context, oldRoot string, incSrc source.IncrementalSource, token string) (newRoot string, pending []core.FileMeta, totalBytes int64, newToken string, err error) {
 	phase := bm.reporter.StartPhase("Scanning (incremental)", 0, false)
 	s := &scanState{root: oldRoot}
 
-	newToken, walkErr := incSrc.WalkChanges(ctx, token, func(fc store.FileChange) error {
+	newToken, walkErr := incSrc.WalkChanges(ctx, token, func(fc source.FileChange) error {
 		phase.Increment(1)
 
 		switch fc.Type {
-		case store.ChangeDelete:
+		case source.ChangeDelete:
 			bm.recordRemoved(fc.Meta.Type)
 			s.root, err = bm.tree.Delete(s.root, fc.Meta.FileID)
 			if err != nil {
 				return fmt.Errorf("hamt delete %s: %w", fc.Meta.FileID, err)
 			}
-		case store.ChangeUpsert:
+		case source.ChangeUpsert:
 			return bm.processEntry(ctx, &fc.Meta, oldRoot, s, phase)
 		}
 		return nil

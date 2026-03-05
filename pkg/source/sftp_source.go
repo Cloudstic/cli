@@ -1,37 +1,64 @@
-package store
+package source
 
 import (
 	"context"
 	"fmt"
 	"io"
 	"path"
+	"strings"
 
 	"github.com/cloudstic/cli/internal/core"
+	intsftp "github.com/cloudstic/cli/internal/sftp"
 	"github.com/pkg/sftp"
 )
 
-// SFTPSourceConfig holds configuration for an SFTP filesystem source.
-type SFTPSourceConfig struct {
-	SFTPConfig      // connection parameters
-	ExcludePatterns []string
+// relPath returns p relative to base using pure path manipulation
+func relPath(base, p string) (string, error) {
+	base = path.Clean(base) + "/"
+	p = path.Clean(p)
+	if !strings.HasPrefix(p, base) {
+		return "", fmt.Errorf("%s is not under %s", p, base)
+	}
+	return strings.TrimPrefix(p, base), nil
+}
+
+// sftpOptions holds configuration for an SFTP filesystem source.
+type sftpOptions struct {
+	sftpConfig      intsftp.Config
+	excludePatterns []string
+}
+
+// SFTPOption configures an SFTP filesystem source.
+type SFTPOption func(*sftpOptions)
+
+// WithSFTPExcludePatterns sets the patterns used to exclude files and folders.
+func WithSFTPExcludePatterns(patterns []string) SFTPOption {
+	return func(o *sftpOptions) {
+		o.excludePatterns = patterns
+	}
 }
 
 // SFTPSource implements Source for a remote SFTP filesystem.
 type SFTPSource struct {
 	client   *sftp.Client
 	rootPath string
-	cfg      SFTPConfig
+	cfg      intsftp.Config
 	exclude  *ExcludeMatcher
 }
 
 // NewSFTPSource connects to the SFTP server described by cfg and returns a
-// source rooted at cfg.RootPath.
-func NewSFTPSource(cfg SFTPSourceConfig) (*SFTPSource, error) {
-	client, err := dialSFTP(cfg.SFTPConfig)
+// source rooted at cfg.BasePath.
+func NewSFTPSource(ctx context.Context, cfg intsftp.Config, opts ...SFTPOption) (*SFTPSource, error) {
+	options := sftpOptions{sftpConfig: cfg}
+	for _, opt := range opts {
+		opt(&options)
+	}
+
+	client, err := intsftp.Dial(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("sftp source connect: %w", err)
 	}
-	return &SFTPSource{client: client, rootPath: cfg.BasePath, cfg: cfg.SFTPConfig, exclude: NewExcludeMatcher(cfg.ExcludePatterns)}, nil
+	return &SFTPSource{client: client, rootPath: cfg.BasePath, cfg: cfg, exclude: NewExcludeMatcher(options.excludePatterns)}, nil
 }
 
 // Close releases the underlying SFTP and SSH connections.

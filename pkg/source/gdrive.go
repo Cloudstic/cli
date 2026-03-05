@@ -1,4 +1,4 @@
-package store
+package source
 
 import (
 	"context"
@@ -19,13 +19,69 @@ import (
 	"google.golang.org/api/option"
 )
 
-// GDriveSourceConfig holds configuration for a Google Drive source.
-type GDriveSourceConfig struct {
-	CredsPath       string // path to credentials JSON; empty uses built-in OAuth client
-	TokenPath       string // where the OAuth token is cached
-	DriveID         string // shared drive ID; empty means "My Drive"
-	RootFolderID    string // restrict to a specific folder; empty means entire drive
-	ExcludePatterns []string
+// gDriveOptions holds configuration for a Google Drive source.
+type gDriveOptions struct {
+	httpClient      *http.Client
+	credsPath       string
+	tokenPath       string
+	driveID         string
+	rootFolderID    string
+	accountEmail    string
+	excludePatterns []string
+}
+
+// GDriveOption configures a Google Drive source.
+type GDriveOption func(*gDriveOptions)
+
+// WithHTTPClient sets a custom HTTP client for OAuth.
+func WithHTTPClient(client *http.Client) GDriveOption {
+	return func(o *gDriveOptions) {
+		o.httpClient = client
+	}
+}
+
+// WithCredsPath sets the path to the credentials JSON file.
+// If empty, uses the built-in OAuth client.
+func WithCredsPath(path string) GDriveOption {
+	return func(o *gDriveOptions) {
+		o.credsPath = path
+	}
+}
+
+// WithTokenPath sets the path where the OAuth token is cached.
+func WithTokenPath(path string) GDriveOption {
+	return func(o *gDriveOptions) {
+		o.tokenPath = path
+	}
+}
+
+// WithDriveID sets the shared drive ID. If empty, defaults to "My Drive".
+func WithDriveID(id string) GDriveOption {
+	return func(o *gDriveOptions) {
+		o.driveID = id
+	}
+}
+
+// WithRootFolderID sets the root folder ID.
+// If empty, defaults to the root of the specified drive.
+func WithRootFolderID(id string) GDriveOption {
+	return func(o *gDriveOptions) {
+		o.rootFolderID = id
+	}
+}
+
+// WithAccountEmail explicitly sets the account email instead of calling the API.
+func WithAccountEmail(email string) GDriveOption {
+	return func(o *gDriveOptions) {
+		o.accountEmail = email
+	}
+}
+
+// WithGDriveExcludePatterns sets the patterns used to exclude files and folders.
+func WithGDriveExcludePatterns(patterns []string) GDriveOption {
+	return func(o *gDriveOptions) {
+		o.excludePatterns = patterns
+	}
 }
 
 // GDriveSource implements Source for Google Drive. By default it backs up the
@@ -33,27 +89,36 @@ type GDriveSourceConfig struct {
 // shared drive instead, and/or set RootFolderID to restrict to a specific
 // folder within the selected drive.
 type GDriveSource struct {
-	Service      *drive.Service
-	DriveID      string // shared drive ID; empty means "My Drive"
-	RootFolderID string // if empty, defaults to "root" (entire drive)
+	service      *drive.Service
+	driveID      string // shared drive ID; empty means "My Drive"
+	rootFolderID string // if empty, defaults to "root" (entire drive)
 	account      string // Google account email; populated automatically
 	exclude      *ExcludeMatcher
 }
 
-// NewGDriveSource creates a new GDriveSource from the given config.
-func NewGDriveSource(cfg GDriveSourceConfig) (*GDriveSource, error) {
-	ctx := context.Background()
+// NewGDriveSource creates a new GDriveSource from the given options.
+func NewGDriveSource(ctx context.Context, opts ...GDriveOption) (*GDriveSource, error) {
+	var cfg gDriveOptions
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 
 	var srv *drive.Service
+	var err error
 
-	if cfg.CredsPath != "" {
-		b, err := os.ReadFile(cfg.CredsPath)
+	if cfg.httpClient != nil {
+		srv, err = drive.NewService(ctx, option.WithHTTPClient(cfg.httpClient))
+		if err != nil {
+			return nil, fmt.Errorf("create drive client (custom http client): %w", err)
+		}
+	} else if cfg.credsPath != "" {
+		b, err := os.ReadFile(cfg.credsPath)
 		if err != nil {
 			return nil, fmt.Errorf("read credentials file: %w", err)
 		}
 		config, err := google.ConfigFromJSON(b, drive.DriveReadonlyScope)
 		if err == nil {
-			client, err := oauthClient(config, cfg.TokenPath)
+			client, err := oauthClient(config, cfg.tokenPath)
 			if err != nil {
 				return nil, err
 			}
@@ -62,7 +127,7 @@ func NewGDriveSource(cfg GDriveSourceConfig) (*GDriveSource, error) {
 				return nil, fmt.Errorf("create drive client (user auth): %w", err)
 			}
 		} else {
-			srv, err = drive.NewService(ctx, option.WithCredentialsFile(cfg.CredsPath))
+			srv, err = drive.NewService(ctx, option.WithCredentialsFile(cfg.credsPath))
 			if err != nil {
 				return nil, fmt.Errorf("create drive client: %w", err)
 			}
@@ -74,7 +139,7 @@ func NewGDriveSource(cfg GDriveSourceConfig) (*GDriveSource, error) {
 			Scopes:       []string{drive.DriveReadonlyScope},
 			Endpoint:     google.Endpoint,
 		}
-		client, err := oauthClient(config, cfg.TokenPath)
+		client, err := oauthClient(config, cfg.tokenPath)
 		if err != nil {
 			return nil, err
 		}
@@ -85,29 +150,30 @@ func NewGDriveSource(cfg GDriveSourceConfig) (*GDriveSource, error) {
 	}
 
 	return &GDriveSource{
-		Service:      srv,
-		DriveID:      cfg.DriveID,
-		RootFolderID: cfg.RootFolderID,
-		exclude:      NewExcludeMatcher(cfg.ExcludePatterns),
+		service:      srv,
+		driveID:      cfg.driveID,
+		rootFolderID: cfg.rootFolderID,
+		account:      cfg.accountEmail,
+		exclude:      NewExcludeMatcher(cfg.excludePatterns),
 	}, nil
 }
 
 func (s *GDriveSource) Info() core.SourceInfo {
 	account := s.account
 	if account == "" {
-		if about, err := s.Service.About.Get().Fields("user(emailAddress)").Do(); err == nil && about.User != nil {
+		if about, err := s.service.About.Get().Fields("user(emailAddress)").Do(); err == nil && about.User != nil {
 			account = about.User.EmailAddress
 		}
 	}
 	return core.SourceInfo{
 		Type:    "gdrive",
 		Account: account,
-		Path:    drivePath(s.DriveID, s.RootFolderID),
+		Path:    drivePath(s.driveID, s.rootFolderID),
 	}
 }
 
 func (s *GDriveSource) isSharedDrive() bool {
-	return s.DriveID != ""
+	return s.driveID != ""
 }
 
 // drivePath builds a URI-like path that uniquely identifies the drive and
@@ -198,13 +264,13 @@ func (s *GDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) er
 	pageToken := ""
 
 	for {
-		call := s.Service.Files.List().
+		call := s.service.Files.List().
 			Q("trashed = false AND mimeType = 'application/vnd.google-apps.folder'").
 			Fields("nextPageToken, files(id, name, parents, mimeType, size, modifiedTime, owners, trashed, sha256Checksum)").
 			PageSize(1000).
 			Context(ctx)
 		if s.isSharedDrive() {
-			call.DriveId(s.DriveID).
+			call.DriveId(s.driveID).
 				Corpora("drive").
 				SupportsAllDrives(true).
 				IncludeItemsFromAllDrives(true)
@@ -245,13 +311,13 @@ func (s *GDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) er
 	// Second pass: emit files page-by-page to avoid holding them all in memory.
 	pageToken = ""
 	for {
-		call := s.Service.Files.List().
+		call := s.service.Files.List().
 			Q("trashed = false AND mimeType != 'application/vnd.google-apps.folder'").
 			Fields("nextPageToken, files(id, name, parents, mimeType, size, modifiedTime, owners, trashed, sha256Checksum)").
 			PageSize(1000).
 			Context(ctx)
 		if s.isSharedDrive() {
-			call.DriveId(s.DriveID).
+			call.DriveId(s.driveID).
 				Corpora("drive").
 				SupportsAllDrives(true).
 				IncludeItemsFromAllDrives(true)
@@ -382,7 +448,7 @@ func (s *GDriveSource) toFileMeta(f *drive.File) core.FileMeta {
 func (s *GDriveSource) Size(ctx context.Context) (*SourceSize, error) {
 	if !s.isSharedDrive() {
 		about, err := driveCallWithRetry(ctx, func() (*drive.About, error) {
-			return s.Service.About.Get().Fields("storageQuota").Context(ctx).Do()
+			return s.service.About.Get().Fields("storageQuota").Context(ctx).Do()
 		})
 		if err != nil {
 			return nil, fmt.Errorf("drive about: %w", err)
@@ -393,9 +459,9 @@ func (s *GDriveSource) Size(ctx context.Context) (*SourceSize, error) {
 	var totalBytes, totalFiles int64
 	pageToken := ""
 	for {
-		call := s.Service.Files.List().
+		call := s.service.Files.List().
 			Corpora("drive").
-			DriveId(s.DriveID).
+			DriveId(s.driveID).
 			IncludeItemsFromAllDrives(true).
 			SupportsAllDrives(true).
 			Q("trashed=false and mimeType!='application/vnd.google-apps.folder'").
@@ -426,7 +492,7 @@ func (s *GDriveSource) Size(ctx context.Context) (*SourceSize, error) {
 func (s *GDriveSource) GetFileStream(fileID string) (io.ReadCloser, error) {
 	var resp *http.Response
 	err := retry.Do(context.Background(), retry.DefaultPolicy(), func() error {
-		call := s.Service.Files.Get(fileID).SupportsAllDrives(true)
+		call := s.service.Files.Get(fileID).SupportsAllDrives(true)
 		var err error
 		resp, err = call.Download()
 		if err != nil {

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/cloudstic/cli/internal/core"
-	"github.com/cloudstic/cli/pkg/store"
+	"github.com/cloudstic/cli/pkg/source"
 )
 
 // MockStore implements store.ObjectStore. It is safe for concurrent use.
@@ -92,7 +92,7 @@ func (s *MockStore) Flush(_ context.Context) error {
 	return nil
 }
 
-// MockSource implements store.Source
+// MockSource implements source.Source
 type MockSource struct {
 	Files map[string]MockFile
 }
@@ -158,14 +158,14 @@ func (s *MockSource) Walk(ctx context.Context, callback func(core.FileMeta) erro
 	return nil
 }
 
-func (s *MockSource) Size(ctx context.Context) (*store.SourceSize, error) {
+func (s *MockSource) Size(ctx context.Context) (*source.SourceSize, error) {
 	var total int64
 	var count int64
 	for _, f := range s.Files {
 		total += int64(len(f.Content))
 		count++
 	}
-	return &store.SourceSize{Bytes: total, Files: count}, nil
+	return &source.SourceSize{Bytes: total, Files: count}, nil
 }
 
 func (s *MockSource) GetFileStream(fileID string) (io.ReadCloser, error) {

@@ -1,4 +1,4 @@
-package store
+package source
 
 import (
 	"context"
@@ -19,8 +19,8 @@ type OneDriveChangeSource struct {
 	OneDriveSource
 }
 
-func NewOneDriveChangeSource(cfg OneDriveSourceConfig) (*OneDriveChangeSource, error) {
-	base, err := NewOneDriveSource(cfg)
+func NewOneDriveChangeSource(ctx context.Context, opts ...OneDriveOption) (*OneDriveChangeSource, error) {
+	base, err := NewOneDriveSource(ctx, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +178,7 @@ func (s *OneDriveChangeSource) fetchDeltaPage(ctx context.Context, url string) (
 			return err
 		}
 
-		resp, err := s.Client.Do(req)
+		resp, err := s.client.Do(req)
 		if err != nil {
 			return err
 		}

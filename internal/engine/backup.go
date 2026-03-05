@@ -14,6 +14,7 @@ import (
 	"github.com/cloudstic/cli/internal/hamt"
 	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/internal/ui"
+	"github.com/cloudstic/cli/pkg/source"
 	"github.com/cloudstic/cli/pkg/store"
 )
 
@@ -78,7 +79,7 @@ func WithExcludeHash(hash string) BackupOption {
 // BackupManager orchestrates a backup: scanning a source for changes, uploading
 // new or modified files, and persisting a snapshot backed by a Merkle-HAMT.
 type BackupManager struct {
-	source     store.Source
+	source     source.Source
 	store      store.ObjectStore
 	keyCache   *store.KeyCacheStore
 	tree       *hamt.Tree
@@ -95,7 +96,7 @@ type BackupManager struct {
 	pendingMetas map[string][]byte // deferred filemeta PUTs (ref → JSON)
 }
 
-func NewBackupManager(src store.Source, dest store.ObjectStore, reporter ui.Reporter, hmacKey []byte, opts ...BackupOption) *BackupManager {
+func NewBackupManager(src source.Source, dest store.ObjectStore, reporter ui.Reporter, hmacKey []byte, opts ...BackupOption) *BackupManager {
 	cfg := backupConfig{
 		generator: "cloudstic-cli",
 		meta:      map[string]string{},

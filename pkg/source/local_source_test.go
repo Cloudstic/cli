@@ -1,4 +1,4 @@
-package store
+package source
 
 import (
 	"context"
@@ -39,14 +39,11 @@ func TestLocalSource_WithExcludes(t *testing.T) {
 		}
 	}
 
-	src := NewLocalSource(LocalSourceConfig{
-		RootPath:        tmpDir,
-		ExcludePatterns: []string{".git/", "node_modules/", "*.tmp", "*.log"},
-	})
+	s := NewLocalSource(context.Background(), WithLocalRootPath(tmpDir), WithLocalExcludePatterns([]string{".git/", "node_modules/", "*.tmp", "*.log"}))
 
 	// Test Walk() — excluded files/dirs should not appear.
 	var walked []string
-	err = src.Walk(ctx, func(fm core.FileMeta) error {
+	err = s.Walk(ctx, func(fm core.FileMeta) error {
 		walked = append(walked, fm.FileID)
 		return nil
 	})
@@ -87,7 +84,7 @@ func TestLocalSource_WithExcludes(t *testing.T) {
 	}
 
 	// Test Size() — should only count non-excluded files.
-	size, err := src.Size(ctx)
+	size, err := s.Size(ctx)
 	if err != nil {
 		t.Fatalf("Size() failed: %v", err)
 	}
@@ -122,7 +119,7 @@ func TestLocalSource(t *testing.T) {
 		t.Fatalf("Failed to write file2: %v", err)
 	}
 
-	src := NewLocalSource(LocalSourceConfig{RootPath: tmpDir})
+	src := NewLocalSource(context.Background(), WithLocalRootPath(tmpDir))
 
 	// Test Info()
 	info := src.Info()

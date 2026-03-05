@@ -8,6 +8,7 @@ import (
 
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/logger"
+	intsftp "github.com/cloudstic/cli/internal/sftp"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/crypto"
 	"github.com/cloudstic/cli/pkg/store"
@@ -160,7 +161,7 @@ func (g *globalFlags) initObjectStore() (store.ObjectStore, error) {
 	return inner, nil
 }
 
-func (g *globalFlags) sftpConfig(host, port, user, pass, key, path *string) (store.SFTPConfig, error) {
+func (g *globalFlags) sftpConfig(host, port, user, pass, key, path *string) (intsftp.Config, error) {
 	h := *host
 	if h == "" {
 		h = *g.sftpHost
@@ -184,13 +185,13 @@ func (g *globalFlags) sftpConfig(host, port, user, pass, key, path *string) (sto
 	bp := *path
 
 	if h == "" {
-		return store.SFTPConfig{}, fmt.Errorf("--sftp-host (or CLOUDSTIC_SFTP_HOST) is required for sftp")
+		return intsftp.Config{}, fmt.Errorf("--sftp-host (or CLOUDSTIC_SFTP_HOST) is required for sftp")
 	}
 	if u == "" {
-		return store.SFTPConfig{}, fmt.Errorf("--sftp-user (or CLOUDSTIC_SFTP_USER) is required for sftp")
+		return intsftp.Config{}, fmt.Errorf("--sftp-user (or CLOUDSTIC_SFTP_USER) is required for sftp")
 	}
 
-	return store.SFTPConfig{
+	return intsftp.Config{
 		Host:           h,
 		Port:           p,
 		User:           u,

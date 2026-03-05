@@ -9,6 +9,7 @@ import (
 
 	"github.com/cloudstic/cli/internal/core"
 	intsftp "github.com/cloudstic/cli/internal/sftp"
+	"github.com/pkg/sftp"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -46,14 +47,20 @@ func startSFTPContainer(t *testing.T, ctx context.Context) (testcontainers.Conta
 	return container, host, mappedPort.Port()
 }
 
-func sftpTestConfig(host, port, basePath string) intsftp.Config {
-	return intsftp.Config{
+// dialTestSFTP creates a raw SFTP client for test seeding purposes.
+func dialTestSFTP(t *testing.T, host, port string) *sftp.Client {
+	t.Helper()
+	cfg := intsftp.Config{
 		Host:     host,
 		Port:     port,
 		User:     "test",
 		Password: "test",
-		BasePath: basePath,
 	}
+	c, err := intsftp.Dial(cfg)
+	if err != nil {
+		t.Fatalf("dialTestSFTP: %v", err)
+	}
+	return c
 }
 
 func TestSFTPSource(t *testing.T) {
@@ -72,20 +79,17 @@ func TestSFTPSource(t *testing.T) {
 		}
 	}()
 
-	cfg := sftpTestConfig(host, port, "/upload/source")
+	basePath := "/upload/source"
 
 	// Seed some files via a direct SFTP connection.
-	seedClient, err := intsftp.Dial(cfg)
-	if err != nil {
-		t.Fatalf("seed dialSFTP: %v", err)
-	}
+	seedClient := dialTestSFTP(t, host, port)
 
-	if err := seedClient.MkdirAll(cfg.BasePath + "/subdir"); err != nil {
+	if err := seedClient.MkdirAll(basePath + "/subdir"); err != nil {
 		t.Fatalf("seed mkdir: %v", err)
 	}
 
 	for _, rel := range []string{"file1.txt", "subdir/file2.txt"} {
-		f, err := seedClient.Create(fmt.Sprintf("%s/%s", cfg.BasePath, rel))
+		f, err := seedClient.Create(fmt.Sprintf("%s/%s", basePath, rel))
 		if err != nil {
 			t.Fatalf("seed create %s: %v", rel, err)
 		}
@@ -98,7 +102,13 @@ func TestSFTPSource(t *testing.T) {
 	_ = seedClient.Close()
 
 	// Create SFTPSource
-	src, err := NewSFTPSource(ctx, cfg)
+	src, err := NewSFTPSource(
+		host,
+		WithSFTPSourcePort(port),
+		WithSFTPSourceUser("test"),
+		WithSFTPSourcePassword("test"),
+		WithSFTPSourceBasePath(basePath),
+	)
 	if err != nil {
 		t.Fatalf("NewSFTPSource failed: %v", err)
 	}
@@ -109,8 +119,8 @@ func TestSFTPSource(t *testing.T) {
 	if info.Type != "sftp" {
 		t.Errorf("Expected type 'sftp', got %s", info.Type)
 	}
-	if info.Path != cfg.BasePath {
-		t.Errorf("Expected Path %q, got %q", cfg.BasePath, info.Path)
+	if info.Path != basePath {
+		t.Errorf("Expected Path %q, got %q", basePath, info.Path)
 	}
 
 	// Test Size()

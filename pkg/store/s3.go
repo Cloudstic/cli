@@ -20,51 +20,116 @@ import (
 
 // S3Store implements ObjectStore for Amazon S3 and compatible services.
 type S3Store struct {
-	Client     *s3.Client
-	BucketName string
-	Prefix     string
+	client     *s3.Client
+	bucketName string
+	prefix     string
 }
 
-// NewS3Store creates a new S3Store.
-// It initializes the AWS SDK config and S3 client.
+type s3Options struct {
+	endpoint  string
+	region    string
+	accessKey string
+	secretKey string
+	prefix    string
+	client    *s3.Client
+}
+
+// S3Option configures an S3 store.
+type S3Option func(*s3Options)
+
+// WithS3Endpoint sets a custom S3-compatible endpoint URL
+// (e.g. MinIO, Cloudflare R2). Path-style addressing is
+// automatically enabled when an endpoint is set.
+func WithS3Endpoint(endpoint string) S3Option {
+	return func(o *s3Options) {
+		o.endpoint = endpoint
+	}
+}
+
+// WithS3Region sets the AWS region for the bucket (e.g. "us-east-1").
+func WithS3Region(region string) S3Option {
+	return func(o *s3Options) {
+		o.region = region
+	}
+}
+
+// WithS3Credentials sets static AWS credentials. When omitted the
+// SDK default credential chain is used (env vars, shared config,
+// IAM role, etc.).
+func WithS3Credentials(accessKey, secretKey string) S3Option {
+	return func(o *s3Options) {
+		o.accessKey = accessKey
+		o.secretKey = secretKey
+	}
+}
+
+// WithS3Prefix sets a key prefix prepended to every object key.
+// Use this to isolate multiple repositories within a single bucket.
+func WithS3Prefix(prefix string) S3Option {
+	return func(o *s3Options) {
+		o.prefix = prefix
+	}
+}
+
+// WithS3Client provides a pre-configured S3 client, skipping
+// internal client creation. When set, credential, region, and
+// endpoint options are ignored.
+func WithS3Client(client *s3.Client) S3Option {
+	return func(o *s3Options) {
+		o.client = client
+	}
+}
+
+// NewS3Store creates an S3Store for the given bucket.
+// If WithS3Client is not provided, a client is created internally
+// using the supplied region, credentials, and endpoint options.
+// The internal HTTP transport is tuned for high-concurrency uploads.
 const s3Concurrency = 128
 
-func NewS3Store(ctx context.Context, endpoint, region, bucketName, accessKey, secretKey, prefix string) (*S3Store, error) {
-	// Use a high-concurrency HTTP transport for S3. Go's default limits
-	// MaxIdleConnsPerHost to 2, which severely throttles parallel uploads.
-	httpClient := awshttp.NewBuildableClient().WithTransportOptions(func(t *http.Transport) {
-		t.MaxIdleConns = 256
-		t.MaxIdleConnsPerHost = s3Concurrency
-		t.MaxConnsPerHost = s3Concurrency
-	})
-
-	opts := []func(*config.LoadOptions) error{
-		config.WithRegion(region),
-		config.WithHTTPClient(httpClient),
+func NewS3Store(ctx context.Context, bucketName string, opts ...S3Option) (*S3Store, error) {
+	var o s3Options
+	for _, opt := range opts {
+		opt(&o)
 	}
 
-	if accessKey != "" && secretKey != "" {
-		opts = append(opts, config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")))
-	}
+	client := o.client
+	if client == nil {
+		// Use a high-concurrency HTTP transport for S3. Go's default limits
+		// MaxIdleConnsPerHost to 2, which severely throttles parallel uploads.
+		httpClient := awshttp.NewBuildableClient().WithTransportOptions(func(t *http.Transport) {
+			t.MaxIdleConns = 256
+			t.MaxIdleConnsPerHost = s3Concurrency
+			t.MaxConnsPerHost = s3Concurrency
+		})
 
-	cfg, err := config.LoadDefaultConfig(ctx, opts...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load s3 config: %w", err)
-	}
-
-	clientOpts := func(o *s3.Options) {
-		if endpoint != "" {
-			o.BaseEndpoint = aws.String(endpoint)
-			o.UsePathStyle = true // Often needed for custom endpoints like MinIO
+		cfgOpts := []func(*config.LoadOptions) error{
+			config.WithRegion(o.region),
+			config.WithHTTPClient(httpClient),
 		}
-	}
 
-	client := s3.NewFromConfig(cfg, clientOpts)
+		if o.accessKey != "" && o.secretKey != "" {
+			cfgOpts = append(cfgOpts, config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(o.accessKey, o.secretKey, "")))
+		}
+
+		cfg, err := config.LoadDefaultConfig(ctx, cfgOpts...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load s3 config: %w", err)
+		}
+
+		clientOpts := func(co *s3.Options) {
+			if o.endpoint != "" {
+				co.BaseEndpoint = aws.String(o.endpoint)
+				co.UsePathStyle = true // Often needed for custom endpoints like MinIO
+			}
+		}
+
+		client = s3.NewFromConfig(cfg, clientOpts)
+	}
 
 	return &S3Store{
-		Client:     client,
-		BucketName: bucketName,
-		Prefix:     prefix,
+		client:     client,
+		bucketName: bucketName,
+		prefix:     o.prefix,
 	}, nil
 }
 
@@ -75,13 +140,13 @@ func (s *S3Store) ConcurrencyHint() int {
 }
 
 func (s *S3Store) key(k string) string {
-	return s.Prefix + k
+	return s.prefix + k
 }
 
 func (s *S3Store) Put(ctx context.Context, key string, data []byte) error {
 	fullKey := s.key(key)
-	_, err := s.Client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: aws.String(s.BucketName),
+	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(s.bucketName),
 		Key:    aws.String(fullKey),
 		Body:   bytes.NewReader(data),
 	})
@@ -90,8 +155,8 @@ func (s *S3Store) Put(ctx context.Context, key string, data []byte) error {
 
 func (s *S3Store) Get(ctx context.Context, key string) ([]byte, error) {
 	fullKey := s.key(key)
-	out, err := s.Client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: aws.String(s.BucketName),
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucketName),
 		Key:    aws.String(fullKey),
 	})
 	if err != nil {
@@ -104,8 +169,8 @@ func (s *S3Store) Get(ctx context.Context, key string) ([]byte, error) {
 
 func (s *S3Store) Exists(ctx context.Context, key string) (bool, error) {
 	fullKey := s.key(key)
-	_, err := s.Client.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(s.BucketName),
+	_, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(s.bucketName),
 		Key:    aws.String(fullKey),
 	})
 
@@ -130,8 +195,8 @@ func (s *S3Store) Exists(ctx context.Context, key string) (bool, error) {
 
 func (s *S3Store) Delete(ctx context.Context, key string) error {
 	fullKey := s.key(key)
-	_, err := s.Client.DeleteObject(ctx, &s3.DeleteObjectInput{
-		Bucket: aws.String(s.BucketName),
+	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(s.bucketName),
 		Key:    aws.String(fullKey),
 	})
 	return err
@@ -139,8 +204,8 @@ func (s *S3Store) Delete(ctx context.Context, key string) error {
 
 func (s *S3Store) Size(ctx context.Context, key string) (int64, error) {
 	fullKey := s.key(key)
-	out, err := s.Client.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(s.BucketName),
+	out, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(s.bucketName),
 		Key:    aws.String(fullKey),
 	})
 	if err != nil {
@@ -156,15 +221,15 @@ func (s *S3Store) TotalSize(ctx context.Context) (int64, error) {
 	var total int64
 	var continuationToken *string
 
-	prefix := s.Prefix
+	prefix := s.prefix
 	var prefixPtr *string
 	if prefix != "" {
 		prefixPtr = aws.String(prefix)
 	}
 
 	for {
-		out, err := s.Client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-			Bucket:            aws.String(s.BucketName),
+		out, err := s.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket:            aws.String(s.bucketName),
 			Prefix:            prefixPtr,
 			ContinuationToken: continuationToken,
 		})
@@ -203,8 +268,8 @@ func (s *S3Store) List(ctx context.Context, prefix string) ([]string, error) {
 	}
 
 	for {
-		out, err := s.Client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-			Bucket:            aws.String(s.BucketName),
+		out, err := s.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket:            aws.String(s.bucketName),
 			Prefix:            prefixPtr,
 			ContinuationToken: continuationToken,
 		})
@@ -215,7 +280,7 @@ func (s *S3Store) List(ctx context.Context, prefix string) ([]string, error) {
 		for _, obj := range out.Contents {
 			if obj.Key != nil {
 				// Strip the base prefix before returning the key
-				keys = append(keys, strings.TrimPrefix(*obj.Key, s.Prefix))
+				keys = append(keys, strings.TrimPrefix(*obj.Key, s.prefix))
 			}
 		}
 

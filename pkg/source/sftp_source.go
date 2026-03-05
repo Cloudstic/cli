@@ -24,12 +24,59 @@ func relPath(base, p string) (string, error) {
 
 // sftpOptions holds configuration for an SFTP filesystem source.
 type sftpOptions struct {
-	sftpConfig      intsftp.Config
+	port, user      string
+	password        string
+	privateKeyPath  string
+	basePath        string
+	client          *sftp.Client
 	excludePatterns []string
 }
 
 // SFTPOption configures an SFTP filesystem source.
 type SFTPOption func(*sftpOptions)
+
+// WithSFTPSourcePort sets the SSH port. Defaults to "22" when empty.
+func WithSFTPSourcePort(port string) SFTPOption {
+	return func(o *sftpOptions) {
+		o.port = port
+	}
+}
+
+// WithSFTPSourceUser sets the SSH user for authentication.
+func WithSFTPSourceUser(user string) SFTPOption {
+	return func(o *sftpOptions) {
+		o.user = user
+	}
+}
+
+// WithSFTPSourcePassword sets password authentication.
+func WithSFTPSourcePassword(password string) SFTPOption {
+	return func(o *sftpOptions) {
+		o.password = password
+	}
+}
+
+// WithSFTPSourceKey sets the path to a PEM-encoded private key for authentication.
+func WithSFTPSourceKey(keyPath string) SFTPOption {
+	return func(o *sftpOptions) {
+		o.privateKeyPath = keyPath
+	}
+}
+
+// WithSFTPSourceBasePath sets the root directory on the SFTP server.
+func WithSFTPSourceBasePath(basePath string) SFTPOption {
+	return func(o *sftpOptions) {
+		o.basePath = basePath
+	}
+}
+
+// WithSFTPSourceClient provides a pre-configured SFTP client, skipping
+// internal connection setup. When set, server and auth options are ignored.
+func WithSFTPSourceClient(client *sftp.Client) SFTPOption {
+	return func(o *sftpOptions) {
+		o.client = client
+	}
+}
 
 // WithSFTPExcludePatterns sets the patterns used to exclude files and folders.
 func WithSFTPExcludePatterns(patterns []string) SFTPOption {
@@ -42,23 +89,44 @@ func WithSFTPExcludePatterns(patterns []string) SFTPOption {
 type SFTPSource struct {
 	client   *sftp.Client
 	rootPath string
-	cfg      intsftp.Config
+	host     string
+	user     string
 	exclude  *ExcludeMatcher
 }
 
-// NewSFTPSource connects to the SFTP server described by cfg and returns a
-// source rooted at cfg.BasePath.
-func NewSFTPSource(ctx context.Context, cfg intsftp.Config, opts ...SFTPOption) (*SFTPSource, error) {
-	options := sftpOptions{sftpConfig: cfg}
+// NewSFTPSource creates an SFTP-backed source for the given host.
+// Either WithSFTPSourceClient or authentication options must be provided,
+// along with WithSFTPSourceBasePath.
+func NewSFTPSource(host string, opts ...SFTPOption) (*SFTPSource, error) {
+	var o sftpOptions
 	for _, opt := range opts {
-		opt(&options)
+		opt(&o)
 	}
 
-	client, err := intsftp.Dial(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("sftp source connect: %w", err)
+	client := o.client
+	if client == nil {
+		cfg := intsftp.Config{
+			Host:           host,
+			Port:           o.port,
+			User:           o.user,
+			Password:       o.password,
+			PrivateKeyPath: o.privateKeyPath,
+			BasePath:       o.basePath,
+		}
+		var err error
+		client, err = intsftp.Dial(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("sftp source connect: %w", err)
+		}
 	}
-	return &SFTPSource{client: client, rootPath: cfg.BasePath, cfg: cfg, exclude: NewExcludeMatcher(options.excludePatterns)}, nil
+
+	return &SFTPSource{
+		client:   client,
+		rootPath: o.basePath,
+		host:     host,
+		user:     o.user,
+		exclude:  NewExcludeMatcher(o.excludePatterns),
+	}, nil
 }
 
 // Close releases the underlying SFTP and SSH connections.
@@ -69,7 +137,7 @@ func (s *SFTPSource) Close() error {
 func (s *SFTPSource) Info() core.SourceInfo {
 	return core.SourceInfo{
 		Type:    "sftp",
-		Account: fmt.Sprintf("%s@%s", s.cfg.User, s.cfg.Host),
+		Account: fmt.Sprintf("%s@%s", s.user, s.host),
 		Path:    s.rootPath,
 	}
 }

@@ -266,7 +266,7 @@ func hasSlotType(slots []store.KeySlot, slotType string) bool {
 }
 
 // ---------------------------------------------------------------------------
-// Client
+// client
 // ---------------------------------------------------------------------------
 
 // ClientOption configures a Client.

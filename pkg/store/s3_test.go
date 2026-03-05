@@ -71,7 +71,14 @@ func TestS3Store(t *testing.T) {
 	}
 
 	// 4. Test NewS3Store
-	store, err := NewS3Store(ctx, endpoint, "us-east-1", bucketName, username, password, "prefix/")
+	store, err := NewS3Store(
+		ctx,
+		bucketName,
+		WithS3Endpoint(endpoint),
+		WithS3Region("us-east-1"),
+		WithS3Credentials(username, password),
+		WithS3Prefix("prefix/"),
+	)
 	if err != nil {
 		t.Fatalf("failed to create S3Store: %v", err)
 	}

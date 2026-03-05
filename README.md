@@ -63,6 +63,27 @@ cloudstic init -encryption-password "my passphrase"
 cloudstic backup -source local -source-path ~/Documents -encryption-password "my passphrase"
 ```
 
+## Performance
+
+Benchmarked against Restic, Borg, and Duplicacy on a ~1 GB dataset (local) and a real Google Drive account (~40 MB). Full methodology and numbers in [docs/benchmark-results.md](docs/benchmark-results.md).
+
+**Local filesystem** (time / peak RAM):
+
+| Operation | Cloudstic | Restic | Borg | Duplicacy |
+| :--- | :--- | :--- | :--- | :--- |
+| Initial backup | 0.61s / 259 MB | 1.80s / 314 MB | 1.69s / 139 MB | 3.44s / 284 MB |
+| Incremental (no changes) | 0.05s / 96 MB | 0.77s / 72 MB | 0.67s / 72 MB | 0.04s / 44 MB |
+| Add 200 MB new data | 0.14s / 152 MB | 1.07s / 283 MB | 0.57s / 136 MB | 0.93s / 195 MB |
+
+**Google Drive** — each step run stateless (no rclone cache) to reflect real-world cold-start conditions:
+
+| Operation | Cloudstic | Restic | Borg |
+| :--- | :--- | :--- | :--- |
+| Initial backup | 6.08s | 11.14s | 15.06s |
+| Incremental (no changes) | **0.56s** | 14.70s | 25.49s |
+
+Cloudstic uses the Google Drive Changes API natively — incremental backups only fetch what actually changed, no full re-scan required. Restic and Borg rely on rclone FUSE mounts and must re-download the entire dataset to detect changes.
+
 ## Documentation
 
 Full documentation is available at **[docs.cloudstic.com](https://docs.cloudstic.com)**.

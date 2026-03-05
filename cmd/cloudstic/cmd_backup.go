@@ -126,16 +126,17 @@ func printBackupSummary(r *engine.RunResult) {
 func initSource(ctx context.Context, sourceType, sourcePath, driveID, rootFolder string, g *globalFlags, excludePatterns []string) (source.Source, error) {
 	switch sourceType {
 	case "local":
-		return source.NewLocalSource(ctx, source.WithLocalRootPath(sourcePath), source.WithLocalExcludePatterns(excludePatterns)), nil
+		return source.NewLocalSource(sourcePath, source.WithLocalExcludePatterns(excludePatterns)), nil
 	case "sftp":
-		cfg, err := g.sftpConfig(g.sourceSFTPHost, g.sourceSFTPPort, g.sourceSFTPUser, g.sourceSFTPPassword, g.sourceSFTPKey, &sourcePath)
-		if err != nil {
-			return nil, err
+		sftpHost, sftpOpts := g.sftpSourceOpts(g.sourceSFTPHost, g.sourceSFTPPort, g.sourceSFTPUser, g.sourceSFTPPassword, g.sourceSFTPKey, &sourcePath)
+		if sftpHost == "" {
+			return nil, fmt.Errorf("--sftp-host is required for sftp source")
 		}
 		if sourcePath == "" {
 			return nil, fmt.Errorf("-source-path is required for sftp source")
 		}
-		return source.NewSFTPSource(ctx, cfg, source.WithSFTPExcludePatterns(excludePatterns))
+		sftpOpts = append(sftpOpts, source.WithSFTPExcludePatterns(excludePatterns))
+		return source.NewSFTPSource(sftpHost, sftpOpts...)
 	case "gdrive":
 		creds := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") // optional; uses built-in OAuth client when empty
 		tokenPath, err := resolveTokenPath("GOOGLE_TOKEN_FILE", "google_token.json")

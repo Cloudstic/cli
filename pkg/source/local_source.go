@@ -21,19 +21,11 @@ func (s *LocalSource) Info() core.SourceInfo {
 
 // localOptions holds configuration for a local filesystem source.
 type localOptions struct {
-	rootPath        string
 	excludePatterns []string
 }
 
 // LocalOption configures a local filesystem source.
 type LocalOption func(*localOptions)
-
-// WithLocalRootPath sets the root directory path.
-func WithLocalRootPath(path string) LocalOption {
-	return func(o *localOptions) {
-		o.rootPath = path
-	}
-}
 
 // WithLocalExcludePatterns sets the patterns used to exclude files and folders.
 func WithLocalExcludePatterns(patterns []string) LocalOption {
@@ -48,14 +40,14 @@ type LocalSource struct {
 	exclude  *ExcludeMatcher
 }
 
-// NewLocalSource creates a local filesystem source from the given options.
-func NewLocalSource(ctx context.Context, opts ...LocalOption) *LocalSource {
+// NewLocalSource creates a local filesystem source rooted at rootPath.
+func NewLocalSource(rootPath string, opts ...LocalOption) *LocalSource {
 	var cfg localOptions
 	for _, opt := range opts {
 		opt(&cfg)
 	}
 	return &LocalSource{
-		rootPath: cfg.rootPath,
+		rootPath: rootPath,
 		exclude:  NewExcludeMatcher(cfg.excludePatterns),
 	}
 }

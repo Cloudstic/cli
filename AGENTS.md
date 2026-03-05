@@ -30,7 +30,7 @@ go fmt ./...
 
 ### E2E Test Modes
 
-E2E tests in `cmd/cloudstic/` are controlled by `CLOUDSTIC_E2E_MODE`:
+E2E tests in `e2e/` are controlled by `CLOUDSTIC_E2E_MODE`:
 - `hermetic` (default) — local filesystem + Testcontainers (MinIO, SFTP). Requires Docker.
 - `live` — real cloud vendor APIs (requires secrets).
 - `all` — runs both.

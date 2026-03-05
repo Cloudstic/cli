@@ -95,6 +95,7 @@ This repository also contains developer-focused reference docs:
 - [Specification](docs/spec.md): object types, backup/restore flow, HAMT structure
 - [Encryption](docs/encryption.md): key slot design, AES-256-GCM, recovery keys
 - [Storage Model](docs/storage-model.md): content-addressable storage layout
+- [Contributing](docs/contributing.md): testing, profiling, debugging
 
 ## Cloud Service
 

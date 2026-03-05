@@ -1,4 +1,4 @@
-package store
+package source
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 
 func (s *LocalSource) Info() core.SourceInfo {
 	hostname, _ := os.Hostname()
-	absPath, _ := filepath.Abs(s.RootPath)
+	absPath, _ := filepath.Abs(s.rootPath)
 	return core.SourceInfo{
 		Type:    "local",
 		Account: hostname,
@@ -19,33 +19,54 @@ func (s *LocalSource) Info() core.SourceInfo {
 	}
 }
 
-// LocalSourceConfig holds configuration for a local filesystem source.
-type LocalSourceConfig struct {
-	RootPath        string
-	ExcludePatterns []string
+// localOptions holds configuration for a local filesystem source.
+type localOptions struct {
+	rootPath        string
+	excludePatterns []string
+}
+
+// LocalOption configures a local filesystem source.
+type LocalOption func(*localOptions)
+
+// WithLocalRootPath sets the root directory path.
+func WithLocalRootPath(path string) LocalOption {
+	return func(o *localOptions) {
+		o.rootPath = path
+	}
+}
+
+// WithLocalExcludePatterns sets the patterns used to exclude files and folders.
+func WithLocalExcludePatterns(patterns []string) LocalOption {
+	return func(o *localOptions) {
+		o.excludePatterns = patterns
+	}
 }
 
 // LocalSource implements Source for local filesystem.
 type LocalSource struct {
-	RootPath string
+	rootPath string
 	exclude  *ExcludeMatcher
 }
 
-// NewLocalSource creates a local filesystem source from the given config.
-func NewLocalSource(cfg LocalSourceConfig) *LocalSource {
+// NewLocalSource creates a local filesystem source from the given options.
+func NewLocalSource(ctx context.Context, opts ...LocalOption) *LocalSource {
+	var cfg localOptions
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	return &LocalSource{
-		RootPath: cfg.RootPath,
-		exclude:  NewExcludeMatcher(cfg.ExcludePatterns),
+		rootPath: cfg.rootPath,
+		exclude:  NewExcludeMatcher(cfg.excludePatterns),
 	}
 }
 
 func (s *LocalSource) Walk(ctx context.Context, callback func(core.FileMeta) error) error {
-	return filepath.Walk(s.RootPath, func(path string, info os.FileInfo, err error) error {
+	return filepath.Walk(s.rootPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 
-		relPath, err := filepath.Rel(s.RootPath, path)
+		relPath, err := filepath.Rel(s.rootPath, path)
 		if err != nil {
 			return err
 		}
@@ -90,7 +111,7 @@ func (s *LocalSource) Walk(ctx context.Context, callback func(core.FileMeta) err
 
 func (s *LocalSource) Size(ctx context.Context) (*SourceSize, error) {
 	var totalBytes, totalFiles int64
-	err := filepath.Walk(s.RootPath, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(s.rootPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -98,7 +119,7 @@ func (s *LocalSource) Size(ctx context.Context) (*SourceSize, error) {
 			return ctx.Err()
 		}
 		if !s.exclude.Empty() {
-			relPath, relErr := filepath.Rel(s.RootPath, path)
+			relPath, relErr := filepath.Rel(s.rootPath, path)
 			if relErr == nil && relPath != "." {
 				if s.exclude.Excludes(filepath.ToSlash(relPath), info.IsDir()) {
 					if info.IsDir() {
@@ -122,6 +143,6 @@ func (s *LocalSource) Size(ctx context.Context) (*SourceSize, error) {
 
 func (s *LocalSource) GetFileStream(fileID string) (io.ReadCloser, error) {
 	// fileID is relPath
-	fullPath := filepath.Join(s.RootPath, fileID)
+	fullPath := filepath.Join(s.rootPath, fileID)
 	return os.Open(fullPath)
 }

@@ -1,4 +1,4 @@
-package store
+package source
 
 import (
 	"context"
@@ -16,8 +16,8 @@ type GDriveChangeSource struct {
 	GDriveSource
 }
 
-func NewGDriveChangeSource(cfg GDriveSourceConfig) (*GDriveChangeSource, error) {
-	base, err := NewGDriveSource(cfg)
+func NewGDriveChangeSource(ctx context.Context, opts ...GDriveOption) (*GDriveChangeSource, error) {
+	base, err := NewGDriveSource(ctx, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -33,9 +33,9 @@ func (s *GDriveChangeSource) Info() core.SourceInfo {
 // GetStartPageToken returns the token representing the current head of the
 // Google Drive change stream.
 func (s *GDriveChangeSource) GetStartPageToken() (string, error) {
-	call := s.Service.Changes.GetStartPageToken()
+	call := s.service.Changes.GetStartPageToken()
 	if s.isSharedDrive() {
-		call.DriveId(s.DriveID).SupportsAllDrives(true)
+		call.DriveId(s.driveID).SupportsAllDrives(true)
 	}
 	resp, err := driveCallWithRetry(context.Background(), func() (*drive.StartPageToken, error) { return call.Do() })
 	if err != nil {
@@ -52,12 +52,12 @@ func (s *GDriveChangeSource) WalkChanges(ctx context.Context, token string, call
 
 	pageToken := token
 	for {
-		call := s.Service.Changes.List(pageToken).
+		call := s.service.Changes.List(pageToken).
 			Fields("nextPageToken, newStartPageToken, changes(fileId, removed, file(id, name, parents, mimeType, size, modifiedTime, owners, trashed, sha256Checksum))").
 			PageSize(1000).
 			Context(ctx)
 		if s.isSharedDrive() {
-			call.DriveId(s.DriveID).
+			call.DriveId(s.driveID).
 				SupportsAllDrives(true).
 				IncludeItemsFromAllDrives(true)
 		}
@@ -186,7 +186,7 @@ func (s *GDriveChangeSource) resolveDrivePath(ctx context.Context, folderID stri
 		return p, nil
 	}
 
-	call := s.Service.Files.Get(folderID).
+	call := s.service.Files.Get(folderID).
 		Fields("id, name, parents").
 		SupportsAllDrives(true)
 	f, err := driveCallWithRetry(ctx, func() (*drive.File, error) { return call.Do() })

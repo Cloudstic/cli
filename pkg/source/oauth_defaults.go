@@ -1,4 +1,4 @@
-package store
+package source
 
 // Default OAuth client credentials, injected at build time via ldflags:
 //

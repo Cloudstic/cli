@@ -1,6 +1,10 @@
 package e2e
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 type localSource struct {
 	dir string
@@ -16,7 +20,14 @@ func (s *localSource) Setup(t *testing.T) []string {
 	return []string{"-source", "local", "-source-path", s.dir}
 }
 func (s *localSource) WriteFile(t *testing.T, relPath, content string) {
-	writeFile(t, s.dir, relPath, content)
+	t.Helper()
+	fullPath := filepath.Join(s.dir, relPath)
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 type localStore struct {

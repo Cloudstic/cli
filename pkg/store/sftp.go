@@ -4,14 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"path"
 	"strings"
 
+	intsftp "github.com/cloudstic/cli/internal/sftp"
 	"github.com/pkg/sftp"
-	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/agent"
 )
 
 // SFTPStore implements ObjectStore backed by an SFTP server.
@@ -20,20 +18,10 @@ type SFTPStore struct {
 	basePath string
 }
 
-// SFTPConfig holds the parameters needed to connect to an SFTP server.
-type SFTPConfig struct {
-	Host           string
-	Port           string // default "22"
-	User           string
-	Password       string // password auth (optional if key is set)
-	PrivateKeyPath string // path to PEM-encoded private key (optional if password is set)
-	BasePath       string
-}
-
 // NewSFTPStore connects to the SFTP server described by cfg and returns a
 // store rooted at basePath. The directory is created if it does not exist.
-func NewSFTPStore(cfg SFTPConfig) (*SFTPStore, error) {
-	client, err := dialSFTP(cfg)
+func NewSFTPStore(cfg intsftp.Config) (*SFTPStore, error) {
+	client, err := intsftp.Dial(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("sftp connect: %w", err)
 	}
@@ -193,73 +181,4 @@ func relPath(base, p string) (string, error) {
 		return "", fmt.Errorf("%s is not under %s", p, base)
 	}
 	return strings.TrimPrefix(p, base), nil
-}
-
-// ---------------------------------------------------------------------------
-// SSH / SFTP dial helpers
-// ---------------------------------------------------------------------------
-
-func dialSFTP(cfg SFTPConfig) (*sftp.Client, error) {
-	port := cfg.Port
-	if port == "" {
-		port = "22"
-	}
-
-	authMethods, err := buildAuthMethods(cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	sshCfg := &ssh.ClientConfig{
-		User:            cfg.User,
-		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), //nolint:gosec // users may override via SSH config
-	}
-
-	conn, err := ssh.Dial("tcp", net.JoinHostPort(cfg.Host, port), sshCfg)
-	if err != nil {
-		return nil, fmt.Errorf("ssh dial %s:%s: %w", cfg.Host, port, err)
-	}
-
-	client, err := sftp.NewClient(conn)
-	if err != nil {
-		_ = conn.Close()
-		return nil, fmt.Errorf("sftp client: %w", err)
-	}
-	return client, nil
-}
-
-func buildAuthMethods(cfg SFTPConfig) ([]ssh.AuthMethod, error) {
-	var methods []ssh.AuthMethod
-
-	// 1. Private key
-	if cfg.PrivateKeyPath != "" {
-		pemBytes, err := os.ReadFile(cfg.PrivateKeyPath)
-		if err != nil {
-			return nil, fmt.Errorf("read private key %s: %w", cfg.PrivateKeyPath, err)
-		}
-		signer, err := ssh.ParsePrivateKey(pemBytes)
-		if err != nil {
-			return nil, fmt.Errorf("parse private key %s: %w", cfg.PrivateKeyPath, err)
-		}
-		methods = append(methods, ssh.PublicKeys(signer))
-	}
-
-	// 2. Password
-	if cfg.Password != "" {
-		methods = append(methods, ssh.Password(cfg.Password))
-	}
-
-	// 3. SSH agent (fallback)
-	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
-		conn, err := net.Dial("unix", sock)
-		if err == nil {
-			methods = append(methods, ssh.PublicKeysCallback(agent.NewClient(conn).Signers))
-		}
-	}
-
-	if len(methods) == 0 {
-		return nil, fmt.Errorf("no SFTP authentication method available: provide --sftp-password, --sftp-key, or SSH_AUTH_SOCK")
-	}
-	return methods, nil
 }

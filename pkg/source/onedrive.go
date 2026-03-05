@@ -1,4 +1,4 @@
-package store
+package source
 
 import (
 	"context"
@@ -16,44 +16,72 @@ import (
 	"golang.org/x/oauth2/microsoft"
 )
 
-// OneDriveSourceConfig holds configuration for a OneDrive source.
-type OneDriveSourceConfig struct {
-	ClientID        string // empty uses built-in OAuth client
-	TokenPath       string // where the OAuth token is cached
-	ExcludePatterns []string
+// oneDriveOptions holds configuration for a OneDrive source.
+type oneDriveOptions struct {
+	clientID        string
+	tokenPath       string
+	excludePatterns []string
+}
+
+// OneDriveOption configures a OneDrive source.
+type OneDriveOption func(*oneDriveOptions)
+
+// WithOneDriveClientID sets the OAuth client ID. If empty, uses the built-in default.
+func WithOneDriveClientID(id string) OneDriveOption {
+	return func(o *oneDriveOptions) {
+		o.clientID = id
+	}
+}
+
+// WithOneDriveTokenPath sets the path where the OAuth token is cached.
+func WithOneDriveTokenPath(path string) OneDriveOption {
+	return func(o *oneDriveOptions) {
+		o.tokenPath = path
+	}
+}
+
+// WithOneDriveExcludePatterns sets the patterns used to exclude files and folders.
+func WithOneDriveExcludePatterns(patterns []string) OneDriveOption {
+	return func(o *oneDriveOptions) {
+		o.excludePatterns = patterns
+	}
 }
 
 type OneDriveSource struct {
-	Client  *http.Client
+	client  *http.Client
 	account string // cached user principal name; populated lazily by Info()
 	exclude *ExcludeMatcher
 }
 
 // NewOneDriveSource creates a new OneDriveSource from the given config.
-func NewOneDriveSource(cfg OneDriveSourceConfig) (*OneDriveSource, error) {
-	clientID := cfg.ClientID
+func NewOneDriveSource(ctx context.Context, opts ...OneDriveOption) (*OneDriveSource, error) {
+	var cfg oneDriveOptions
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	clientID := cfg.clientID
 	if clientID == "" {
 		clientID = defaultOneDriveClientID
 	}
 
-	ctx := context.Background()
 	conf := &oauth2.Config{
 		ClientID: clientID,
 		Scopes:   []string{"Files.Read", "Files.Read.All", "User.Read", "offline_access"},
 		Endpoint: microsoft.AzureADEndpoint("common"),
 	}
 
-	token, err := loadToken(cfg.TokenPath)
+	token, err := loadToken(cfg.tokenPath)
 	if err != nil {
 		token, err = exchangeWithLocalServer(conf, oauth2.AccessTypeOffline)
 		if err != nil {
 			return nil, fmt.Errorf("onedrive auth: %w", err)
 		}
-		_ = saveTokenJSON(cfg.TokenPath, token)
+		_ = saveTokenJSON(cfg.tokenPath, token)
 	}
 
 	client := conf.Client(ctx, token)
-	return &OneDriveSource{Client: client, exclude: NewExcludeMatcher(cfg.ExcludePatterns)}, nil
+	return &OneDriveSource{client: client, exclude: NewExcludeMatcher(cfg.excludePatterns)}, nil
 }
 
 func (s *OneDriveSource) Info() core.SourceInfo {
@@ -73,7 +101,7 @@ func (s *OneDriveSource) fetchAccount() string {
 	if err != nil {
 		return ""
 	}
-	resp, err := s.Client.Do(req)
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return ""
 	}
@@ -197,7 +225,7 @@ func (s *OneDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) 
 		if err != nil {
 			return err
 		}
-		resp, err := s.Client.Do(req)
+		resp, err := s.client.Do(req)
 		if err != nil {
 			return err
 		}
@@ -293,7 +321,7 @@ func (s *OneDriveSource) fetchPage(ctx context.Context, url string) (*graphListR
 			return err
 		}
 
-		resp, err := s.Client.Do(req)
+		resp, err := s.client.Do(req)
 		if err != nil {
 			return err
 		}
@@ -324,7 +352,7 @@ func (s *OneDriveSource) Size(ctx context.Context) (*SourceSize, error) {
 		if err != nil {
 			return err
 		}
-		resp, err := s.Client.Do(req)
+		resp, err := s.client.Do(req)
 		if err != nil {
 			return err
 		}
@@ -357,7 +385,7 @@ func (s *OneDriveSource) GetFileStream(fileID string) (io.ReadCloser, error) {
 		// download URL on a different domain. We must NOT follow the redirect with
 		// the oauth2 client, because it would forward the Graph API Bearer token to
 		// SharePoint, which rejects it with 401.
-		noFollow := *s.Client
+		noFollow := *s.client
 		noFollow.CheckRedirect = func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		}

@@ -92,7 +92,8 @@ func TestCLI_EndToEnd_Matrix(t *testing.T) {
 	}
 
 	// Only add Docker-based hermetic tests if Docker is actually available
-	if _, err := os.Stat("/var/run/docker.sock"); err == nil {
+	cmd := exec.Command("docker", "info")
+	if err := cmd.Run(); err == nil {
 		sources = append(sources, func(t *testing.T) TestSource { return newSFTPTestSource(t) })
 		stores = append(stores, func(t *testing.T) TestStore { return newMinIOTestStore(t) })
 		stores = append(stores, func(t *testing.T) TestStore { return newSFTPTestStore(t) })

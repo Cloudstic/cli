@@ -11,6 +11,7 @@ import (
 	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/crypto"
+	"github.com/cloudstic/cli/pkg/source"
 	"github.com/cloudstic/cli/pkg/store"
 )
 
@@ -394,7 +395,7 @@ var (
 	WithExcludeHash  = engine.WithExcludeHash
 )
 
-func (c *Client) Backup(ctx context.Context, src store.Source, opts ...BackupOption) (*BackupResult, error) {
+func (c *Client) Backup(ctx context.Context, src source.Source, opts ...BackupOption) (*BackupResult, error) {
 	rawMeter := store.NewMeteredStore(c.store)
 	c.storedMeter.Reset()
 

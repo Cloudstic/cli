@@ -13,7 +13,7 @@ import (
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/engine"
 	"github.com/cloudstic/cli/internal/paths"
-	"github.com/cloudstic/cli/pkg/store"
+	"github.com/cloudstic/cli/pkg/source"
 )
 
 type backupArgs struct {
@@ -56,7 +56,7 @@ func runBackup() {
 	// Collect exclude patterns from -exclude flags and -exclude-file.
 	excludePatterns := []string(a.excludes)
 	if a.excludeFile != "" {
-		filePatterns, err := store.ParseExcludeFile(a.excludeFile)
+		filePatterns, err := source.ParseExcludeFile(a.excludeFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to read exclude file: %v\n", err)
 			os.Exit(1)
@@ -66,7 +66,7 @@ func runBackup() {
 
 	ctx := context.Background()
 
-	src, err := initSource(a.sourceType, a.sourcePath, a.driveID, a.rootFolder, a.g, excludePatterns)
+	src, err := initSource(ctx, a.sourceType, a.sourcePath, a.driveID, a.rootFolder, a.g, excludePatterns)
 	if err != nil {
 		fmt.Printf("Failed to init source: %v\n", err)
 		os.Exit(1)
@@ -123,13 +123,10 @@ func printBackupSummary(r *engine.RunResult) {
 	}
 }
 
-func initSource(sourceType, sourcePath, driveID, rootFolder string, g *globalFlags, excludePatterns []string) (store.Source, error) {
+func initSource(ctx context.Context, sourceType, sourcePath, driveID, rootFolder string, g *globalFlags, excludePatterns []string) (source.Source, error) {
 	switch sourceType {
 	case "local":
-		return store.NewLocalSource(store.LocalSourceConfig{
-			RootPath:        sourcePath,
-			ExcludePatterns: excludePatterns,
-		}), nil
+		return source.NewLocalSource(ctx, source.WithLocalRootPath(sourcePath), source.WithLocalExcludePatterns(excludePatterns)), nil
 	case "sftp":
 		cfg, err := g.sftpConfig(g.sourceSFTPHost, g.sourceSFTPPort, g.sourceSFTPUser, g.sourceSFTPPassword, g.sourceSFTPKey, &sourcePath)
 		if err != nil {
@@ -138,58 +135,57 @@ func initSource(sourceType, sourcePath, driveID, rootFolder string, g *globalFla
 		if sourcePath == "" {
 			return nil, fmt.Errorf("-source-path is required for sftp source")
 		}
-		return store.NewSFTPSource(store.SFTPSourceConfig{
-			SFTPConfig:      cfg,
-			ExcludePatterns: excludePatterns,
-		})
+		return source.NewSFTPSource(ctx, cfg, source.WithSFTPExcludePatterns(excludePatterns))
 	case "gdrive":
 		creds := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") // optional; uses built-in OAuth client when empty
 		tokenPath, err := resolveTokenPath("GOOGLE_TOKEN_FILE", "google_token.json")
 		if err != nil {
 			return nil, err
 		}
-		return store.NewGDriveSource(store.GDriveSourceConfig{
-			CredsPath:       creds,
-			TokenPath:       tokenPath,
-			DriveID:         driveID,
-			RootFolderID:    rootFolder,
-			ExcludePatterns: excludePatterns,
-		})
+		return source.NewGDriveSource(
+			ctx,
+			source.WithCredsPath(creds),
+			source.WithTokenPath(tokenPath),
+			source.WithDriveID(driveID),
+			source.WithRootFolderID(rootFolder),
+			source.WithGDriveExcludePatterns(excludePatterns),
+		)
 	case "gdrive-changes":
 		creds := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") // optional; uses built-in OAuth client when empty
 		tokenPath, err := resolveTokenPath("GOOGLE_TOKEN_FILE", "google_token.json")
 		if err != nil {
 			return nil, err
 		}
-		return store.NewGDriveChangeSource(store.GDriveSourceConfig{
-			CredsPath:       creds,
-			TokenPath:       tokenPath,
-			DriveID:         driveID,
-			RootFolderID:    rootFolder,
-			ExcludePatterns: excludePatterns,
-		})
+		return source.NewGDriveChangeSource(
+			ctx,
+			source.WithCredsPath(creds),
+			source.WithTokenPath(tokenPath),
+			source.WithDriveID(driveID),
+			source.WithRootFolderID(rootFolder),
+			source.WithGDriveExcludePatterns(excludePatterns),
+		)
 	case "onedrive":
 		clientID := os.Getenv("ONEDRIVE_CLIENT_ID") // optional; uses built-in OAuth client when empty
 		tokenPath, err := resolveTokenPath("ONEDRIVE_TOKEN_FILE", "onedrive_token.json")
 		if err != nil {
 			return nil, err
 		}
-		return store.NewOneDriveSource(store.OneDriveSourceConfig{
-			ClientID:        clientID,
-			TokenPath:       tokenPath,
-			ExcludePatterns: excludePatterns,
-		})
+		return source.NewOneDriveSource(ctx,
+			source.WithOneDriveClientID(clientID),
+			source.WithOneDriveTokenPath(tokenPath),
+			source.WithOneDriveExcludePatterns(excludePatterns),
+		)
 	case "onedrive-changes":
 		clientID := os.Getenv("ONEDRIVE_CLIENT_ID") // optional; uses built-in OAuth client when empty
 		tokenPath, err := resolveTokenPath("ONEDRIVE_TOKEN_FILE", "onedrive_token.json")
 		if err != nil {
 			return nil, err
 		}
-		return store.NewOneDriveChangeSource(store.OneDriveSourceConfig{
-			ClientID:        clientID,
-			TokenPath:       tokenPath,
-			ExcludePatterns: excludePatterns,
-		})
+		return source.NewOneDriveChangeSource(ctx,
+			source.WithOneDriveClientID(clientID),
+			source.WithOneDriveTokenPath(tokenPath),
+			source.WithOneDriveExcludePatterns(excludePatterns),
+		)
 	default:
 		return nil, fmt.Errorf("unsupported source type: %s", sourceType)
 	}

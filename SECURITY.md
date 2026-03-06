@@ -28,6 +28,7 @@ The output will confirm if the binary is authentic and provide the specific git 
 ## Encryption Standards
 
 Cloudstic uses industry-standard encryption to protect your data:
+
 - **AES-256-GCM** for data at rest.
 - **BIP39** for recovery key generation.
 - **Argon2id** for password-based key derivation.

@@ -61,6 +61,7 @@ type SourceInfo struct {
 ```
 
 The engine uses `SourceInfo` to:
+
 - Find the previous snapshot from the same source (for incremental comparison)
 - Group snapshots in retention policies (`forget --group-by source,account,path`)
 

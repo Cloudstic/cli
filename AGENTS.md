@@ -31,6 +31,7 @@ go fmt ./...
 ### E2E Test Modes
 
 E2E tests in `e2e/` are controlled by `CLOUDSTIC_E2E_MODE`:
+
 - `hermetic` (default) — local filesystem + Testcontainers (MinIO, SFTP). Requires Docker.
 - `live` — real cloud vendor APIs (requires secrets).
 - `all` — runs both.
@@ -68,6 +69,7 @@ CompressedStore → EncryptedStore → MeteredStore → [PackStore] → KeyCache
 ### Object Key Conventions
 
 All objects are addressed by `<type>/<sha256>`:
+
 - `chunk/<hash>` — Raw file data chunks
 - `content/<hash>` — Chunk manifests (list of chunk refs, or inline data for small files)
 - `filemeta/<hash>` — File metadata (name, type, parents, content hash)

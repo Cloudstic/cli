@@ -266,7 +266,7 @@ cloudstic backup -source local -source-path ~/Documents -dry-run
 | `-drive-id` | | Shared drive ID for Google Drive (omit for My Drive) |
 | `-root-folder` | | Root folder ID for Google Drive (defaults to entire drive) |
 | `-tag` | | Tag to apply to the snapshot (repeatable) |
-|| `-exclude` | | Exclude pattern using gitignore syntax (repeatable) |
+| `-exclude` | | Exclude pattern using gitignore syntax (repeatable) |
 | `-exclude-file` | | Path to file containing exclude patterns, one per line |
 | `-dry-run` | `false` | Scan source and report changes without writing to the store |
 
@@ -530,7 +530,7 @@ The snapshot can also be passed as a positional argument.
 
 On success, the command prints a summary and exits with code 0:
 
-```
+```text
 Repository check complete.
   Snapshots checked:  3
   Objects verified:   1247
@@ -541,7 +541,7 @@ No errors found — repository is healthy.
 
 If errors are found, they are listed and the command exits with code 1:
 
-```
+```text
 Repository check complete.
   Snapshots checked:  3
   Objects verified:   1244
@@ -566,7 +566,7 @@ cloudstic key list
 
 Example output:
 
-```
+```text
 +──────────────+─────────+──────────+
 | TYPE         | LABEL   | KDF      |
 +──────────────+─────────+──────────+
@@ -657,8 +657,8 @@ cloudstic cat config --json
 | Key pattern | Description |
 |-------------|-------------|
 | `config` | Repository configuration (version, encryption status, creation time) |
-|| `index/latest` | Pointer to the most recent snapshot |
-|| `index/snapshots` | Snapshot catalog (lightweight summaries for fast listing) |
+| `index/latest` | Pointer to the most recent snapshot |
+| `index/snapshots` | Snapshot catalog (lightweight summaries for fast listing) |
 | `snapshot/<hash>` | Snapshot metadata (creation time, root node, source info, tags) |
 | `filemeta/<hash>` | File metadata (name, size, modification time, content hash) |
 | `content/<hash>` | Content manifest (list of chunk references or inline data) |
@@ -1050,7 +1050,7 @@ The `-store-path` is the remote directory path on the SFTP server where backup o
 **Environment variables:**
 
 | Variable | Description |
-|----------|-------------|
+| :--- | :--- |
 | `CLOUDSTIC_SFTP_HOST` | SFTP server hostname |
 | `CLOUDSTIC_SFTP_PORT` | SFTP server port (default: `22`) |
 | `CLOUDSTIC_SFTP_USER` | SFTP username |
@@ -1083,7 +1083,7 @@ In non-interactive environments (piped input, cron, CI), you must provide creden
 ### Key slot types
 
 | Slot type | Credential | Use case |
-|-----------|-----------|----------|
+| :--- | :--- | :--- |
 | `password` | `--encryption-password` | Day-to-day personal use |
 | `platform` | `--encryption-key` | Automation, CI/CD, platform integration (legacy) |
 | `kms-platform` | `--kms-key-arn` | HSM-backed platform integration via AWS KMS (also supports `--kms-region` and `--kms-endpoint`) |
@@ -1142,7 +1142,7 @@ Use `forget` with retention flags to automatically expire old snapshots while ke
 cloudstic forget -keep-daily 7 -keep-weekly 4 -keep-monthly 12 -prune
 ```
 
-### How it works
+### How it works (Retention)
 
 - Snapshots are grouped by source, account, and path (configurable with `-group-by`)
 - Within each group, the retention policy decides which to keep
@@ -1163,7 +1163,7 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 ## Environment Variables
 
 | Variable | Flag equivalent | Description |
-|----------|----------------|-------------|
+| :--- | :--- | :--- |
 | `CLOUDSTIC_STORE` | `-store` | Storage backend: `local`, `s3`, `b2`, `sftp` |
 | `CLOUDSTIC_STORE_PATH` | `-store-path` | Local/SFTP path or S3/B2 bucket name |
 | `CLOUDSTIC_STORE_PREFIX` | `-store-prefix` | Key prefix for S3/B2 objects |

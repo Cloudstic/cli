@@ -27,6 +27,7 @@
 ```
 
 Requirements:
+
 - Go toolchain (to build Cloudstic)
 - `restic`, `borg`, and/or `duplicacy` installed for their respective benchmarks (skipped if not found)
 - AWS credentials for `s3` store
@@ -82,4 +83,3 @@ _Format: time / peak RAM / +repo written_
 > **Methodology:** Each benchmark step remounts rclone with a fresh, empty VFS cache (no carry-over between steps). This reflects a cold-start environment with no local copy of the source data, which is Cloudstic's normal operating mode: it uses the Google Drive API natively and needs no local state. Tools with a persistent rclone cache would be faster on incremental steps, but at the cost of local storage and state.
 
 > **macOS setup:** Running rclone FUSE mounts on macOS required installing macFUSE and booting into Recovery Mode to disable SIP before the kernel extension could load. Cloudstic needs no FUSE, no rclone, and no system configuration - just a Google OAuth token.
-

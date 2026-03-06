@@ -7,9 +7,13 @@ import (
 	"time"
 
 	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/pkg/crypto"
+	"github.com/cloudstic/cli/pkg/keychain"
 	"github.com/cloudstic/cli/pkg/store"
 )
+
+var initLog = logger.New("init", logger.ColorYellow)
 
 // ---------------------------------------------------------------------------
 // Options
@@ -19,45 +23,15 @@ import (
 type InitOption func(*initConfig)
 
 type initConfig struct {
-	platformKey  []byte
-	password     string
+	chain        keychain.Chain
 	recovery     bool
 	noEncryption bool
-	kmsEncrypter crypto.KMSEncrypter
-	kmsDecrypter crypto.KMSDecrypter
-	kmsKeyARN    string
+	adoptSlots   bool
 }
 
-// WithInitPlatformKey sets the platform key for encryption.
-func WithInitPlatformKey(key []byte) InitOption {
-	return func(cfg *initConfig) { cfg.platformKey = key }
-}
-
-// WithInitPassword sets the password for encryption.
-func WithInitPassword(pw string) InitOption {
-	return func(cfg *initConfig) { cfg.password = pw }
-}
-
-// WithInitRecovery requests generation of a recovery key during init.
-func WithInitRecovery() InitOption {
-	return func(cfg *initConfig) { cfg.recovery = true }
-}
-
-// WithInitNoEncryption creates an unencrypted repository.
-func WithInitNoEncryption() InitOption {
-	return func(cfg *initConfig) { cfg.noEncryption = true }
-}
-
-// WithInitKMS configures KMS envelope encryption for the repository.
-// The encrypter wraps the master key during init; the decrypter is used
-// to verify existing KMS slots and to extract the master key when adding
-// a recovery slot.
-func WithInitKMS(encrypter crypto.KMSEncrypter, decrypter crypto.KMSDecrypter, keyARN string) InitOption {
-	return func(cfg *initConfig) {
-		cfg.kmsEncrypter = encrypter
-		cfg.kmsDecrypter = decrypter
-		cfg.kmsKeyARN = keyARN
-	}
+// WithInitCredentials configures the keychain to use for initialization.
+func WithInitCredentials(chain keychain.Chain) InitOption {
+	return func(cfg *initConfig) { cfg.chain = chain }
 }
 
 // ---------------------------------------------------------------------------
@@ -95,14 +69,18 @@ func (m *InitManager) Run(ctx context.Context, opts ...InitOption) (*InitResult,
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+	initLog.Debugf("InitRepo: encrypted=%v, noEncryption=%v, adoptSlots=%v, hasChain=%v, recovery=%v",
+		!cfg.noEncryption && len(cfg.chain) > 0, cfg.noEncryption, cfg.adoptSlots, len(cfg.chain) > 0, cfg.recovery)
 
 	// Check if already initialized.
 	cfgData, err := m.store.Get(ctx, configKey)
 	if err == nil && cfgData != nil {
-		return nil, fmt.Errorf("repository is already initialized")
+		if !cfg.adoptSlots {
+			return nil, fmt.Errorf("repository is already initialized")
+		}
 	}
 
-	hasCreds := len(cfg.platformKey) > 0 || cfg.password != "" || cfg.kmsEncrypter != nil
+	hasCreds := len(cfg.chain) > 0
 	encrypted := hasCreds && !cfg.noEncryption
 	result := &InitResult{Encrypted: encrypted}
 
@@ -132,63 +110,55 @@ func (m *InitManager) Run(ctx context.Context, opts ...InitOption) (*InitResult,
 // setupEncryption creates new key slots or adopts existing ones. Returns true
 // if existing slots were adopted.
 func (m *InitManager) setupEncryption(ctx context.Context, cfg initConfig) (adopted bool, err error) {
-	slots, err := store.LoadKeySlots(m.store)
+	slots, err := keychain.LoadKeySlots(m.store)
 	if err != nil {
 		return false, fmt.Errorf("load key slots: %w", err)
 	}
 
+	var masterKey []byte
 	if len(slots) > 0 {
-		// Verify we can open the existing slots.
-		if err := verifyExistingSlots(ctx, slots, cfg); err != nil {
+		// Use existing master key.
+		mk, err := cfg.chain.Resolve(ctx, slots)
+		if err != nil {
 			return false, fmt.Errorf("found existing key slots but cannot open them: %w", err)
 		}
-		return true, nil
-	}
-
-	if cfg.kmsEncrypter != nil {
-		if _, err := store.InitKMSEncryptionKey(ctx, m.store, cfg.kmsEncrypter, cfg.kmsKeyARN, cfg.platformKey, cfg.password); err != nil {
-			return false, fmt.Errorf("initialize KMS encryption: %w", err)
-		}
+		masterKey = mk
+		adopted = true
 	} else {
-		if _, err := store.InitEncryptionKey(m.store, cfg.platformKey, cfg.password); err != nil {
-			return false, fmt.Errorf("initialize encryption: %w", err)
+		// Generate new master key.
+		mk, err := crypto.GenerateKey()
+		if err != nil {
+			return false, fmt.Errorf("generate master key for init: %w", err)
 		}
+		masterKey = mk
 	}
-	return false, nil
-}
 
-// verifyExistingSlots checks that at least one provided credential can open
-// the existing key slots.
-func verifyExistingSlots(ctx context.Context, slots []store.KeySlot, cfg initConfig) error {
-	if cfg.kmsDecrypter != nil {
-		if _, err := store.OpenWithKMS(ctx, slots, cfg.kmsDecrypter); err == nil {
-			return nil
+	// Always wrap and write slots in the provided chain.
+	// This ensures that new credentials provided during 'adopt' get their own slots.
+	newSlots, err := cfg.chain.WrapAll(ctx, masterKey)
+	if err != nil {
+		return false, fmt.Errorf("wrap master key: %w", err)
+	}
+	for _, slot := range newSlots {
+		if err := keychain.WriteKeySlot(m.store, slot); err != nil {
+			return false, fmt.Errorf("write key slot: %w", err)
 		}
 	}
-	if len(cfg.platformKey) > 0 {
-		if _, err := store.OpenWithPlatformKey(slots, cfg.platformKey); err == nil {
-			return nil
-		}
-	}
-	if cfg.password != "" {
-		if _, err := store.OpenWithPassword(slots, cfg.password); err == nil {
-			return nil
-		}
-	}
-	return fmt.Errorf("no provided credential matches (types: %s)", store.SlotTypes(slots))
+
+	return adopted, nil
 }
 
 // addRecoverySlot extracts the master key and creates a recovery slot.
 func (m *InitManager) addRecoverySlot(ctx context.Context, cfg initConfig) (string, error) {
-	slots, err := store.LoadKeySlots(m.store)
+	slots, err := keychain.LoadKeySlots(m.store)
 	if err != nil {
 		return "", fmt.Errorf("reload key slots: %w", err)
 	}
-	masterKey, err := store.ExtractMasterKeyWithKMS(ctx, slots, cfg.kmsDecrypter, cfg.platformKey, cfg.password)
+	masterKey, err := cfg.chain.Resolve(ctx, slots)
 	if err != nil {
 		return "", fmt.Errorf("extract master key for recovery slot: %w", err)
 	}
-	mnemonic, err := store.AddRecoverySlot(m.store, masterKey)
+	mnemonic, err := keychain.AddRecoverySlot(m.store, masterKey)
 	if err != nil {
 		return "", fmt.Errorf("create recovery key: %w", err)
 	}
@@ -206,4 +176,19 @@ func (m *InitManager) writeRepoConfig(ctx context.Context, encrypted bool) error
 		return fmt.Errorf("marshal repo config: %w", err)
 	}
 	return m.store.Put(ctx, configKey, data)
+}
+
+// WithInitRecovery requests generation of a recovery key during init.
+func WithInitRecovery() InitOption {
+	return func(cfg *initConfig) { cfg.recovery = true }
+}
+
+// WithInitNoEncryption creates an unencrypted repository.
+func WithInitNoEncryption() InitOption {
+	return func(cfg *initConfig) { cfg.noEncryption = true }
+}
+
+// WithInitAdoptSlots allows initialization to succeed even if key slots already exist.
+func WithInitAdoptSlots() InitOption {
+	return func(cfg *initConfig) { cfg.adoptSlots = true }
 }

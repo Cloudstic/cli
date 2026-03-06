@@ -22,3 +22,26 @@ func PromptPassword(prompt string) (string, error) {
 
 	return strings.TrimSpace(string(pw)), nil
 }
+
+// PromptPasswordConfirm prompts for a password and then a confirmation.
+// Returns an error if they don't match or are empty.
+func PromptPasswordConfirm(msg string) (string, error) {
+	p1, err := PromptPassword(msg)
+	if err != nil {
+		return "", err
+	}
+	if p1 == "" {
+		return "", fmt.Errorf("password cannot be empty")
+	}
+
+	p2, err := PromptPassword("Confirm password")
+	if err != nil {
+		return "", err
+	}
+
+	if p1 != p2 {
+		return "", fmt.Errorf("passwords do not match")
+	}
+
+	return p1, nil
+}

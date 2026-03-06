@@ -7,7 +7,7 @@ import (
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/pkg/crypto"
-	"github.com/cloudstic/cli/pkg/store"
+	"github.com/cloudstic/cli/pkg/keychain"
 )
 
 // mockKMS implements both crypto.KMSEncrypter and crypto.KMSDecrypter using
@@ -17,7 +17,7 @@ type mockKMS struct {
 	xorByte byte
 }
 
-func (m *mockKMS) Encrypt(_ context.Context, _ string, plaintext []byte) ([]byte, error) {
+func (m *mockKMS) Encrypt(_ context.Context, plaintext []byte) ([]byte, error) {
 	out := make([]byte, len(plaintext))
 	for i, b := range plaintext {
 		out[i] = b ^ m.xorByte
@@ -33,8 +33,7 @@ func (m *mockKMS) Decrypt(_ context.Context, ciphertext []byte) ([]byte, error) 
 	return out, nil
 }
 
-var _ crypto.KMSEncrypter = (*mockKMS)(nil)
-var _ crypto.KMSDecrypter = (*mockKMS)(nil)
+var _ crypto.KMSClient = (*mockKMS)(nil)
 
 func TestInitManager_UnencryptedRepo(t *testing.T) {
 	s := NewMockStore()
@@ -69,7 +68,7 @@ func TestInitManager_EncryptedWithPassword(t *testing.T) {
 	s := NewMockStore()
 	mgr := NewInitManager(s)
 
-	result, err := mgr.Run(context.Background(), WithInitPassword("test-password"))
+	result, err := mgr.Run(context.Background(), WithInitCredentials(keychain.Chain{keychain.WithPassword("test-password")}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -81,7 +80,7 @@ func TestInitManager_EncryptedWithPassword(t *testing.T) {
 	}
 
 	// Verify key slots were created.
-	slots, err := store.LoadKeySlots(s)
+	slots, err := keychain.LoadKeySlots(s)
 	if err != nil {
 		t.Fatalf("failed to load key slots: %v", err)
 	}
@@ -99,7 +98,7 @@ func TestInitManager_EncryptedWithPassword(t *testing.T) {
 	}
 
 	// Verify we can open the slot.
-	if _, err := store.OpenWithPassword(slots, "test-password"); err != nil {
+	if _, err := (keychain.Chain{keychain.WithPassword("test-password")}).Resolve(context.Background(), slots); err != nil {
 		t.Errorf("failed to open with password: %v", err)
 	}
 }
@@ -113,7 +112,7 @@ func TestInitManager_EncryptedWithPlatformKey(t *testing.T) {
 		platformKey[i] = byte(i)
 	}
 
-	result, err := mgr.Run(context.Background(), WithInitPlatformKey(platformKey))
+	result, err := mgr.Run(context.Background(), WithInitCredentials(keychain.Chain{keychain.WithPlatformKey(platformKey)}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -121,11 +120,11 @@ func TestInitManager_EncryptedWithPlatformKey(t *testing.T) {
 		t.Error("expected encrypted repo")
 	}
 
-	slots, err := store.LoadKeySlots(s)
+	slots, err := keychain.LoadKeySlots(s)
 	if err != nil {
 		t.Fatalf("failed to load key slots: %v", err)
 	}
-	if _, err := store.OpenWithPlatformKey(slots, platformKey); err != nil {
+	if _, err := (keychain.Chain{keychain.WithPlatformKey(platformKey)}).Resolve(context.Background(), slots); err != nil {
 		t.Errorf("failed to open with platform key: %v", err)
 	}
 }
@@ -154,12 +153,12 @@ func TestInitManager_AdoptsExistingSlots(t *testing.T) {
 	for i := range platformKey {
 		platformKey[i] = byte(i + 10)
 	}
-	if _, err := store.InitEncryptionKey(s, platformKey, ""); err != nil {
-		t.Fatalf("failed to pre-create key slots: %v", err)
-	}
+	masterKey, _ := crypto.GenerateKey()
+	slot, _ := keychain.CreatePlatformSlot(masterKey, platformKey)
+	_ = keychain.WriteKeySlot(s, slot)
 
 	mgr := NewInitManager(s)
-	result, err := mgr.Run(context.Background(), WithInitPlatformKey(platformKey))
+	result, err := mgr.Run(context.Background(), WithInitCredentials(keychain.Chain{keychain.WithPlatformKey(platformKey)}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -176,9 +175,9 @@ func TestInitManager_AdoptExistingSlots_WrongCredential(t *testing.T) {
 	for i := range originalKey {
 		originalKey[i] = byte(i)
 	}
-	if _, err := store.InitEncryptionKey(s, originalKey, ""); err != nil {
-		t.Fatalf("failed to pre-create key slots: %v", err)
-	}
+	masterKey, _ := crypto.GenerateKey()
+	slot, _ := keychain.CreatePlatformSlot(masterKey, originalKey)
+	_ = keychain.WriteKeySlot(s, slot)
 
 	// Try to init with a different platform key.
 	wrongKey := make([]byte, 32)
@@ -187,7 +186,7 @@ func TestInitManager_AdoptExistingSlots_WrongCredential(t *testing.T) {
 	}
 
 	mgr := NewInitManager(s)
-	_, err := mgr.Run(context.Background(), WithInitPlatformKey(wrongKey))
+	_, err := mgr.Run(context.Background(), WithInitCredentials(keychain.Chain{keychain.WithPlatformKey(wrongKey)}))
 	if err == nil {
 		t.Fatal("expected error when adopting slots with wrong key")
 	}
@@ -198,7 +197,7 @@ func TestInitManager_WithRecoveryKey(t *testing.T) {
 	mgr := NewInitManager(s)
 
 	result, err := mgr.Run(context.Background(),
-		WithInitPassword("test-password"),
+		WithInitCredentials(keychain.Chain{keychain.WithPassword("test-password")}),
 		WithInitRecovery(),
 	)
 	if err != nil {
@@ -221,7 +220,7 @@ func TestInitManager_WithRecoveryKey(t *testing.T) {
 	}
 
 	// Verify recovery slot was created.
-	slots, err := store.LoadKeySlots(s)
+	slots, err := keychain.LoadKeySlots(s)
 	if err != nil {
 		t.Fatalf("failed to load key slots: %v", err)
 	}
@@ -242,7 +241,7 @@ func TestInitManager_EncryptedWithKMS(t *testing.T) {
 	kms := &mockKMS{xorByte: 0x42}
 
 	result, err := mgr.Run(context.Background(),
-		WithInitKMS(kms, kms, "arn:aws:kms:us-east-1:123456789:key/test-key"),
+		WithInitCredentials(keychain.Chain{keychain.WithKMSClient(kms)}),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -255,7 +254,7 @@ func TestInitManager_EncryptedWithKMS(t *testing.T) {
 	}
 
 	// Verify kms-platform slot was created.
-	slots, err := store.LoadKeySlots(s)
+	slots, err := keychain.LoadKeySlots(s)
 	if err != nil {
 		t.Fatalf("failed to load key slots: %v", err)
 	}
@@ -270,7 +269,7 @@ func TestInitManager_EncryptedWithKMS(t *testing.T) {
 	}
 
 	// Verify we can open the slot with the mock decrypter.
-	if _, err := store.OpenWithKMS(context.Background(), slots, kms); err != nil {
+	if _, err := (keychain.Chain{keychain.WithKMSClient(kms)}).Resolve(context.Background(), slots); err != nil {
 		t.Errorf("failed to open with KMS: %v", err)
 	}
 
@@ -295,8 +294,10 @@ func TestInitManager_KMSWithPasswordSlots(t *testing.T) {
 
 	// Init with both KMS and password — should create both slot types.
 	result, err := mgr.Run(context.Background(),
-		WithInitKMS(kms, kms, "arn:aws:kms:us-east-1:123456789:key/test-key"),
-		WithInitPassword("test-password"),
+		WithInitCredentials(keychain.Chain{
+			keychain.WithKMSClient(kms),
+			keychain.WithPassword("test-password"),
+		}),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -305,7 +306,7 @@ func TestInitManager_KMSWithPasswordSlots(t *testing.T) {
 		t.Error("expected encrypted repo")
 	}
 
-	slots, err := store.LoadKeySlots(s)
+	slots, err := keychain.LoadKeySlots(s)
 	if err != nil {
 		t.Fatalf("failed to load key slots: %v", err)
 	}
@@ -327,10 +328,10 @@ func TestInitManager_KMSWithPasswordSlots(t *testing.T) {
 	}
 
 	// Both credential types should open the repo.
-	if _, err := store.OpenWithKMS(context.Background(), slots, kms); err != nil {
+	if _, err := (keychain.Chain{keychain.WithKMSClient(kms)}).Resolve(context.Background(), slots); err != nil {
 		t.Errorf("failed to open with KMS: %v", err)
 	}
-	if _, err := store.OpenWithPassword(slots, "test-password"); err != nil {
+	if _, err := (keychain.Chain{keychain.WithPassword("test-password")}).Resolve(context.Background(), slots); err != nil {
 		t.Errorf("failed to open with password: %v", err)
 	}
 }
@@ -341,7 +342,7 @@ func TestInitManager_KMSWithRecovery(t *testing.T) {
 	kms := &mockKMS{xorByte: 0x42}
 
 	result, err := mgr.Run(context.Background(),
-		WithInitKMS(kms, kms, "arn:aws:kms:us-east-1:123456789:key/test-key"),
+		WithInitCredentials(keychain.Chain{keychain.WithKMSClient(kms)}),
 		WithInitRecovery(),
 	)
 	if err != nil {
@@ -351,7 +352,7 @@ func TestInitManager_KMSWithRecovery(t *testing.T) {
 		t.Error("expected recovery key mnemonic")
 	}
 
-	slots, err := store.LoadKeySlots(s)
+	slots, err := keychain.LoadKeySlots(s)
 	if err != nil {
 		t.Fatalf("failed to load key slots: %v", err)
 	}
@@ -372,7 +373,7 @@ func TestInitManager_NoEncryptionOverridesCreds(t *testing.T) {
 
 	// Passing both a password and --no-encryption should result in unencrypted repo.
 	result, err := mgr.Run(context.Background(),
-		WithInitPassword("test-password"),
+		WithInitCredentials(keychain.Chain{keychain.WithPassword("test-password")}),
 		WithInitNoEncryption(),
 	)
 	if err != nil {
@@ -383,11 +384,72 @@ func TestInitManager_NoEncryptionOverridesCreds(t *testing.T) {
 	}
 
 	// No key slots should exist.
-	slots, err := store.LoadKeySlots(s)
+	slots, err := keychain.LoadKeySlots(s)
 	if err != nil {
 		t.Fatalf("failed to load key slots: %v", err)
 	}
 	if len(slots) != 0 {
 		t.Errorf("expected no key slots, got %d", len(slots))
+	}
+}
+func TestInitManager_AdoptAddsNewSlots(t *testing.T) {
+	s := NewMockStore()
+	mgr := NewInitManager(s)
+	ctx := context.Background()
+
+	// 1. Pre-create a password slot
+	password := "p1"
+	masterKey, _ := crypto.GenerateKey()
+	slot, _ := keychain.CreatePasswordSlot(masterKey, password)
+	_ = keychain.WriteKeySlot(s, slot)
+
+	// 2. Adopt with password AND a new platform key
+	platformKey := make([]byte, 32)
+	for i := range platformKey {
+		platformKey[i] = byte(i + 5)
+	}
+
+	result, err := mgr.Run(ctx,
+		WithInitCredentials(keychain.Chain{
+			keychain.WithPassword(password),
+			keychain.WithPlatformKey(platformKey),
+		}),
+		WithInitAdoptSlots(),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.AdoptedSlots {
+		t.Error("expected AdoptedSlots to be true")
+	}
+
+	// 3. Verify both slots exist and work
+	slots, err := keychain.LoadKeySlots(s)
+	if err != nil {
+		t.Fatalf("failed to load key slots: %v", err)
+	}
+	if len(slots) < 2 {
+		t.Errorf("expected at least 2 slots, got %d", len(slots))
+	}
+
+	hasPW, hasPlatform := false, false
+	for _, sl := range slots {
+		if sl.SlotType == "password" {
+			hasPW = true
+		}
+		if sl.SlotType == "platform" {
+			hasPlatform = true
+		}
+	}
+	if !hasPW || !hasPlatform {
+		t.Errorf("missing expected slot types: hasPW=%v, hasPlatform=%v", hasPW, hasPlatform)
+	}
+
+	// Verify both can unlock
+	if _, err := (keychain.Chain{keychain.WithPassword(password)}).Resolve(ctx, slots); err != nil {
+		t.Errorf("failed to open with password: %v", err)
+	}
+	if _, err := (keychain.Chain{keychain.WithPlatformKey(platformKey)}).Resolve(ctx, slots); err != nil {
+		t.Errorf("failed to open with platform key: %v", err)
 	}
 }

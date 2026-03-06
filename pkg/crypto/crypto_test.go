@@ -274,3 +274,23 @@ func TestNewHMACHash_MatchesComputeHMAC(t *testing.T) {
 		t.Fatalf("NewHMACHash result differs from ComputeHMAC:\n  got:  %s\n  want: %s", got, expected)
 	}
 }
+func TestDeriveKeyFromPassword(t *testing.T) {
+	password := "correct-password"
+	salt := []byte("salt-salt-salt-salt-salt-salt-sa")
+	params := DefaultArgon2Params
+
+	k1 := DeriveKeyFromPassword(password, salt, params)
+	k2 := DeriveKeyFromPassword(password, salt, params)
+
+	if !bytes.Equal(k1, k2) {
+		t.Error("DeriveKeyFromPassword not deterministic")
+	}
+	if len(k1) != KeySize {
+		t.Errorf("expected %d bytes, got %d", KeySize, len(k1))
+	}
+
+	k3 := DeriveKeyFromPassword("wrong-password", salt, params)
+	if bytes.Equal(k1, k3) {
+		t.Error("different passwords produced same key")
+	}
+}

@@ -119,7 +119,7 @@ func runKeyPasswd() {
 	}
 	raw = a.g.applyDebug(raw)
 
-	creds, err := a.g.buildKeyProvider(ctx)
+	kc, err := a.g.buildKeychain(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
@@ -132,26 +132,16 @@ func runKeyPasswd() {
 			if !term.IsTerminal(os.Stdin.Fd()) {
 				return "", errors.New("provide --new-password or run interactively")
 			}
-			p1, err := ui.PromptPassword("Enter new repository password")
+			p1, err := ui.PromptPasswordConfirm("Enter new repository password")
 			if err != nil {
-				return "", fmt.Errorf("failed to read password: %w", err)
-			}
-			if p1 == "" {
-				return "", errors.New("password cannot be empty")
-			}
-			p2, err := ui.PromptPassword("Confirm new repository password")
-			if err != nil {
-				return "", fmt.Errorf("failed to read confirmation: %w", err)
-			}
-			if p1 != p2 {
-				return "", errors.New("passwords do not match")
+				return "", err
 			}
 			newPw = p1
 		}
 		return newPw, nil
 	})
 
-	if err := cloudstic.ChangePassword(ctx, raw, creds, newPassword); err != nil {
+	if err := cloudstic.ChangePassword(ctx, raw, kc, newPassword); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to change password: %v\n", err)
 		os.Exit(1)
 	}
@@ -182,13 +172,13 @@ func runAddRecoveryKey() {
 	}
 	raw = a.g.applyDebug(raw)
 
-	creds, err := a.g.buildKeyProvider(ctx)
+	kc, err := a.g.buildKeychain(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
 
-	mnemonic, err := cloudstic.AddRecoveryKey(ctx, raw, creds)
+	mnemonic, err := cloudstic.AddRecoveryKey(ctx, raw, kc)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create recovery key: %v\n", err)
 		os.Exit(1)

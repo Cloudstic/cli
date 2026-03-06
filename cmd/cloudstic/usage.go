@@ -59,6 +59,8 @@ func printUsage() {
 		{"-encryption-password", ui.Env("Password for password-based encryption", "CLOUDSTIC_ENCRYPTION_PASSWORD")},
 		{"-recovery-key <words>", ui.Env("Recovery key (24-word seed phrase)", "CLOUDSTIC_RECOVERY_KEY")},
 		{"-kms-key-arn <arn>", ui.Env("AWS KMS key ARN for kms-platform slots", "CLOUDSTIC_KMS_KEY_ARN")},
+		{"-kms-region <region>", ui.Env("AWS KMS region", "CLOUDSTIC_KMS_REGION")},
+		{"-kms-endpoint <url>", ui.Env("AWS KMS endpoint URL", "CLOUDSTIC_KMS_ENDPOINT")},
 	})
 	t.Blank()
 	t.Note(
@@ -73,6 +75,7 @@ func printUsage() {
 	t.Flags([][2]string{
 		{"-recovery", "Generate a 24-word recovery key during init"},
 		{"-no-encryption", "Create an unencrypted repository (not recommended)"},
+		{"-adopt-slots", "Initialize by adopting existing key slots if found"},
 	})
 	t.Blank()
 

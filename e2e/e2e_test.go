@@ -255,7 +255,7 @@ func TestCLI_EndToEnd_Matrix(t *testing.T) {
 
 				// 13. Test Backup Storage Backend With Recovery Key Generation & Restore
 				// Re-init the isolated dummy store with recovery key enabled
-				out = run(t, bin, append([]string{"init", "--encryption-password", password, "--recovery"}, dummyStoreArgs...)...)
+				out = run(t, bin, append([]string{"init", "--adopt-slots", "--encryption-password", password, "--recovery"}, dummyStoreArgs...)...)
 				if !strings.Contains(out, "RECOVERY KEY") {
 					t.Fatalf("Expected recovery key output on init, got: %s", out)
 				}

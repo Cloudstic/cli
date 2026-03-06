@@ -43,7 +43,7 @@ _cloudstic() {
 
     local commands="init backup restore list ls prune forget diff break-lock key cat completion version help"
 
-    local global_flags="-store -store-path -store-prefix -s3-endpoint -s3-region -s3-access-key -s3-secret-key -sftp-host -sftp-port -sftp-user -sftp-password -sftp-key -source-sftp-host -source-sftp-port -source-sftp-user -source-sftp-password -source-sftp-key -store-sftp-host -store-sftp-port -store-sftp-user -store-sftp-password -store-sftp-key -encryption-key -encryption-password -recovery-key -kms-key-arn -enable-packfile -verbose -quiet -debug"
+    local global_flags="-store -store-path -store-prefix -s3-endpoint -s3-region -s3-access-key -s3-secret-key -sftp-host -sftp-port -sftp-user -sftp-password -sftp-key -source-sftp-host -source-sftp-port -source-sftp-user -source-sftp-password -source-sftp-key -store-sftp-host -store-sftp-port -store-sftp-user -store-sftp-password -store-sftp-key -encryption-key -encryption-password -recovery-key -kms-key-arn -kms-region -kms-endpoint -enable-packfile -verbose -quiet -debug"
 
     # Identify the subcommand
     local cmd=""
@@ -53,7 +53,7 @@ _cloudstic() {
             -*)
                 # skip flags and their values
                 case "${words[i]}" in
-                    -store|-store-path|-store-prefix|-s3-endpoint|-s3-region|-s3-access-key|-s3-secret-key|-sftp-host|-sftp-port|-sftp-user|-sftp-password|-sftp-key|-source-sftp-host|-source-sftp-port|-source-sftp-user|-source-sftp-password|-source-sftp-key|-store-sftp-host|-store-sftp-port|-store-sftp-user|-store-sftp-password|-store-sftp-key|-encryption-key|-encryption-password|-recovery-key|-kms-key-arn|-source|-source-path|-drive-id|-root-folder|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-snapshot|-account|-path|-json)
+                    -store|-store-path|-store-prefix|-s3-endpoint|-s3-region|-s3-access-key|-s3-secret-key|-sftp-host|-sftp-port|-sftp-user|-sftp-password|-sftp-key|-source-sftp-host|-source-sftp-port|-source-sftp-user|-source-sftp-password|-source-sftp-key|-store-sftp-host|-store-sftp-port|-store-sftp-user|-store-sftp-password|-store-sftp-key|-encryption-key|-encryption-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-source-path|-drive-id|-root-folder|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-snapshot|-account|-path|-json)
                         ((i++)) ;;
                 esac
                 ;;
@@ -74,7 +74,7 @@ _cloudstic() {
     local cmd_flags=""
     case "$cmd" in
         init)
-            cmd_flags="-recovery -no-encryption" ;;
+            cmd_flags="-recovery -no-encryption -adopt-slots" ;;
         backup)
             cmd_flags="-source -source-path -drive-id -root-folder -tag -dry-run" ;;
         restore)
@@ -189,6 +189,8 @@ _cloudstic() {
         '-encryption-password[Password for encryption]:password:'
         '-recovery-key[Recovery key (24-word mnemonic)]:words:'
         '-kms-key-arn[AWS KMS key ARN]:arn:'
+        '-kms-region[AWS KMS region]:region:'
+        '-kms-endpoint[Custom AWS KMS endpoint]:url:'
         '-enable-packfile[Bundle small objects into packs]'
         '-verbose[Log detailed operations]'
         '-quiet[Suppress progress bars]'
@@ -203,7 +205,7 @@ _cloudstic() {
             -*)
                 # Skip flags with values
                 case "${words[i]}" in
-                    -store|-store-path|-store-prefix|-s3-endpoint|-s3-region|-s3-access-key|-s3-secret-key|-sftp-host|-sftp-port|-sftp-user|-sftp-password|-sftp-key|-source-sftp-host|-source-sftp-port|-source-sftp-user|-source-sftp-password|-source-sftp-key|-store-sftp-host|-store-sftp-port|-store-sftp-user|-store-sftp-password|-store-sftp-key|-encryption-key|-encryption-password|-recovery-key|-kms-key-arn|-source|-source-path|-drive-id|-root-folder|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-snapshot|-account|-path)
+                    -store|-store-path|-store-prefix|-s3-endpoint|-s3-region|-s3-access-key|-s3-secret-key|-sftp-host|-sftp-port|-sftp-user|-sftp-password|-sftp-key|-source-sftp-host|-source-sftp-port|-source-sftp-user|-source-sftp-password|-source-sftp-key|-store-sftp-host|-store-sftp-port|-store-sftp-user|-store-sftp-password|-source-sftp-key|-store-sftp-host|-store-sftp-port|-store-sftp-user|-store-sftp-password|-store-sftp-key|-encryption-key|-encryption-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-source-path|-drive-id|-root-folder|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-snapshot|-account|-path)
                         (( i++ )) ;;
                 esac
                 ;;
@@ -225,7 +227,8 @@ _cloudstic() {
         init)
             _arguments $global_flags \
                 '-recovery[Generate a 24-word recovery key]' \
-                '-no-encryption[Create an unencrypted repository]'
+                '-no-encryption[Create an unencrypted repository]' \
+                '-adopt-slots[Adopt existing key slots]'
             ;;
         backup)
             _arguments $global_flags \
@@ -374,6 +377,8 @@ complete -c cloudstic -l encryption-key -x -d 'Platform key (hex-encoded)'
 complete -c cloudstic -l encryption-password -x -d 'Password for encryption'
 complete -c cloudstic -l recovery-key -x -d 'Recovery key (24-word mnemonic)'
 complete -c cloudstic -l kms-key-arn -x -d 'AWS KMS key ARN'
+complete -c cloudstic -l kms-region -x -d 'AWS KMS region'
+complete -c cloudstic -l kms-endpoint -x -d 'Custom AWS KMS endpoint'
 complete -c cloudstic -l enable-packfile -d 'Bundle small objects into packs'
 complete -c cloudstic -l verbose -d 'Log detailed operations'
 complete -c cloudstic -l quiet -d 'Suppress progress bars'
@@ -382,6 +387,7 @@ complete -c cloudstic -l debug -d 'Log every store request'
 # init
 complete -c cloudstic -n '__fish_seen_subcommand_from init' -l recovery -d 'Generate a 24-word recovery key'
 complete -c cloudstic -n '__fish_seen_subcommand_from init' -l no-encryption -d 'Create an unencrypted repository'
+complete -c cloudstic -n '__fish_seen_subcommand_from init' -l adopt-slots -d 'Adopt existing key slots'
 
 # backup
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l source -x -a 'local sftp gdrive gdrive-changes onedrive onedrive-changes' -d 'Source type'

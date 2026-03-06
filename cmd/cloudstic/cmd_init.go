@@ -15,6 +15,7 @@ type initArgs struct {
 	g            *globalFlags
 	recovery     bool
 	noEncryption bool
+	adoptSlots   bool
 }
 
 func parseInitArgs() *initArgs {
@@ -23,9 +24,11 @@ func parseInitArgs() *initArgs {
 	a.g = addGlobalFlags(fs)
 	recovery := fs.Bool("recovery", false, "Generate a recovery key (24-word seed phrase) during init")
 	noEncryption := fs.Bool("no-encryption", false, "Create an unencrypted repository (NOT recommended)")
+	adoptSlots := fs.Bool("adopt-slots", false, "Initialize by adopting existing key slots if found (prevents error if already has slots)")
 	mustParse(fs)
 	a.recovery = *recovery
 	a.noEncryption = *noEncryption
+	a.adoptSlots = *adoptSlots
 	return a
 }
 
@@ -42,39 +45,23 @@ func runInit() {
 	}
 	raw = a.g.applyDebug(raw)
 
-	platformKey, err := a.g.parsePlatformKey()
+	kc, err := a.g.buildKeychain(context.Background())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
+		fmt.Fprintf(os.Stderr, "Failed to build keychain: %v\n", err)
 		os.Exit(1)
 	}
-	password := *a.g.encryptionPassword
-	kmsARN := ""
-	if a.g.kmsKeyARN != nil {
-		kmsARN = *a.g.kmsKeyARN
-	}
-	hasEncryptionCreds := len(platformKey) > 0 || password != "" || kmsARN != ""
+	hasEncryptionCreds := len(kc) > 0
 
 	if !hasEncryptionCreds && !a.noEncryption {
 		if term.IsTerminal(os.Stdin.Fd()) {
-			pw, err := ui.PromptPassword("Enter new repository password")
+			pw, err := ui.PromptPasswordConfirm("Enter new repository password")
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to read password: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
-			if pw == "" {
-				fmt.Fprintln(os.Stderr, "Error: encryption password cannot be empty.")
-				os.Exit(1)
-			}
-			pw2, err := ui.PromptPassword("Confirm repository password")
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to read password confirmation: %v\n", err)
-				os.Exit(1)
-			}
-			if pw != pw2 {
-				fmt.Fprintln(os.Stderr, "Error: passwords do not match.")
-				os.Exit(1)
-			}
-			password = pw
+			*a.g.encryptionPassword = pw
+			// rebuild keychain with the new password
+			kc, _ = a.g.buildKeychain(context.Background())
 		} else {
 			fmt.Fprintln(os.Stderr, "Error: encryption is required by default.")
 			fmt.Fprintln(os.Stderr, "Provide --encryption-password or --encryption-key to encrypt your repository.")
@@ -85,25 +72,17 @@ func runInit() {
 
 	// Build init options.
 	var initOpts []cloudstic.InitOption
-	if len(platformKey) > 0 {
-		initOpts = append(initOpts, cloudstic.WithInitPlatformKey(platformKey))
-	}
-	if password != "" {
-		initOpts = append(initOpts, cloudstic.WithInitPassword(password))
-	}
-	if kmsARN != "" {
-		kmsClient, err := a.g.buildKMSClient(context.Background())
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to init KMS client: %v\n", err)
-			os.Exit(1)
-		}
-		initOpts = append(initOpts, cloudstic.WithInitKMS(kmsClient, kmsClient, kmsARN))
+	if len(kc) > 0 {
+		initOpts = append(initOpts, cloudstic.WithInitCredentials(kc))
 	}
 	if a.recovery {
 		initOpts = append(initOpts, cloudstic.WithInitRecovery())
 	}
 	if a.noEncryption {
 		initOpts = append(initOpts, cloudstic.WithInitNoEncryption())
+	}
+	if a.adoptSlots {
+		initOpts = append(initOpts, cloudstic.WithInitAdoptSlots())
 	}
 
 	result, err := cloudstic.InitRepo(context.Background(), raw, initOpts...)

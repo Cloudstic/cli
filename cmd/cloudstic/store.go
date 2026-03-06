@@ -10,6 +10,7 @@ import (
 	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/crypto"
+	"github.com/cloudstic/cli/pkg/keychain"
 	"github.com/cloudstic/cli/pkg/source"
 	"github.com/cloudstic/cli/pkg/store"
 	"github.com/moby/term"
@@ -48,13 +49,13 @@ func (g *globalFlags) openClient() (*cloudstic.Client, error) {
 		reporter = cr
 	}
 
-	kp, err := g.buildKeyProvider(context.Background())
+	kc, err := g.buildKeychain(context.Background())
 	if err != nil {
 		return nil, err
 	}
 
 	return cloudstic.NewClient(raw,
-		cloudstic.WithKeyProvider(kp),
+		cloudstic.WithKeychain(kc),
 		cloudstic.WithReporter(reporter),
 		cloudstic.WithPackfile(packfileEnabled),
 	)
@@ -62,21 +63,26 @@ func (g *globalFlags) openClient() (*cloudstic.Client, error) {
 
 // buildKMSClient creates an AWS KMS client if -kms-key-arn is set, otherwise
 // returns nil. The returned client implements both KMSEncrypter and KMSDecrypter.
-func (g *globalFlags) buildKMSClient(ctx context.Context) (*crypto.AWSKMSClient, error) {
+func (g *globalFlags) buildKMSClient(ctx context.Context) (crypto.KMSClient, error) {
 	if g.kmsKeyARN == nil || *g.kmsKeyARN == "" {
 		return nil, nil
 	}
-	client, err := crypto.NewAWSKMSDecrypter(ctx)
+	var opts []crypto.KMSClientOption
+	if g.kmsRegion != nil && *g.kmsRegion != "" {
+		opts = append(opts, crypto.WithKMSRegion(*g.kmsRegion))
+	}
+	if g.kmsEndpoint != nil && *g.kmsEndpoint != "" {
+		opts = append(opts, crypto.WithKMSEndpoint(*g.kmsEndpoint))
+	}
+	client, err := crypto.NewAWSKMSClient(ctx, *g.kmsKeyARN, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("init KMS client: %w", err)
 	}
 	return client, nil
 }
 
-// buildKeyProvider constructs a Credentials key provider from the CLI flags.
-// The returned provider always attempts auto-detection: the client reads the
-// repo config and only calls ResolveKey when encryption is enabled.
-func (g *globalFlags) buildKeyProvider(ctx context.Context) (cloudstic.KeyProvider, error) {
+// buildKeychain constructs a Keychain from the CLI flags.
+func (g *globalFlags) buildKeychain(ctx context.Context) (keychain.Chain, error) {
 	platformKey, err := g.parsePlatformKey()
 	if err != nil {
 		return nil, err
@@ -87,27 +93,29 @@ func (g *globalFlags) buildKeyProvider(ctx context.Context) (cloudstic.KeyProvid
 		return nil, err
 	}
 
-	// Avoid assigning a typed nil *AWSKMSClient to the interface field;
-	// a non-nil interface wrapping a nil pointer would bypass nil checks.
-	var kmsDecrypter cloudstic.KMSDecrypter
+	var chain keychain.Chain
+
 	if kmsClient != nil {
-		kmsDecrypter = kmsClient
+		chain = append(chain, keychain.WithKMSClient(kmsClient))
+	}
+	if len(platformKey) > 0 {
+		chain = append(chain, keychain.WithPlatformKey(platformKey))
+	}
+	if *g.encryptionPassword != "" {
+		chain = append(chain, keychain.WithPassword(*g.encryptionPassword))
+	}
+	if *g.recoveryKey != "" {
+		chain = append(chain, keychain.WithRecoveryKey(*g.recoveryKey))
 	}
 
-	var passwordPrompt func() (string, error)
 	if term.IsTerminal(os.Stdin.Fd()) {
-		passwordPrompt = func() (string, error) {
-			return ui.PromptPassword("Repository password")
-		}
+		chain = append(chain, keychain.WithPrompt(
+			func() (string, error) { return ui.PromptPassword("Repository password") },
+			func() (string, error) { return ui.PromptPasswordConfirm("Enter new repository password") },
+		))
 	}
 
-	return &cloudstic.Credentials{
-		PlatformKey:      platformKey,
-		Password:         *g.encryptionPassword,
-		RecoveryMnemonic: *g.recoveryKey,
-		KMSDecrypter:     kmsDecrypter,
-		PasswordPrompt:   passwordPrompt,
-	}, nil
+	return chain, nil
 }
 
 func (g *globalFlags) parsePlatformKey() ([]byte, error) {

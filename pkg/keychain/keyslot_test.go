@@ -1,18 +1,107 @@
-package store
+package keychain
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/cloudstic/cli/pkg/crypto"
 )
 
+type mockStore struct {
+	data map[string][]byte
+}
+
+func newMemStore() *mockStore {
+	return &mockStore{data: make(map[string][]byte)}
+}
+
+func (m *mockStore) Put(ctx context.Context, key string, data []byte) error {
+	m.data[key] = append([]byte(nil), data...)
+	return nil
+}
+
+func (m *mockStore) Get(ctx context.Context, key string) ([]byte, error) {
+	d, ok := m.data[key]
+	if !ok {
+		return nil, nil
+	}
+	return append([]byte(nil), d...), nil
+}
+
+func (m *mockStore) List(ctx context.Context, prefix string) ([]string, error) {
+	var keys []string
+	for k := range m.data {
+		if strings.HasPrefix(k, prefix) {
+			keys = append(keys, k)
+		}
+	}
+	return keys, nil
+}
+
+func (m *mockStore) Delete(ctx context.Context, key string) error {
+	delete(m.data, key)
+	return nil
+}
+
+func (m *mockStore) Exists(ctx context.Context, key string) (bool, error) {
+	_, ok := m.data[key]
+	return ok, nil
+}
+
+func (m *mockStore) Size(ctx context.Context, key string) (int64, error) {
+	d, ok := m.data[key]
+	if !ok {
+		return 0, nil
+	}
+	return int64(len(d)), nil
+}
+
+func (m *mockStore) TotalSize(ctx context.Context) (int64, error) {
+	var total int64
+	for _, v := range m.data {
+		total += int64(len(v))
+	}
+	return total, nil
+}
+
+func (m *mockStore) Flush(ctx context.Context) error {
+	return nil
+}
+
+// initEncryptionKey is a local test helper that replicates the old InitEncryptionKey logic
+// using the new Chain/Credential API.
+func initEncryptionKey(s *mockStore, platformKey []byte, password string) ([]byte, error) {
+	masterKey, err := crypto.GenerateKey()
+	if err != nil {
+		return nil, err
+	}
+	var c Chain
+	if len(platformKey) > 0 {
+		c = append(c, WithPlatformKey(platformKey))
+	}
+	if password != "" {
+		c = append(c, WithPassword(password))
+	}
+	slots, err := c.WrapAll(context.Background(), masterKey)
+	if err != nil {
+		return nil, err
+	}
+	for _, slot := range slots {
+		if err := WriteKeySlot(s, slot); err != nil {
+			return nil, err
+		}
+	}
+	return masterKey, nil
+}
+
 func TestInitAndOpenPlatformKey(t *testing.T) {
 	inner := newMemStore()
 	platformKey, _ := crypto.GenerateKey()
 
-	encKey, err := InitEncryptionKey(inner, platformKey, "")
+	encKey, err := initEncryptionKey(inner, platformKey, "")
 	if err != nil {
 		t.Fatalf("InitEncryptionKey: %v", err)
 	}
@@ -31,9 +120,9 @@ func TestInitAndOpenPlatformKey(t *testing.T) {
 		t.Fatalf("slot type = %q, want platform", slots[0].SlotType)
 	}
 
-	opened, err := OpenWithPlatformKey(slots, platformKey)
+	opened, err := (Chain{WithPlatformKey(platformKey)}).Resolve(context.Background(), slots)
 	if err != nil {
-		t.Fatalf("OpenWithPlatformKey: %v", err)
+		t.Fatalf("WithPlatformKey Resolve: %v", err)
 	}
 	if len(opened) != crypto.KeySize {
 		t.Fatalf("opened key length = %d, want %d", len(opened), crypto.KeySize)
@@ -49,7 +138,7 @@ func TestInitAndOpenPassword(t *testing.T) {
 	inner := newMemStore()
 	password := "test-password-123"
 
-	encKey, err := InitEncryptionKey(inner, nil, password)
+	encKey, err := initEncryptionKey(inner, nil, password)
 	if err != nil {
 		t.Fatalf("InitEncryptionKey: %v", err)
 	}
@@ -71,9 +160,9 @@ func TestInitAndOpenPassword(t *testing.T) {
 		t.Fatalf("algorithm = %q, want argon2id", slots[0].KDFParams.Algorithm)
 	}
 
-	opened, err := OpenWithPassword(slots, password)
+	opened, err := (Chain{WithPassword(password)}).Resolve(context.Background(), slots)
 	if err != nil {
-		t.Fatalf("OpenWithPassword: %v", err)
+		t.Fatalf("WithPassword Resolve: %v", err)
 	}
 	for i := range encKey {
 		if encKey[i] != opened[i] {
@@ -84,13 +173,13 @@ func TestInitAndOpenPassword(t *testing.T) {
 
 func TestOpenWithWrongPassword(t *testing.T) {
 	inner := newMemStore()
-	_, err := InitEncryptionKey(inner, nil, "correct-password")
+	_, err := initEncryptionKey(inner, nil, "correct-password")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	slots, _ := LoadKeySlots(inner)
-	if _, err := OpenWithPassword(slots, "wrong-password"); err == nil {
+	if _, err := (Chain{WithPassword("wrong-password")}).Resolve(context.Background(), slots); err == nil {
 		t.Fatal("expected error with wrong password")
 	}
 }
@@ -100,13 +189,13 @@ func TestOpenWithWrongPlatformKey(t *testing.T) {
 	key1, _ := crypto.GenerateKey()
 	key2, _ := crypto.GenerateKey()
 
-	_, err := InitEncryptionKey(inner, key1, "")
+	_, err := initEncryptionKey(inner, key1, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	slots, _ := LoadKeySlots(inner)
-	if _, err := OpenWithPlatformKey(slots, key2); err == nil {
+	if _, err := (Chain{WithPlatformKey(key2)}).Resolve(context.Background(), slots); err == nil {
 		t.Fatal("expected error with wrong platform key")
 	}
 }
@@ -116,7 +205,7 @@ func TestDualSlots(t *testing.T) {
 	platformKey, _ := crypto.GenerateKey()
 	password := "my-password"
 
-	encKey, err := InitEncryptionKey(inner, platformKey, password)
+	encKey, err := initEncryptionKey(inner, platformKey, password)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,11 +215,11 @@ func TestDualSlots(t *testing.T) {
 		t.Fatalf("expected 2 slots, got %d", len(slots))
 	}
 
-	opened1, err := OpenWithPlatformKey(slots, platformKey)
+	opened1, err := (Chain{WithPlatformKey(platformKey)}).Resolve(context.Background(), slots)
 	if err != nil {
 		t.Fatalf("open with platform key: %v", err)
 	}
-	opened2, err := OpenWithPassword(slots, password)
+	opened2, err := (Chain{WithPassword(password)}).Resolve(context.Background(), slots)
 	if err != nil {
 		t.Fatalf("open with password: %v", err)
 	}
@@ -146,7 +235,7 @@ func TestKeySlotJSONFormat(t *testing.T) {
 	inner := newMemStore()
 	platformKey, _ := crypto.GenerateKey()
 
-	if _, err := InitEncryptionKey(inner, platformKey, ""); err != nil {
+	if _, err := initEncryptionKey(inner, platformKey, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -170,15 +259,15 @@ func TestAddAndOpenRecoveryKey(t *testing.T) {
 	inner := newMemStore()
 	platformKey, _ := crypto.GenerateKey()
 
-	encKey, err := InitEncryptionKey(inner, platformKey, "")
+	encKey, err := initEncryptionKey(inner, platformKey, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	slots, _ := LoadKeySlots(inner)
-	masterKey, err := ExtractMasterKey(slots, platformKey, "")
+	masterKey, err := (Chain{WithPlatformKey(platformKey)}).Resolve(context.Background(), slots)
 	if err != nil {
-		t.Fatalf("ExtractMasterKey: %v", err)
+		t.Fatalf("Resolve with platform key: %v", err)
 	}
 
 	mnemonic, err := AddRecoverySlot(inner, masterKey)
@@ -200,13 +289,9 @@ func TestAddAndOpenRecoveryKey(t *testing.T) {
 		t.Fatal("expected a recovery slot after AddRecoverySlot")
 	}
 
-	recoveryKey, err := crypto.MnemonicToKey(mnemonic)
+	opened, err := (Chain{WithRecoveryKey(mnemonic)}).Resolve(context.Background(), slots)
 	if err != nil {
-		t.Fatalf("MnemonicToKey: %v", err)
-	}
-	opened, err := OpenWithRecoveryKey(slots, recoveryKey)
-	if err != nil {
-		t.Fatalf("OpenWithRecoveryKey: %v", err)
+		t.Fatalf("Resolve with recovery key: %v", err)
 	}
 	for i := range encKey {
 		if encKey[i] != opened[i] {
@@ -219,61 +304,22 @@ func TestOpenWithWrongRecoveryKey(t *testing.T) {
 	inner := newMemStore()
 	platformKey, _ := crypto.GenerateKey()
 
-	_, err := InitEncryptionKey(inner, platformKey, "")
+	_, err := initEncryptionKey(inner, platformKey, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	slots, _ := LoadKeySlots(inner)
-	mk, _ := ExtractMasterKey(slots, platformKey, "")
+	mk, _ := (Chain{WithPlatformKey(platformKey)}).Resolve(context.Background(), slots)
 	_, _ = AddRecoverySlot(inner, mk)
 
 	slots, _ = LoadKeySlots(inner)
-	wrongKey, _ := crypto.GenerateKey()
-	if _, err := OpenWithRecoveryKey(slots, wrongKey); err == nil {
+
+	// Create another valid mnemonic
+	wrongMnemonic, _, _ := crypto.GenerateRecoveryMnemonic()
+
+	if _, err := (Chain{WithRecoveryKey(wrongMnemonic)}).Resolve(context.Background(), slots); err == nil {
 		t.Fatal("expected error with wrong recovery key")
-	}
-}
-
-func TestExtractMasterKey_Platform(t *testing.T) {
-	inner := newMemStore()
-	platformKey, _ := crypto.GenerateKey()
-	_, _ = InitEncryptionKey(inner, platformKey, "")
-
-	slots, _ := LoadKeySlots(inner)
-	mk, err := ExtractMasterKey(slots, platformKey, "")
-	if err != nil {
-		t.Fatalf("ExtractMasterKey: %v", err)
-	}
-	if len(mk) != crypto.KeySize {
-		t.Fatalf("master key length = %d, want %d", len(mk), crypto.KeySize)
-	}
-}
-
-func TestExtractMasterKey_Password(t *testing.T) {
-	inner := newMemStore()
-	password := "test-pass"
-	_, _ = InitEncryptionKey(inner, nil, password)
-
-	slots, _ := LoadKeySlots(inner)
-	mk, err := ExtractMasterKey(slots, nil, password)
-	if err != nil {
-		t.Fatalf("ExtractMasterKey: %v", err)
-	}
-	if len(mk) != crypto.KeySize {
-		t.Fatalf("master key length = %d, want %d", len(mk), crypto.KeySize)
-	}
-}
-
-func TestExtractMasterKey_NoMatch(t *testing.T) {
-	inner := newMemStore()
-	key, _ := crypto.GenerateKey()
-	_, _ = InitEncryptionKey(inner, key, "")
-
-	slots, _ := LoadKeySlots(inner)
-	wrongKey, _ := crypto.GenerateKey()
-	if _, err := ExtractMasterKey(slots, wrongKey, ""); err == nil {
-		t.Fatal("expected error with wrong credentials")
 	}
 }
 
@@ -282,15 +328,15 @@ func TestChangePasswordSlot(t *testing.T) {
 	oldPassword := "old-password"
 	newPassword := "new-password"
 
-	encKey, err := InitEncryptionKey(inner, nil, oldPassword)
+	encKey, err := initEncryptionKey(inner, nil, oldPassword)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	slots, _ := LoadKeySlots(inner)
-	mk, err := ExtractMasterKey(slots, nil, oldPassword)
+	mk, err := (Chain{WithPassword(oldPassword)}).Resolve(context.Background(), slots)
 	if err != nil {
-		t.Fatalf("ExtractMasterKey: %v", err)
+		t.Fatalf("Resolve with old password: %v", err)
 	}
 
 	if err := ChangePasswordSlot(inner, mk, newPassword); err != nil {
@@ -299,14 +345,14 @@ func TestChangePasswordSlot(t *testing.T) {
 
 	// Old password should no longer work.
 	slots, _ = LoadKeySlots(inner)
-	if _, err := OpenWithPassword(slots, oldPassword); err == nil {
+	if _, err := (Chain{WithPassword(oldPassword)}).Resolve(context.Background(), slots); err == nil {
 		t.Fatal("old password should no longer open the repo")
 	}
 
 	// New password should work and produce the same encryption key.
-	opened, err := OpenWithPassword(slots, newPassword)
+	opened, err := (Chain{WithPassword(newPassword)}).Resolve(context.Background(), slots)
 	if err != nil {
-		t.Fatalf("OpenWithPassword with new password: %v", err)
+		t.Fatalf("Resolve with new password: %v", err)
 	}
 	for i := range encKey {
 		if encKey[i] != opened[i] {
@@ -329,7 +375,7 @@ func TestHasKeySlots(t *testing.T) {
 		t.Fatal("empty store should not have key slots")
 	}
 	key, _ := crypto.GenerateKey()
-	_, _ = InitEncryptionKey(inner, key, "")
+	_, _ = initEncryptionKey(inner, key, "")
 	if !HasKeySlots(inner) {
 		t.Fatal("store should have key slots after init")
 	}

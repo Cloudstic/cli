@@ -185,6 +185,8 @@ These flags apply to all commands:
 |------|-------------|
 | `-verbose` | Log detailed file-level operations (files scanned, written, deleted) |
 | `-quiet` | Suppress progress bars (keeps final summary output) |
+| `-debug` | Log every store request (network calls, timing, sizes) |
+| `-enable-packfile` | Bundle small objects into 8MB packs to save S3 PUTs (default: true) |
 
 `-verbose` and `-quiet` are mutually exclusive. If both are set, `-quiet` takes precedence.
 
@@ -225,6 +227,7 @@ When no encryption credential is provided and stdin is a terminal, `init` prompt
 | `-encryption-key` | Platform key (64 hex chars = 32 bytes) |
 | `-recovery` | Generate a 24-word recovery key during init |
 | `-no-encryption` | Create an unencrypted repository (not recommended) |
+| `-adopt-slots` | Adopt existing key slots (and add new credentials to them) |
 
 When `-recovery` is used, a 24-word seed phrase is displayed **once**. Write it down and store it safely — it's your last resort if you lose your password.
 
@@ -1083,7 +1086,7 @@ In non-interactive environments (piped input, cron, CI), you must provide creden
 |-----------|-----------|----------|
 | `password` | `--encryption-password` | Day-to-day personal use |
 | `platform` | `--encryption-key` | Automation, CI/CD, platform integration (legacy) |
-| `kms-platform` | `--kms-key-arn` | HSM-backed platform integration via AWS KMS |
+| `kms-platform` | `--kms-key-arn` | HSM-backed platform integration via AWS KMS (also supports `--kms-region` and `--kms-endpoint`) |
 | `recovery` | `--recovery-key` | Emergency access when password is lost |
 
 ### Recommended setup
@@ -1176,6 +1179,8 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 | `CLOUDSTIC_ENCRYPTION_PASSWORD` | `-encryption-password` | Encryption password |
 | `CLOUDSTIC_RECOVERY_KEY` | `-recovery-key` | Recovery seed phrase |
 | `CLOUDSTIC_KMS_KEY_ARN` | `-kms-key-arn` | AWS KMS key ARN for kms-platform slots |
+| `CLOUDSTIC_KMS_REGION` | `-kms-region` | AWS KMS region |
+| `CLOUDSTIC_KMS_ENDPOINT` | `-kms-endpoint` | Custom AWS KMS endpoint URL |
 | `CLOUDSTIC_CONFIG_DIR` | — | Override config directory path |
 | `GOOGLE_APPLICATION_CREDENTIALS` | — | Path to your own Google OAuth credentials file (optional, overrides built-in) |
 | `GOOGLE_TOKEN_FILE` | — | Override Google OAuth token path |

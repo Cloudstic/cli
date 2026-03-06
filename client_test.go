@@ -6,8 +6,7 @@ import (
 	"testing"
 
 	"github.com/cloudstic/cli/internal/core"
-	"github.com/cloudstic/cli/pkg/crypto"
-	"github.com/cloudstic/cli/pkg/store"
+	"github.com/cloudstic/cli/pkg/keychain"
 )
 
 // mockStore is a simple in-memory store for testing
@@ -113,7 +112,7 @@ func TestLoadRepoConfig_Unencrypted(t *testing.T) {
 func TestLoadRepoConfig_Encrypted(t *testing.T) {
 	ctx := context.Background()
 	s := newMockStore()
-	if _, err := InitRepo(ctx, s, WithInitPassword("test-pass")); err != nil {
+	if _, err := InitRepo(ctx, s, WithInitCredentials(keychain.Chain{keychain.WithPassword("test-pass")})); err != nil {
 		t.Fatalf("InitRepo: %v", err)
 	}
 	cfg, err := LoadRepoConfig(ctx, s)
@@ -145,19 +144,19 @@ func TestLoadRepoConfig_Malformed(t *testing.T) {
 func TestChangePassword(t *testing.T) {
 	ctx := context.Background()
 	s := newMockStore()
-	if _, err := InitRepo(ctx, s, WithInitPassword("old-pass")); err != nil {
+	if _, err := InitRepo(ctx, s, WithInitCredentials(keychain.Chain{keychain.WithPassword("old-pass")})); err != nil {
 		t.Fatalf("InitRepo: %v", err)
 	}
 
-	if err := ChangePassword(ctx, s, Credentials{Password: "old-pass"}, PasswordString("new-pass")); err != nil {
+	if err := ChangePassword(ctx, s, keychain.Chain{keychain.WithPassword("old-pass")}, PasswordString("new-pass")); err != nil {
 		t.Fatalf("ChangePassword: %v", err)
 	}
 
-	slots, _ := store.LoadKeySlots(s)
-	if _, err := store.OpenWithPassword(slots, "old-pass"); err == nil {
+	slots, _ := keychain.LoadKeySlots(s)
+	if _, err := (keychain.Chain{keychain.WithPassword("old-pass")}).Resolve(ctx, slots); err == nil {
 		t.Error("old password should no longer work")
 	}
-	if _, err := store.OpenWithPassword(slots, "new-pass"); err != nil {
+	if _, err := (keychain.Chain{keychain.WithPassword("new-pass")}).Resolve(ctx, slots); err != nil {
 		t.Errorf("new password should work: %v", err)
 	}
 }
@@ -165,10 +164,10 @@ func TestChangePassword(t *testing.T) {
 func TestChangePassword_WrongCredentials(t *testing.T) {
 	ctx := context.Background()
 	s := newMockStore()
-	if _, err := InitRepo(ctx, s, WithInitPassword("correct-pass")); err != nil {
+	if _, err := InitRepo(ctx, s, WithInitCredentials(keychain.Chain{keychain.WithPassword("correct-pass")})); err != nil {
 		t.Fatalf("InitRepo: %v", err)
 	}
-	if err := ChangePassword(ctx, s, Credentials{Password: "wrong-pass"}, PasswordString("new-pass")); err == nil {
+	if err := ChangePassword(ctx, s, keychain.Chain{keychain.WithPassword("wrong-pass")}, PasswordString("new-pass")); err == nil {
 		t.Error("expected error with wrong credentials")
 	}
 }
@@ -180,11 +179,11 @@ func TestChangePassword_WrongCredentials(t *testing.T) {
 func TestAddRecoveryKey(t *testing.T) {
 	ctx := context.Background()
 	s := newMockStore()
-	if _, err := InitRepo(ctx, s, WithInitPassword("test-pass")); err != nil {
+	if _, err := InitRepo(ctx, s, WithInitCredentials(keychain.Chain{keychain.WithPassword("test-pass")})); err != nil {
 		t.Fatalf("InitRepo: %v", err)
 	}
 
-	mnemonic, err := AddRecoveryKey(ctx, s, Credentials{Password: "test-pass"})
+	mnemonic, err := AddRecoveryKey(ctx, s, keychain.Chain{keychain.WithPassword("test-pass")})
 	if err != nil {
 		t.Fatalf("AddRecoveryKey: %v", err)
 	}
@@ -192,7 +191,7 @@ func TestAddRecoveryKey(t *testing.T) {
 		t.Error("expected non-empty mnemonic")
 	}
 
-	slots, _ := store.LoadKeySlots(s)
+	slots, _ := keychain.LoadKeySlots(s)
 	hasRecovery := false
 	for _, slot := range slots {
 		if slot.SlotType == "recovery" {
@@ -204,22 +203,18 @@ func TestAddRecoveryKey(t *testing.T) {
 	}
 
 	// Verify the mnemonic can actually open the repo.
-	recoveryKey, err := crypto.MnemonicToKey(mnemonic)
-	if err != nil {
-		t.Fatalf("MnemonicToKey: %v", err)
-	}
-	if _, err := store.OpenWithRecoveryKey(slots, recoveryKey); err != nil {
-		t.Errorf("OpenWithRecoveryKey: %v", err)
+	if _, err := (keychain.Chain{keychain.WithRecoveryKey(mnemonic)}).Resolve(ctx, slots); err != nil {
+		t.Errorf("Resolve recovery key: %v", err)
 	}
 }
 
 func TestAddRecoveryKey_WrongCredentials(t *testing.T) {
 	ctx := context.Background()
 	s := newMockStore()
-	if _, err := InitRepo(ctx, s, WithInitPassword("correct-pass")); err != nil {
+	if _, err := InitRepo(ctx, s, WithInitCredentials(keychain.Chain{keychain.WithPassword("correct-pass")})); err != nil {
 		t.Fatalf("InitRepo: %v", err)
 	}
-	if _, err := AddRecoveryKey(ctx, s, Credentials{Password: "wrong-pass"}); err == nil {
+	if _, err := AddRecoveryKey(ctx, s, keychain.Chain{keychain.WithPassword("wrong-pass")}); err == nil {
 		t.Error("expected error with wrong credentials")
 	}
 }
@@ -323,6 +318,10 @@ func TestClient_Cat_MultipleObjects(t *testing.T) {
 func TestClient_Cat_ObjectNotFound(t *testing.T) {
 	ctx := context.Background()
 	base := newMockStore()
+	config := []byte(`{"version":1,"created":"2024-01-01T00:00:00Z","encrypted":false}`)
+	if err := base.Put(ctx, "config", config); err != nil {
+		t.Fatalf("Failed to setup mock data: %v", err)
+	}
 
 	client, err := NewClient(base)
 	if err != nil {
@@ -343,6 +342,10 @@ func TestClient_Cat_ObjectNotFound(t *testing.T) {
 func TestClient_Cat_NoKeys(t *testing.T) {
 	ctx := context.Background()
 	base := newMockStore()
+	config := []byte(`{"version":1,"created":"2024-01-01T00:00:00Z","encrypted":false}`)
+	if err := base.Put(ctx, "config", config); err != nil {
+		t.Fatalf("Failed to setup mock data: %v", err)
+	}
 
 	client, err := NewClient(base)
 	if err != nil {
@@ -430,6 +433,10 @@ func TestClient_Cat_WithEncryption(t *testing.T) {
 func TestClient_Cat_WithCompression(t *testing.T) {
 	ctx := context.Background()
 	base := newMockStore()
+	config := []byte(`{"version":1,"created":"2024-01-01T00:00:00Z","encrypted":false}`)
+	if err := base.Put(ctx, "config", config); err != nil {
+		t.Fatalf("Failed to setup mock data: %v", err)
+	}
 
 	client, err := NewClient(base)
 	if err != nil {

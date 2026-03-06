@@ -219,7 +219,7 @@ The token format is source-specific:
 
 To avoid issuing hundreds of thousands of S3 `PUT` and `GET` requests for tiny metadata objects, the storage layer implements a stateless PackStore.
 
-* All small objects (< 512KB) like `filemeta/`, `node/`, and small `content/` objects are buffered in memory and flushed as aggregated 8MB `packs/<hash>` files. 
+* All small objects (< 512KB) like `filemeta/`, `node/`, and small `content/` objects are buffered in memory and flushed as aggregated 8MB `packs/<hash>` files.
 * The `index/packs` catalog is then updated to record the exact byte offset and length of each logical object within its packfile.
 * When reading, the entire 8MB packfile is fetched and cached in an LRU, meaning thousands of subsequent metadata reads take 0 network requests.
 
@@ -250,15 +250,15 @@ When packfiles are enabled, a bbolt database mapping logical object keys to thei
 
 1. **Load previous state**: read `index/latest` → snapshot → HAMT root.
 2. **Scan**: walk the source; for each file:
-   - Look up the file ID in the old HAMT.
-   - Fast-check metadata (name, size, mtime, type, parents). If identical and the source doesn't provide a content hash, carry the old hash forward (avoids false-positive diffs).
-   - Unchanged files are re-inserted into the new HAMT by reference.
-   - Changed or new files are queued for upload.
+   * Look up the file ID in the old HAMT.
+   * Fast-check metadata (name, size, mtime, type, parents). If identical and the source doesn't provide a content hash, carry the old hash forward (avoids false-positive diffs).
+   * Unchanged files are re-inserted into the new HAMT by reference.
+   * Changed or new files are queued for upload.
 3. **Upload**: process queued files with concurrent workers:
-   - Stream → FastCDC split → HMAC-SHA256 (keyed by dedup key, or plain SHA-256 if unencrypted) → zstd → store as `chunk/<hash>` (dedup by Exists check).
-   - Create `content/<content-hash>` object.
-   - Create `filemeta/<hash>` object referencing the content.
-   - Insert into the new HAMT.
+   * Stream → FastCDC split → HMAC-SHA256 (keyed by dedup key, or plain SHA-256 if unencrypted) → zstd → store as `chunk/<hash>` (dedup by Exists check).
+   * Create `content/<content-hash>` object.
+   * Create `filemeta/<hash>` object referencing the content.
+   * Insert into the new HAMT.
 4. **Persist**: create `snapshot/<hash>`, update `index/latest`. (Metadata is bundled into `packs/` automatically by the store layer).
 5. **Flush HAMT**: only reachable new nodes are written to the persistent store (BFS from root through the transactional cache).
 
@@ -271,8 +271,8 @@ When packfiles are enabled, a bbolt database mapping logical object keys to thei
 3. **Topological sort** ensures parent directories are created before their children.
 4. **Path building**: walk the parent chain of each entry to reconstruct the full relative path.
 5. Write entries to a ZIP archive:
-   - Folders: directory entries with stored `mtime`.
-   - Files: load `content/<hash>`, fetch and decompress each chunk, write to the ZIP stream.
+   * Folders: directory entries with stored `mtime`.
+   * Files: load `content/<hash>`, fetch and decompress each chunk, write to the ZIP stream.
 6. Output is always a ZIP archive (used by both CLI and web).
 
 ---
@@ -286,11 +286,13 @@ The `diff` command leverages the HAMT's `Diff(root1, root2)` primitive, which pe
 ## Forget & Prune
 
 **Forget** removes a snapshot:
+
 1. Delete the `snapshot/<hash>` object.
 2. If the snapshot was `latest`, elect the highest-seq remaining snapshot as the new `index/latest`.
 3. Optionally run prune.
 
 **Prune** (mark-and-sweep GC):
+
 1. **Mark**: list `snapshot/` to find all live snapshots, then walk each snapshot → HAMT nodes → filemeta → content → chunks. Collect all reachable keys.
 2. **Sweep**: list all keys under `chunk/`, `content/`, `filemeta/`, `node/`, and `snapshot/`. Delete any key not in the reachable set. Objects inside packfiles are removed from the pack catalog.
 3. **Repack**: when packfiles are enabled, fragmented packs (more than 30% wasted space) are repacked — live objects are extracted, re-bundled into new packs, and the old packs are deleted.

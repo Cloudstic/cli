@@ -15,7 +15,7 @@ Content-addressable, encrypted backup tool for Google Drive, OneDrive, and local
 ## Supported Sources
 
 | Source | Flag | Description |
-|--------|------|-------------|
+| :--- | :--- | :--- |
 | Local directory | `-source local` | Back up any local folder |
 | Google Drive | `-source gdrive` | Full rescan of My Drive or a Shared Drive |
 | Google Drive (Changes) | `-source gdrive-changes` | **Recommended.** Fast incremental backup via the Changes API |

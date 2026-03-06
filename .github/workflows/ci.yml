@@ -10,21 +10,62 @@ permissions:
   contents: read
 
 jobs:
+  filter:
+    name: Filter Changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+      docs: ${{ steps.filter.outputs.docs }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - '!docs/**'
+              - '!rfcs/**'
+              - '!*.md'
+              - '**'
+            docs:
+              - 'docs/**'
+              - 'rfcs/**'
+              - '*.md'
+
   lint:
     name: Lint
+    needs: filter
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Setup Go
+        if: needs.filter.outputs.code == 'true'
+        uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - uses: golangci/golangci-lint-action@v7
+      - name: Run golangci-lint
+        if: needs.filter.outputs.code == 'true'
+        uses: golangci/golangci-lint-action@v7
         with:
           version: v2.10.1
           args: --timeout=5m
 
+  lint-docs:
+    name: Lint Docs
+    needs: filter
+    if: needs.filter.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Markdown Lint
+        uses: DavidAnson/markdownlint-cli2-action@v16
+        with:
+          globs: |
+            **/*.md
+
   test:
     name: Test
+    needs: filter
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -35,21 +76,25 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Setup Go
+        if: needs.filter.outputs.code == 'true'
+        uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: |
+      - name: Run Tests
+        if: needs.filter.outputs.code == 'true'
+        run: |
           set -o pipefail
           go test -v -json -race -coverprofile=coverage.out -count=1 ./... | tee test-output.json
       - name: Test Report
         uses: dorny/test-reporter@v2
-        if: always()
+        if: always() && needs.filter.outputs.code == 'true'
         with:
           name: Go Tests (${{ matrix.os }})
           path: test-output.json
           reporter: golang-json
       - name: Coverage Summary
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && needs.filter.outputs.code == 'true'
         run: |
           echo "## Code Coverage" >> $GITHUB_STEP_SUMMARY
           echo '```text' >> $GITHUB_STEP_SUMMARY
@@ -58,10 +103,15 @@ jobs:
 
   build:
     name: Build
+    needs: filter
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Setup Go
+        if: needs.filter.outputs.code == 'true'
+        uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: go build ./cmd/cloudstic
+      - name: Run Build
+        if: needs.filter.outputs.code == 'true'
+        run: go build ./cmd/cloudstic

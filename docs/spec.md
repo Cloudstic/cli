@@ -41,6 +41,47 @@ Cloudstic is a content-addressable backup system designed for flat cloud storage
 | `b2`    | `-store b2`     | Backblaze B2 bucket             |
 | `sftp`  | `-store sftp`   | Remote SFTP server              |
 
+### Store Pipeline (Chaining)
+
+Cloudstic implements storage via a decorator pattern (store chaining). When the application writes or reads an object, the request passes through a layered sequence of wrapper stores before reaching the persistent backing store.
+
+```mermaid
+flowchart TD
+    App[Engine / Application]
+    
+    subgraph Pipeline [Store Pipeline]
+    direction TB
+    Comp[CompressedStore<br>zstd compression]
+    Enc[EncryptedStore<br>AES-256-GCM]
+    Met[MeteredStore<br>progress tracking bytes]
+    Pack[PackStore<br>bundles objects into 8MB packs]
+    end
+    
+    Base[(Base / Real Store<br>S3, B2, SFTP, Local)]
+
+    App -- Write --> Comp
+    Comp -- Compressed --> Enc
+    Enc -- Encrypted --> Met
+    Met -- Measured --> Pack
+    Pack -- Packed / Passed-through --> Base
+
+    style App fill:#f9f9f9,stroke:#333
+    style Base fill:#bbf,stroke:#333
+    style Pipeline fill:#f2f2f2,stroke:#ccc,stroke-dasharray: 5 5
+```
+
+The pipeline from outermost (application layer) to innermost (network layer) is:
+
+1. **Compressed Store**: Compresses outgoing objects using `zstd` and decompresses incoming objects.
+2. **Encrypted Store** *(optional)*: Encrypts the compressed data using AES-256-GCM, and decrypts/authenticates the ciphertext on read.
+3. **Metered Store**: Tracks bytes written to and read from the underlying layer to precisely report progress reflecting the actual physical bytes stored/retrieved.
+4. **Pack Store** *(optional)*: Intercepts small objects (like `filemeta/`, `node/`, and small manifests). Buffers them in memory and groups them into 8MB pack files (`packs/<hash>`) to drastically reduce bucket API requests and billing. Large objects bypass the buffer and pass through directly.
+5. **Base / Real Store**: The raw persistent backend (e.g., `s3`, `local`, `sftp`). This layer performs the exact I/O or network requests.
+
+**Data Flow Example (Read):**
+
+`App ← [decompress] ← [decrypt] ← [measure] ← [extract from pack or get] ← [Base Store]`
+
 ### Commands
 
 | Command            | Description                                              |

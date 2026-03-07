@@ -107,8 +107,8 @@ func (g *globalFlags) buildKeychain(ctx context.Context) (keychain.Chain, error)
 	if *g.recoveryKey != "" {
 		chain = append(chain, keychain.WithRecoveryKey(*g.recoveryKey))
 	}
-
-	if term.IsTerminal(os.Stdin.Fd()) {
+	promptRequested := g.password != nil && *g.password
+	if (len(chain) == 0 || promptRequested) && term.IsTerminal(os.Stdin.Fd()) {
 		chain = append(chain, keychain.WithPrompt(
 			func() (string, error) { return ui.PromptPassword("Repository password") },
 			func() (string, error) { return ui.PromptPasswordConfirm("Enter new repository password") },

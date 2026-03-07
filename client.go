@@ -112,9 +112,17 @@ func AddRecoveryKey(ctx context.Context, rawStore store.ObjectStore, kc keychain
 // Returns (nil, nil) if the repository has not been initialized yet.
 // Returns an error if the store is unreachable (e.g. invalid credentials).
 func LoadRepoConfig(ctx context.Context, rawStore store.ObjectStore) (*RepoConfig, error) {
+	exists, err := rawStore.Exists(ctx, "config")
+	if err != nil {
+		return nil, fmt.Errorf("check repo config: %w", err)
+	}
+	if !exists {
+		return nil, nil // repository not initialized
+	}
+
 	data, err := rawStore.Get(ctx, "config")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read repo config: %w", err)
 	}
 	if data == nil {
 		return nil, nil

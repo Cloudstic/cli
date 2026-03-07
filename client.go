@@ -477,7 +477,7 @@ var (
 // and checking that every referenced object can be read.
 // With WithReadData(), chunk data is re-hashed for byte-level verification.
 func (c *Client) Check(ctx context.Context, opts ...CheckOption) (*CheckResult, error) {
-	mgr := engine.NewCheckManager(c.store, c.reporter)
+	mgr := engine.NewCheckManager(c.store, c.reporter, c.hmacKey)
 	return mgr.Run(ctx, opts...)
 }
 

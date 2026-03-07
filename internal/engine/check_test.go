@@ -8,6 +8,7 @@ import (
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
 	"github.com/cloudstic/cli/internal/ui"
+	"github.com/cloudstic/cli/pkg/crypto"
 )
 
 // buildTestRepo sets up a minimal valid repository in the mock store and
@@ -65,7 +66,7 @@ func TestCheckManager_HealthyRepo(t *testing.T) {
 	mockStore := NewMockStore()
 	buildTestRepo(t, mockStore)
 
-	cm := NewCheckManager(mockStore, ui.NewNoOpReporter())
+	cm := NewCheckManager(mockStore, ui.NewNoOpReporter(), nil)
 	result, err := cm.Run(ctx)
 	if err != nil {
 		t.Fatalf("Check failed: %v", err)
@@ -86,7 +87,7 @@ func TestCheckManager_HealthyRepoWithReadData(t *testing.T) {
 	mockStore := NewMockStore()
 	buildTestRepo(t, mockStore)
 
-	cm := NewCheckManager(mockStore, ui.NewNoOpReporter())
+	cm := NewCheckManager(mockStore, ui.NewNoOpReporter(), nil)
 	result, err := cm.Run(ctx, WithReadData())
 	if err != nil {
 		t.Fatalf("Check failed: %v", err)
@@ -104,7 +105,7 @@ func TestCheckManager_MissingChunk(t *testing.T) {
 	// Delete the chunk
 	_ = mockStore.Delete(ctx, chunkRef)
 
-	cm := NewCheckManager(mockStore, ui.NewNoOpReporter())
+	cm := NewCheckManager(mockStore, ui.NewNoOpReporter(), nil)
 	result, err := cm.Run(ctx)
 	if err != nil {
 		t.Fatalf("Check failed: %v", err)
@@ -127,7 +128,7 @@ func TestCheckManager_MissingContent(t *testing.T) {
 
 	_ = mockStore.Delete(ctx, contentRef)
 
-	cm := NewCheckManager(mockStore, ui.NewNoOpReporter())
+	cm := NewCheckManager(mockStore, ui.NewNoOpReporter(), nil)
 	result, err := cm.Run(ctx)
 	if err != nil {
 		t.Fatalf("Check failed: %v", err)
@@ -150,7 +151,7 @@ func TestCheckManager_MissingFileMeta(t *testing.T) {
 
 	_ = mockStore.Delete(ctx, metaRef)
 
-	cm := NewCheckManager(mockStore, ui.NewNoOpReporter())
+	cm := NewCheckManager(mockStore, ui.NewNoOpReporter(), nil)
 	result, err := cm.Run(ctx)
 	if err != nil {
 		t.Fatalf("Check failed: %v", err)
@@ -170,7 +171,7 @@ func TestCheckManager_MissingHAMTNode(t *testing.T) {
 
 	_ = mockStore.Delete(ctx, rootRef)
 
-	cm := NewCheckManager(mockStore, ui.NewNoOpReporter())
+	cm := NewCheckManager(mockStore, ui.NewNoOpReporter(), nil)
 	result, err := cm.Run(ctx)
 	if err != nil {
 		t.Fatalf("Check failed: %v", err)
@@ -200,7 +201,7 @@ func TestCheckManager_CorruptChunk_ReadData(t *testing.T) {
 	// Corrupt the chunk data
 	_ = mockStore.Put(ctx, chunkRef, []byte("corrupted data"))
 
-	cm := NewCheckManager(mockStore, ui.NewNoOpReporter())
+	cm := NewCheckManager(mockStore, ui.NewNoOpReporter(), nil)
 	result, err := cm.Run(ctx, WithReadData())
 	if err != nil {
 		t.Fatalf("Check failed: %v", err)
@@ -224,7 +225,7 @@ func TestCheckManager_CorruptChunk_WithoutReadData(t *testing.T) {
 	// Corrupt the chunk data — should NOT be detected without --read-data
 	_ = mockStore.Put(ctx, chunkRef, []byte("corrupted data"))
 
-	cm := NewCheckManager(mockStore, ui.NewNoOpReporter())
+	cm := NewCheckManager(mockStore, ui.NewNoOpReporter(), nil)
 	result, err := cm.Run(ctx)
 	if err != nil {
 		t.Fatalf("Check failed: %v", err)
@@ -239,7 +240,7 @@ func TestCheckManager_SingleSnapshot(t *testing.T) {
 	mockStore := NewMockStore()
 	snapRef, _, _, _, _ := buildTestRepo(t, mockStore)
 
-	cm := NewCheckManager(mockStore, ui.NewNoOpReporter())
+	cm := NewCheckManager(mockStore, ui.NewNoOpReporter(), nil)
 	result, err := cm.Run(ctx, WithSnapshotRef(snapRef))
 	if err != nil {
 		t.Fatalf("Check failed: %v", err)
@@ -257,7 +258,7 @@ func TestCheckManager_SnapshotLatestAlias(t *testing.T) {
 	mockStore := NewMockStore()
 	buildTestRepo(t, mockStore)
 
-	cm := NewCheckManager(mockStore, ui.NewNoOpReporter())
+	cm := NewCheckManager(mockStore, ui.NewNoOpReporter(), nil)
 	result, err := cm.Run(ctx, WithSnapshotRef("latest"))
 	if err != nil {
 		t.Fatalf("Check failed: %v", err)
@@ -267,5 +268,123 @@ func TestCheckManager_SnapshotLatestAlias(t *testing.T) {
 	}
 	if len(result.Errors) != 0 {
 		t.Errorf("Expected 0 errors, got %d: %v", len(result.Errors), result.Errors)
+	}
+}
+
+// TestCheckManager_ContentRef_HMACPath verifies CheckManager follows meta.ContentRef (not ContentHash) to locate content objects.
+func TestCheckManager_ContentRef_HMACPath(t *testing.T) {
+	ctx := context.Background()
+	mockStore := NewMockStore()
+	hmacKey := []byte("test-hmac-key-32-bytes-long!!!!!")
+
+	// Build a chunk
+	chunkData := []byte("hello hmac world")
+	chunkHash := core.ComputeHash(chunkData)
+	chunkRef := "chunk/" + chunkHash
+	_ = mockStore.Put(ctx, chunkRef, chunkData)
+
+	// Build a content object stored under the HMAC ref
+	contentHash := "plain-content-hash-abc"
+	contentRef := crypto.ComputeHMAC(hmacKey, []byte(contentHash))
+	content := core.Content{Chunks: []string{chunkRef}}
+	_, contentData, _ := core.ComputeJSONHash(&content)
+	_ = mockStore.Put(ctx, "content/"+contentRef, contentData)
+
+	// FileMeta uses ContentHash + ContentRef (HMAC variant)
+	meta := core.FileMeta{
+		Name:        "hmac-file.txt",
+		Type:        core.FileTypeFile,
+		ContentHash: contentHash,
+		ContentRef:  contentRef,
+		FileID:      "hmac-file",
+	}
+	metaHash, metaData, _ := core.ComputeJSONHash(&meta)
+	metaRef := "filemeta/" + metaHash
+	_ = mockStore.Put(ctx, metaRef, metaData)
+
+	// HAMT tree + snapshot
+	directTree := hamt.NewTree(mockStore)
+	rootRef, err := directTree.Insert("", "hmac-file", metaRef)
+	if err != nil {
+		t.Fatalf("Failed to build HAMT: %v", err)
+	}
+	snap := core.Snapshot{Root: rootRef, Seq: 1}
+	snapHash, snapData, _ := core.ComputeJSONHash(&snap)
+	snapRef := "snapshot/" + snapHash
+	_ = mockStore.Put(ctx, snapRef, snapData)
+	idx := core.Index{LatestSnapshot: snapRef, Seq: 1}
+	idxData, _ := json.Marshal(idx)
+	_ = mockStore.Put(ctx, "index/latest", idxData)
+
+	cm := NewCheckManager(mockStore, ui.NewNoOpReporter(), hmacKey)
+	result, err := cm.Run(ctx)
+	if err != nil {
+		t.Fatalf("Check failed: %v", err)
+	}
+	if len(result.Errors) != 0 {
+		t.Errorf("Expected 0 errors, got %d: %v", len(result.Errors), result.Errors)
+	}
+}
+
+// TestCheckManager_CorruptChunk_HMACReadData verifies corruption detection with --read-data when chunks are HMAC-keyed.
+func TestCheckManager_CorruptChunk_HMACReadData(t *testing.T) {
+	ctx := context.Background()
+	mockStore := NewMockStore()
+	hmacKey := []byte("test-hmac-key-32-bytes-long!!!!!")
+
+	// Build a clean chunk stored under HMAC key
+	chunkData := []byte("clean chunk data")
+	chunkHMAC := crypto.ComputeHMAC(hmacKey, chunkData)
+	chunkRef := "chunk/" + chunkHMAC
+	_ = mockStore.Put(ctx, chunkRef, chunkData)
+
+	// Content object
+	content := core.Content{Chunks: []string{chunkRef}}
+	_, contentData, _ := core.ComputeJSONHash(&content)
+	contentHash := "hmac-content-hash"
+	contentRef := crypto.ComputeHMAC(hmacKey, []byte(contentHash))
+	_ = mockStore.Put(ctx, "content/"+contentRef, contentData)
+
+	// FileMeta
+	meta := core.FileMeta{
+		Name:        "corrupt-test.txt",
+		Type:        core.FileTypeFile,
+		ContentHash: contentHash,
+		ContentRef:  contentRef,
+		FileID:      "corrupt-hmac-file",
+	}
+	metaHash, metaData, _ := core.ComputeJSONHash(&meta)
+	metaRef := "filemeta/" + metaHash
+	_ = mockStore.Put(ctx, metaRef, metaData)
+
+	directTree := hamt.NewTree(mockStore)
+	rootRef, err := directTree.Insert("", "corrupt-hmac-file", metaRef)
+	if err != nil {
+		t.Fatalf("Failed to build HAMT: %v", err)
+	}
+	snap := core.Snapshot{Root: rootRef, Seq: 1}
+	snapHash, snapData, _ := core.ComputeJSONHash(&snap)
+	snapRef := "snapshot/" + snapHash
+	_ = mockStore.Put(ctx, snapRef, snapData)
+	idx := core.Index{LatestSnapshot: snapRef, Seq: 1}
+	idxData, _ := json.Marshal(idx)
+	_ = mockStore.Put(ctx, "index/latest", idxData)
+
+	// Now corrupt the chunk
+	_ = mockStore.Put(ctx, chunkRef, []byte("corrupted!"))
+
+	cm := NewCheckManager(mockStore, ui.NewNoOpReporter(), hmacKey)
+	result, err := cm.Run(ctx, WithReadData())
+	if err != nil {
+		t.Fatalf("Check failed: %v", err)
+	}
+	if len(result.Errors) != 1 {
+		t.Fatalf("Expected 1 error for corrupt chunk, got %d: %v", len(result.Errors), result.Errors)
+	}
+	if result.Errors[0].Key != chunkRef {
+		t.Errorf("Expected error for %s, got %s", chunkRef, result.Errors[0].Key)
+	}
+	if result.Errors[0].Type != "corrupt" {
+		t.Errorf("Expected error type 'corrupt', got %q", result.Errors[0].Type)
 	}
 }

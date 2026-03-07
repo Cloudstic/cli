@@ -142,8 +142,9 @@ func (c *Chunker) ProcessStream(r io.Reader, onProgress func(int64)) (refs []str
 	return refs, size, hash, nil
 }
 
-// CreateContentObject persists a Content object keyed by contentHash and
-// returns its store ref.
+// CreateContentObject persists a Content object. The object is keyed by an HMAC
+// of the contentHash (if encryption is enabled) to prevent hash leakage, or the
+// plain contentHash otherwise. Returns the secure contentRef (the hex hash used).
 func (c *Chunker) CreateContentObject(chunkRefs []string, size int64, contentHash string) (string, error) {
 	content := core.Content{
 		Type:   core.ObjectTypeContent,
@@ -156,11 +157,18 @@ func (c *Chunker) CreateContentObject(chunkRefs []string, size int64, contentHas
 		return "", err
 	}
 
-	ref := "content/" + contentHash
+	var contentRef string
+	if len(c.hmacKey) > 0 {
+		contentRef = crypto.ComputeHMAC(c.hmacKey, []byte(contentHash))
+	} else {
+		contentRef = contentHash
+	}
+
+	ref := "content/" + contentRef
 	if err := c.store.Put(context.Background(), ref, data); err != nil {
 		return "", err
 	}
-	return ref, nil
+	return contentRef, nil
 }
 
 func (c *Chunker) storeChunk(ctx context.Context, data []byte) (string, error) {

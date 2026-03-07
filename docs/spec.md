@@ -126,7 +126,8 @@ All objects are stored under a flat key namespace of the form `<type>/<hash>`.
 ### 2. Content
 
 * References the ordered list of chunks that make up a file's content.
-* Object key: `content/<sha256-of-raw-file-content>`
+* Object key: `content/<content_ref>` (where `content_ref` is an HMAC of the
+  raw content hash when encryption is enabled, or the plain SHA-256 otherwise)
 
 ```json
 {
@@ -155,6 +156,7 @@ All objects are stored under a flat key namespace of the form `<type>/<hash>`.
   "parents": ["filemeta/<sha256>"],
   "paths": [],
   "content_hash": "<sha256-of-raw-file-content>",
+  "content_ref": "<hmac-sha256-of-content_hash>",
   "size": 21733,
   "mtime": 1710000000,
   "owner": "user@example.com",
@@ -167,12 +169,13 @@ All objects are stored under a flat key namespace of the form `<type>/<hash>`.
 | `fileId`       | Source-specific unique identifier (Google Drive ID, relative path)   |
 | `type`         | `"file"` or `"folder"`                                              |
 | `parents`      | List of `filemeta/<sha256>` refs pointing to parent metadata objects |
-| `content_hash` | SHA-256 of the raw file content (used to key the Content object)    |
+| `content_hash` | SHA-256 of the raw file content |
+| `content_ref`  | Opaque content reference used as `content/<content_ref>` key; HMAC of `content_hash` for encrypted repos, plain `content_hash` for unencrypted repos |
 | `paths`        | Reserved for future use (multi-path support)                        |
 | `extra`        | Source-specific metadata (e.g. MIME type)                           |
 
 * `fileId` is **the HAMT key**.
-* Folders have an empty `content_hash` and `size` of 0.
+* Folders have an empty `content_hash`, `content_ref`, and `size` of 0.
 * Deduplicated by SHA-256 of the canonical JSON representation.
 
 ### 4. HAMT Node

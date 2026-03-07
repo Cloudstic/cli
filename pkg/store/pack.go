@@ -72,6 +72,8 @@ func (s *PackStore) Put(ctx context.Context, key string, data []byte) error {
 		return s.ObjectStore.Put(ctx, key, data)
 	}
 
+	debugf("pack: buffering %s (%d bytes)", key, len(data))
+
 	s.mu.Lock()
 
 	// 2. Append to active buffer
@@ -325,7 +327,14 @@ func (s *PackStore) Flush(ctx context.Context) error {
 		}
 		s.mu.Lock()
 		s.catalogDirty = false
+		nodeCount := 0
+		for k := range s.catalog {
+			if strings.HasPrefix(k, "node/") {
+				nodeCount++
+			}
+		}
 		s.mu.Unlock()
+		debugf("pack: catalog flushed — %d total entries, %d node/* entries", len(s.catalog), nodeCount)
 	}
 
 	return nil

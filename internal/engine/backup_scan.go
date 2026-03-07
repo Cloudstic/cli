@@ -38,11 +38,24 @@ type scanState struct {
 	totalBytes int64
 }
 
+// primaryParentID returns the raw source-level parent identifier for a FileMeta.
+// This is the first element of meta.Parents, which contains raw source IDs (e.g. GDrive folder IDs).
+// Returns "" for root-level entries with no parents.
+func primaryParentID(meta *core.FileMeta) string {
+	if len(meta.Parents) > 0 {
+		return meta.Parents[0]
+	}
+	return ""
+}
+
 func (bm *BackupManager) processEntry(ctx context.Context, meta *core.FileMeta, oldRoot string, s *scanState, phase ui.Phase) error {
 	if meta.Type == core.FileTypeFolder {
 		meta.ContentHash = ""
 		meta.Size = 0
 	}
+
+	// Record this entry's parent so lookupMetaByFileID can use AffinityKey.
+	bm.parentIndex[meta.FileID] = primaryParentID(meta)
 
 	// Resolve Paths when the source hasn't populated it (incremental/changes
 	// sources only emit changed entries and can't build a full path map).
@@ -57,7 +70,7 @@ func (bm *BackupManager) processEntry(ctx context.Context, meta *core.FileMeta, 
 
 	if !changed {
 		bm.recordStat(meta.Type, false, false)
-		s.root, err = bm.tree.Insert(s.root, meta.FileID, oldRef)
+		s.root, err = bm.tree.Insert(s.root, primaryParentID(meta), meta.FileID, oldRef)
 		if err != nil {
 			return fmt.Errorf("hamt insert: %w", err)
 		}
@@ -106,7 +119,7 @@ func (bm *BackupManager) scanIncremental(ctx context.Context, oldRoot string, in
 		switch fc.Type {
 		case source.ChangeDelete:
 			bm.recordRemoved(fc.Meta.Type)
-			s.root, err = bm.tree.Delete(s.root, fc.Meta.FileID)
+			s.root, err = bm.tree.Delete(s.root, primaryParentID(&fc.Meta), fc.Meta.FileID)
 			if err != nil {
 				return fmt.Errorf("hamt delete %s: %w", fc.Meta.FileID, err)
 			}
@@ -132,7 +145,7 @@ func (bm *BackupManager) scanIncremental(ctx context.Context, oldRoot string, in
 // fast-path compares observable metadata and carries the hash forward to avoid
 // false-positive diffs.
 func (bm *BackupManager) detectChange(oldRoot string, meta *core.FileMeta) (changed bool, oldRef string, err error) {
-	oldRef, err = bm.tree.Lookup(oldRoot, meta.FileID)
+	oldRef, err = bm.tree.Lookup(oldRoot, primaryParentID(meta), meta.FileID)
 	if err != nil {
 		return false, "", fmt.Errorf("hamt lookup: %w", err)
 	}
@@ -188,7 +201,7 @@ func (bm *BackupManager) insertFolder(_ context.Context, root string, meta *core
 		bm.pendingMetas[metaRef] = metaData
 	}
 	bm.trackFileMeta(metaRef, *meta)
-	return bm.tree.Insert(root, meta.FileID, metaRef)
+	return bm.tree.Insert(root, primaryParentID(meta), meta.FileID, metaRef)
 }
 
 func (bm *BackupManager) flushPendingMetas(ctx context.Context) error {
@@ -280,10 +293,18 @@ func (bm *BackupManager) buildPathFromTree(root string, meta *core.FileMeta) str
 
 // lookupMetaByFileID resolves a FileID to its FileMeta via the HAMT tree.
 // It checks newMetas (just inserted this scan) first, then falls back to the store.
+// Uses parentIndex to resolve the AffinityKey; falls back to a full-tree walk
+// for entries not yet seen in this scan (e.g. incremental backups).
 func (bm *BackupManager) lookupMetaByFileID(root, fileID string) *core.FileMeta {
-	ref, err := bm.tree.Lookup(root, fileID)
+	parentID := bm.parentIndex[fileID]
+	ref, err := bm.tree.Lookup(root, parentID, fileID)
 	if err != nil || ref == "" {
-		return nil
+		// parentID not in index (e.g. entry from a previous snapshot not re-scanned);
+		// fall back to a walk-based lookup.
+		ref, err = bm.tree.LookupByFileID(root, fileID)
+		if err != nil || ref == "" {
+			return nil
+		}
 	}
 	if fm, ok := bm.newMetas[ref]; ok {
 		return &fm

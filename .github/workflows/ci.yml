@@ -67,7 +67,13 @@ jobs:
           echo '```text' >> $GITHUB_STEP_SUMMARY
           go tool cover -func=coverage.out >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          slug: Cloudstic/cli
+          files: coverage.out
+          token: ${{ secrets.CODECOV_TOKEN }}
   build:
     name: Build
     runs-on: ubuntu-latest

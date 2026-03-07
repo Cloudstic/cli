@@ -42,7 +42,7 @@ func buildTestRepo(t *testing.T, mockStore *MockStore) (snapRef, rootRef, metaRe
 
 	// HAMT tree
 	directTree := hamt.NewTree(mockStore)
-	rootRef, err := directTree.Insert("", "file1", metaRef)
+	rootRef, err := directTree.Insert("", "", "file1", metaRef)
 	if err != nil {
 		t.Fatalf("Failed to build HAMT: %v", err)
 	}
@@ -304,7 +304,7 @@ func TestCheckManager_ContentRef_HMACPath(t *testing.T) {
 
 	// HAMT tree + snapshot
 	directTree := hamt.NewTree(mockStore)
-	rootRef, err := directTree.Insert("", "hmac-file", metaRef)
+	rootRef, err := directTree.Insert("", "", "hmac-file", metaRef)
 	if err != nil {
 		t.Fatalf("Failed to build HAMT: %v", err)
 	}
@@ -358,7 +358,7 @@ func TestCheckManager_CorruptChunk_HMACReadData(t *testing.T) {
 	_ = mockStore.Put(ctx, metaRef, metaData)
 
 	directTree := hamt.NewTree(mockStore)
-	rootRef, err := directTree.Insert("", "corrupt-hmac-file", metaRef)
+	rootRef, err := directTree.Insert("", "", "corrupt-hmac-file", metaRef)
 	if err != nil {
 		t.Fatalf("Failed to build HAMT: %v", err)
 	}

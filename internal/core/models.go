@@ -35,7 +35,8 @@ type FileMeta struct {
 	Type        FileType               `json:"type"`    // "file" or "folder"
 	Parents     []string               `json:"parents"` // List of "filemeta/<sha256>" refs (NOT raw IDs)
 	Paths       []string               `json:"paths"`
-	ContentHash string                 `json:"content_hash"` // SHA256 of the file content
+	ContentHash string                 `json:"content_hash"`          // SHA256 of the file content
+	ContentRef  string                 `json:"content_ref,omitempty"` // HMAC(dedupKey, ContentHash) for secure backend lookup
 	Size        int64                  `json:"size"`
 	Mtime       int64                  `json:"mtime"` // Unix timestamp
 	Owner       string                 `json:"owner"`

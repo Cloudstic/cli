@@ -649,7 +649,10 @@ cloudstic cat filemeta/789abc...
 cloudstic cat node/def456...
 
 # Suppress non-JSON output for scripting
-cloudstic cat config --json
+cloudstic cat config -json
+
+# Output raw, unformatted data for hashing
+cloudstic cat -raw filemeta/789abc... | sha256sum
 ```
 
 **Object key types:**
@@ -671,6 +674,7 @@ cloudstic cat config --json
 | Flag | Description |
 |------|-------------|
 | `-json` | Suppress non-JSON output (alias for `-quiet`) |
+| `-raw` | Output raw, unformatted data (useful for hashing) |
 
 The output is pretty-printed JSON by default. Use `-json` or `-quiet` to suppress header messages when fetching multiple objects, which is useful for piping to `jq` or other JSON processors.
 
@@ -688,6 +692,9 @@ cloudstic list --json | jq -r '.[] | .ref'
 
 # Inspect a specific snapshot's metadata
 cloudstic cat snapshot/abc123... | jq .
+
+# Verify the integrity of a filemeta object
+cloudstic cat -raw filemeta/abc123... | sha256sum
 ```
 
 > **Note:** This command operates at the object store level and returns the raw JSON representation of repository objects. It does not reconstruct file contents — use `restore` for that.

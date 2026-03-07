@@ -1,5 +1,11 @@
 # Cloudstic CLI
 
+[![CI](https://github.com/Cloudstic/cli/actions/workflows/ci.yml/badge.svg)](https://github.com/Cloudstic/cli/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/Cloudstic/cli/branch/main/graph/badge.svg)](https://codecov.io/gh/Cloudstic/cli)
+![Release](https://img.shields.io/github/v/release/Cloudstic/cli)
+![License](https://img.shields.io/github/license/Cloudstic/cli)
+![Go Version](https://img.shields.io/github/go-mod/go-version/Cloudstic/cli)
+
 Content-addressable, encrypted backup tool for Google Drive, OneDrive, and local files.
 
 ## Features

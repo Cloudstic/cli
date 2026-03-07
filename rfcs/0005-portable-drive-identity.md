@@ -351,7 +351,7 @@ When an explicit UUID is provided it takes precedence over the detected value.
 
 ### Concurrent access from multiple machines
 
-If machine A and machine B both attempt to back up the same drive simultaneously, the repository lock (`AcquireSharedLock`) prevents concurrent writes. However, two machines cannot physically have the same external drive plugged in simultaneously under normal circumstances. Network drives shared via NFS/SMB are a different case and are out of scope.
+If machine A and machine B both attempt to back up the same drive simultaneously, `backup` acquires a **shared lock** (`index/lock.shared/<timestamp>`) at run start. Multiple shared locks can coexist, so two simultaneous backups are allowed — each writes its own snapshot and both complete normally. A `prune` run holds an **exclusive lock** (`index/lock.exclusive`) and cannot start until all active shared locks are released; conversely, `backup` and `restore` fail immediately if an exclusive lock is held. Lock TTL is 1 minute with a 30-second background refresh; a crashed holder's lock expires automatically. In practice, two machines cannot have the same external drive plugged in simultaneously, so concurrent backup of the same portable drive is not a realistic scenario. Network drives shared via NFS/SMB are out of scope.
 
 ### `index/latest` with multiple machines
 

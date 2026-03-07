@@ -343,6 +343,69 @@ The `diff` command leverages the HAMT's `Diff(root1, root2)` primitive, which pe
 
 ---
 
+## Repository Locking
+
+Cloudstic uses a two-tier distributed lock stored inside the repository itself (under `index/`) to prevent concurrent writes from corrupting the repository.
+
+### Lock types
+
+| Type | Key | Behaviour |
+|---|---|---|
+| **Shared** | `index/lock.shared/<timestamp>` | Multiple shared locks can coexist. Used by read-write operations that are safe to run in parallel with each other. |
+| **Exclusive** | `index/lock.exclusive` | Only one exclusive lock can exist. Blocked by any active shared lock; blocks all new shared and exclusive locks. |
+
+### Which operation holds which lock
+
+| Command | Lock type | Acquired | Released |
+|---|---|---|---|
+| `backup` | Shared | At the start of `BackupManager.Run`, after dry-run check | When `Run` returns (success or error) |
+| `restore` | Shared | At the start of `RestoreManager.Run`, always (dry-run still acquires) | When `Run` returns |
+| `prune` | Exclusive | At the start of `PruneManager.Run`, after dry-run check | When `Run` returns |
+| `forget` | None | — | — |
+
+`-dry-run` on `backup` skips lock acquisition entirely (no writes are made). `prune -dry-run` also skips the exclusive lock.
+
+### Lock payload
+
+Each lock object is a JSON document:
+
+```json
+{
+  "operation":   "backup",
+  "holder":      "hostname (pid 12345)",
+  "acquired_at": "2026-03-07T09:00:00.000000000Z",
+  "expires_at":  "2026-03-07T09:01:00.000000000Z",
+  "is_shared":   true
+}
+```
+
+`holder` is `"<hostname> (pid <pid>)"` of the process that acquired the lock.
+
+### TTL and automatic refresh
+
+* **TTL:** 1 minute from acquisition.
+* **Refresh:** A background goroutine rewrites the lock every 30 seconds, extending `expires_at` by another minute. This keeps the TTL short for fast crash recovery while supporting arbitrarily long operations.
+* **Crash recovery:** If the process dies without calling `Release`, the lock expires after at most 1 minute. Any subsequent operation will see an expired `expires_at` and treat the lock as stale, overriding it.
+* **Refresh failure:** If the backing store becomes unreachable, the refresh goroutine gives up after 3 consecutive failures, allowing the TTL to expire naturally.
+
+### TOCTOU mitigation
+
+Object stores without atomic conditional writes (S3, B2, SFTP) have an inherent check-then-set race. After writing the exclusive lock, the engine immediately re-reads it and verifies `holder + acquired_at` still match. If another process won the race, the acquire call returns an error.
+
+For shared locks, the engine writes its shared lock entry and then re-checks the exclusive lock path. If an exclusive lock appeared concurrently, the shared lock entry is deleted and the call returns an error.
+
+### Stale lock recovery
+
+A lock is stale when its `expires_at` is in the past. Stale locks are ignored automatically — the next operation acquires normally without any manual intervention.
+
+If a lock is active but the holder has crashed (network partition, kill signal before TTL expires), use `break-lock` to force-remove all locks immediately.
+
+### break-lock
+
+`break-lock` unconditionally deletes `index/lock.exclusive` and all `index/lock.shared/<timestamp>` entries regardless of TTL or holder. It prints each removed lock's metadata. Only use it when you are certain no operation is actively running against the repository.
+
+---
+
 ## HAMT Construction
 
 The HAMT is a **Merkle Hash Array Mapped Trie** with 5 bits per level (32-way branching). Operations are exposed through the `Tree` type:

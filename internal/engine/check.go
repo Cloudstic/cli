@@ -9,6 +9,7 @@ import (
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
 	"github.com/cloudstic/cli/internal/ui"
+	"github.com/cloudstic/cli/pkg/crypto"
 	"github.com/cloudstic/cli/pkg/store"
 )
 
@@ -62,14 +63,16 @@ type CheckManager struct {
 	tree     *hamt.Tree
 	reporter ui.Reporter
 	verified map[string]bool
+	hmacKey  []byte
 }
 
 // NewCheckManager creates a CheckManager.
-func NewCheckManager(s store.ObjectStore, reporter ui.Reporter) *CheckManager {
+func NewCheckManager(s store.ObjectStore, reporter ui.Reporter, hmacKey []byte) *CheckManager {
 	return &CheckManager{
 		store:    s,
 		tree:     hamt.NewTree(hamt.NewTransactionalStore(s)),
 		reporter: reporter,
+		hmacKey:  hmacKey,
 	}
 }
 
@@ -236,7 +239,12 @@ func (cm *CheckManager) checkFileMeta(ctx context.Context, ref string, result *C
 		return nil // folder or file with no content
 	}
 
-	return cm.checkContent(ctx, "content/"+meta.ContentHash, result, cfg, phase)
+	contentKey := meta.ContentRef
+	if contentKey == "" {
+		contentKey = meta.ContentHash
+	}
+
+	return cm.checkContent(ctx, "content/"+contentKey, result, cfg, phase)
 }
 
 // checkContent verifies a content object and its referenced chunks.
@@ -297,7 +305,12 @@ func (cm *CheckManager) checkChunk(ctx context.Context, ref string, result *Chec
 		// The key is "chunk/<hash>". Verify the data hashes to the expected value.
 		parts := strings.SplitN(ref, "/", 2)
 		if len(parts) == 2 {
-			actual := core.ComputeHash(data)
+			var actual string
+			if len(cm.hmacKey) > 0 {
+				actual = crypto.ComputeHMAC(cm.hmacKey, data)
+			} else {
+				actual = core.ComputeHash(data)
+			}
 			if actual != parts[1] {
 				result.Errors = append(result.Errors, CheckError{
 					Key:     ref,

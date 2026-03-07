@@ -147,6 +147,12 @@ func (bm *BackupManager) detectChange(oldRoot string, meta *core.FileMeta) (chan
 
 	if meta.ContentHash == "" && oldMeta.ContentHash != "" && metadataEqual(*meta, *oldMeta) {
 		meta.ContentHash = oldMeta.ContentHash
+		meta.ContentRef = oldMeta.ContentRef
+	} else if meta.ContentHash != "" && meta.ContentHash == oldMeta.ContentHash && meta.ContentRef == "" {
+		// Source provides a hash directly. If the old meta already has a ContentRef
+		// (written by a previous backup that introduced HMAC), carry it forward so
+		// Ref() produces the same key and the entry is not falsely detected as changed.
+		meta.ContentRef = oldMeta.ContentRef
 	}
 
 	newRef, _, err := meta.Ref()

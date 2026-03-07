@@ -193,7 +193,11 @@ func (pm *PruneManager) markFileMeta(ctx context.Context, ref string, reachable 
 	}
 
 	if meta.ContentHash != "" {
-		return pm.markContent(ctx, "content/"+meta.ContentHash, reachable)
+		contentKey := meta.ContentRef
+		if contentKey == "" {
+			contentKey = meta.ContentHash
+		}
+		return pm.markContent(ctx, "content/"+contentKey, reachable)
 	}
 	return nil
 }

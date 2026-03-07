@@ -19,6 +19,7 @@ Cloudstic is a content-addressable backup tool that creates encrypted, deduplica
   - [diff](#diff)
   - [forget](#forget)
   - [prune](#prune)
+  - [break-lock](#break-lock)
   - [check](#check)
   - [key list](#key-list)
   - [key add-recovery](#key-add-recovery)
@@ -279,6 +280,8 @@ cloudstic backup -source local -source-path ~/Documents -dry-run
 
 The `gdrive-changes` and `onedrive-changes` source types use their respective change/delta APIs for faster incremental backups after the first full backup.
 
+> **Locking:** `backup` acquires a **shared lock** on the repository at the start of the run (skipped for `-dry-run`). Multiple backups can run concurrently. The lock is released when the command exits. If the repository is exclusively locked by a `prune` run, `backup` will fail immediately with an error message. Use `break-lock` if a lock is stale.
+
 #### Exclude patterns
 
 You can exclude files and directories from the backup using gitignore-style patterns. This works with all source types — local, SFTP, Google Drive, and OneDrive. This is essential for skipping development directories that contain `.git/`, `node_modules/`, build artifacts, etc.
@@ -378,6 +381,8 @@ cloudstic restore -dry-run
 | `-dry-run` | `false` | Show what would be restored without writing the archive |
 
 The snapshot ID is a positional argument (defaults to latest if omitted).
+
+> **Locking:** `restore` always acquires a **shared lock** at the start of the run (including `-dry-run`). The lock is released when the command exits.
 
 ---
 
@@ -496,6 +501,37 @@ cloudstic prune -verbose
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-dry-run` | `false` | Show what would be deleted without deleting |
+
+> **Locking:** `prune` acquires an **exclusive lock** at the start of the run (skipped for `-dry-run`). While the exclusive lock is held, all `backup` and `restore` commands will fail immediately. The lock is released when `prune` exits. If `prune` crashes, the lock expires automatically after 1 minute. Use `break-lock` to remove it sooner.
+
+---
+
+### break-lock
+
+Force-remove a stale repository lock left behind by a crashed or interrupted process. Only use this when you are certain no `backup`, `restore`, or `prune` is actively running against the repository.
+
+```bash
+cloudstic break-lock
+```
+
+If no lock is present, the command reports that and exits cleanly. If one or more locks are found, each is removed and its metadata is printed:
+
+```text
+Locks removed:
+  Operation:  backup
+  Holder:     mac-studio.local (pid 12345)
+  Acquired:   2026-03-07T09:00:00Z
+  Expired at: 2026-03-07T09:01:00Z
+  Shared:     true
+```
+
+> **When to use `break-lock`:**
+>
+> - A `prune`, `backup`, or `restore` run was killed and you see "repository is locked" on the next attempt.
+> - The lock TTL has already passed (locks expire automatically after 1 minute) but you don't want to wait.
+> - You are certain the holder process is no longer running.
+>
+> Do **not** use `break-lock` if the locking operation is still in progress — removing the lock while `prune` is running can leave the repository in an inconsistent state.
 
 ---
 

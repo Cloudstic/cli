@@ -31,6 +31,7 @@ var inlineBufferPool = sync.Pool{
 
 type uploadResult struct {
 	fileID        string
+	parentID      string   // primary parent's raw fileID (for AffinityKey)
 	ref           string
 	meta          core.FileMeta
 	contentRef    string   // content key to cache (empty when dedup'd)
@@ -91,7 +92,7 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 			phase.Error()
 			return "", res.err
 		}
-		root, err = bm.tree.Insert(root, res.fileID, res.ref)
+		root, err = bm.tree.Insert(root, res.parentID, res.fileID, res.ref)
 		if err != nil {
 			phase.Error()
 			return "", fmt.Errorf("hamt insert: %w", err)
@@ -128,6 +129,7 @@ func (bm *BackupManager) processFile(ctx context.Context, meta core.FileMeta, ph
 	}
 	return uploadResult{
 		fileID:        meta.FileID,
+		parentID:      primaryParentID(&meta),
 		ref:           metaRef,
 		meta:          meta,
 		contentRef:    contentRef,

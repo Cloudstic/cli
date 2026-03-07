@@ -78,7 +78,7 @@ func createHamt(t *testing.T, s *MockStore, ids []string, refs []string) string 
 	root := ""
 	for i, id := range ids {
 		var err error
-		root, err = tree.Insert(root, id, refs[i])
+		root, err = tree.Insert(root, "", id, refs[i])
 		if err != nil {
 			t.Fatalf("Insert failed: %v", err)
 		}

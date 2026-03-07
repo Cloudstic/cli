@@ -41,20 +41,58 @@ func NewTree(s store.ObjectStore) *Tree {
 // Public API
 // ---------------------------------------------------------------------------
 
-// Insert adds or updates the entry for key, returning a new root ref.
-// Pass an empty root to start a new tree.
-func (t *Tree) Insert(root, key, value string) (string, error) {
-	pathKey := computePathKey(key)
-	return t.insertAt(root, pathKey, key, value, 0)
+// AffinityKey produces a locality-preserving HAMT routing key.
+// parentID is the raw source-level parent identifier (e.g. a GDrive folder ID).
+// fileID is the raw source-level file identifier.
+// Files sharing the same parent will share the top routing levels in the trie,
+// reducing metadata rewrites during incremental backups of a single directory.
+func AffinityKey(parentID, fileID string) string {
+	parentHash := core.ComputeHash([]byte(parentID))
+	fileHash := core.ComputeHash([]byte(fileID))
+	return parentHash[:4] + fileHash[4:]
 }
 
-// Lookup returns the value associated with key, or ("", nil) if not found.
-func (t *Tree) Lookup(root, key string) (string, error) {
+// errFoundSentinel is used to short-circuit a Walk in LookupByFileID.
+var errFoundSentinel = fmt.Errorf("found")
+
+// Insert adds or updates the entry for (parentID, fileID), returning a new root ref.
+// parentID is the raw source-level parent identifier ("" for root-level entries).
+// fileID is the raw source-level file identifier; it is stored as the leaf key.
+// Pass an empty root to start a new tree.
+func (t *Tree) Insert(root, parentID, fileID, value string) (string, error) {
+	pathKey := AffinityKey(parentID, fileID)
+	return t.insertAt(root, pathKey, fileID, value, 0)
+}
+
+// Lookup returns the value associated with (parentID, fileID), or ("", nil) if not found.
+// parentID is the raw source-level parent identifier ("" for root-level entries).
+func (t *Tree) Lookup(root, parentID, fileID string) (string, error) {
 	if root == "" {
 		return "", nil
 	}
-	pathKey := computePathKey(key)
-	return t.lookupAt(root, pathKey, key, 0)
+	pathKey := AffinityKey(parentID, fileID)
+	return t.lookupAt(root, pathKey, fileID, 0)
+}
+
+// LookupByFileID finds a value by walking the entire tree and matching on the raw fileID.
+// This is O(N) and slower than Lookup, but does not require the parentID context.
+// Use only when the parentID is not available (e.g. path resolution for legacy entries).
+func (t *Tree) LookupByFileID(root, fileID string) (string, error) {
+	if root == "" {
+		return "", nil
+	}
+	var found string
+	err := t.Walk(root, func(key, value string) error {
+		if key == fileID {
+			found = value
+			return errFoundSentinel
+		}
+		return nil
+	})
+	if err == errFoundSentinel {
+		return found, nil
+	}
+	return "", err
 }
 
 // Walk visits every (key, value) pair stored in the tree rooted at root.
@@ -91,15 +129,16 @@ func (t *Tree) NodeRefs(root string, fn func(ref string) error) error {
 	return t.nodeRefs(root, fn)
 }
 
-// Delete removes the entry for key, returning a new root ref. If the key is
-// not found the original root is returned unchanged. Deleting from an empty
-// tree is a no-op.
-func (t *Tree) Delete(root, key string) (string, error) {
+// Delete removes the entry for (parentID, fileID), returning a new root ref.
+// If the key is not found the original root is returned unchanged.
+// Deleting from an empty tree is a no-op.
+// parentID is the raw source-level parent identifier ("" for root-level entries).
+func (t *Tree) Delete(root, parentID, fileID string) (string, error) {
 	if root == "" {
 		return "", nil
 	}
-	pathKey := computePathKey(key)
-	newRef, err := t.deleteAt(root, pathKey, key, 0)
+	pathKey := AffinityKey(parentID, fileID)
+	newRef, err := t.deleteAt(root, pathKey, fileID, 0)
 	if err != nil {
 		return "", err
 	}
@@ -206,7 +245,7 @@ func (t *Tree) insertIntoLeaf(node *core.HAMTNode, pathKey, key, value string, l
 		if e.Key == key {
 			newEntries := make([]core.LeafEntry, len(node.Entries))
 			copy(newEntries, node.Entries)
-			newEntries[i] = core.LeafEntry{Key: key, FileMeta: value}
+			newEntries[i] = core.LeafEntry{Key: key, PathKey: pathKey, FileMeta: value}
 			return t.saveNode(&core.HAMTNode{Type: core.ObjectTypeLeaf, Entries: newEntries})
 		}
 	}
@@ -215,7 +254,7 @@ func (t *Tree) insertIntoLeaf(node *core.HAMTNode, pathKey, key, value string, l
 	if len(node.Entries) < maxLeafSize || level >= maxDepth {
 		newEntries := make([]core.LeafEntry, len(node.Entries)+1)
 		copy(newEntries, node.Entries)
-		newEntries[len(node.Entries)] = core.LeafEntry{Key: key, FileMeta: value}
+		newEntries[len(node.Entries)] = core.LeafEntry{Key: key, PathKey: pathKey, FileMeta: value}
 		sortEntries(newEntries)
 		return t.saveNode(&core.HAMTNode{Type: core.ObjectTypeLeaf, Entries: newEntries})
 	}
@@ -223,7 +262,7 @@ func (t *Tree) insertIntoLeaf(node *core.HAMTNode, pathKey, key, value string, l
 	// Leaf full: split into an internal node.
 	all := make([]core.LeafEntry, len(node.Entries)+1)
 	copy(all, node.Entries)
-	all[len(node.Entries)] = core.LeafEntry{Key: key, FileMeta: value}
+	all[len(node.Entries)] = core.LeafEntry{Key: key, PathKey: pathKey, FileMeta: value}
 	return t.buildNode(all, level)
 }
 
@@ -276,7 +315,10 @@ func (t *Tree) buildNode(entries []core.LeafEntry, level int) (string, error) {
 
 	buckets := make(map[int][]core.LeafEntry)
 	for _, e := range entries {
-		pk := computePathKey(e.Key)
+		pk := e.PathKey
+		if pk == "" {
+			pk = computePathKey(e.Key) // backward compat: legacy entries without PathKey
+		}
 		idx, err := indexForLevel(pk, level)
 		if err != nil {
 			return "", err
@@ -512,7 +554,10 @@ func (t *Tree) childForBucket(n *core.HAMTNode, idx, level int) (*core.HAMTNode,
 	// Leaf: filter entries belonging to this bucket.
 	var filtered []core.LeafEntry
 	for _, e := range n.Entries {
-		pk := computePathKey(e.Key)
+		pk := e.PathKey
+		if pk == "" {
+			pk = computePathKey(e.Key) // backward compat: legacy entries without PathKey
+		}
 		i, err := indexForLevel(pk, level)
 		if err != nil {
 			continue

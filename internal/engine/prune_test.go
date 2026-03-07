@@ -34,7 +34,7 @@ func TestPruneManager_Run(t *testing.T) {
 	// HAMT Construction using BackupManager's tree for flushing.
 	src := NewMockSource()
 	bkMgr := NewBackupManager(src, mockStore, ui.NewNoOpReporter(), nil, WithVerbose())
-	rootRef, err := bkMgr.tree.Insert("", "file1", metaRef)
+	rootRef, err := bkMgr.tree.Insert("", "", "file1", metaRef)
 	if err != nil {
 		t.Fatalf("Failed to create hamt: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestPruneManager_Run(t *testing.T) {
 
 	// Also insert directly into mock store (non-transactional).
 	directTree := hamt.NewTree(mockStore)
-	rootRef, err = directTree.Insert("", "file1", metaRef)
+	rootRef, err = directTree.Insert("", "", "file1", metaRef)
 	if err != nil {
 		t.Fatalf("Failed to insert: %v", err)
 	}

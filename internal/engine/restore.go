@@ -155,7 +155,7 @@ func (rm *RestoreManager) Run(ctx context.Context, w io.Writer, snapshotRef stri
 			continue
 		}
 
-		if err := rm.writeFileContent(ctx, fw, meta.ContentHash); err != nil {
+		if err := rm.writeFileContent(ctx, fw, meta); err != nil {
 			phase.Log(fmt.Sprintf("Failed: %s: %v", p, err))
 			result.Errors++
 			phase.Increment(1)
@@ -205,8 +205,13 @@ func (cw *countingWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func (rm *RestoreManager) writeFileContent(ctx context.Context, w io.Writer, contentHash string) error {
-	content, err := rm.loadContent(ctx, contentHash)
+func (rm *RestoreManager) writeFileContent(ctx context.Context, w io.Writer, meta core.FileMeta) error {
+	contentKey := meta.ContentRef
+	if contentKey == "" {
+		contentKey = meta.ContentHash
+	}
+
+	content, err := rm.loadContent(ctx, contentKey)
 	if err != nil {
 		return err
 	}

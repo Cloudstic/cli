@@ -94,6 +94,7 @@ type BackupManager struct {
 	metaCacheMu  sync.RWMutex
 	metaCache    map[string]core.FileMeta
 	pendingMetas map[string][]byte // deferred filemeta PUTs (ref → JSON)
+	hmacKey      []byte
 }
 
 func NewBackupManager(src source.Source, dest store.ObjectStore, reporter ui.Reporter, hmacKey []byte, opts ...BackupOption) *BackupManager {
@@ -121,6 +122,7 @@ func NewBackupManager(src source.Source, dest store.ObjectStore, reporter ui.Rep
 		newMetas:     make(map[string]core.FileMeta),
 		metaCache:    make(map[string]core.FileMeta),
 		pendingMetas: make(map[string][]byte),
+		hmacKey:      hmacKey,
 	}
 }
 

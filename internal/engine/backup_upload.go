@@ -11,6 +11,7 @@ import (
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/ui"
+	"github.com/cloudstic/cli/pkg/crypto"
 	"github.com/cloudstic/cli/pkg/store"
 )
 
@@ -115,6 +116,7 @@ func (bm *BackupManager) processFile(ctx context.Context, meta core.FileMeta, ph
 	}
 
 	meta.ContentHash = contentHash
+	meta.ContentRef = contentRef
 	meta.Size = size
 
 	metaRef, metaData, err := meta.Ref()
@@ -133,18 +135,24 @@ func (bm *BackupManager) processFile(ctx context.Context, meta core.FileMeta, ph
 	}
 }
 
-// uploadContent streams, chunks, and stores the file content. If the content
-// already exists (dedup by hash), the upload is skipped and contentRef is empty.
-// Small files (below inlineThreshold) are stored inline in the Content object
-// to reduce the number of backend API calls.
+// uploadContent streams, chunks, and stores file content. Skips upload on dedup (contentChunks nil), stores small files inline.
 func (bm *BackupManager) uploadContent(ctx context.Context, meta core.FileMeta, phase ui.Phase) (hash string, size int64, contentRef string, contentChunks []string, err error) {
 	if meta.ContentHash != "" {
-		exists, err := bm.store.Exists(ctx, "content/"+meta.ContentHash)
+		contentRef = meta.ContentRef
+		if contentRef == "" {
+			if len(bm.hmacKey) > 0 {
+				contentRef = crypto.ComputeHMAC(bm.hmacKey, []byte(meta.ContentHash))
+			} else {
+				contentRef = meta.ContentHash
+			}
+		}
+
+		exists, err := bm.store.Exists(ctx, "content/"+contentRef)
 		if err == nil && exists {
 			if bm.cfg.verbose {
 				phase.Log(fmt.Sprintf("Deduplicated: %s", meta.Name))
 			}
-			return meta.ContentHash, meta.Size, "", nil, nil
+			return meta.ContentHash, meta.Size, contentRef, nil, nil
 		}
 	}
 
@@ -165,11 +173,11 @@ func (bm *BackupManager) uploadContent(ctx context.Context, meta core.FileMeta, 
 		return "", 0, "", nil, fmt.Errorf("chunking %s: %w", meta.Name, err)
 	}
 
-	ref, err := bm.chunker.CreateContentObject(chunkRefs, size, hash)
+	contentRef, err = bm.chunker.CreateContentObject(chunkRefs, size, hash)
 	if err != nil {
 		return "", 0, "", nil, fmt.Errorf("create content for %s: %w", meta.Name, err)
 	}
-	return hash, size, ref, chunkRefs, nil
+	return hash, size, contentRef, chunkRefs, nil
 }
 
 // uploadInline reads the entire file into memory and stores it directly inside
@@ -189,12 +197,18 @@ func (bm *BackupManager) uploadInline(ctx context.Context, r io.Reader, meta cor
 	phase.Increment(size)
 	hash = core.ComputeHash(data)
 
-	contentKey := "content/" + hash
+	if len(bm.hmacKey) > 0 {
+		contentRef = crypto.ComputeHMAC(bm.hmacKey, []byte(hash))
+	} else {
+		contentRef = hash
+	}
+
+	contentKey := "content/" + contentRef
 	if exists, _ := bm.store.Exists(ctx, contentKey); exists {
 		if bm.cfg.verbose {
 			phase.Log(fmt.Sprintf("Deduplicated: %s", meta.Name))
 		}
-		return hash, size, "", nil, nil
+		return hash, size, contentRef, nil, nil
 	}
 
 	// Manually construct JSON to avoid json.Marshal allocating a huge string for the base64 data
@@ -210,5 +224,5 @@ func (bm *BackupManager) uploadInline(ctx context.Context, r io.Reader, meta cor
 	if err := bm.store.Put(ctx, contentKey, contentData); err != nil {
 		return "", 0, "", nil, err
 	}
-	return hash, size, contentKey, nil, nil
+	return hash, size, contentRef, nil, nil
 }

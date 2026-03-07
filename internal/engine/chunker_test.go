@@ -66,20 +66,53 @@ func TestChunker_CreateContentObject(t *testing.T) {
 		t.Fatalf("CreateContentObject failed: %v", err)
 	}
 
-	expectedRef := "content/" + contentHash
-	if ref != expectedRef {
-		t.Errorf("Expected ref %s, got %s", expectedRef, ref)
+	if ref != contentHash {
+		t.Errorf("Expected ref %s, got %s", contentHash, ref)
 	}
 
-	data, _ := store.Get(ctx, ref)
+	data, _ := store.Get(ctx, "content/"+ref)
 	if !strings.Contains(string(data), "chunk/1") {
 		t.Error("Content object missing chunk/1")
 	}
 }
 
-// TestChunker_HMAC_ChunkRefsUseHMAC verifies that providing an HMAC key
-// produces different chunk refs than without one, while the content hash
-// (stream SHA-256) remains identical.
+// TestChunker_HMAC_CreateContentObject verifies HMAC path: ref differs from hash and object is stored under content/<contentRef>.
+func TestChunker_HMAC_CreateContentObject(t *testing.T) {
+	ctx := context.Background()
+	hmacKey := []byte("test-hmac-key-32-bytes-long!!!!!")
+	store := NewMockStore()
+	chunker := NewChunker(store, hmacKey)
+
+	chunks := []string{"chunk/1", "chunk/2"}
+	contentHash := "plain-content-hash"
+
+	contentRef, err := chunker.CreateContentObject(chunks, 100, contentHash)
+	if err != nil {
+		t.Fatalf("CreateContentObject failed: %v", err)
+	}
+
+	// contentRef must differ from contentHash (it should be the HMAC)
+	if contentRef == contentHash {
+		t.Error("contentRef should differ from contentHash when HMAC key is set")
+	}
+
+	// Object must be stored under content/<contentRef>, NOT content/<contentHash>
+	hmacData, _ := store.Get(ctx, "content/"+contentRef)
+	if hmacData == nil {
+		t.Errorf("Content object not found under content/%s", contentRef)
+	}
+	if !strings.Contains(string(hmacData), "chunk/1") {
+		t.Error("Content object missing chunk/1")
+	}
+
+	// Object must NOT be stored under content/<contentHash>
+	plainData, _ := store.Get(ctx, "content/"+contentHash)
+	if plainData != nil {
+		t.Error("Content object should not be stored under content/<contentHash>")
+	}
+}
+
+// TestChunker_HMAC_ChunkRefsUseHMAC verifies HMAC key produces different chunk refs but identical content hash.
 func TestChunker_HMAC_ChunkRefsUseHMAC(t *testing.T) {
 	hmacKey := []byte("test-hmac-key-32-bytes-long!!!!!")
 
@@ -115,10 +148,7 @@ func TestChunker_HMAC_ChunkRefsUseHMAC(t *testing.T) {
 	}
 }
 
-// TestChunker_HMAC_ContentHashStable verifies that the content hash returned
-// by ProcessStream is deterministic and independent of the HMAC key. This
-// prevents the regression where HMAC-ing the stream hash caused subsequent
-// backups to detect false changes.
+// TestChunker_HMAC_ContentHashStable verifies content hash is deterministic and independent of HMAC key.
 func TestChunker_HMAC_ContentHashStable(t *testing.T) {
 	hmacKey := []byte("test-hmac-key-32-bytes-long!!!!!")
 	data := "stable content hash test"
@@ -143,8 +173,7 @@ func TestChunker_HMAC_ContentHashStable(t *testing.T) {
 	}
 }
 
-// TestChunker_HMAC_Deduplication verifies that dedup works correctly when
-// an HMAC key is used — identical data produces identical chunk refs.
+// TestChunker_HMAC_Deduplication verifies that dedup works correctly with an HMAC key.
 func TestChunker_HMAC_Deduplication(t *testing.T) {
 	hmacKey := []byte("test-hmac-key-32-bytes-long!!!!!")
 	store := NewMockStore()

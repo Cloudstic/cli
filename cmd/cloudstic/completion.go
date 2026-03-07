@@ -84,7 +84,7 @@ _cloudstic() {
         forget)
             cmd_flags="-prune -dry-run -keep-last -keep-hourly -keep-daily -keep-weekly -keep-monthly -keep-yearly -tag -source -account -path -group-by" ;;
         cat)
-            cmd_flags="-json" ;;
+            cmd_flags="-json -raw" ;;
         completion)
             COMPREPLY=($(compgen -W "bash zsh fish" -- "$cur"))
             return ;;
@@ -315,6 +315,7 @@ _cloudstic() {
         cat)
             _arguments $global_flags \
                 '-json[Suppress non-JSON output]' \
+                '-raw[Output raw, unformatted data]' \
                 '*:object key:'
             ;;
         completion)
@@ -427,6 +428,7 @@ complete -c cloudstic -n '__fish_seen_subcommand_from key; and __fish_seen_subco
 
 # cat
 complete -c cloudstic -n '__fish_seen_subcommand_from cat' -l json -d 'Suppress non-JSON output'
+complete -c cloudstic -n '__fish_seen_subcommand_from cat' -l raw -d 'Output raw, unformatted data'
 
 # completion
 complete -c cloudstic -n '__fish_seen_subcommand_from completion' -a 'bash zsh fish' -d 'Shell type'

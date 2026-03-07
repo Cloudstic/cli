@@ -13,6 +13,7 @@ type catArgs struct {
 	g    *globalFlags
 	keys []string
 	json bool
+	raw  bool
 }
 
 func parseCatArgs() *catArgs {
@@ -20,6 +21,7 @@ func parseCatArgs() *catArgs {
 	a := &catArgs{}
 	a.g = addGlobalFlags(fs)
 	jsonFlag := fs.Bool("json", false, "Suppress non-JSON output (alias for -quiet)")
+	rawFlag := fs.Bool("raw", false, "Output raw, unformatted data (useful for hashing)")
 	mustParse(fs)
 	if fs.NArg() < 1 {
 		fmt.Fprintln(os.Stderr, "Usage: cloudstic cat [options] <object_key> [object_key...]")
@@ -29,9 +31,11 @@ func parseCatArgs() *catArgs {
 		fmt.Fprintln(os.Stderr, "  cloudstic cat index/latest")
 		fmt.Fprintln(os.Stderr, "  cloudstic cat snapshot/abc123...")
 		fmt.Fprintln(os.Stderr, "  cloudstic cat filemeta/def456... node/789abc...")
+		fmt.Fprintln(os.Stderr, "  cloudstic cat -raw filemeta/def456... | sha256sum")
 		os.Exit(1)
 	}
 	a.json = *jsonFlag
+	a.raw = *rawFlag
 	a.keys = fs.Args()
 	return a
 }
@@ -60,13 +64,21 @@ func runCat() {
 			fmt.Fprintf(os.Stderr, "==> %s <==\n", result.Key)
 		}
 
-		// Pretty-print JSON
-		var indented bytes.Buffer
-		if err := json.Indent(&indented, result.Data, "", "  "); err != nil {
-			// If it's not valid JSON, just output the raw data
-			fmt.Print(string(result.Data))
+		if a.raw {
+			_, err := os.Stdout.Write(result.Data)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to write raw data: %v\n", err)
+				os.Exit(1)
+			}
 		} else {
-			fmt.Println(indented.String())
+			// Pretty-print JSON
+			var indented bytes.Buffer
+			if err := json.Indent(&indented, result.Data, "", "  "); err != nil {
+				// If it's not valid JSON, just output the raw data
+				fmt.Print(string(result.Data))
+			} else {
+				fmt.Println(indented.String())
+			}
 		}
 
 		// Add spacing between multiple objects

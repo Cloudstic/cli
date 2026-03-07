@@ -359,6 +359,24 @@ All mutations are purely functional — `Insert` returns a new root reference wh
 
 A `TransactionalStore` buffers new nodes in memory during a backup and flushes only the reachable subset to the persistent store at the end, avoiding upload of intermediate superseded nodes.
 
+### Affinity Model (HAMTv2)
+
+Implemented in [PR #61](https://github.com/cloudstic/cloudstic-cli/pull/61).
+
+By default, `SHA-256(fileID)` produces uniformly distributed routing keys. Files sharing the same parent directory scatter across all 32 top-level trie buckets, causing `O(N · depth)` intermediate node rewrites on every incremental backup of a directory with `N` changed files.
+
+The affinity model biases routing so that siblings share a common subtree:
+
+```
+AffinityKey(parentID, fileID) = SHA256(parentID)[:4] + SHA256(fileID)[4:]
+```
+
+The first 4 hex characters (16 bits) are derived from the parent directory ID, pinning all siblings to the same top-3 trie levels. The remaining 28 hex characters come from the file's own hash. Total key length is unchanged (32 hex chars), so the routing machinery is unaffected.
+
+**Impact:** incremental backups of a flat directory rewrite `O(maxDepth)` nodes instead of `O(N · maxDepth)`.
+
+New snapshots are tagged `hamt_version: 2`. Snapshots without this field default to version 1 (legacy SHA-256 keys) and remain fully readable.
+
 ---
 
 ## Structural Sharing

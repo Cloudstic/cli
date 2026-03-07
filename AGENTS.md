@@ -134,6 +134,15 @@ When implementing new functionality, always consider the following:
    - Provide actionable error messages to users.
    - Distinguish between user errors and system errors.
 
+### Documentation Formatting
+
+Markdown files are linted with `markdownlint` (rules from `.markdownlint.json`). Follow these conventions to avoid CI failures:
+
+* Use `*` (asterisk) for unordered list items, not `-`.
+* Surround fenced code blocks with blank lines (even when nested inside a list item).
+* Surround unordered and ordered lists with blank lines.
+* Restart ordered list numbering at `1` for each new list — do not continue numbering across headings or sections.
+
 ### Testing Guidelines
 
 - Run `go test -v -count=1 ./...` before committing to ensure all tests pass.

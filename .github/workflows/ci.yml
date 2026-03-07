@@ -23,10 +23,10 @@ jobs:
         with:
           filters: |
             code:
+              - '**'
               - '!docs/**'
               - '!rfcs/**'
-              - '!*.md'
-              - '**'
+              - '!**/*.md'
             docs:
               - 'docs/**'
               - 'rfcs/**'

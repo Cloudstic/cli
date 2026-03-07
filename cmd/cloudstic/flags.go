@@ -30,7 +30,7 @@ type globalFlags struct {
 	recoveryKey                                       *string
 	kmsKeyARN, kmsRegion, kmsEndpoint                 *string
 	enablePackfile                                    *bool
-	verbose, quiet, debug                             *bool
+	password, verbose, quiet, debug                   *bool
 	debugLog                                          *ui.SafeLogWriter
 }
 
@@ -67,6 +67,7 @@ func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 	g.kmsRegion = fs.String("kms-region", envDefault("CLOUDSTIC_KMS_REGION", ""), "AWS KMS region (defaults to us-east-1)")
 	g.kmsEndpoint = fs.String("kms-endpoint", envDefault("CLOUDSTIC_KMS_ENDPOINT", ""), "Custom AWS KMS endpoint URL")
 	g.enablePackfile = fs.Bool("enable-packfile", true, "Bundle small objects into 8MB packs to save S3 PUTs")
+	g.password = fs.Bool("password", false, "Prompt for a password (used alongside --encryption-key or --kms-key-arn to add a password layer)")
 	g.verbose = fs.Bool("verbose", false, "Log detailed file-level operations")
 	g.quiet = fs.Bool("quiet", false, "Suppress progress bars (keeps final summary)")
 	g.debug = fs.Bool("debug", false, "Log every store request (network calls, timing, sizes)")

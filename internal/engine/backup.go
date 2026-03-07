@@ -94,6 +94,7 @@ type BackupManager struct {
 	metaCacheMu  sync.RWMutex
 	metaCache    map[string]core.FileMeta
 	pendingMetas map[string][]byte // deferred filemeta PUTs (ref → JSON)
+	parentIndex  map[string]string // fileID → primary parent fileID (for AffinityKey lookups)
 	hmacKey      []byte
 }
 
@@ -122,6 +123,7 @@ func NewBackupManager(src source.Source, dest store.ObjectStore, reporter ui.Rep
 		newMetas:     make(map[string]core.FileMeta),
 		metaCache:    make(map[string]core.FileMeta),
 		pendingMetas: make(map[string][]byte),
+		parentIndex:  make(map[string]string),
 		hmacKey:      hmacKey,
 	}
 }
@@ -321,6 +323,7 @@ func (bm *BackupManager) saveSnapshot(ctx context.Context, root string, seq int,
 		Meta:        meta,
 		ChangeToken: changeToken,
 		ExcludeHash: bm.cfg.excludeHash,
+		HAMTVersion: 2,
 	}
 
 	hash, snapData, err := core.ComputeJSONHash(&snap)

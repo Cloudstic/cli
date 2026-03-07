@@ -62,8 +62,9 @@ type HAMTNode struct {
 
 // LeafEntry represents an entry in a Leaf node
 type LeafEntry struct {
-	Key      string `json:"key"`      // FileID
-	FileMeta string `json:"filemeta"` // "filemeta/<sha256>"
+	Key      string `json:"key"`               // FileID
+	PathKey  string `json:"path_key,omitempty"` // AffinityKey routing key; falls back to SHA256(Key) if empty
+	FileMeta string `json:"filemeta"`           // "filemeta/<sha256>"
 }
 
 // SourceInfo describes the origin of a backup snapshot. It is stored as a
@@ -87,6 +88,7 @@ type Snapshot struct {
 	Tags        []string          `json:"tags,omitempty"`
 	ChangeToken string            `json:"change_token,omitempty"`
 	ExcludeHash string            `json:"exclude_hash,omitempty"`
+	HAMTVersion int               `json:"hamt_version,omitempty"` // 1 = legacy, 2 = affinity keys
 }
 
 // Index represents a pointer to the latest snapshot

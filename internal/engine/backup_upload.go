@@ -31,7 +31,7 @@ var inlineBufferPool = sync.Pool{
 
 type uploadResult struct {
 	fileID        string
-	parentID      string   // primary parent's raw fileID (for AffinityKey)
+	parentID      string // primary parent's raw fileID (for AffinityKey)
 	ref           string
 	meta          core.FileMeta
 	contentRef    string   // content key to cache (empty when dedup'd)

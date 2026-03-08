@@ -50,76 +50,85 @@ func parseBackupArgs() *backupArgs {
 	return a
 }
 
-func runBackup() {
+func (r *runner) runBackup() int {
 	a := parseBackupArgs()
 
-	// Collect exclude patterns from -exclude flags and -exclude-file.
-	excludePatterns := []string(a.excludes)
-	if a.excludeFile != "" {
-		filePatterns, err := source.ParseExcludeFile(a.excludeFile)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to read exclude file: %v\n", err)
-			os.Exit(1)
-		}
-		excludePatterns = append(excludePatterns, filePatterns...)
+	excludePatterns, err := r.parseExcludePatterns(a)
+	if err != nil {
+		return r.fail("Failed to read exclude file: %v", err)
 	}
 
 	ctx := context.Background()
 
 	src, err := initSource(ctx, a.sourceType, a.sourcePath, a.driveID, a.rootFolder, a.g, excludePatterns)
 	if err != nil {
-		fmt.Printf("Failed to init source: %v\n", err)
-		os.Exit(1)
+		return r.fail("Failed to init source: %v", err)
 	}
 
-	client, err := a.g.openClient()
+	if err := r.openClient(a.g); err != nil {
+		return r.fail("Failed to init store: %v", err)
+	}
+
+	backupOpts := buildBackupOpts(a, excludePatterns)
+
+	result, err := r.client.Backup(ctx, src, backupOpts...)
 	if err != nil {
-		fmt.Printf("Failed to init store: %v\n", err)
-		os.Exit(1)
+		return r.fail("Backup failed: %v", err)
 	}
+	r.printBackupSummary(result)
+	return 0
+}
 
-	var backupOpts []cloudstic.BackupOption
+func (r *runner) parseExcludePatterns(a *backupArgs) ([]string, error) {
+	excludePatterns := []string(a.excludes)
+	if a.excludeFile != "" {
+		filePatterns, err := source.ParseExcludeFile(a.excludeFile)
+		if err != nil {
+			return nil, err
+		}
+		excludePatterns = append(excludePatterns, filePatterns...)
+	}
+	return excludePatterns, nil
+}
+
+func buildBackupOpts(a *backupArgs, excludePatterns []string) []cloudstic.BackupOption {
+	var opts []cloudstic.BackupOption
 	if *a.g.verbose {
-		backupOpts = append(backupOpts, cloudstic.WithVerbose())
+		opts = append(opts, cloudstic.WithVerbose())
 	}
 	if a.dryRun {
-		backupOpts = append(backupOpts, engine.WithBackupDryRun())
+		opts = append(opts, engine.WithBackupDryRun())
 	}
 	if len(a.tags) > 0 {
-		backupOpts = append(backupOpts, cloudstic.WithTags(a.tags...))
+		opts = append(opts, cloudstic.WithTags(a.tags...))
 	}
 	if len(excludePatterns) > 0 {
 		h := sha256.Sum256([]byte(strings.Join(excludePatterns, "\n")))
-		backupOpts = append(backupOpts, cloudstic.WithExcludeHash(hex.EncodeToString(h[:])))
+		opts = append(opts, cloudstic.WithExcludeHash(hex.EncodeToString(h[:])))
 	}
-	result, err := client.Backup(ctx, src, backupOpts...)
-	if err != nil {
-		fmt.Printf("Backup failed: %v\n", err)
-		os.Exit(1)
-	}
-	printBackupSummary(result)
+	return opts
 }
 
-func printBackupSummary(r *engine.RunResult) {
-	total := r.FilesNew + r.FilesChanged + r.FilesUnmodified +
-		r.DirsNew + r.DirsChanged + r.DirsUnmodified
-	if r.DryRun {
-		fmt.Printf("\nBackup dry run complete.\n")
+func (r *runner) printBackupSummary(res *engine.RunResult) {
+	total := res.FilesNew + res.FilesChanged + res.FilesUnmodified +
+		res.DirsNew + res.DirsChanged + res.DirsUnmodified
+	if res.DryRun {
+		_, _ = fmt.Fprintf(r.out, "\nBackup dry run complete.\n")
 	} else {
-		fmt.Printf("\nBackup complete. Snapshot: %s, Root: %s\n", r.SnapshotRef, r.Root)
+		_, _ = fmt.Fprintf(r.out, "\nBackup complete. Snapshot: %s, Root: %s\n", res.SnapshotRef, res.Root)
 	}
-	fmt.Printf("Files:  %d new,  %d changed,  %d unmodified,  %d removed\n",
-		r.FilesNew, r.FilesChanged, r.FilesUnmodified, r.FilesRemoved)
-	fmt.Printf("Dirs:   %d new,  %d changed,  %d unmodified,  %d removed\n",
-		r.DirsNew, r.DirsChanged, r.DirsUnmodified, r.DirsRemoved)
-	if !r.DryRun {
-		fmt.Printf("Added to the repository: %s (%s compressed)\n",
-			formatBytes(r.BytesAddedRaw), formatBytes(r.BytesAddedStored))
+	_, _ = fmt.Fprintf(r.out, "Files:  %d new,  %d changed,  %d unmodified,  %d removed\n",
+		res.FilesNew, res.FilesChanged, res.FilesUnmodified, res.FilesRemoved)
+	_, _ = fmt.Fprintf(r.out, "Dirs:   %d new,  %d changed,  %d unmodified,  %d removed\n",
+		res.DirsNew, res.DirsChanged, res.DirsUnmodified, res.DirsRemoved)
+	if !res.DryRun {
+		_, _ = fmt.Fprintf(r.out, "Added to the repository: %s (%s compressed)\n",
+			formatBytes(res.BytesAddedRaw), formatBytes(res.BytesAddedStored))
 	}
-	fmt.Printf("Processed %d entries in %s\n",
-		total, r.Duration.Round(time.Second))
-	if !r.DryRun {
-		fmt.Printf("Snapshot %s saved\n", r.SnapshotHash)
+	_, _ = fmt.Fprintf(r.out, "Processed %d entries in %s\n",
+		total, res.Duration.Round(time.Second))
+	if !res.DryRun {
+		_, _ = fmt.Fprintf(r.out, "Snapshot %s saved\n", res.SnapshotHash)
 	}
 }
 

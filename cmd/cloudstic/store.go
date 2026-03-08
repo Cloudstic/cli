@@ -16,6 +16,16 @@ import (
 	"github.com/moby/term"
 )
 
+// openStore initializes the raw object store with debug wrapping applied.
+// Used by commands that operate on the store directly (init, key).
+func (g *globalFlags) openStore() (store.ObjectStore, error) {
+	raw, err := g.initObjectStore()
+	if err != nil {
+		return nil, err
+	}
+	return g.applyDebug(raw), nil
+}
+
 // applyDebug wraps a store with a DebugStore and enables the global debug
 // logger when --debug is set. It returns the (possibly wrapped) store.
 func (g *globalFlags) applyDebug(s store.ObjectStore) store.ObjectStore {

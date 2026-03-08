@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"os"
 
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/engine"
@@ -25,17 +24,24 @@ func parsePruneArgs() *pruneArgs {
 	return a
 }
 
-func runPrune() {
+func (r *runner) runPrune() int {
 	a := parsePruneArgs()
-
-	ctx := context.Background()
-
-	client, err := a.g.openClient()
-	if err != nil {
-		fmt.Printf("Failed to init store: %v\n", err)
-		os.Exit(1)
+	if err := r.openClient(a.g); err != nil {
+		return r.fail("Failed to init store: %v", err)
 	}
 
+	pruneOpts := buildPruneOpts(a)
+
+	result, err := r.client.Prune(context.Background(), pruneOpts...)
+	if err != nil {
+		return r.fail("Prune failed: %v", err)
+	}
+	_, _ = fmt.Fprintln(r.out)
+	r.printPruneStats(result)
+	return 0
+}
+
+func buildPruneOpts(a *pruneArgs) []cloudstic.PruneOption {
 	var pruneOpts []cloudstic.PruneOption
 	if a.dryRun {
 		pruneOpts = append(pruneOpts, engine.WithPruneDryRun())
@@ -43,26 +49,18 @@ func runPrune() {
 	if *a.g.verbose {
 		pruneOpts = append(pruneOpts, engine.WithPruneVerbose())
 	}
-	result, err := client.Prune(ctx, pruneOpts...)
-	if err != nil {
-		fmt.Printf("Prune failed: %v\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Println()
-	printPruneStats(result)
+	return pruneOpts
 }
 
-// printPruneStats prints a prune result summary to stdout.
-func printPruneStats(r *engine.PruneResult) {
-	if r.DryRun {
-		fmt.Printf("Prune dry run complete.\n")
-		fmt.Printf("  Objects scanned:       %d\n", r.ObjectsScanned)
-		fmt.Printf("  Objects would delete:  %d\n", r.ObjectsDeleted)
+func (r *runner) printPruneStats(res *cloudstic.PruneResult) {
+	if res.DryRun {
+		_, _ = fmt.Fprintf(r.out, "Prune dry run complete.\n")
+		_, _ = fmt.Fprintf(r.out, "  Objects scanned:       %d\n", res.ObjectsScanned)
+		_, _ = fmt.Fprintf(r.out, "  Objects would delete:  %d\n", res.ObjectsDeleted)
 	} else {
-		fmt.Printf("Prune complete.\n")
-		fmt.Printf("  Objects scanned:  %d\n", r.ObjectsScanned)
-		fmt.Printf("  Objects deleted:  %d\n", r.ObjectsDeleted)
-		fmt.Printf("  Space reclaimed:  %s\n", formatBytes(r.BytesReclaimed))
+		_, _ = fmt.Fprintf(r.out, "Prune complete.\n")
+		_, _ = fmt.Fprintf(r.out, "  Objects scanned:  %d\n", res.ObjectsScanned)
+		_, _ = fmt.Fprintf(r.out, "  Objects deleted:  %d\n", res.ObjectsDeleted)
+		_, _ = fmt.Fprintf(r.out, "  Space reclaimed:  %s\n", formatBytes(res.BytesReclaimed))
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"os"
 	"sort"
 	"time"
 
@@ -31,40 +30,40 @@ func parseLsArgs() *lsArgs {
 	return a
 }
 
-func runLsSnapshot() {
+func (r *runner) runLsSnapshot() int {
 	a := parseLsArgs()
-
-	ctx := context.Background()
-
-	client, err := a.g.openClient()
-	if err != nil {
-		fmt.Printf("Failed to init store: %v\n", err)
-		os.Exit(1)
+	if err := r.openClient(a.g); err != nil {
+		return r.fail("Failed to init store: %v", err)
 	}
+
 	start := time.Now()
+	lsOpts := buildLsOpts(a)
+
+	result, err := r.client.LsSnapshot(context.Background(), a.snapshotID, lsOpts...)
+	if err != nil {
+		return r.fail("Ls failed: %v", err)
+	}
+	r.printLsResult(result, time.Since(start))
+	return 0
+}
+
+func buildLsOpts(a *lsArgs) []cloudstic.LsSnapshotOption {
 	var lsOpts []cloudstic.LsSnapshotOption
 	if *a.g.verbose {
 		lsOpts = append(lsOpts, cloudstic.WithLsVerbose())
 	}
-	result, err := client.LsSnapshot(ctx, a.snapshotID, lsOpts...)
-	if err != nil {
-		fmt.Printf("Ls failed: %v\n", err)
-		os.Exit(1)
-	}
-
-	printLsResult(result, time.Since(start))
+	return lsOpts
 }
 
-// printLsResult prints the snapshot header, file tree, and entry count to stdout.
-func printLsResult(result *engine.LsSnapshotResult, elapsed time.Duration) {
-	fmt.Printf("Listing files for snapshot: %s (Created: %s)\n", result.Ref, result.Snapshot.Created)
-	renderSnapshotTree(result)
-	fmt.Printf("\n%d entries listed in %s\n", len(result.RefToMeta), elapsed.Round(time.Millisecond))
+func (r *runner) printLsResult(result *engine.LsSnapshotResult, elapsed time.Duration) {
+	_, _ = fmt.Fprintf(r.out, "Listing files for snapshot: %s (Created: %s)\n", result.Ref, result.Snapshot.Created)
+	r.renderSnapshotTree(result)
+	_, _ = fmt.Fprintf(r.out, "\n%d entries listed in %s\n", len(result.RefToMeta), elapsed.Round(time.Millisecond))
 }
 
-func renderSnapshotTree(result *engine.LsSnapshotResult) {
+func (r *runner) renderSnapshotTree(result *engine.LsSnapshotResult) {
 	l := list.NewWriter()
-	l.SetOutputMirror(os.Stdout)
+	l.SetOutputMirror(r.out)
 	for _, rootRef := range result.RootRefs {
 		appendTreeNode(l, rootRef, result.RefToMeta, result.ChildRefs)
 	}

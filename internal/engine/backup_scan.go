@@ -158,6 +158,21 @@ func (bm *BackupManager) detectChange(oldRoot string, meta *core.FileMeta) (chan
 		return false, "", err
 	}
 
+	// Native Google files: use headRevisionId as the sole change signal.
+	// Size and ContentHash comparisons are unreliable for exported files
+	// (see RFC 0003 section 2.4).
+	if isGoogleNativeMeta(meta) {
+		newRevID, _ := meta.Extra["headRevisionId"].(string)
+		oldRevID, _ := oldMeta.Extra["headRevisionId"].(string)
+		if newRevID != "" && newRevID == oldRevID {
+			meta.ContentHash = oldMeta.ContentHash
+			meta.ContentRef = oldMeta.ContentRef
+			meta.Size = oldMeta.Size
+			return false, oldRef, nil
+		}
+		return true, oldRef, nil
+	}
+
 	if meta.ContentHash == "" && oldMeta.ContentHash != "" && metadataEqual(*meta, *oldMeta) {
 		meta.ContentHash = oldMeta.ContentHash
 		meta.ContentRef = oldMeta.ContentRef
@@ -173,6 +188,17 @@ func (bm *BackupManager) detectChange(oldRoot string, meta *core.FileMeta) (chan
 		return false, "", err
 	}
 	return newRef != oldRef, oldRef, nil
+}
+
+// isGoogleNativeMeta returns true if the FileMeta represents a Google-native
+// file (Docs, Sheets, etc.) based on the stored mimeType in Extra.
+func isGoogleNativeMeta(meta *core.FileMeta) bool {
+	if meta.Extra == nil {
+		return false
+	}
+	mimeType, _ := meta.Extra["mimeType"].(string)
+	return strings.HasPrefix(mimeType, "application/vnd.google-apps.") &&
+		mimeType != "application/vnd.google-apps.folder"
 }
 
 func metadataEqual(a, b core.FileMeta) bool {

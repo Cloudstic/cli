@@ -28,6 +28,7 @@ type gDriveOptions struct {
 	rootFolderID    string
 	accountEmail    string
 	excludePatterns []string
+	skipNativeFiles bool
 }
 
 // GDriveOption configures a Google Drive source.
@@ -84,16 +85,26 @@ func WithGDriveExcludePatterns(patterns []string) GDriveOption {
 	}
 }
 
+// WithSkipNativeFiles excludes Google-native files (Docs, Sheets, Slides, etc.)
+// from the backup. They will not appear in the snapshot at all.
+func WithSkipNativeFiles() GDriveOption {
+	return func(o *gDriveOptions) {
+		o.skipNativeFiles = true
+	}
+}
+
 // GDriveSource implements Source for Google Drive. By default it backs up the
 // entire "My Drive" root. Set DriveID in GDriveSourceConfig to back up a
 // shared drive instead, and/or set RootFolderID to restrict to a specific
 // folder within the selected drive.
 type GDriveSource struct {
-	service      *drive.Service
-	driveID      string // shared drive ID; empty means "My Drive"
-	rootFolderID string // if empty, defaults to "root" (entire drive)
-	account      string // Google account email; populated automatically
-	exclude      *ExcludeMatcher
+	service         *drive.Service
+	driveID         string // shared drive ID; empty means "My Drive"
+	rootFolderID    string // if empty, defaults to "root" (entire drive)
+	account         string // Google account email; populated automatically
+	exclude         *ExcludeMatcher
+	skipNativeFiles bool
+	mimeTypes       map[string]string // fileID → mimeType; populated during Walk/WalkChanges
 }
 
 // NewGDriveSource creates a new GDriveSource from the given options.
@@ -150,11 +161,12 @@ func NewGDriveSource(ctx context.Context, opts ...GDriveOption) (*GDriveSource, 
 	}
 
 	return &GDriveSource{
-		service:      srv,
-		driveID:      cfg.driveID,
-		rootFolderID: cfg.rootFolderID,
-		account:      cfg.accountEmail,
-		exclude:      NewExcludeMatcher(cfg.excludePatterns),
+		service:         srv,
+		driveID:         cfg.driveID,
+		rootFolderID:    cfg.rootFolderID,
+		account:         cfg.accountEmail,
+		exclude:         NewExcludeMatcher(cfg.excludePatterns),
+		skipNativeFiles: cfg.skipNativeFiles,
 	}, nil
 }
 
@@ -260,13 +272,15 @@ func isRetryableGoogleErr(err error) bool {
 // for topological sort) but files are streamed page-by-page to avoid holding
 // the full file list in memory.
 func (s *GDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) error) error {
+	s.mimeTypes = make(map[string]string)
+
 	var folders []*drive.File
 	pageToken := ""
 
 	for {
 		call := s.service.Files.List().
 			Q("trashed = false AND mimeType = 'application/vnd.google-apps.folder'").
-			Fields("nextPageToken, files(id, name, parents, mimeType, size, modifiedTime, owners, trashed, sha256Checksum)").
+			Fields("nextPageToken, files(id, name, parents, mimeType, size, modifiedTime, owners, trashed, sha256Checksum, headRevisionId)").
 			PageSize(1000).
 			Context(ctx)
 		if s.isSharedDrive() {
@@ -313,7 +327,7 @@ func (s *GDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) er
 	for {
 		call := s.service.Files.List().
 			Q("trashed = false AND mimeType != 'application/vnd.google-apps.folder'").
-			Fields("nextPageToken, files(id, name, parents, mimeType, size, modifiedTime, owners, trashed, sha256Checksum)").
+			Fields("nextPageToken, files(id, name, parents, mimeType, size, modifiedTime, owners, trashed, sha256Checksum, headRevisionId)").
 			PageSize(1000).
 			Context(ctx)
 		if s.isSharedDrive() {
@@ -379,6 +393,17 @@ func topoSortFolders(folders []*drive.File) []*drive.File {
 }
 
 func (s *GDriveSource) visitEntryWithPath(f *drive.File, pathMap map[string]string, excludedPaths map[string]bool, callback func(core.FileMeta) error) error {
+	// Record MIME type for all non-folder entries so GetFileStream can
+	// decide between download and export.
+	if f.MimeType != "application/vnd.google-apps.folder" {
+		s.mimeTypes[f.Id] = f.MimeType
+	}
+
+	// Skip native files when the user opted out of exporting them.
+	if s.skipNativeFiles && isGoogleNativeMimeType(f.MimeType) {
+		return nil
+	}
+
 	meta := s.toFileMeta(f)
 
 	// Compute full path from parent path map.
@@ -429,17 +454,28 @@ func (s *GDriveSource) toFileMeta(f *drive.File) core.FileMeta {
 		fileType = core.FileTypeFolder
 	}
 
+	name := f.Name
+	extra := map[string]interface{}{"mimeType": f.MimeType}
+
+	if isGoogleNativeMimeType(f.MimeType) {
+		name += nativeExportExtension(f.MimeType)
+		extra["exportMimeType"] = nativeExportMimeType(f.MimeType)
+	}
+	if f.HeadRevisionId != "" {
+		extra["headRevisionId"] = f.HeadRevisionId
+	}
+
 	return core.FileMeta{
 		Version:     1,
 		FileID:      f.Id,
-		Name:        f.Name,
+		Name:        name,
 		Type:        fileType,
 		Parents:     f.Parents,
 		ContentHash: f.Sha256Checksum,
 		Size:        f.Size,
 		Mtime:       mtime,
 		Owner:       owner,
-		Extra:       map[string]interface{}{"mimeType": f.MimeType},
+		Extra:       extra,
 	}
 }
 
@@ -490,11 +526,34 @@ func (s *GDriveSource) Size(ctx context.Context) (*SourceSize, error) {
 }
 
 func (s *GDriveSource) GetFileStream(fileID string) (io.ReadCloser, error) {
+	if mimeType, ok := s.mimeTypes[fileID]; ok && isGoogleNativeMimeType(mimeType) {
+		return s.exportFile(fileID, nativeExportMimeType(mimeType))
+	}
+
 	var resp *http.Response
 	err := retry.Do(context.Background(), retry.DefaultPolicy(), func() error {
 		call := s.service.Files.Get(fileID).SupportsAllDrives(true)
 		var err error
 		resp, err = call.Download()
+		if err != nil {
+			if isRetryableGoogleErr(err) {
+				return &retry.RetryableError{Err: err}
+			}
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Body, nil
+}
+
+func (s *GDriveSource) exportFile(fileID, exportMimeType string) (io.ReadCloser, error) {
+	var resp *http.Response
+	err := retry.Do(context.Background(), retry.DefaultPolicy(), func() error {
+		var err error
+		resp, err = s.service.Files.Export(fileID, exportMimeType).Download()
 		if err != nil {
 			if isRetryableGoogleErr(err) {
 				return &retry.RetryableError{Err: err}

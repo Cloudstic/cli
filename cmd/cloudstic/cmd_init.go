@@ -8,6 +8,7 @@ import (
 
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/ui"
+	"github.com/cloudstic/cli/pkg/keychain"
 	"github.com/moby/term"
 )
 
@@ -32,23 +33,17 @@ func parseInitArgs() *initArgs {
 	return a
 }
 
-// runInit bootstraps a new repository: creates encryption key slots and
-// writes the "config" marker. Encryption is required by default; pass
-// --no-encryption to explicitly create an unencrypted repository.
-func runInit() {
+func (r *runner) runInit() int {
 	a := parseInitArgs()
 
-	raw, err := a.g.initObjectStore()
+	raw, err := a.g.openStore()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to init store: %v\n", err)
-		os.Exit(1)
+		return r.fail("Failed to init store: %v", err)
 	}
-	raw = a.g.applyDebug(raw)
 
 	kc, err := a.g.buildKeychain(context.Background())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to build keychain: %v\n", err)
-		os.Exit(1)
+		return r.fail("Failed to build keychain: %v", err)
 	}
 	hasEncryptionCreds := len(kc) > 0
 
@@ -56,21 +51,30 @@ func runInit() {
 		if term.IsTerminal(os.Stdin.Fd()) {
 			pw, err := ui.PromptPasswordConfirm("Enter new repository password")
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				return r.fail("Error: %v", err)
 			}
 			*a.g.encryptionPassword = pw
-			// rebuild keychain with the new password
 			kc, _ = a.g.buildKeychain(context.Background())
 		} else {
-			fmt.Fprintln(os.Stderr, "Error: encryption is required by default.")
-			fmt.Fprintln(os.Stderr, "Provide --encryption-password or --encryption-key to encrypt your repository.")
-			fmt.Fprintln(os.Stderr, "To create an unencrypted repository, pass --no-encryption (not recommended).")
-			os.Exit(1)
+			_, _ = fmt.Fprintln(r.errOut, "Error: encryption is required by default.")
+			_, _ = fmt.Fprintln(r.errOut, "Provide --encryption-password or --encryption-key to encrypt your repository.")
+			_, _ = fmt.Fprintln(r.errOut, "To create an unencrypted repository, pass --no-encryption (not recommended).")
+			return 1
 		}
 	}
 
-	// Build init options.
+	initOpts := buildInitOpts(a, kc)
+
+	result, err := cloudstic.InitRepo(context.Background(), raw, initOpts...)
+	if err != nil {
+		return r.fail("Init failed: %v", err)
+	}
+
+	r.printInitResult(result)
+	return 0
+}
+
+func buildInitOpts(a *initArgs, kc keychain.Chain) []cloudstic.InitOption {
 	var initOpts []cloudstic.InitOption
 	if len(kc) > 0 {
 		initOpts = append(initOpts, cloudstic.WithInitCredentials(kc))
@@ -84,46 +88,38 @@ func runInit() {
 	if a.adoptSlots {
 		initOpts = append(initOpts, cloudstic.WithInitAdoptSlots())
 	}
-
-	result, err := cloudstic.InitRepo(context.Background(), raw, initOpts...)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Init failed: %v\n", err)
-		os.Exit(1)
-	}
-
-	printInitResult(result)
+	return initOpts
 }
 
-// printInitResult prints the init outcome to stderr.
-func printInitResult(result *cloudstic.InitResult) {
+func (r *runner) printInitResult(result *cloudstic.InitResult) {
 	if result.Encrypted {
 		if result.AdoptedSlots {
-			fmt.Fprintln(os.Stderr, "Adopted existing encryption key slots.")
+			_, _ = fmt.Fprintln(r.errOut, "Adopted existing encryption key slots.")
 		} else {
-			fmt.Fprintln(os.Stderr, "Created new encryption key slots.")
+			_, _ = fmt.Fprintln(r.errOut, "Created new encryption key slots.")
 		}
 		if result.RecoveryKey != "" {
-			printRecoveryKey(result.RecoveryKey)
+			r.printRecoveryKey(result.RecoveryKey)
 		}
 	} else {
-		fmt.Fprintln(os.Stderr, "WARNING: creating unencrypted repository. Your backups will NOT be encrypted at rest.")
+		_, _ = fmt.Fprintln(r.errOut, "WARNING: creating unencrypted repository. Your backups will NOT be encrypted at rest.")
 	}
-	fmt.Fprintf(os.Stderr, "Repository initialized (encrypted: %v).\n", result.Encrypted)
+	_, _ = fmt.Fprintf(r.errOut, "Repository initialized (encrypted: %v).\n", result.Encrypted)
 }
 
-func printRecoveryKey(mnemonic string) {
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "╔══════════════════════════════════════════════════════════════╗")
-	fmt.Fprintln(os.Stderr, "║                      RECOVERY KEY                           ║")
-	fmt.Fprintln(os.Stderr, "╠══════════════════════════════════════════════════════════════╣")
-	fmt.Fprintln(os.Stderr, "║                                                              ║")
-	fmt.Fprintf(os.Stderr, "║  %s\n", mnemonic)
-	fmt.Fprintln(os.Stderr, "║                                                              ║")
-	fmt.Fprintln(os.Stderr, "║  Write down these 24 words and store them in a safe place.   ║")
-	fmt.Fprintln(os.Stderr, "║  This is the ONLY time the recovery key will be displayed.   ║")
-	fmt.Fprintln(os.Stderr, "║  If you lose your password, this key is your only way to     ║")
-	fmt.Fprintln(os.Stderr, "║  recover your encrypted backups.                             ║")
-	fmt.Fprintln(os.Stderr, "║                                                              ║")
-	fmt.Fprintln(os.Stderr, "╚══════════════════════════════════════════════════════════════╝")
-	fmt.Fprintln(os.Stderr)
+func (r *runner) printRecoveryKey(mnemonic string) {
+	_, _ = fmt.Fprintln(r.errOut)
+	_, _ = fmt.Fprintln(r.errOut, "╔══════════════════════════════════════════════════════════════╗")
+	_, _ = fmt.Fprintln(r.errOut, "║                      RECOVERY KEY                           ║")
+	_, _ = fmt.Fprintln(r.errOut, "╠══════════════════════════════════════════════════════════════╣")
+	_, _ = fmt.Fprintln(r.errOut, "║                                                              ║")
+	_, _ = fmt.Fprintf(r.errOut, "║  %s\n", mnemonic)
+	_, _ = fmt.Fprintln(r.errOut, "║                                                              ║")
+	_, _ = fmt.Fprintln(r.errOut, "║  Write down these 24 words and store them in a safe place.   ║")
+	_, _ = fmt.Fprintln(r.errOut, "║  This is the ONLY time the recovery key will be displayed.   ║")
+	_, _ = fmt.Fprintln(r.errOut, "║  If you lose your password, this key is your only way to     ║")
+	_, _ = fmt.Fprintln(r.errOut, "║  recover your encrypted backups.                             ║")
+	_, _ = fmt.Fprintln(r.errOut, "║                                                              ║")
+	_, _ = fmt.Fprintln(r.errOut, "╚══════════════════════════════════════════════════════════════╝")
+	_, _ = fmt.Fprintln(r.errOut)
 }

@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/cloudstic/cli/internal/engine"
@@ -31,11 +30,11 @@ func formatBytes(b int64) string {
 	}
 }
 
-// renderSnapshotTable prints a table of snapshot entries to stdout. If reasons
+// renderSnapshotTable prints a table of snapshot entries to w. If reasons
 // is non-nil, a "Reasons" column is appended with the value for each ref.
-func renderSnapshotTable(entries []engine.SnapshotEntry, reasons map[string]string) {
+func (r *runner) renderSnapshotTable(entries []engine.SnapshotEntry, reasons map[string]string) {
 	t := table.NewWriter()
-	t.SetOutputMirror(os.Stdout)
+	t.SetOutputMirror(r.out)
 
 	header := table.Row{"Seq", "Created", "Snapshot Hash", "Source", "Account", "Path", "Tags"}
 	if reasons != nil {

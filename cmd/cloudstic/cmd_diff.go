@@ -21,8 +21,8 @@ func parseDiffArgs() *diffArgs {
 	a.g = addGlobalFlags(fs)
 	mustParse(fs)
 	if fs.NArg() < 2 {
-		fmt.Println("Usage: cloudstic diff [options] <snapshot_id1> <snapshot_id2>")
-		fmt.Println("       cloudstic diff [options] <snapshot_id1> latest")
+		fmt.Fprintln(os.Stderr, "Usage: cloudstic diff [options] <snapshot_id1> <snapshot_id2>")
+		fmt.Fprintln(os.Stderr, "       cloudstic diff [options] <snapshot_id1> latest")
 		os.Exit(1)
 	}
 	a.snap1 = fs.Arg(0)
@@ -30,33 +30,33 @@ func parseDiffArgs() *diffArgs {
 	return a
 }
 
-func runDiff() {
+func (r *runner) runDiff() int {
 	a := parseDiffArgs()
-
-	ctx := context.Background()
-
-	client, err := a.g.openClient()
-	if err != nil {
-		fmt.Printf("Failed to init store: %v\n", err)
-		os.Exit(1)
+	if err := r.openClient(a.g); err != nil {
+		return r.fail("Failed to init store: %v", err)
 	}
+
+	diffOpts := buildDiffOpts(a)
+
+	result, err := r.client.Diff(context.Background(), a.snap1, a.snap2, diffOpts...)
+	if err != nil {
+		return r.fail("Diff failed: %v", err)
+	}
+	r.printDiffResult(result)
+	return 0
+}
+
+func buildDiffOpts(a *diffArgs) []cloudstic.DiffOption {
 	var diffOpts []cloudstic.DiffOption
 	if *a.g.verbose {
 		diffOpts = append(diffOpts, cloudstic.WithDiffVerbose())
 	}
-	result, err := client.Diff(ctx, a.snap1, a.snap2, diffOpts...)
-	if err != nil {
-		fmt.Printf("Diff failed: %v\n", err)
-		os.Exit(1)
-	}
-
-	printDiffResult(result)
+	return diffOpts
 }
 
-// printDiffResult prints the diff header and per-file changes to stdout.
-func printDiffResult(result *cloudstic.DiffResult) {
-	fmt.Printf("Diffing %s vs %s\n", result.Ref1, result.Ref2)
+func (r *runner) printDiffResult(result *cloudstic.DiffResult) {
+	_, _ = fmt.Fprintf(r.out, "Diffing %s vs %s\n", result.Ref1, result.Ref2)
 	for _, c := range result.Changes {
-		fmt.Printf("%s %s\n", c.Type, c.Path)
+		_, _ = fmt.Fprintf(r.out, "%s %s\n", c.Type, c.Path)
 	}
 }

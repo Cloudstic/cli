@@ -37,17 +37,45 @@ func parseRestoreArgs() *restoreArgs {
 	return a
 }
 
-func runRestore() {
+func (r *runner) runRestore() int {
 	a := parseRestoreArgs()
-
-	ctx := context.Background()
-
-	client, err := a.g.openClient()
-	if err != nil {
-		fmt.Printf("Failed to init store: %v\n", err)
-		os.Exit(1)
+	if err := r.openClient(a.g); err != nil {
+		return r.fail("Failed to init store: %v", err)
 	}
 
+	restoreOpts := buildRestoreOpts(a)
+
+	return r.execRestore(a, restoreOpts)
+}
+
+func (r *runner) execRestore(a *restoreArgs, opts []cloudstic.RestoreOption) int {
+	ctx := context.Background()
+
+	if a.dryRun {
+		result, err := r.client.Restore(ctx, io.Discard, a.snapshotRef, opts...)
+		if err != nil {
+			return r.fail("Restore failed: %v", err)
+		}
+		r.printRestoreSummary(result, "")
+		return 0
+	}
+
+	f, err := os.Create(a.output)
+	if err != nil {
+		return r.fail("Failed to create output file: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	result, err := r.client.Restore(ctx, f, a.snapshotRef, opts...)
+	if err != nil {
+		_ = os.Remove(a.output)
+		return r.fail("Restore failed: %v", err)
+	}
+	r.printRestoreSummary(result, a.output)
+	return 0
+}
+
+func buildRestoreOpts(a *restoreArgs) []cloudstic.RestoreOption {
 	var restoreOpts []cloudstic.RestoreOption
 	if a.dryRun {
 		restoreOpts = append(restoreOpts, engine.WithRestoreDryRun())
@@ -58,46 +86,21 @@ func runRestore() {
 	if a.pathFilter != "" {
 		restoreOpts = append(restoreOpts, engine.WithRestorePath(a.pathFilter))
 	}
-
-	if a.dryRun {
-		result, err := client.Restore(ctx, io.Discard, a.snapshotRef, restoreOpts...)
-		if err != nil {
-			fmt.Printf("Restore failed: %v\n", err)
-			os.Exit(1)
-		}
-		printRestoreSummary(result, "")
-		return
-	}
-
-	f, err := os.Create(a.output)
-	if err != nil {
-		fmt.Printf("Failed to create output file: %v\n", err)
-		os.Exit(1)
-	}
-	defer func() { _ = f.Close() }()
-
-	result, err := client.Restore(ctx, f, a.snapshotRef, restoreOpts...)
-	if err != nil {
-		_ = os.Remove(a.output)
-		fmt.Printf("Restore failed: %v\n", err)
-		os.Exit(1)
-	}
-	printRestoreSummary(result, a.output)
+	return restoreOpts
 }
 
-// printRestoreSummary prints the restore result to stdout.
-func printRestoreSummary(result *engine.RestoreResult, output string) {
+func (r *runner) printRestoreSummary(result *engine.RestoreResult, output string) {
 	if result.DryRun {
-		fmt.Printf("\nRestore dry run complete. Snapshot: %s\n", result.SnapshotRef)
-		fmt.Printf("  Files: %d, Dirs: %d\n", result.FilesWritten, result.DirsWritten)
-		fmt.Printf("  Estimated size: %s\n", formatBytes(result.BytesWritten))
+		_, _ = fmt.Fprintf(r.out, "\nRestore dry run complete. Snapshot: %s\n", result.SnapshotRef)
+		_, _ = fmt.Fprintf(r.out, "  Files: %d, Dirs: %d\n", result.FilesWritten, result.DirsWritten)
+		_, _ = fmt.Fprintf(r.out, "  Estimated size: %s\n", formatBytes(result.BytesWritten))
 		return
 	}
-	fmt.Printf("\nRestore complete. Snapshot: %s\n", result.SnapshotRef)
-	fmt.Printf("  Files: %d, Dirs: %d", result.FilesWritten, result.DirsWritten)
+	_, _ = fmt.Fprintf(r.out, "\nRestore complete. Snapshot: %s\n", result.SnapshotRef)
+	_, _ = fmt.Fprintf(r.out, "  Files: %d, Dirs: %d", result.FilesWritten, result.DirsWritten)
 	if result.Errors > 0 {
-		fmt.Printf(", Errors: %d", result.Errors)
+		_, _ = fmt.Fprintf(r.out, ", Errors: %d", result.Errors)
 	}
-	fmt.Println()
-	fmt.Printf("  Archive: %s (%s)\n", output, formatBytes(result.BytesWritten))
+	_, _ = fmt.Fprintln(r.out)
+	_, _ = fmt.Fprintf(r.out, "  Archive: %s (%s)\n", output, formatBytes(result.BytesWritten))
 }

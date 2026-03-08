@@ -62,7 +62,7 @@ type HAMTNode struct {
 
 // LeafEntry represents an entry in a Leaf node
 type LeafEntry struct {
-	Key      string `json:"key"`               // FileID
+	Key      string `json:"key"`                // FileID
 	PathKey  string `json:"path_key,omitempty"` // AffinityKey routing key; falls back to SHA256(Key) if empty
 	FileMeta string `json:"filemeta"`           // "filemeta/<sha256>"
 }

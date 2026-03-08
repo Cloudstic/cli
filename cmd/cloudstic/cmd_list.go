@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"os"
 
 	cloudstic "github.com/cloudstic/cli"
 )
@@ -20,31 +19,31 @@ func parseListArgs() *listArgs {
 	return a
 }
 
-func runList() {
+func (r *runner) runList() int {
 	a := parseListArgs()
-
-	ctx := context.Background()
-
-	client, err := a.g.openClient()
-	if err != nil {
-		fmt.Printf("Failed to init store: %v\n", err)
-		os.Exit(1)
+	if err := r.openClient(a.g); err != nil {
+		return r.fail("Failed to init store: %v", err)
 	}
+
+	listOpts := buildListOpts(a)
+
+	result, err := r.client.List(context.Background(), listOpts...)
+	if err != nil {
+		return r.fail("List failed: %v", err)
+	}
+	r.printListResult(result)
+	return 0
+}
+
+func buildListOpts(a *listArgs) []cloudstic.ListOption {
 	var listOpts []cloudstic.ListOption
 	if *a.g.verbose {
 		listOpts = append(listOpts, cloudstic.WithListVerbose())
 	}
-	result, err := client.List(ctx, listOpts...)
-	if err != nil {
-		fmt.Printf("List failed: %v\n", err)
-		os.Exit(1)
-	}
-
-	printListResult(result)
+	return listOpts
 }
 
-// printListResult prints the snapshot count and table to stdout.
-func printListResult(result *cloudstic.ListResult) {
-	fmt.Printf("%d snapshots\n", len(result.Snapshots))
-	renderSnapshotTable(result.Snapshots, nil)
+func (r *runner) printListResult(result *cloudstic.ListResult) {
+	_, _ = fmt.Fprintf(r.out, "%d snapshots\n", len(result.Snapshots))
+	r.renderSnapshotTable(result.Snapshots, nil)
 }

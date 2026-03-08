@@ -13,33 +13,29 @@ import (
 	"github.com/moby/term"
 )
 
-func runKey() {
+func (r *runner) runKey() int {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "Usage: cloudstic key <subcommand>")
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "Subcommands:")
-		fmt.Fprintln(os.Stderr, "  list           List all encryption key slots in the repository")
-		fmt.Fprintln(os.Stderr, "  add-recovery   Generate a 24-word recovery key")
-		fmt.Fprintln(os.Stderr, "  passwd         Change the repository password")
-		os.Exit(1)
+		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic key <subcommand>")
+		_, _ = fmt.Fprintln(r.errOut)
+		_, _ = fmt.Fprintln(r.errOut, "Subcommands:")
+		_, _ = fmt.Fprintln(r.errOut, "  list           List all encryption key slots in the repository")
+		_, _ = fmt.Fprintln(r.errOut, "  add-recovery   Generate a 24-word recovery key")
+		_, _ = fmt.Fprintln(r.errOut, "  passwd         Change the repository password")
+		return 1
 	}
 
 	sub := os.Args[2]
-	// Shift os.Args so subcommand flag parsing works correctly:
-	// "cloudstic key list -store ..." → args[0]="cloudstic" args[1]="key" args[2]="list" ...
-	// After shift: args become ["cloudstic", "key", "-store", ...] and flags parse from args[2:].
 	os.Args = append(os.Args[:2], os.Args[3:]...)
 
 	switch sub {
 	case "list":
-		runKeyList()
+		return r.runKeyList()
 	case "add-recovery":
-		runAddRecoveryKey()
+		return r.runAddRecoveryKey()
 	case "passwd":
-		runKeyPasswd()
+		return r.runKeyPasswd()
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown key subcommand: %s\n", sub)
-		os.Exit(1)
+		return r.fail("Unknown key subcommand: %s", sub)
 	}
 }
 
@@ -54,32 +50,30 @@ func parseKeyListArgs() *keyListArgs {
 	return a
 }
 
-func runKeyList() {
+func (r *runner) runKeyList() int {
 	a := parseKeyListArgs()
 
-	raw, err := a.g.initObjectStore()
+	raw, err := a.g.openStore()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to init store: %v\n", err)
-		os.Exit(1)
+		return r.fail("Failed to init store: %v", err)
 	}
-	raw = a.g.applyDebug(raw)
 
 	slots, err := cloudstic.ListKeySlots(context.Background(), raw)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to list key slots: %v\n", err)
-		os.Exit(1)
+		return r.fail("Failed to list key slots: %v", err)
 	}
 
-	printKeySlots(slots)
+	r.printKeySlots(slots)
+	return 0
 }
 
-func printKeySlots(slots []cloudstic.KeySlot) {
+func (r *runner) printKeySlots(slots []cloudstic.KeySlot) {
 	if len(slots) == 0 {
-		fmt.Fprintln(os.Stderr, "No key slots found.")
+		_, _ = fmt.Fprintln(r.errOut, "No key slots found.")
 		return
 	}
 	t := table.NewWriter()
-	t.SetOutputMirror(os.Stdout)
+	t.SetOutputMirror(r.out)
 	t.AppendHeader(table.Row{"Type", "Label", "KDF"})
 	for _, slot := range slots {
 		kdf := "—"
@@ -89,7 +83,7 @@ func printKeySlots(slots []cloudstic.KeySlot) {
 		t.AppendRow(table.Row{slot.SlotType, slot.Label, kdf})
 	}
 	t.Render()
-	fmt.Fprintf(os.Stderr, "\n%d key slot(s) found.\n", len(slots))
+	_, _ = fmt.Fprintf(r.errOut, "\n%d key slot(s) found.\n", len(slots))
 }
 
 type keyPasswdArgs struct {
@@ -107,26 +101,22 @@ func parseKeyPasswdArgs() *keyPasswdArgs {
 	return a
 }
 
-func runKeyPasswd() {
+func (r *runner) runKeyPasswd() int {
 	a := parseKeyPasswdArgs()
 
 	ctx := context.Background()
 
-	raw, err := a.g.initObjectStore()
+	raw, err := a.g.openStore()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to init store: %v\n", err)
-		os.Exit(1)
+		return r.fail("Failed to init store: %v", err)
 	}
-	raw = a.g.applyDebug(raw)
 
 	kc, err := a.g.buildKeychain(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
-		os.Exit(1)
+		return r.fail("%v", err)
 	}
 
 	newPassword := cloudstic.PasswordProviderFunc(func(ctx context.Context) (string, error) {
-		// Resolve new password.
 		newPw := a.newPassword
 		if newPw == "" {
 			if !term.IsTerminal(os.Stdin.Fd()) {
@@ -142,11 +132,11 @@ func runKeyPasswd() {
 	})
 
 	if err := cloudstic.ChangePassword(ctx, raw, kc, newPassword); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to change password: %v\n", err)
-		os.Exit(1)
+		return r.fail("Failed to change password: %v", err)
 	}
 
-	fmt.Fprintln(os.Stderr, "Repository password has been changed.")
+	_, _ = fmt.Fprintln(r.errOut, "Repository password has been changed.")
+	return 0
 }
 
 type addRecoveryKeyArgs struct {
@@ -160,30 +150,27 @@ func parseAddRecoveryKeyArgs() *addRecoveryKeyArgs {
 	return a
 }
 
-func runAddRecoveryKey() {
+func (r *runner) runAddRecoveryKey() int {
 	a := parseAddRecoveryKeyArgs()
 
 	ctx := context.Background()
 
-	raw, err := a.g.initObjectStore()
+	raw, err := a.g.openStore()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to init store: %v\n", err)
-		os.Exit(1)
+		return r.fail("Failed to init store: %v", err)
 	}
-	raw = a.g.applyDebug(raw)
 
 	kc, err := a.g.buildKeychain(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
-		os.Exit(1)
+		return r.fail("%v", err)
 	}
 
 	mnemonic, err := cloudstic.AddRecoveryKey(ctx, raw, kc)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create recovery key: %v\n", err)
-		os.Exit(1)
+		return r.fail("Failed to create recovery key: %v", err)
 	}
 
-	printRecoveryKey(mnemonic)
-	fmt.Fprintln(os.Stderr, "Recovery key slot has been added to the repository.")
+	r.printRecoveryKey(mnemonic)
+	_, _ = fmt.Fprintln(r.errOut, "Recovery key slot has been added to the repository.")
+	return 0
 }

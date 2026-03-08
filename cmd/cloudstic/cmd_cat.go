@@ -7,6 +7,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+
+	cloudstic "github.com/cloudstic/cli"
 )
 
 type catArgs struct {
@@ -40,50 +42,44 @@ func parseCatArgs() *catArgs {
 	return a
 }
 
-func runCat() {
+func (r *runner) runCat() int {
 	a := parseCatArgs()
+	if err := r.openClient(a.g); err != nil {
+		return r.fail("Failed to init store: %v", err)
+	}
 
 	quiet := *a.g.quiet || a.json
 
-	ctx := context.Background()
-
-	client, err := a.g.openClient()
+	results, err := r.client.Cat(context.Background(), a.keys...)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to init store: %v\n", err)
-		os.Exit(1)
+		return r.fail("Failed to fetch objects: %v", err)
 	}
 
-	results, err := client.Cat(ctx, a.keys...)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to fetch objects: %v\n", err)
-		os.Exit(1)
-	}
+	r.printCatResult(results, quiet, a.raw)
+	return 0
+}
 
+func (r *runner) printCatResult(results []*cloudstic.CatResult, quiet, raw bool) {
 	for i, result := range results {
 		if !quiet && len(results) > 1 {
-			fmt.Fprintf(os.Stderr, "==> %s <==\n", result.Key)
+			_, _ = fmt.Fprintf(r.errOut, "==> %s <==\n", result.Key)
 		}
-
-		if a.raw {
-			_, err := os.Stdout.Write(result.Data)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to write raw data: %v\n", err)
-				os.Exit(1)
+		if raw {
+			if _, err := r.out.Write(result.Data); err != nil {
+				_, _ = fmt.Fprintf(r.errOut, "Failed to write raw data: %v\n", err)
+				return
 			}
 		} else {
-			// Pretty-print JSON
 			var indented bytes.Buffer
 			if err := json.Indent(&indented, result.Data, "", "  "); err != nil {
-				// If it's not valid JSON, just output the raw data
-				fmt.Print(string(result.Data))
+				_, _ = fmt.Fprint(r.out, string(result.Data))
 			} else {
-				fmt.Println(indented.String())
+				_, _ = fmt.Fprintln(r.out, indented.String())
 			}
 		}
 
-		// Add spacing between multiple objects
 		if !quiet && i < len(results)-1 {
-			fmt.Fprintln(os.Stderr)
+			_, _ = fmt.Fprintln(r.errOut)
 		}
 	}
 }

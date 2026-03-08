@@ -17,15 +17,16 @@ import (
 )
 
 type backupArgs struct {
-	g           *globalFlags
-	sourceType  string
-	sourcePath  string
-	driveID     string
-	rootFolder  string
-	dryRun      bool
-	excludeFile string
-	tags        stringArrayFlags
-	excludes    stringArrayFlags
+	g               *globalFlags
+	sourceType      string
+	sourcePath      string
+	driveID         string
+	rootFolder      string
+	dryRun          bool
+	excludeFile     string
+	skipNativeFiles bool
+	tags            stringArrayFlags
+	excludes        stringArrayFlags
 }
 
 func parseBackupArgs() *backupArgs {
@@ -37,6 +38,7 @@ func parseBackupArgs() *backupArgs {
 	driveID := fs.String("drive-id", envDefault("CLOUDSTIC_DRIVE_ID", ""), "Shared drive ID for gdrive source (omit for My Drive)")
 	rootFolder := fs.String("root-folder", envDefault("CLOUDSTIC_ROOT_FOLDER", ""), "Root folder ID for gdrive source (defaults to entire drive)")
 	dryRun := fs.Bool("dry-run", false, "Scan source and report changes without writing to the store")
+	skipNativeFiles := fs.Bool("skip-native-files", false, "Exclude Google-native files (Docs, Sheets, Slides, etc.) from the backup")
 	excludeFile := fs.String("exclude-file", "", "Path to file with exclude patterns (one per line, gitignore syntax)")
 	fs.Var(&a.tags, "tag", "Tag to apply to the snapshot (can be specified multiple times)")
 	fs.Var(&a.excludes, "exclude", "Exclude pattern (gitignore syntax, repeatable)")
@@ -46,6 +48,7 @@ func parseBackupArgs() *backupArgs {
 	a.driveID = *driveID
 	a.rootFolder = *rootFolder
 	a.dryRun = *dryRun
+	a.skipNativeFiles = *skipNativeFiles
 	a.excludeFile = *excludeFile
 	return a
 }
@@ -60,7 +63,7 @@ func (r *runner) runBackup() int {
 
 	ctx := context.Background()
 
-	src, err := initSource(ctx, a.sourceType, a.sourcePath, a.driveID, a.rootFolder, a.g, excludePatterns)
+	src, err := initSource(ctx, a.sourceType, a.sourcePath, a.driveID, a.rootFolder, a.skipNativeFiles, a.g, excludePatterns)
 	if err != nil {
 		return r.fail("Failed to init source: %v", err)
 	}
@@ -132,7 +135,7 @@ func (r *runner) printBackupSummary(res *engine.RunResult) {
 	}
 }
 
-func initSource(ctx context.Context, sourceType, sourcePath, driveID, rootFolder string, g *globalFlags, excludePatterns []string) (source.Source, error) {
+func initSource(ctx context.Context, sourceType, sourcePath, driveID, rootFolder string, skipNativeFiles bool, g *globalFlags, excludePatterns []string) (source.Source, error) {
 	switch sourceType {
 	case "local":
 		return source.NewLocalSource(sourcePath, source.WithLocalExcludePatterns(excludePatterns)), nil
@@ -152,28 +155,34 @@ func initSource(ctx context.Context, sourceType, sourcePath, driveID, rootFolder
 		if err != nil {
 			return nil, err
 		}
-		return source.NewGDriveSource(
-			ctx,
+		gdriveOpts := []source.GDriveOption{
 			source.WithCredsPath(creds),
 			source.WithTokenPath(tokenPath),
 			source.WithDriveID(driveID),
 			source.WithRootFolderID(rootFolder),
 			source.WithGDriveExcludePatterns(excludePatterns),
-		)
+		}
+		if skipNativeFiles {
+			gdriveOpts = append(gdriveOpts, source.WithSkipNativeFiles())
+		}
+		return source.NewGDriveSource(ctx, gdriveOpts...)
 	case "gdrive-changes":
 		creds := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") // optional; uses built-in OAuth client when empty
 		tokenPath, err := resolveTokenPath("GOOGLE_TOKEN_FILE", "google_token.json")
 		if err != nil {
 			return nil, err
 		}
-		return source.NewGDriveChangeSource(
-			ctx,
+		gdriveOpts := []source.GDriveOption{
 			source.WithCredsPath(creds),
 			source.WithTokenPath(tokenPath),
 			source.WithDriveID(driveID),
 			source.WithRootFolderID(rootFolder),
 			source.WithGDriveExcludePatterns(excludePatterns),
-		)
+		}
+		if skipNativeFiles {
+			gdriveOpts = append(gdriveOpts, source.WithSkipNativeFiles())
+		}
+		return source.NewGDriveChangeSource(ctx, gdriveOpts...)
 	case "onedrive":
 		clientID := os.Getenv("ONEDRIVE_CLIENT_ID") // optional; uses built-in OAuth client when empty
 		tokenPath, err := resolveTokenPath("ONEDRIVE_TOKEN_FILE", "onedrive_token.json")

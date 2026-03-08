@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"os"
 
 	cloudstic "github.com/cloudstic/cli"
 )
@@ -30,17 +29,25 @@ func parseCheckArgs() *checkArgs {
 	return a
 }
 
-func runCheck() {
+func (r *runner) runCheck() int {
 	a := parseCheckArgs()
-
-	ctx := context.Background()
-
-	client, err := a.g.openClient()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to init store: %v\n", err)
-		os.Exit(1)
+	if err := r.openClient(a.g); err != nil {
+		return r.fail("Failed to init store: %v", err)
 	}
 
+	checkOpts := buildCheckOpts(a)
+
+	result, err := r.client.Check(context.Background(), checkOpts...)
+	if err != nil {
+		return r.fail("Check failed: %v", err)
+	}
+	if r.printCheckResult(result) {
+		return 1
+	}
+	return 0
+}
+
+func buildCheckOpts(a *checkArgs) []cloudstic.CheckOption {
 	var checkOpts []cloudstic.CheckOption
 	if a.readData {
 		checkOpts = append(checkOpts, cloudstic.WithReadData())
@@ -51,33 +58,24 @@ func runCheck() {
 	if a.snapshotRef != "" {
 		checkOpts = append(checkOpts, cloudstic.WithSnapshotRef(a.snapshotRef))
 	}
-
-	result, err := client.Check(ctx, checkOpts...)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Check failed: %v\n", err)
-		os.Exit(1)
-	}
-
-	if printCheckResult(result) {
-		os.Exit(1)
-	}
+	return checkOpts
 }
 
-// printCheckResult prints the check summary to stderr.
+// printCheckResult prints the check summary to r.errOut.
 // Returns true if integrity errors were found.
-func printCheckResult(result *cloudstic.CheckResult) bool {
-	fmt.Fprintf(os.Stderr, "\nRepository check complete.\n")
-	fmt.Fprintf(os.Stderr, "  Snapshots checked:  %d\n", result.SnapshotsChecked)
-	fmt.Fprintf(os.Stderr, "  Objects verified:   %d\n", result.ObjectsVerified)
+func (r *runner) printCheckResult(result *cloudstic.CheckResult) bool {
+	_, _ = fmt.Fprintf(r.errOut, "\nRepository check complete.\n")
+	_, _ = fmt.Fprintf(r.errOut, "  Snapshots checked:  %d\n", result.SnapshotsChecked)
+	_, _ = fmt.Fprintf(r.errOut, "  Objects verified:   %d\n", result.ObjectsVerified)
 	if len(result.Errors) > 0 {
-		fmt.Fprintf(os.Stderr, "  Errors found:       %d\n\n", len(result.Errors))
+		_, _ = fmt.Fprintf(r.errOut, "  Errors found:       %d\n\n", len(result.Errors))
 		for _, e := range result.Errors {
-			fmt.Fprintf(os.Stderr, "  [%s] %s: %s\n", e.Type, e.Key, e.Message)
+			_, _ = fmt.Fprintf(r.errOut, "  [%s] %s: %s\n", e.Type, e.Key, e.Message)
 		}
-		fmt.Fprintln(os.Stderr)
+		_, _ = fmt.Fprintln(r.errOut)
 		return true
 	}
-	fmt.Fprintf(os.Stderr, "  Errors found:       0\n")
-	fmt.Fprintf(os.Stderr, "\nNo errors found — repository is healthy.\n")
+	_, _ = fmt.Fprintf(r.errOut, "  Errors found:       0\n")
+	_, _ = fmt.Fprintf(r.errOut, "\nNo errors found — repository is healthy.\n")
 	return false
 }

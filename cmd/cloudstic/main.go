@@ -34,36 +34,38 @@ func main() {
 }
 
 func runCmd(cmd string) int {
+	r := newRunner()
 	switch cmd {
 	case "version", "--version", "-v":
 		fmt.Printf("cloudstic %s (commit %s, built %s)\n", version, commit, date)
 		return 0
 	case "init":
-		runInit()
+		return r.runInit()
 	case "backup":
-		runBackup()
+		return r.runBackup()
 	case "restore":
-		runRestore()
+		return r.runRestore()
 	case "list":
-		runList()
+		return r.runList()
 	case "ls":
-		runLsSnapshot()
+		return r.runLsSnapshot()
 	case "prune":
-		runPrune()
+		return r.runPrune()
 	case "forget":
-		runForget()
+		return r.runForget()
 	case "diff":
-		runDiff()
+		return r.runDiff()
 	case "break-lock":
-		runBreakLock()
+		return r.runBreakLock()
 	case "key":
-		runKey()
+		return r.runKey()
 	case "check":
-		runCheck()
+		return r.runCheck()
 	case "cat":
-		runCat()
+		return r.runCat()
 	case "completion":
 		runCompletion()
+		return 0
 	case "help", "--help", "-h":
 		printUsage()
 		return 0
@@ -72,5 +74,4 @@ func runCmd(cmd string) int {
 		printUsage()
 		return 1
 	}
-	return 0
 }

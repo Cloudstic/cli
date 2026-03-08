@@ -62,6 +62,7 @@ func buildTree(tb testing.TB, tree *Tree, nDirs, filesPerDir int, parentFn func(
 //     → all 100 dir-00 files share the same L0/L1/L2 path.
 //   - Level 3 (bits 16–12): bit 16 from parent, bits 15–12 from file hash.
 //     → files diverge here across ~16 occupied L3 leaf buckets.
+//
 // The incremental update rewrites: 1 root + 3 internal path nodes + ~16 L3 leaves ≈ 20.
 //
 // Why the legacy count is ~68:

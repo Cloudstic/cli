@@ -48,12 +48,14 @@ func (s *GDriveChangeSource) GetStartPageToken() (string, error) {
 // changes are emitted before file changes so that the engine can resolve
 // parent references incrementally.
 func (s *GDriveChangeSource) WalkChanges(ctx context.Context, token string, callback func(FileChange) error) (string, error) {
+	s.mimeTypes = make(map[string]string)
+
 	var folderChanges, fileChanges []FileChange
 
 	pageToken := token
 	for {
 		call := s.service.Changes.List(pageToken).
-			Fields("nextPageToken, newStartPageToken, changes(fileId, removed, file(id, name, parents, mimeType, size, modifiedTime, owners, trashed, sha256Checksum))").
+			Fields("nextPageToken, newStartPageToken, changes(fileId, removed, file(id, name, parents, mimeType, size, modifiedTime, owners, trashed, sha256Checksum, headRevisionId))").
 			PageSize(1000).
 			Context(ctx)
 		if s.isSharedDrive() {
@@ -69,6 +71,12 @@ func (s *GDriveChangeSource) WalkChanges(ctx context.Context, token string, call
 
 		for _, ch := range resp.Changes {
 			fc := s.changeToFileChange(ch)
+
+			// Skip native files when the user opted out.
+			if s.skipNativeFiles && fc.Type == ChangeUpsert && ch.File != nil && isGoogleNativeMimeType(ch.File.MimeType) {
+				continue
+			}
+
 			if fc.Type == ChangeUpsert && fc.Meta.Type == core.FileTypeFolder {
 				folderChanges = append(folderChanges, fc)
 			} else {
@@ -239,6 +247,12 @@ func (s *GDriveChangeSource) changeToFileChange(ch *drive.Change) FileChange {
 			Meta: core.FileMeta{FileID: ch.FileId},
 		}
 	}
+
+	// Record MIME type for GetFileStream export routing.
+	if ch.File.MimeType != "application/vnd.google-apps.folder" {
+		s.mimeTypes[ch.File.Id] = ch.File.MimeType
+	}
+
 	return FileChange{
 		Type: ChangeUpsert,
 		Meta: s.toFileMeta(ch.File),

@@ -1,6 +1,6 @@
 # RFC 0003: Google Native File Export
 
-* **Status:** Proposed
+* **Status:** Implemented
 * **Date:** 2026-03-07
 * **Affects:** `pkg/source/gdrive.go`, `pkg/source/gdrive_changes.go`, `internal/engine/backup_scan.go`
 
@@ -209,7 +209,7 @@ When `skipNativeFiles` is false (the default), export is attempted for all nativ
 
 No changes needed to the query. The existing filter `mimeType != 'application/vnd.google-apps.folder'` correctly includes all native files. The `Size()` query also remains unchanged — native files contribute 0 bytes to the estimate, which is acceptable.
 
-### 2.6 `mimeTypes` map population
+### 2.7 `mimeTypes` map population
 
 In `Walk`: `toFileMeta` already has access to `f.MimeType`, so `visitEntryWithPath` (or `toFileMeta` itself) should populate `s.mimeTypes[f.Id] = f.MimeType` for every non-folder entry. `headRevisionId` must be added to the `fields` string in the `files.list` call so it is fetched alongside the existing fields at no extra cost:
 

@@ -49,10 +49,14 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Run Tests
+      - name: Run Unit Tests
         run: |
           set -o pipefail
-          go test -v -json -race -coverprofile=coverage.out -count=1 ./... | tee test-output.json
+          go test -v -json -race -coverprofile=unit.out -count=1 $(go list ./... | grep -v '/e2e') | tee test-output.json
+      - name: Run E2E Tests
+        run: |
+          set -o pipefail
+          E2E_COVERAGE_OUT=e2e_coverage.out go test -v -json -count=1 ./e2e/ | tee -a test-output.json
       - name: Test Report
         uses: dorny/test-reporter@v2
         if: always()
@@ -64,15 +68,22 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           echo "## Code Coverage" >> $GITHUB_STEP_SUMMARY
+          echo "### Unit Tests" >> $GITHUB_STEP_SUMMARY
           echo '```text' >> $GITHUB_STEP_SUMMARY
-          go tool cover -func=coverage.out >> $GITHUB_STEP_SUMMARY
+          go tool cover -func=unit.out >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
+          if [ -f e2e_coverage.out ]; then
+            echo "### E2E Tests" >> $GITHUB_STEP_SUMMARY
+            echo '```text' >> $GITHUB_STEP_SUMMARY
+            go tool cover -func=e2e_coverage.out >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
         if: matrix.os == 'ubuntu-latest'
         with:
           slug: Cloudstic/cli
-          files: coverage.out
+          files: unit.out,e2e_coverage.out
           token: ${{ secrets.CODECOV_TOKEN }}
   build:
     name: Build

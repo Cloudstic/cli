@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"archive/zip"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -10,6 +11,47 @@ import (
 	"strings"
 	"testing"
 )
+
+// TestMain sets up a shared GOCOVERDIR so that every instrumented binary
+// spawned during the e2e suite writes its coverage data to a single directory.
+// After all tests complete, the binary coverage data is converted to the
+// standard textfmt profile (compatible with go tool cover / Codecov) and
+// written to the path in E2E_COVERAGE_OUT, if set.
+func TestMain(m *testing.M) {
+	// Respect an externally-provided GOCOVERDIR (e.g. for custom CI setups).
+	// Otherwise create a temporary directory and own its lifecycle.
+	coverDir := os.Getenv("GOCOVERDIR")
+	ownsDir := coverDir == ""
+	if ownsDir {
+		var err error
+		coverDir, err = os.MkdirTemp("", "e2e-cover-*")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "e2e: failed to create GOCOVERDIR: %v\n", err)
+			os.Exit(1)
+		}
+		if err := os.Setenv("GOCOVERDIR", coverDir); err != nil {
+			fmt.Fprintf(os.Stderr, "e2e: failed to set GOCOVERDIR: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	code := m.Run()
+
+	// Convert binary coverage data → textfmt so it can be merged with the
+	// unit-test profile and uploaded to Codecov.
+	if outFile := os.Getenv("E2E_COVERAGE_OUT"); outFile != "" {
+		cmd := exec.Command("go", "tool", "covdata", "textfmt", "-i="+coverDir, "-o="+outFile)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "e2e: coverage conversion failed: %v\n%s\n", err, out)
+		}
+	}
+
+	if ownsDir {
+		_ = os.RemoveAll(coverDir)
+	}
+
+	os.Exit(code)
+}
 
 // shouldRun returns true if the given environment should run under the current E2E mode.
 func shouldRun(e TestEnv) bool {
@@ -24,7 +66,7 @@ func buildBinary(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "cloudstic")
-	cmd := exec.Command("go", "build", "-o", bin, "../cmd/cloudstic")
+	cmd := exec.Command("go", "build", "-cover", "-o", bin, "../cmd/cloudstic")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Build failed: %v\n%s", err, out)
 	}

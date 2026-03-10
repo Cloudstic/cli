@@ -158,3 +158,107 @@ func TestMatchesFilter(t *testing.T) {
 		t.Error("should not match when a tag is missing")
 	}
 }
+
+// TestGroupSnapshots_VolumeUUID verifies that snapshots from different
+// machines but the same VolumeUUID are grouped together.
+func TestGroupSnapshots_VolumeUUID(t *testing.T) {
+	macSource := &core.SourceInfo{
+		Type:       "local",
+		Account:    "mac-studio.local",
+		Path:       ".",
+		VolumeUUID: "UUID-SHARED",
+	}
+	linuxSource := &core.SourceInfo{
+		Type:       "local",
+		Account:    "linux-workstation",
+		Path:       ".",
+		VolumeUUID: "UUID-SHARED",
+	}
+	otherSource := &core.SourceInfo{
+		Type:       "local",
+		Account:    "mac-studio.local",
+		Path:       ".",
+		VolumeUUID: "UUID-OTHER",
+	}
+
+	entries := []SnapshotEntry{
+		makeEntry("a", "2026-03-03T12:00:00Z", macSource, nil),
+		makeEntry("b", "2026-03-02T12:00:00Z", linuxSource, nil),
+		makeEntry("c", "2026-03-01T12:00:00Z", otherSource, nil),
+	}
+
+	groups := groupSnapshots(entries, defaultGroupFields())
+
+	// macSource and linuxSource should be in the same group (same UUID + path).
+	// otherSource should be separate (different UUID).
+	if len(groups) != 2 {
+		t.Errorf("expected 2 groups (same UUID grouped together), got %d", len(groups))
+		for k, v := range groups {
+			t.Logf("  group %v: %d entries", k, len(v))
+		}
+	}
+
+	// Find the group with 2 entries (the shared UUID group).
+	found := false
+	for _, v := range groups {
+		if len(v) == 2 {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected one group with 2 entries (same VolumeUUID)")
+	}
+}
+
+// TestGroupSnapshots_VolumeUUID_DifferentSubdirs verifies that backups of
+// different sub-directories on the same drive are grouped independently.
+func TestGroupSnapshots_VolumeUUID_DifferentSubdirs(t *testing.T) {
+	photosSource := &core.SourceInfo{
+		Type:       "local",
+		Account:    "mac-studio.local",
+		Path:       "Photos",
+		VolumeUUID: "UUID-SHARED",
+	}
+	docsSource := &core.SourceInfo{
+		Type:       "local",
+		Account:    "mac-studio.local",
+		Path:       "Documents",
+		VolumeUUID: "UUID-SHARED",
+	}
+
+	entries := []SnapshotEntry{
+		makeEntry("a", "2026-03-02T12:00:00Z", photosSource, nil),
+		makeEntry("b", "2026-03-01T12:00:00Z", docsSource, nil),
+	}
+
+	groups := groupSnapshots(entries, defaultGroupFields())
+	if len(groups) != 2 {
+		t.Errorf("expected 2 groups (same UUID, different paths), got %d", len(groups))
+	}
+}
+
+// TestGroupSnapshots_MixedUUIDAndLegacy verifies that snapshots with
+// VolumeUUID group by UUID+path while those without group by account+path.
+func TestGroupSnapshots_MixedUUIDAndLegacy(t *testing.T) {
+	withUUID := &core.SourceInfo{
+		Type:       "local",
+		Account:    "mac-studio.local",
+		Path:       ".",
+		VolumeUUID: "UUID-1234",
+	}
+	withoutUUID := &core.SourceInfo{
+		Type:    "local",
+		Account: "mac-studio.local",
+		Path:    "/data",
+	}
+
+	entries := []SnapshotEntry{
+		makeEntry("a", "2026-03-02T12:00:00Z", withUUID, nil),
+		makeEntry("b", "2026-03-01T12:00:00Z", withoutUUID, nil),
+	}
+
+	groups := groupSnapshots(entries, defaultGroupFields())
+	if len(groups) != 2 {
+		t.Errorf("expected 2 groups (UUID vs legacy), got %d", len(groups))
+	}
+}

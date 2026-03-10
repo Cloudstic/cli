@@ -225,3 +225,196 @@ func TestBackupManager_Run(t *testing.T) {
 		t.Error("id2 missing in third snapshot")
 	}
 }
+
+// TestFindPreviousSnapshot_VolumeUUID verifies that findPreviousSnapshot
+// uses VolumeUUID for matching when present, enabling cross-machine
+// incremental backup for portable drives.
+func TestFindPreviousSnapshot_VolumeUUID(t *testing.T) {
+	s := NewMockStore()
+
+	// Create snapshots from two different machines backing up the same drive.
+	macSnap := &core.Snapshot{
+		Seq:     1,
+		Created: "2026-03-01T10:00:00Z",
+		Root:    "node/mac",
+		Source: &core.SourceInfo{
+			Type:       "local",
+			Account:    "mac-studio.local",
+			Path:       ".",
+			VolumeUUID: "A1B2C3D4-1234-5678-ABCD-EF0123456789",
+		},
+	}
+	linuxSnap := &core.Snapshot{
+		Seq:     2,
+		Created: "2026-03-02T10:00:00Z",
+		Root:    "node/linux",
+		Source: &core.SourceInfo{
+			Type:       "local",
+			Account:    "linux-workstation",
+			Path:       ".",
+			VolumeUUID: "A1B2C3D4-1234-5678-ABCD-EF0123456789",
+		},
+	}
+
+	ref1 := putSnapshot(t, s, macSnap)
+	ref2 := putSnapshot(t, s, linuxSnap)
+
+	// Build catalog with newest first.
+	putCatalog(t, s, []core.SnapshotSummary{
+		{Ref: ref2, Created: linuxSnap.Created, Root: linuxSnap.Root, Source: linuxSnap.Source},
+		{Ref: ref1, Created: macSnap.Created, Root: macSnap.Root, Source: macSnap.Source},
+	})
+
+	src := NewMockSource()
+	bm := NewBackupManager(src, s, ui.NewNoOpReporter(), nil)
+
+	// Search from the Mac with same UUID and same volume-relative path.
+	info := core.SourceInfo{
+		Type:       "local",
+		Account:    "mac-studio.local",
+		Path:       ".",
+		VolumeUUID: "A1B2C3D4-1234-5678-ABCD-EF0123456789",
+	}
+	prev := bm.findPreviousSnapshot(info)
+	if prev == nil {
+		t.Fatal("expected to find previous snapshot via UUID match")
+	}
+	// Should return the most recent (Linux) snapshot since catalog is newest-first.
+	if prev.Root != "node/linux" {
+		t.Errorf("expected linux snapshot (newest), got root=%s", prev.Root)
+	}
+}
+
+// TestFindPreviousSnapshot_LegacyFallback verifies that snapshots without
+// VolumeUUID are still found by the traditional account+path match.
+func TestFindPreviousSnapshot_LegacyFallback(t *testing.T) {
+	s := NewMockStore()
+
+	snap := &core.Snapshot{
+		Seq:     1,
+		Created: "2026-03-01T10:00:00Z",
+		Root:    "node/legacy",
+		Source: &core.SourceInfo{
+			Type:    "local",
+			Account: "myhost",
+			Path:    "/data",
+		},
+	}
+
+	ref := putSnapshot(t, s, snap)
+	putCatalog(t, s, []core.SnapshotSummary{
+		{Ref: ref, Created: snap.Created, Root: snap.Root, Source: snap.Source},
+	})
+
+	src := NewMockSource()
+	bm := NewBackupManager(src, s, ui.NewNoOpReporter(), nil)
+
+	// Search without VolumeUUID — should fall back to account+path.
+	info := core.SourceInfo{
+		Type:    "local",
+		Account: "myhost",
+		Path:    "/data",
+	}
+	prev := bm.findPreviousSnapshot(info)
+	if prev == nil {
+		t.Fatal("expected to find previous snapshot via legacy match")
+	}
+	if prev.Root != "node/legacy" {
+		t.Errorf("expected root=node/legacy, got %s", prev.Root)
+	}
+}
+
+// TestFindPreviousSnapshot_UUIDPreferredOverLegacy verifies that the UUID
+// match takes precedence when both UUID and account+path could match
+// different snapshots.
+func TestFindPreviousSnapshot_UUIDPreferredOverLegacy(t *testing.T) {
+	s := NewMockStore()
+
+	// Old snapshot from same machine, same path, no UUID.
+	oldSnap := &core.Snapshot{
+		Seq:     1,
+		Created: "2026-03-01T10:00:00Z",
+		Root:    "node/old",
+		Source: &core.SourceInfo{
+			Type:    "local",
+			Account: "mac-studio.local",
+			Path:    "/Volumes/MyDrive",
+		},
+	}
+	// Newer snapshot from different machine with UUID (volume-relative path).
+	newSnap := &core.Snapshot{
+		Seq:     2,
+		Created: "2026-03-02T10:00:00Z",
+		Root:    "node/new",
+		Source: &core.SourceInfo{
+			Type:       "local",
+			Account:    "linux-workstation",
+			Path:       ".",
+			VolumeUUID: "UUID-1234",
+		},
+	}
+
+	ref1 := putSnapshot(t, s, oldSnap)
+	ref2 := putSnapshot(t, s, newSnap)
+
+	putCatalog(t, s, []core.SnapshotSummary{
+		{Ref: ref2, Created: newSnap.Created, Root: newSnap.Root, Source: newSnap.Source},
+		{Ref: ref1, Created: oldSnap.Created, Root: oldSnap.Root, Source: oldSnap.Source},
+	})
+
+	src := NewMockSource()
+	bm := NewBackupManager(src, s, ui.NewNoOpReporter(), nil)
+
+	// Search with UUID — should find the UUID-matched snapshot first.
+	info := core.SourceInfo{
+		Type:       "local",
+		Account:    "mac-studio.local",
+		Path:       ".",
+		VolumeUUID: "UUID-1234",
+	}
+	prev := bm.findPreviousSnapshot(info)
+	if prev == nil {
+		t.Fatal("expected to find previous snapshot")
+	}
+	if prev.Root != "node/new" {
+		t.Errorf("expected UUID-matched snapshot (node/new), got root=%s", prev.Root)
+	}
+}
+
+// TestFindPreviousSnapshot_UUIDDifferentSubdirs verifies that backups of
+// different sub-directories on the same drive do not match each other.
+func TestFindPreviousSnapshot_UUIDDifferentSubdirs(t *testing.T) {
+	s := NewMockStore()
+
+	photosSnap := &core.Snapshot{
+		Seq:     1,
+		Created: "2026-03-01T10:00:00Z",
+		Root:    "node/photos",
+		Source: &core.SourceInfo{
+			Type:       "local",
+			Account:    "mac-studio.local",
+			Path:       "Photos",
+			VolumeUUID: "UUID-SAME-DRIVE",
+		},
+	}
+
+	ref := putSnapshot(t, s, photosSnap)
+	putCatalog(t, s, []core.SnapshotSummary{
+		{Ref: ref, Created: photosSnap.Created, Root: photosSnap.Root, Source: photosSnap.Source},
+	})
+
+	src := NewMockSource()
+	bm := NewBackupManager(src, s, ui.NewNoOpReporter(), nil)
+
+	// Search for Documents on the same drive — should NOT match Photos.
+	info := core.SourceInfo{
+		Type:       "local",
+		Account:    "mac-studio.local",
+		Path:       "Documents",
+		VolumeUUID: "UUID-SAME-DRIVE",
+	}
+	prev := bm.findPreviousSnapshot(info)
+	if prev != nil {
+		t.Errorf("expected nil (different subdir on same drive), got root=%s", prev.Root)
+	}
+}

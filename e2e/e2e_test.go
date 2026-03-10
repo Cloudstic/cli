@@ -129,6 +129,7 @@ func TestCLI_EndToEnd_Matrix(t *testing.T) {
 	sources := []func(t *testing.T) TestSource{
 		func(t *testing.T) TestSource { return newLocalSource(t) },
 	}
+	sources = append(sources, portableDriveSources()...)
 	stores := []func(t *testing.T) TestStore{
 		func(t *testing.T) TestStore { return newLocalStore(t) },
 	}

@@ -276,6 +276,7 @@ cloudstic backup -source local -source-path ~/Documents -dry-run
 | `-tag` | | Tag to apply to the snapshot (repeatable) |
 | `-exclude` | | Exclude pattern using gitignore syntax (repeatable) |
 | `-exclude-file` | | Path to file containing exclude patterns, one per line |
+| `-volume-uuid` | | Override volume UUID for local source (enables cross-machine incremental backup for portable drives) |
 | `-dry-run` | `false` | Scan source and report changes without writing to the store |
 
 The `gdrive-changes` and `onedrive-changes` source types use their respective change/delta APIs for faster incremental backups after the first full backup.
@@ -841,10 +842,56 @@ cloudstic backup -source local -source-path ~/project -exclude-file .backupignor
 | `-source-path` | `.` | Root directory to back up |
 | `-exclude` | | Exclude pattern, gitignore syntax (repeatable) |
 | `-exclude-file` | | File containing exclude patterns (one per line) |
+| `-volume-uuid` | | Override volume UUID (see [Portable drives](#portable-drives)) |
 
 Cloudstic walks the directory recursively. Symbolic links are not followed. File permissions are not preserved — only name, size, modification time, and content are captured.
 
 See [Exclude patterns](#exclude-patterns) for the full pattern syntax reference.
+
+#### Portable Drives
+
+When backing up a portable or external drive from multiple machines, Cloudstic automatically detects the volume identity (on macOS and Linux) and uses it to find previous snapshots. This enables true incremental backups across machines — only changed files are uploaded, even when the mount point or hostname differs.
+
+```bash
+# Back up a portable drive — UUID is auto-detected
+cloudstic backup -source local -source-path /Volumes/MyDrive
+
+# Override UUID when auto-detection fails or for custom lineage
+cloudstic backup -source local -source-path /mnt/backup -volume-uuid "A1B2C3D4-1234-5678-ABCD-EF0123456789"
+```
+
+The volume UUID can also be set via the `CLOUDSTIC_VOLUME_UUID` environment variable. When provided, the explicit UUID takes precedence over auto-detection.
+
+File paths inside the backup are normalized to forward slashes regardless of the operating system, so a backup started on one OS can be continued incrementally on another.
+
+Retention policies (via `forget`) automatically group all snapshots of the same volume together across machines, so a `--keep-daily 7` policy keeps 7 daily snapshots total regardless of which machine created them.
+
+**Cross-OS compatibility:**
+
+For modern GPT-formatted drives (the default for most drives today), Cloudstic uses the **GPT partition UUID** which is identical across all platforms — cross-OS incremental backups work automatically with no configuration needed.
+
+For older MBR-formatted drives (some FAT32 USB sticks), the auto-detected UUID is platform-specific and will differ between operating systems. In this case, use `-volume-uuid` (or `CLOUDSTIC_VOLUME_UUID`) with a consistent UUID value of your choice.
+
+| Platform | UUID detection | Label detection |
+|----------|---------------|-----------------|
+| macOS | ✓ Automatic (GPT partition UUID via `diskutil`, fallback to `getattrlist`) | ✓ Automatic |
+| Linux | ✓ Automatic (GPT partition UUID via `/dev/disk/by-partuuid/`, fallback to `/dev/disk/by-uuid/`) | ✓ Automatic (`/dev/disk/by-label/`) |
+| Windows | ✓ Automatic (GPT partition UUID via `DeviceIoControl`) | ✓ Automatic (`GetVolumeInformation`) |
+
+**Directories spanning multiple drives:**
+
+The volume UUID is determined from the backup root path only. If your backup directory contains mount points for other volumes (e.g. `/data/external` is a separate partition mounted under `/data`), those files are included in the backup but the volume identity reflects only the root path's filesystem. This is usually fine — the backup works correctly, and incremental detection still functions based on file content. However, for portable drive workflows, back up each volume separately rather than backing up a parent directory that spans multiple drives:
+
+```bash
+# Good: back up each volume independently
+cloudstic backup -source local -source-path /Volumes/MyDrive
+cloudstic backup -source local -source-path /Volumes/OtherDrive
+
+# Avoid: backing up a parent that contains mount points from different volumes
+cloudstic backup -source local -source-path /Volumes
+```
+
+Note that symlinks to other volumes are **not followed** — only direct mount points within the tree are traversed.
 
 ### SFTP Source
 

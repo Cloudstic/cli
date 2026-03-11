@@ -12,16 +12,36 @@ import (
 func (s *LocalSource) Info() core.SourceInfo {
 	hostname, _ := os.Hostname()
 	absPath, _ := filepath.Abs(s.rootPath)
+
+	// When volume UUID is present, store the path relative to the volume
+	// mount point instead of the absolute path. This makes the path
+	// stable across machines where mount points differ.
+	infoPath := absPath
+	if s.volumeUUID != "" && s.volumeMountPoint != "" {
+		// Resolve symlinks so the relative path is correct (e.g. on macOS
+		// /var → /private/var but the mount point is /System/Volumes/Data).
+		realAbs, errA := filepath.EvalSymlinks(absPath)
+		realMount, errM := filepath.EvalSymlinks(s.volumeMountPoint)
+		if errA == nil && errM == nil {
+			if rel, err := filepath.Rel(realMount, realAbs); err == nil {
+				infoPath = filepath.ToSlash(rel)
+			}
+		}
+	}
+
 	return core.SourceInfo{
-		Type:    "local",
-		Account: hostname,
-		Path:    absPath,
+		Type:        "local",
+		Account:     hostname,
+		Path:        infoPath,
+		VolumeUUID:  s.volumeUUID,
+		VolumeLabel: s.volumeLabel,
 	}
 }
 
 // localOptions holds configuration for a local filesystem source.
 type localOptions struct {
 	excludePatterns []string
+	volumeUUID      string // explicit override for volume UUID
 }
 
 // LocalOption configures a local filesystem source.
@@ -34,10 +54,22 @@ func WithLocalExcludePatterns(patterns []string) LocalOption {
 	}
 }
 
+// WithVolumeUUID overrides the auto-detected volume UUID for the source.
+// Use this for filesystems where UUID detection is unsupported or to
+// explicitly tie backups to a specific snapshot lineage.
+func WithVolumeUUID(uuid string) LocalOption {
+	return func(o *localOptions) {
+		o.volumeUUID = uuid
+	}
+}
+
 // LocalSource implements Source for local filesystem.
 type LocalSource struct {
-	rootPath string
-	exclude  *ExcludeMatcher
+	rootPath         string
+	exclude          *ExcludeMatcher
+	volumeUUID       string
+	volumeLabel      string
+	volumeMountPoint string
 }
 
 // NewLocalSource creates a local filesystem source rooted at rootPath.
@@ -46,9 +78,18 @@ func NewLocalSource(rootPath string, opts ...LocalOption) *LocalSource {
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+
+	uuid, label, mountPoint := detectVolumeIdentity(rootPath)
+	if cfg.volumeUUID != "" {
+		uuid = cfg.volumeUUID
+	}
+
 	return &LocalSource{
-		rootPath: rootPath,
-		exclude:  NewExcludeMatcher(cfg.excludePatterns),
+		rootPath:         rootPath,
+		exclude:          NewExcludeMatcher(cfg.excludePatterns),
+		volumeUUID:       uuid,
+		volumeLabel:      label,
+		volumeMountPoint: mountPoint,
 	}
 }
 
@@ -82,17 +123,20 @@ func (s *LocalSource) Walk(ctx context.Context, callback func(core.FileMeta) err
 			fileType = core.FileTypeFile
 		}
 
+		// Normalize to forward slashes so backup trees are portable across OS.
+		normalizedPath := filepath.ToSlash(relPath)
+
 		var parents []string
-		if dir := filepath.Dir(relPath); dir != "." {
+		if dir := filepath.ToSlash(filepath.Dir(relPath)); dir != "." {
 			parents = []string{dir}
 		}
 
 		meta := core.FileMeta{
-			FileID:  relPath,
+			FileID:  normalizedPath,
 			Name:    filepath.Base(path),
 			Type:    fileType,
 			Parents: parents,
-			Paths:   []string{relPath},
+			Paths:   []string{normalizedPath},
 			Size:    info.Size(),
 			Mtime:   info.ModTime().Unix(),
 		}

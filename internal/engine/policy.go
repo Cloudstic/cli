@@ -132,11 +132,22 @@ func makeGroupKey(snap *core.Snapshot, gf groupFields) GroupKey {
 		if gf.source {
 			k.Source = snap.Source.Type
 		}
-		if gf.account {
-			k.Account = snap.Source.Account
-		}
-		if gf.path {
-			k.Path = snap.Source.Path
+		// When VolumeUUID is present, use it as the primary grouping
+		// identity instead of account. Path is kept (it is relative to
+		// the volume root) so that different sub-directories of the same
+		// drive are grouped independently.
+		if snap.Source.VolumeUUID != "" && (gf.account || gf.path) {
+			k.Account = snap.Source.VolumeUUID
+			if gf.path {
+				k.Path = snap.Source.Path
+			}
+		} else {
+			if gf.account {
+				k.Account = snap.Source.Account
+			}
+			if gf.path {
+				k.Path = snap.Source.Path
+			}
 		}
 	}
 	if gf.tags && len(snap.Tags) > 0 {

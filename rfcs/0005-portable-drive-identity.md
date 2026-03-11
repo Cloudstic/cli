@@ -1,6 +1,6 @@
 # RFC 0005: Portable Drive Identity
 
-* **Status:** Proposed
+* **Status:** Implemented
 * **Date:** 2026-03-07
 * **Affects:** `internal/core/models.go`, `internal/engine/backup.go`, `internal/engine/policy.go`, `pkg/source/local_source.go`, `cmd/cloudstic/main.go`
 
@@ -104,7 +104,7 @@ Day 3 — Mac:   UUID match → S2 found, incremental scan, only changed files
 type SourceInfo struct {
     Type        string `json:"type"`
     Account     string `json:"account,omitempty"`  // hostname (informational)
-    Path        string `json:"path,omitempty"`      // mount point at time of backup (informational)
+    Path        string `json:"path,omitempty"`      // volume-relative path when VolumeUUID is set; absolute otherwise
     VolumeUUID  string `json:"volume_uuid,omitempty"` // stable identity across mounts/machines
     VolumeLabel string `json:"volume_label,omitempty"` // human-readable name (e.g. "MyDrive")
     FsType      string `json:"fs_type,omitempty"`   // proposed in RFC 0004
@@ -117,59 +117,57 @@ These fields are backward-compatible: old snapshots have neither field; the engi
 
 ### 2.2 Obtaining the volume UUID per platform
 
-UUID collection is isolated in `local_source_unix.go` (established by RFC 0004):
+UUID collection is isolated in platform-specific files (`local_source_darwin.go`, `local_source_linux.go`, `local_source_windows.go`, `local_source_stub.go`).
+
+The primary goal is **cross-OS stability**: the same physical drive should produce the same UUID regardless of which operating system performs the backup. To achieve this, the implementation prefers the **GPT partition UUID** over platform-specific volume UUIDs. The GPT partition UUID is a standard UUID stored in the GUID Partition Table and is identical on every OS that reads the same partition table.
+
+**Detection priority (per platform):**
+
+1. GPT partition UUID (cross-OS stable) — preferred
+2. Platform-specific volume/filesystem UUID — fallback
+3. Manual override via `-volume-uuid` — always takes final precedence
 
 #### macOS
 
-Use `getattrlist(2)` with `ATTR_VOL_UUID` on the mount point path. The result is a 16-byte UUID. Additionally, `statfs.F_vol_name` or a second `getattrlist(ATTR_VOL_NAME)` call gives the volume label.
+1. **GPT partition UUID** (preferred): Use `syscall.Statfs` to obtain the BSD device name from `Mntfromname` (e.g. `/dev/disk2s1`), then run `diskutil info -plist <device>` and parse the `DiskUUID` key from the XML plist output. This returns the GPT partition UUID, which is identical to the value Linux reads from the partition table.
 
-```go
-// macOS: getattrlist on the mount root
-type volAttrs struct {
-    length uint32
-    uuid   [16]byte
-    name   [256]byte
-}
-attrList := syscall.AttrList{
-    Bitmapcount: syscall.ATTR_BIT_MAP_COUNT,
-    Volattr:     syscall.ATTR_VOL_UUID | syscall.ATTR_VOL_NAME,
-}
-// syscall.Getattrlist(path, &attrList, unsafe.Pointer(&buf), ...)
-```
+2. **Volume UUID** (fallback): Use `getattrlist(2)` with `ATTR_VOL_UUID`. This returns a macOS-specific 128-bit UUID that differs from what Linux reports for the same drive. Used only when the GPT partition UUID is unavailable (e.g. MBR-formatted drives).
+
+3. **Volume label**: `getattrlist(2)` with `ATTR_VOL_NAME` provides the human-readable volume name.
 
 #### Linux
 
-Linux `statfs(2)` does not expose a UUID. The UUID is stored on-disk and readable from two stable locations:
+1. **GPT partition UUID** (preferred): Find the device via `/proc/mounts` + `syscall.Stat` (matching `st.Dev`), then scan `/dev/disk/by-partuuid/` symlinks for a matching device. The `by-partuuid` directory contains GPT partition UUIDs.
 
-1. **`/dev/disk/by-uuid/`**: a directory of symlinks `{uuid} → ../../sdXN`. Find the device for the path via `statfs.Fsid` or `/proc/mounts`, then look for a matching symlink.
-2. **`/proc/mounts` + `blkid`**: parse `/proc/mounts` to find the device for the mount point, then read the UUID from the kernel via `ioctl(BLKID)` or by reading the filesystem superblock directly (ext4: offset 0x468, 16 bytes; btrfs: different offset).
+2. **Filesystem UUID** (fallback): Scan `/dev/disk/by-uuid/` symlinks. This returns the filesystem-level UUID (e.g. ext4 superblock UUID, FAT32 volume serial). Used when `by-partuuid` has no match (MBR-formatted drives).
 
-**Recommended implementation for Linux**: read from `/dev/disk/by-uuid/`. It requires no additional privileges and is stable on all modern distributions:
+3. **Volume label**: Scan `/dev/disk/by-label/` symlinks.
 
-```go
-// Find mount point for path via statfs → Fsid → /proc/mounts
-// Then scan /dev/disk/by-uuid/ for a symlink pointing to that device
-func findVolumeUUIDLinux(path string) (string, error) {
-    device, err := deviceForPath(path)     // parses /proc/mounts
-    if err != nil {
-        return "", err
-    }
-    entries, _ := os.ReadDir("/dev/disk/by-uuid")
-    for _, e := range entries {
-        target, _ := os.Readlink("/dev/disk/by-uuid/" + e.Name())
-        if filepath.Base(target) == filepath.Base(device) {
-            return e.Name(), nil
-        }
-    }
-    return "", nil
-}
-```
+All UUIDs are normalized to uppercase for consistent matching across platforms.
 
-This approach does not require `blkid`, `libblkid`, or root privileges.
+#### Windows
 
-#### Stub (Windows, plan9)
+1. **GPT partition UUID** (preferred): Use `GetVolumePathName` to determine the volume mount point, then open the volume with `CreateFile` (`\\.\C:`) and call `DeviceIoControl` with `IOCTL_DISK_GET_PARTITION_INFO_EX`. For GPT partitions, `PARTITION_INFORMATION_EX.Gpt.PartitionId` contains the GPT partition UUID — the same UUID that macOS and Linux detect from the partition table. Returns empty for MBR partitions.
 
-Return `"", ""` — UUID and label are left empty, existing matching logic applies.
+2. **Volume label**: `GetVolumeInformation` provides the human-readable volume name.
+
+3. **Mount point**: `GetVolumePathName` returns the drive root (e.g. `C:\`).
+
+No elevation is required — `CreateFile` with zero access rights and `FILE_SHARE_READ | FILE_SHARE_WRITE` is sufficient for partition info queries.
+
+#### Stub (plan9, etc.)
+
+Return `"", "", ""` — UUID, label, and mount point are left empty, existing matching logic applies. Users can use `-volume-uuid` for manual override.
+
+#### Cross-OS compatibility matrix
+
+| Partition table | UUID source | macOS ↔ Linux | macOS/Linux ↔ Windows |
+|---|---|---|---|
+| GPT | Partition UUID (`DiskUUID` / `by-partuuid` / `DeviceIoControl`) | ✓ Identical | ✓ Identical |
+| MBR | Platform-specific (getattrlist / `by-uuid` / none) | ✗ Different | ✗ Different |
+| MBR + `-volume-uuid` | Manual override | ✓ User-controlled | ✓ User-controlled |
+
+Modern portable drives (formatted as exFAT or APFS on GPT) produce matching UUIDs automatically. Older MBR-formatted FAT32 drives require `-volume-uuid` for cross-OS use.
 
 #### When UUID is unavailable
 
@@ -184,12 +182,13 @@ func (bm *BackupManager) findPreviousSnapshot(info core.SourceInfo) *core.Snapsh
         return nil
     }
 
-    // Pass 1: UUID match (cross-machine, mount-point-agnostic)
+    // Pass 1: UUID + path match (cross-machine, mount-point-agnostic)
     if info.VolumeUUID != "" {
         for _, e := range entries {
             if e.Snap.Source != nil &&
                 e.Snap.Source.Type == info.Type &&
-                e.Snap.Source.VolumeUUID == info.VolumeUUID {
+                e.Snap.Source.VolumeUUID == info.VolumeUUID &&
+                e.Snap.Source.Path == info.Path {
                 snap := e.Snap
                 return &snap
             }
@@ -211,7 +210,7 @@ func (bm *BackupManager) findPreviousSnapshot(info core.SourceInfo) *core.Snapsh
 }
 ```
 
-**Pass 1** is tried first whenever `VolumeUUID` is non-empty. It finds the most recent snapshot for this drive regardless of which machine performed it or where it was mounted. The `entries` slice is already sorted newest-first by `LoadSnapshotCatalog`, so the first match is the correct previous snapshot.
+**Pass 1** is tried first whenever `VolumeUUID` is non-empty. It finds the most recent snapshot for the same drive **and the same sub-directory** (by matching `Type + VolumeUUID + Path`). Because `Path` is stored relative to the volume mount point when a UUID is present (e.g. `"."` for the drive root, `"Photos"` for a sub-directory), this match works regardless of which machine performed the backup or where the drive was mounted. Users can independently back up different sub-directories of the same drive, and each sub-directory maintains its own snapshot lineage.
 
 **Pass 2** is the existing logic. It activates when:
 
@@ -259,11 +258,12 @@ When `VolumeLabel` is empty, fall back to the existing `account:path` display.
 ```go
 func NewLocalSource(rootPath string, opts ...LocalOption) *LocalSource {
     // ...
-    uuid, label := detectVolumeIdentity(rootPath) // platform helper
+    uuid, label, mountPoint := detectVolumeIdentity(rootPath) // platform helper
     return &LocalSource{
-        rootPath:    rootPath,
-        volumeUUID:  uuid,
-        volumeLabel: label,
+        rootPath:         rootPath,
+        volumeUUID:       uuid,
+        volumeLabel:      label,
+        volumeMountPoint: mountPoint,
         // ...
     }
 }
@@ -271,10 +271,26 @@ func NewLocalSource(rootPath string, opts ...LocalOption) *LocalSource {
 func (s *LocalSource) Info() core.SourceInfo {
     hostname, _ := os.Hostname()
     absPath, _  := filepath.Abs(s.rootPath)
+
+    // When volume UUID is present, store the path relative to the volume
+    // mount point. This makes path matching work across machines where
+    // mount points differ, and allows independent backups of different
+    // sub-directories on the same drive.
+    infoPath := absPath
+    if s.volumeUUID != "" && s.volumeMountPoint != "" {
+        realAbs, errA := filepath.EvalSymlinks(absPath)
+        realMount, errM := filepath.EvalSymlinks(s.volumeMountPoint)
+        if errA == nil && errM == nil {
+            if rel, err := filepath.Rel(realMount, realAbs); err == nil {
+                infoPath = filepath.ToSlash(rel)
+            }
+        }
+    }
+
     return core.SourceInfo{
         Type:        "local",
         Account:     hostname,
-        Path:        absPath,
+        Path:        infoPath,
         VolumeUUID:  s.volumeUUID,
         VolumeLabel: s.volumeLabel,
         FsType:      s.fsType, // RFC 0004
@@ -282,7 +298,9 @@ func (s *LocalSource) Info() core.SourceInfo {
 }
 ```
 
-`detectVolumeIdentity` is called once at construction, not on every `Info()` call.
+`detectVolumeIdentity` is called once at construction, not on every `Info()` call. It also returns the volume mount point, which is used to compute the relative path.
+
+The `volumeMountPoint` field stores the detected mount point (e.g. `/Volumes/MyDrive` on macOS, `/media/user/MyDrive` on Linux). Symlinks are resolved before computing the relative path (important on macOS where `/var` → `/private/var`).
 
 ### 2.7 Explicit override flag
 
@@ -320,15 +338,13 @@ When an explicit UUID is provided it takes precedence over the detected value.
 3. Populate both fields in `Info()`.
 4. Add `WithVolumeUUID(uuid string) LocalOption` for the explicit override.
 
-### `pkg/source/local_source_unix.go` *(extended from RFC 0004)*
+### `pkg/source/local_source_unix.go` → platform-specific files
 
-1. Add `func detectVolumeIdentity(path string) (uuid, label string)`:
-   * macOS: `getattrlist` with `ATTR_VOL_UUID | ATTR_VOL_NAME`.
-   * Linux: `deviceForPath` + `/dev/disk/by-uuid/` scan.
+Implemented as three separate files (one per platform):
 
-### `pkg/source/local_source_stub.go` *(extended from RFC 0004)*
-
-1. Stub `detectVolumeIdentity` returning `"", ""`.
+1. **`local_source_darwin.go`**: `detectVolumeIdentity` tries GPT partition UUID via `Statfs` + `diskutil info -plist`, falls back to `getattrlist(ATTR_VOL_UUID)`. Includes `extractPlistValue` XML parser.
+2. **`local_source_linux.go`**: `detectVolumeIdentity` tries `/dev/disk/by-partuuid/` (GPT), falls back to `/dev/disk/by-uuid/` (filesystem UUID).
+3. **`local_source_stub.go`**: Returns `"", ""` for unsupported platforms.
 
 ### `cmd/cloudstic/main.go`
 
@@ -337,9 +353,11 @@ When an explicit UUID is provided it takes precedence over the detected value.
 ### Tests
 
 1. `local_source_unix_test.go`: verify `detectVolumeIdentity` returns a non-empty UUID for a temp directory on the test runner's native filesystem; verify it is a valid UUID format.
-2. `backup_test.go`: unit test for `findPreviousSnapshot` UUID-first pass: create two mock snapshots for different machines with the same `VolumeUUID`; verify the most recent one is returned regardless of `Account`/`Path`.
+2. `backup_test.go`: unit test for `findPreviousSnapshot` UUID-first pass: create two mock snapshots for different machines with the same `VolumeUUID` and volume-relative `Path`; verify the most recent one is returned regardless of `Account`.
 3. `backup_test.go`: verify legacy fallback: snapshots without `VolumeUUID` are still found by `account+path`.
-4. `policy_test.go`: verify that two snapshots from different machines but same `VolumeUUID` are grouped together under the same retention key.
+4. `backup_test.go`: verify that two snapshots with the same `VolumeUUID` but different sub-directory paths (e.g. `"Photos"` vs `"Documents"`) do **not** match each other.
+5. `policy_test.go`: verify that two snapshots from different machines but same `VolumeUUID` and `Path` are grouped together under the same retention key.
+6. `policy_test.go`: verify that two snapshots with the same `VolumeUUID` but different `Path` values are in **separate** retention groups.
 
 ---
 
@@ -347,7 +365,9 @@ When an explicit UUID is provided it takes precedence over the detected value.
 
 ### fileID stability across machines
 
-`fileID` in the `local` source is the path relative to `rootPath`. For a portable drive mounted at `/Volumes/MyDrive` on macOS and `/media/user/MyDrive` on Linux, the **relative** paths are identical. A file at `/Volumes/MyDrive/Photos/img.jpg` has `fileID = Photos/img.jpg` on both machines. The HAMT lookup, change detection, and dedup all work correctly without any changes to `fileID` semantics.
+`fileID` in the `local` source is the path relative to `rootPath`, **normalized to forward slashes** (via `filepath.ToSlash`). For a portable drive mounted at `/Volumes/MyDrive` on macOS and `/media/user/MyDrive` on Linux, the relative paths are identical (`Photos/img.jpg`). On Windows, backslashes are converted to forward slashes before storage so the same file produces the same `fileID` regardless of OS. The HAMT lookup, change detection, and dedup all work correctly without any changes to `fileID` semantics.
+
+Similarly, the `Path` field in `SourceInfo` is stored as a **volume-relative path** (normalized to forward slashes) when `VolumeUUID` is set — e.g. `"."` for the drive root, `"Photos"` for a sub-directory. This ensures snapshot matching works across machines regardless of mount point. Without `VolumeUUID`, `Path` retains the absolute path for backward compatibility with non-portable sources.
 
 ### Concurrent access from multiple machines
 
@@ -364,6 +384,12 @@ Grouping all backups of a drive into one retention group means a retention polic
 ### UUID unavailability on non-standard filesystems
 
 `tmpfs`, `ramfs`, `procfs`, `sysfs`, and some network filesystems (NFS, SMB) do not have volume UUIDs. UUID detection returns empty, and the legacy `account+path` matching applies. This is correct: these are not portable drives.
+
+### Directories spanning multiple drives
+
+The volume UUID is determined once at source construction from the backup root path. If the backup directory contains mount points for other filesystems (e.g. `/data/external` is a separate partition mounted under `/data`), `filepath.Walk` crosses into those sub-mounts transparently — the files are included in the backup, but the volume UUID and mount-relative path reflect only the root path's filesystem. This is acceptable because backup and dedup operate on file content, not on volume boundaries. However, users should back up each portable drive as a separate source rather than backing up a parent directory that spans multiple drives, since the volume identity would not accurately represent the sub-mounted volumes.
+
+Symlinks to other volumes are **not followed** by `filepath.Walk` (which uses `os.Lstat`). Only direct mount points within the directory tree are traversed.
 
 ### VM disk images and `dd` copies
 

@@ -126,8 +126,15 @@ func TestLocalSource(t *testing.T) {
 	if info.Type != "local" {
 		t.Errorf("Expected type 'local', got %s", info.Type)
 	}
-	if info.Path != tmpDir {
-		t.Errorf("Expected Path '%s', got %s", tmpDir, info.Path)
+	if info.VolumeUUID != "" {
+		// Path is volume-relative when UUID is detected.
+		if len(info.Path) > 0 && info.Path[0] == '/' {
+			t.Errorf("Expected volume-relative Path when UUID is set, got absolute: %s", info.Path)
+		}
+	} else {
+		if info.Path != tmpDir {
+			t.Errorf("Expected Path '%s', got %s", tmpDir, info.Path)
+		}
 	}
 
 	// Test Size()

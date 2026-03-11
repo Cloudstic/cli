@@ -25,6 +25,7 @@ type backupArgs struct {
 	dryRun          bool
 	excludeFile     string
 	skipNativeFiles bool
+	volumeUUID      string
 	tags            stringArrayFlags
 	excludes        stringArrayFlags
 }
@@ -40,6 +41,7 @@ func parseBackupArgs() *backupArgs {
 	dryRun := fs.Bool("dry-run", false, "Scan source and report changes without writing to the store")
 	skipNativeFiles := fs.Bool("skip-native-files", false, "Exclude Google-native files (Docs, Sheets, Slides, etc.) from the backup")
 	excludeFile := fs.String("exclude-file", "", "Path to file with exclude patterns (one per line, gitignore syntax)")
+	volumeUUID := fs.String("volume-uuid", envDefault("CLOUDSTIC_VOLUME_UUID", ""), "Override volume UUID for local source (enables cross-machine incremental backup)")
 	fs.Var(&a.tags, "tag", "Tag to apply to the snapshot (can be specified multiple times)")
 	fs.Var(&a.excludes, "exclude", "Exclude pattern (gitignore syntax, repeatable)")
 	mustParse(fs)
@@ -50,6 +52,7 @@ func parseBackupArgs() *backupArgs {
 	a.dryRun = *dryRun
 	a.skipNativeFiles = *skipNativeFiles
 	a.excludeFile = *excludeFile
+	a.volumeUUID = *volumeUUID
 	return a
 }
 
@@ -63,7 +66,7 @@ func (r *runner) runBackup() int {
 
 	ctx := context.Background()
 
-	src, err := initSource(ctx, a.sourceType, a.sourcePath, a.driveID, a.rootFolder, a.skipNativeFiles, a.g, excludePatterns)
+	src, err := initSource(ctx, a.sourceType, a.sourcePath, a.driveID, a.rootFolder, a.skipNativeFiles, a.volumeUUID, a.g, excludePatterns)
 	if err != nil {
 		return r.fail("Failed to init source: %v", err)
 	}
@@ -135,10 +138,14 @@ func (r *runner) printBackupSummary(res *engine.RunResult) {
 	}
 }
 
-func initSource(ctx context.Context, sourceType, sourcePath, driveID, rootFolder string, skipNativeFiles bool, g *globalFlags, excludePatterns []string) (source.Source, error) {
+func initSource(ctx context.Context, sourceType, sourcePath, driveID, rootFolder string, skipNativeFiles bool, volumeUUID string, g *globalFlags, excludePatterns []string) (source.Source, error) {
 	switch sourceType {
 	case "local":
-		return source.NewLocalSource(sourcePath, source.WithLocalExcludePatterns(excludePatterns)), nil
+		opts := []source.LocalOption{source.WithLocalExcludePatterns(excludePatterns)}
+		if volumeUUID != "" {
+			opts = append(opts, source.WithVolumeUUID(volumeUUID))
+		}
+		return source.NewLocalSource(sourcePath, opts...), nil
 	case "sftp":
 		sftpHost, sftpOpts := g.sftpSourceOpts(g.sourceSFTPHost, g.sourceSFTPPort, g.sourceSFTPUser, g.sourceSFTPPassword, g.sourceSFTPKey, &sourcePath)
 		if sftpHost == "" {

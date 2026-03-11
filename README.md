@@ -16,13 +16,14 @@ Content-addressable, encrypted backup tool for Google Drive, OneDrive, and local
 - **Multiple sources:** Google Drive, Google Drive Changes API, OneDrive, local directories
 - **Multiple backends:** Local filesystem, Amazon S3 (and compatibles like R2, MinIO), or Backblaze B2
 - **Retention policies:** Keep-last, hourly, daily, weekly, monthly, yearly
+- **Portable drive awareness:** Automatically identifies USB drives and external disks by GPT partition UUID — back up the same drive from any machine or mount point, across macOS, Linux, and Windows
 - **Point-in-time restore:** Restore any snapshot, any file, any time
 
 ## Supported Sources
 
 | Source | Flag | Description |
 | :--- | :--- | :--- |
-| Local directory | `-source local` | Back up any local folder |
+| Local directory | `-source local` | Back up any local folder (auto-detects portable drives) |
 | Google Drive | `-source gdrive` | Full rescan of My Drive or a Shared Drive |
 | Google Drive (Changes) | `-source gdrive-changes` | **Recommended.** Fast incremental backup via the Changes API |
 | OneDrive | `-source onedrive` | Full scan of a Microsoft OneDrive account |
@@ -52,6 +53,9 @@ cloudstic backup -source local -source-path ~/Documents
 # Back up Google Drive (opens browser for auth on first run)
 cloudstic backup -source gdrive-changes
 
+# Back up a USB drive (auto-detected by partition UUID)
+cloudstic backup -source local -source-path /Volumes/MyUSB
+
 # List snapshots
 cloudstic list
 
@@ -68,6 +72,23 @@ When running interactively, Cloudstic prompts for the repository password if no 
 cloudstic init -encryption-password "my passphrase"
 cloudstic backup -source local -source-path ~/Documents -encryption-password "my passphrase"
 ```
+
+## Portable Drive Backup
+
+Cloudstic automatically detects when a source path is on a portable drive (USB stick, external SSD, SD card). It identifies the drive by its **GPT partition UUID** and stores paths relative to the volume root, so backups are consistent regardless of where the drive is mounted or which OS you use.
+
+```bash
+# On macOS — drive mounts at /Volumes/MyUSB
+cloudstic backup -source local -source-path /Volumes/MyUSB
+
+# On Linux — same drive mounts at /mnt/usb
+cloudstic backup -source local -source-path /mnt/usb
+
+# Both produce identical snapshots with the same source identity
+cloudstic list
+```
+
+This works automatically on GPT-formatted drives (exFAT, APFS, ext4, NTFS). For older MBR-formatted drives, pass `-volume-uuid` explicitly. See the [User Guide](docs/user-guide.md#portable-drive-backup) for details.
 
 ## Performance
 

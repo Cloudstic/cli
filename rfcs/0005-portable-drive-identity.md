@@ -60,21 +60,24 @@ A drive has a stable identity when its **volume UUID** matches. The volume UUID 
 * It changes: reformatting (`diskutil eraseDisk`, `mkfs`), which correctly starts a new snapshot lineage.
 * Edge cases: cloning a disk image may duplicate the UUID (VM snapshots, `dd` copies). This is rare and documented but not handled specially.
 
-### 1.4 Remote sources are unaffected
+### 1.4 Cloud source identity
 
-Remote and network sources already produce machine-agnostic identity without any changes:
+Cloud sources now use the same `VolumeUUID`/`VolumeLabel` fields as local sources where applicable:
 
-| Source | `Account` | `Path` | Cross-machine stable? |
-|---|---|---|---|
-| `gdrive` / `gdrive-changes` | Gmail address (`user@gmail.com`) | Drive/folder ID (`drivePath(driveID, rootFolderID)`) | ✓ |
-| `onedrive` / `onedrive-changes` | User principal name (`user@company.com`) | `onedrive://` | ✓ |
-| `sftp` | `user@host` | Root path on server | ✓ (tied to server, not client) |
+| Source | `Account` | `Path` | `VolumeUUID` | `VolumeLabel` |
+|---|---|---|---|---|
+| `gdrive` (My Drive) | Gmail address | `/` or `<folderID>` | *(empty)* | `My Drive` |
+| `gdrive` (shared drive) | Gmail address | `/` or `<folderID>` | `<driveID>` | Drive name |
+| `onedrive` | User principal name | `/` | *(empty)* | `My Drive` |
+| `sftp` | `user@host` | Root path on server | *(empty)* | *(empty)* |
 
-`Account` for cloud sources is the authenticated account identifier, not the hostname of the machine running the backup. Plugging in from a different machine with the same OAuth token produces an identical `SourceInfo`, so `findPreviousSnapshot` finds the previous snapshot normally. **No changes are required for any remote source.**
+For **shared drives**, `VolumeUUID` enables cross-account matching: different Google accounts accessing the same shared drive produce the same `VolumeUUID`, so `findPreviousSnapshot` Pass 1 (`Type + VolumeUUID + Path`) matches regardless of which account runs the backup.
 
-`VolumeUUID` in `SourceInfo` is a `local`-only concept. The UUID-first pass in `findPreviousSnapshot` is guarded by `VolumeUUID != ""`, so it is never attempted for `gdrive`, `onedrive`, or `sftp` entries — those fall straight through to the existing `account+path` match, which already works correctly.
+For **My Drive** and **OneDrive**, the account email is the stable identity — there is no globally unique drive identifier beyond the account itself. These use `findPreviousSnapshot` Pass 2 (`Type + Account + Path`).
 
-The one edge case worth noting for `sftp`: if the server's hostname or IP changes (DNS rename, server migration), `Account = user@oldhost` no longer matches. This is analogous to the local source's `Path` instability, but for SFTP the host is the stable identity marker and migration is an explicit, operator-controlled event. A future RFC could introduce a `-sftp-server-id` override similar to `-volume-uuid` proposed here.
+`VolumeLabel` is set for display purposes: `My Drive` for personal drives, or the shared drive name (fetched via `Drives.Get` at construction time).
+
+SFTP sources remain unchanged — the server `user@host` is the stable identity marker.
 
 ### 1.5 The cross-machine workflow
 
@@ -214,9 +217,8 @@ func (bm *BackupManager) findPreviousSnapshot(info core.SourceInfo) *core.Snapsh
 
 **Pass 2** is the existing logic. It activates when:
 
-* `VolumeUUID` is empty (UUID detection failed, or Windows stub).
+* `VolumeUUID` is empty (UUID detection failed, My Drive, OneDrive, or SFTP).
 * The drive has no previous snapshot from any machine (pass 1 found nothing).
-* The source is not a local drive (e.g. `gdrive`, `sftp`) — those never set `VolumeUUID`.
 
 ### 2.4 Retention policy grouping
 

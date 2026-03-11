@@ -89,9 +89,10 @@ func (s *OneDriveSource) Info() core.SourceInfo {
 		s.account = s.fetchAccount()
 	}
 	return core.SourceInfo{
-		Type:    "onedrive",
-		Account: s.account,
-		Path:    "onedrive://",
+		Type:        "onedrive",
+		Account:     s.account,
+		Path:        "/",
+		VolumeLabel: "My Drive",
 	}
 }
 

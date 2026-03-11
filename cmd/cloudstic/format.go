@@ -47,10 +47,9 @@ func (r *runner) renderSnapshotTable(entries []engine.SnapshotEntry, reasons map
 		if e.Snap.Source != nil {
 			source = e.Snap.Source.Type
 			if e.Snap.Source.VolumeLabel != "" {
-				account = e.Snap.Source.VolumeLabel
-			} else {
-				account = e.Snap.Source.Account
+				source += " (" + e.Snap.Source.VolumeLabel + ")"
 			}
+			account = e.Snap.Source.Account
 			path = e.Snap.Source.Path
 		} else if e.Snap.Meta != nil {
 			source = e.Snap.Meta["source"]

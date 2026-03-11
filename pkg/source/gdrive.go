@@ -102,6 +102,7 @@ type GDriveSource struct {
 	driveID         string // shared drive ID; empty means "My Drive"
 	rootFolderID    string // if empty, defaults to "root" (entire drive)
 	account         string // Google account email; populated automatically
+	driveName       string // shared drive name; populated during construction
 	exclude         *ExcludeMatcher
 	skipNativeFiles bool
 	mimeTypes       map[string]string // fileID → mimeType; populated during Walk/WalkChanges
@@ -160,14 +161,23 @@ func NewGDriveSource(ctx context.Context, opts ...GDriveOption) (*GDriveSource, 
 		}
 	}
 
-	return &GDriveSource{
+	src := &GDriveSource{
 		service:         srv,
 		driveID:         cfg.driveID,
 		rootFolderID:    cfg.rootFolderID,
 		account:         cfg.accountEmail,
 		exclude:         NewExcludeMatcher(cfg.excludePatterns),
 		skipNativeFiles: cfg.skipNativeFiles,
-	}, nil
+	}
+
+	// Resolve the shared drive name for VolumeLabel.
+	if cfg.driveID != "" {
+		if d, err := srv.Drives.Get(cfg.driveID).Fields("name").Do(); err == nil {
+			src.driveName = d.Name
+		}
+	}
+
+	return src, nil
 }
 
 func (s *GDriveSource) Info() core.SourceInfo {
@@ -175,27 +185,33 @@ func (s *GDriveSource) Info() core.SourceInfo {
 	if account == "" {
 		if about, err := s.service.About.Get().Fields("user(emailAddress)").Do(); err == nil && about.User != nil {
 			account = about.User.EmailAddress
+			s.account = account
 		}
 	}
-	return core.SourceInfo{
+
+	path := "/"
+	if s.rootFolderID != "" {
+		path = s.rootFolderID
+	}
+
+	info := core.SourceInfo{
 		Type:    "gdrive",
 		Account: account,
-		Path:    drivePath(s.driveID, s.rootFolderID),
+		Path:    path,
 	}
+
+	if s.isSharedDrive() {
+		info.VolumeUUID = s.driveID
+		info.VolumeLabel = s.driveName
+	} else {
+		info.VolumeLabel = "My Drive"
+	}
+
+	return info
 }
 
 func (s *GDriveSource) isSharedDrive() bool {
 	return s.driveID != ""
-}
-
-// drivePath builds a URI-like path that uniquely identifies the drive and
-// optional root folder: "my-drive://" or "<driveID>://<rootFolderID>".
-func drivePath(driveID, rootFolderID string) string {
-	drive := "my-drive"
-	if driveID != "" {
-		drive = driveID
-	}
-	return drive + "://" + rootFolderID
 }
 
 // ---------------------------------------------------------------------------

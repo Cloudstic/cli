@@ -486,3 +486,92 @@ func TestWithSkipNativeFiles(t *testing.T) {
 		t.Error("WithSkipNativeFiles should set skipNativeFiles to true")
 	}
 }
+
+func TestGDriveInfo_MyDrive_Root(t *testing.T) {
+	s := &GDriveSource{account: "user@gmail.com"}
+	info := s.Info()
+
+	if info.Type != "gdrive" {
+		t.Errorf("Type = %q, want gdrive", info.Type)
+	}
+	if info.Account != "user@gmail.com" {
+		t.Errorf("Account = %q, want user@gmail.com", info.Account)
+	}
+	if info.Path != "/" {
+		t.Errorf("Path = %q, want /", info.Path)
+	}
+	if info.VolumeUUID != "" {
+		t.Errorf("VolumeUUID = %q, want empty for My Drive", info.VolumeUUID)
+	}
+	if info.VolumeLabel != "My Drive" {
+		t.Errorf("VolumeLabel = %q, want My Drive", info.VolumeLabel)
+	}
+}
+
+func TestGDriveInfo_MyDrive_Subfolder(t *testing.T) {
+	s := &GDriveSource{account: "user@gmail.com", rootFolderID: "folder123"}
+	info := s.Info()
+
+	if info.Path != "folder123" {
+		t.Errorf("Path = %q, want folder123", info.Path)
+	}
+	if info.VolumeUUID != "" {
+		t.Errorf("VolumeUUID = %q, want empty for My Drive", info.VolumeUUID)
+	}
+	if info.VolumeLabel != "My Drive" {
+		t.Errorf("VolumeLabel = %q, want My Drive", info.VolumeLabel)
+	}
+}
+
+func TestGDriveInfo_SharedDrive_Root(t *testing.T) {
+	s := &GDriveSource{
+		account:   "user@gmail.com",
+		driveID:   "shared-drive-abc",
+		driveName: "Team Photos",
+	}
+	info := s.Info()
+
+	if info.Path != "/" {
+		t.Errorf("Path = %q, want /", info.Path)
+	}
+	if info.VolumeUUID != "shared-drive-abc" {
+		t.Errorf("VolumeUUID = %q, want shared-drive-abc", info.VolumeUUID)
+	}
+	if info.VolumeLabel != "Team Photos" {
+		t.Errorf("VolumeLabel = %q, want Team Photos", info.VolumeLabel)
+	}
+}
+
+func TestGDriveInfo_SharedDrive_Subfolder(t *testing.T) {
+	s := &GDriveSource{
+		account:      "user@gmail.com",
+		driveID:      "shared-drive-abc",
+		driveName:    "Team Photos",
+		rootFolderID: "folder456",
+	}
+	info := s.Info()
+
+	if info.Path != "folder456" {
+		t.Errorf("Path = %q, want folder456", info.Path)
+	}
+	if info.VolumeUUID != "shared-drive-abc" {
+		t.Errorf("VolumeUUID = %q, want shared-drive-abc", info.VolumeUUID)
+	}
+	if info.VolumeLabel != "Team Photos" {
+		t.Errorf("VolumeLabel = %q, want Team Photos", info.VolumeLabel)
+	}
+}
+
+func TestGDriveChangesInfo_Type(t *testing.T) {
+	s := &GDriveChangeSource{
+		GDriveSource: GDriveSource{account: "user@gmail.com"},
+	}
+	info := s.Info()
+
+	if info.Type != "gdrive-changes" {
+		t.Errorf("Type = %q, want gdrive-changes", info.Type)
+	}
+	if info.VolumeLabel != "My Drive" {
+		t.Errorf("VolumeLabel = %q, want My Drive", info.VolumeLabel)
+	}
+}

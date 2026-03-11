@@ -52,8 +52,8 @@ _cloudstic() {
         case "${words[i]}" in
             -*)
                 # skip flags and their values
-                case "${words[i]}" in
-					-store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-store-sftp-password|-store-sftp-key|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-auth-ref|-google-credentials|-google-token-file|-onedrive-client-id|-onedrive-token-file|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account|-json)
+				case "${words[i]}" in
+					-store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-store-sftp-password|-store-sftp-key|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-all-profiles|-auth-ref|-google-credentials|-google-token-file|-onedrive-client-id|-onedrive-token-file|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account|-json|-xattr-namespaces)
 						((i++)) ;;
 				esac
                 ;;
@@ -73,10 +73,10 @@ _cloudstic() {
     # Complete flags per subcommand
     local cmd_flags=""
     case "$cmd" in
-        init)
-            cmd_flags="-add-recovery-key -no-encryption -adopt-slots" ;;
-        backup)
-            cmd_flags="-source -profile -all-profiles -auth-ref -profiles-file -skip-native-files -google-credentials -google-token-file -onedrive-client-id -onedrive-token-file -tag -dry-run" ;;
+		init)
+			cmd_flags="-add-recovery-key -no-encryption -adopt-slots" ;;
+		backup)
+			cmd_flags="-source -profile -all-profiles -auth-ref -profiles-file -skip-native-files -google-credentials -google-token-file -onedrive-client-id -onedrive-token-file -tag -dry-run -skip-mode -skip-flags -skip-xattrs -xattr-namespaces" ;;
         restore)
             cmd_flags="-output -format -path -dry-run" ;;
         prune)
@@ -321,7 +321,11 @@ _cloudstic() {
                 '-onedrive-client-id[OneDrive OAuth client ID]:id:' \
                 '-onedrive-token-file[OneDrive OAuth token file]:path:_files' \
                 '*-tag[Tag for the snapshot]:tag:' \
-                '-dry-run[Scan without writing]'
+                '-dry-run[Scan without writing]' \
+                '-skip-mode[Skip POSIX mode/uid/gid/btime/flags]' \
+                '-skip-flags[Skip file flags ioctl (Linux only)]' \
+                '-skip-xattrs[Skip extended attribute collection]' \
+                '-xattr-namespaces[Restrict xattr collection to prefixes]:prefixes:'
             ;;
         profile)
             local -a profile_commands
@@ -652,6 +656,10 @@ complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l onedrive-client
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l onedrive-token-file -r -F -d 'OneDrive OAuth token file'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l tag -x -d 'Tag for the snapshot'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l dry-run -d 'Scan without writing'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-mode -d 'Skip POSIX mode/uid/gid/btime/flags'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-flags -d 'Skip file flags ioctl (Linux only)'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-xattrs -d 'Skip extended attribute collection'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l xattr-namespaces -x -d 'Restrict xattr collection to prefixes'
 
 # profile subcommands
 complete -c cloudstic -n '__fish_seen_subcommand_from profile; and not __fish_seen_subcommand_from list show new' -a list -d 'List stores, auth entries, and backup profiles'

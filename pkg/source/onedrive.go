@@ -214,6 +214,7 @@ func (s *OneDriveSource) Info() core.SourceInfo {
 		Path:      s.rootPath,
 		PathID:    s.rootID,
 		DriveName: "My Drive",
+		FsType:    "onedrive",
 	}
 	if s.driveID != "" {
 		info.Identity = s.driveID

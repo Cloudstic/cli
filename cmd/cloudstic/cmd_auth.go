@@ -252,7 +252,7 @@ func (r *runner) runAuthLogin() int {
 		if googleCreds == "" {
 			googleCreds = os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
 		}
-		src, err := initSource(ctx, "gdrive:/", false, "", googleCreds, auth.GoogleTokenFile, "", "", g, nil)
+		src, err := initSource(ctx, "gdrive:/", false, "", googleCreds, auth.GoogleTokenFile, "", "", false, false, false, "", g, nil)
 		if err != nil {
 			return r.fail("Failed to initialize Google auth source: %v", err)
 		}
@@ -262,7 +262,7 @@ func (r *runner) runAuthLogin() int {
 		if onedriveClientID == "" {
 			onedriveClientID = os.Getenv("ONEDRIVE_CLIENT_ID")
 		}
-		src, err := initSource(ctx, "onedrive:/", false, "", "", "", onedriveClientID, auth.OneDriveTokenFile, g, nil)
+		src, err := initSource(ctx, "onedrive:/", false, "", "", "", onedriveClientID, auth.OneDriveTokenFile, false, false, false, "", g, nil)
 		if err != nil {
 			return r.fail("Failed to initialize OneDrive auth source: %v", err)
 		}

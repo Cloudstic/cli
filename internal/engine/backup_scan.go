@@ -233,7 +233,37 @@ func metadataEqual(a, b core.FileMeta) bool {
 		a.Size == b.Size &&
 		a.Mtime == b.Mtime &&
 		a.Type == b.Type &&
+		a.Mode == b.Mode &&
+		a.Uid == b.Uid &&
+		a.Gid == b.Gid &&
+		a.Btime == b.Btime &&
+		a.Flags == b.Flags &&
+		xattrsEqual(a.Xattrs, b.Xattrs) &&
 		len(a.Parents) == len(b.Parents)
+}
+
+func xattrsEqual(a, b map[string][]byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if bv, ok := b[k]; !ok || !bytesEqual(v, bv) {
+			return false
+		}
+	}
+	return true
+}
+
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (bm *BackupManager) insertFolder(_ context.Context, root string, meta *core.FileMeta, phase ui.Phase) (string, error) {

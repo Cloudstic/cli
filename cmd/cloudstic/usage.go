@@ -137,6 +137,10 @@ func printUsage() {
 		{"-exclude <pattern>", "Exclude pattern, gitignore syntax (repeatable)"},
 		{"-exclude-file <path>", "Load exclude patterns from file (one per line, gitignore syntax)"},
 		{"-dry-run", "Scan source and report changes without writing to the store"},
+		{"-skip-mode", "Skip POSIX mode, uid, gid, btime, and flags collection"},
+		{"-skip-flags", "Skip file flags ioctl (Linux only; no effect on macOS)"},
+		{"-skip-xattrs", "Skip extended attribute collection"},
+		{"-xattr-namespaces <prefixes>", "Restrict xattr collection to prefixes (comma-separated)"},
 	})
 	t.Blank()
 	t.Note(

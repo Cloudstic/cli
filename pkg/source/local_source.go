@@ -49,6 +49,10 @@ func (s *LocalSource) Info() core.SourceInfo {
 		Path:      displayPath,
 		PathID:    pathID,
 		DriveName: s.volumeLabel,
+		FsType:    s.fsType,
+
+		VolumeUUID:  s.volumeUUID,
+		VolumeLabel: s.volumeLabel,
 		Identity: func() string {
 			if s.volumeUUID != "" {
 				return s.volumeUUID
@@ -61,7 +65,11 @@ func (s *LocalSource) Info() core.SourceInfo {
 // localOptions holds configuration for a local filesystem source.
 type localOptions struct {
 	excludePatterns []string
-	volumeUUID      string // explicit override for volume UUID
+	volumeUUID      string   // explicit override for volume UUID
+	skipMode        bool     // skip Mode, Uid, Gid, Btime, Flags collection
+	skipFlags       bool     // skip Flags ioctl only (Linux); no-op on macOS
+	skipXattrs      bool     // skip extended attribute collection
+	xattrNamespaces []string // restrict xattr collection to these prefixes
 }
 
 // LocalOption configures a local filesystem source.
@@ -83,6 +91,29 @@ func WithVolumeUUID(uuid string) LocalOption {
 	}
 }
 
+// WithSkipMode disables collection of POSIX mode, uid, gid, btime, and flags.
+func WithSkipMode() LocalOption {
+	return func(o *localOptions) { o.skipMode = true }
+}
+
+// WithSkipFlags disables the FS_IOC_GETFLAGS ioctl on Linux. On macOS,
+// flags come free from stat and this option has no effect.
+func WithSkipFlags() LocalOption {
+	return func(o *localOptions) { o.skipFlags = true }
+}
+
+// WithSkipXattrs disables extended attribute collection.
+func WithSkipXattrs() LocalOption {
+	return func(o *localOptions) { o.skipXattrs = true }
+}
+
+// WithXattrNamespaces restricts xattr collection to attributes whose name
+// starts with one of the given prefixes (e.g. "user.", "com.apple.").
+// An empty slice (default) collects all readable attributes.
+func WithXattrNamespaces(prefixes []string) LocalOption {
+	return func(o *localOptions) { o.xattrNamespaces = prefixes }
+}
+
 // LocalSource implements Source for local filesystem.
 type LocalSource struct {
 	rootPath         string
@@ -90,6 +121,11 @@ type LocalSource struct {
 	volumeUUID       string
 	volumeLabel      string
 	volumeMountPoint string
+	fsType           string
+	skipMode         bool
+	skipFlags        bool
+	skipXattrs       bool
+	xattrNamespaces  []string
 }
 
 // NewLocalSource creates a local filesystem source rooted at rootPath.
@@ -110,6 +146,11 @@ func NewLocalSource(rootPath string, opts ...LocalOption) *LocalSource {
 		volumeUUID:       uuid,
 		volumeLabel:      label,
 		volumeMountPoint: mountPoint,
+		fsType:           detectFsType(rootPath),
+		skipMode:         cfg.skipMode,
+		skipFlags:        cfg.skipFlags,
+		skipXattrs:       cfg.skipXattrs,
+		xattrNamespaces:  cfg.xattrNamespaces,
 	}
 }
 
@@ -160,6 +201,8 @@ func (s *LocalSource) Walk(ctx context.Context, callback func(core.FileMeta) err
 			Size:    info.Size(),
 			Mtime:   info.ModTime().Unix(),
 		}
+
+		readExtendedMeta(path, &meta, s.skipMode, s.skipFlags, s.skipXattrs, s.xattrNamespaces)
 
 		return callback(meta)
 	})

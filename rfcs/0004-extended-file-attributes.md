@@ -1,6 +1,6 @@
 # RFC 0004: Extended File Attributes
 
-* **Status:** Proposed
+* **Status:** Implemented
 * **Date:** 2026-03-07
 * **Affects:** `pkg/source/local_source.go`, `pkg/source/sftp_source.go`, `internal/core/models.go`, `internal/engine/backup_scan.go`, `internal/engine/restore.go`
 
@@ -616,3 +616,16 @@ The current restore path produces a ZIP archive. A `restore --target <dir>` mode
 * Handling permission elevation: `Lchown` requires root on most systems.
 * Conflict resolution: what to do when target paths already exist.
 * Progress reporting and resume on interrupted restores.
+
+### RFC Cloud source metadata
+
+Google Drive and OneDrive expose metadata that doesn't map to POSIX attributes but is worth preserving for round-trip fidelity. This would extend the `Extra` map rather than adding top-level `FileMeta` fields:
+
+* **Birth time (`Btime`)**: Google Drive exposes `createdTime`, OneDrive exposes `createdDateTime`. The `Btime` field proposed in this RFC covers all sources — cloud sources should populate it alongside local/SFTP.
+* **MIME type**: Google Drive already stores `mimeType` in `Extra`; OneDrive deserializes `file.mimeType` but discards it. Both should be consistent.
+* **Content hash**: OneDrive exposes `file.hashes.sha256Hash` but we don't capture it in `ContentHash`. Google Drive already populates `sha256Checksum`.
+* **File owner**: OneDrive exposes `createdBy`/`lastModifiedBy` but doesn't populate `FileMeta.Owner`. Google Drive already captures the first owner's email.
+* **Google Drive properties**: `file.Properties` and `file.AppProperties` are user/app-defined key-value pairs, conceptually similar to filesystem xattrs. These could be stored under `Extra["properties"]` if round-trip preservation is desired.
+* **OneDrive media facets**: `image`, `photo`, `video`, and `audio` facets contain EXIF-like metadata (dimensions, camera model, duration). Useful for media-heavy backups but increases object size.
+
+Implementation should be a separate effort since it doesn't require schema changes beyond what this RFC already proposes (`Btime`) and consistent use of `Extra`.

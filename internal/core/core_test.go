@@ -44,3 +44,66 @@ func TestComputeJSONHash(t *testing.T) {
 		t.Errorf("Hash mismatch: got %s, calculated from data %s", hash, expectedHash)
 	}
 }
+
+func TestFileMetaHashStability_WithXattrs(t *testing.T) {
+	// Xattrs map keys must be sorted for deterministic hashing.
+	meta := FileMeta{
+		Version: 1,
+		FileID:  "test.txt",
+		Name:    "test.txt",
+		Type:    FileTypeFile,
+		Size:    100,
+		Mtime:   1000,
+		Mode:    0755,
+		Uid:     501,
+		Gid:     20,
+		Btime:   900,
+		Xattrs: map[string][]byte{
+			"user.zeta":  []byte("last"),
+			"user.alpha": []byte("first"),
+		},
+	}
+
+	hash1, _, err := ComputeJSONHash(&meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Compute again — must be identical.
+	hash2, _, err := ComputeJSONHash(&meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if hash1 != hash2 {
+		t.Errorf("hash not stable: %s vs %s", hash1, hash2)
+	}
+}
+
+func TestFileMetaOmitempty(t *testing.T) {
+	// Fields with zero values should be omitted from JSON.
+	meta := FileMeta{
+		Version: 1,
+		FileID:  "test.txt",
+		Name:    "test.txt",
+		Type:    FileTypeFile,
+		Size:    100,
+		Mtime:   1000,
+	}
+
+	_, data, err := ComputeJSONHash(&meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, field := range []string{"mode", "uid", "gid", "btime", "flags", "xattrs"} {
+		if _, ok := decoded[field]; ok {
+			t.Errorf("expected %q to be omitted from JSON when zero, but it was present", field)
+		}
+	}
+}

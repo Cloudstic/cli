@@ -259,6 +259,7 @@ func (s *GDriveSource) Info() core.SourceInfo {
 		Path:      s.rootPath,
 		PathID:    s.selectedRootID(),
 		DriveName: "My Drive",
+		FsType:    "google-drive",
 	}
 
 	if s.isSharedDrive() {

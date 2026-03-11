@@ -58,5 +58,5 @@ jobs:
       - uses: vedantmgoyal9/winget-releaser@v2
         with:
           identifier: Cloudstic.CLI
-          installers-regex: '_windows_amd64\.zip$'
+          installers-regex: '_windows_(amd64|arm64)\.zip$'
           token: ${{ secrets.WINGET_TOKEN }}

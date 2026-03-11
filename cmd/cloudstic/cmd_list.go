@@ -9,12 +9,16 @@ import (
 )
 
 type listArgs struct {
-	g *globalFlags
+	g     *globalFlags
+	group *bool
 }
 
 func parseListArgs() *listArgs {
 	fs := flag.NewFlagSet("list", flag.ExitOnError)
-	a := &listArgs{g: addGlobalFlags(fs)}
+	a := &listArgs{
+		g:     addGlobalFlags(fs),
+		group: fs.Bool("group", false, "Group snapshots by source identity"),
+	}
 	mustParse(fs)
 	return a
 }
@@ -31,7 +35,7 @@ func (r *runner) runList() int {
 	if err != nil {
 		return r.fail("List failed: %v", err)
 	}
-	r.printListResult(result)
+	r.printListResult(result, *a.group)
 	return 0
 }
 
@@ -43,7 +47,11 @@ func buildListOpts(a *listArgs) []cloudstic.ListOption {
 	return listOpts
 }
 
-func (r *runner) printListResult(result *cloudstic.ListResult) {
+func (r *runner) printListResult(result *cloudstic.ListResult, group bool) {
 	_, _ = fmt.Fprintf(r.out, "%d snapshots\n", len(result.Snapshots))
-	r.renderSnapshotTable(result.Snapshots, nil)
+	if group {
+		r.renderGroupedSnapshotTables(result.Snapshots)
+	} else {
+		r.renderSnapshotTable(result.Snapshots, nil)
+	}
 }

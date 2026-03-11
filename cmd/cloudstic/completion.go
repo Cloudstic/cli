@@ -109,7 +109,9 @@ _cloudstic() {
                     cmd_flags="" ;;
             esac
             ;;
-        list|ls|diff|break-lock|version|help)
+        list)
+            cmd_flags="-group" ;;
+        ls|diff|break-lock|version|help)
             cmd_flags="" ;;
     esac
 
@@ -246,7 +248,8 @@ _cloudstic() {
                 ':snapshot ID:'
             ;;
         list)
-            _arguments $global_flags
+            _arguments $global_flags \
+                '-group[Group output by source identity]'
             ;;
         ls)
             _arguments $global_flags \
@@ -401,6 +404,9 @@ complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l dry-run -d 'Sca
 # restore
 complete -c cloudstic -n '__fish_seen_subcommand_from restore' -l output -r -F -d 'Output ZIP file path'
 complete -c cloudstic -n '__fish_seen_subcommand_from restore' -l dry-run -d 'Show what would be restored'
+
+# list
+complete -c cloudstic -n '__fish_seen_subcommand_from list' -l group -d 'Group output by source identity'
 
 # prune
 complete -c cloudstic -n '__fish_seen_subcommand_from prune' -l dry-run -d 'Show what would be deleted'

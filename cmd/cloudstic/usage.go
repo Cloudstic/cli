@@ -122,7 +122,9 @@ func printUsage() {
 	t.Blank()
 
 	t.Command("list", "")
-	t.Note("  No additional flags.")
+	t.Flags([][2]string{
+		{"-group", "Group snapshots by source identity"},
+	})
 	t.Blank()
 
 	t.Command("ls", "[snapshot_id]")

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/engine"
 	"github.com/jedib0t/go-pretty/v6/table"
 )
@@ -66,4 +67,69 @@ func (r *runner) renderSnapshotTable(entries []engine.SnapshotEntry, reasons map
 	}
 
 	t.Render()
+}
+
+// sourceGroupKey returns a string key that groups snapshots by source identity.
+func sourceGroupKey(s *core.SourceInfo) string {
+	if s == nil {
+		return ""
+	}
+	if s.VolumeUUID != "" {
+		return s.Type + "\x00" + s.VolumeUUID + "\x00" + s.Path
+	}
+	return s.Type + "\x00" + s.Account + "\x00" + s.Path
+}
+
+// sourceGroupLabel returns a human-readable label for a source group.
+func sourceGroupLabel(s *core.SourceInfo) string {
+	if s == nil {
+		return "(unknown source)"
+	}
+	var parts []string
+	label := s.Type
+	if s.VolumeLabel != "" {
+		label += " (" + s.VolumeLabel + ")"
+	}
+	parts = append(parts, label)
+	if s.Account != "" {
+		parts = append(parts, s.Account)
+	}
+	if s.Path != "" {
+		parts = append(parts, s.Path)
+	}
+	return strings.Join(parts, " · ")
+}
+
+// renderGroupedSnapshotTables prints one table per source group.
+func (r *runner) renderGroupedSnapshotTables(entries []engine.SnapshotEntry) {
+	// Collect groups preserving first-seen order.
+	type group struct {
+		key     string
+		label   string
+		entries []engine.SnapshotEntry
+	}
+	var groups []group
+	idx := map[string]int{}
+
+	for _, e := range entries {
+		k := sourceGroupKey(e.Snap.Source)
+		if i, ok := idx[k]; ok {
+			groups[i].entries = append(groups[i].entries, e)
+		} else {
+			idx[k] = len(groups)
+			groups = append(groups, group{
+				key:     k,
+				label:   sourceGroupLabel(e.Snap.Source),
+				entries: []engine.SnapshotEntry{e},
+			})
+		}
+	}
+
+	for i, g := range groups {
+		if i > 0 {
+			_, _ = fmt.Fprintln(r.out)
+		}
+		_, _ = fmt.Fprintf(r.out, "── %s (%d snapshots)\n", g.label, len(g.entries))
+		r.renderSnapshotTable(g.entries, nil)
+	}
 }

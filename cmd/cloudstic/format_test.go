@@ -85,3 +85,141 @@ func TestRenderSnapshotTable_WithReasons(t *testing.T) {
 		t.Errorf("expected 'REASONS' header in output, got:\n%s", got)
 	}
 }
+
+func TestRenderSnapshotTable_VolumeLabel(t *testing.T) {
+	var out strings.Builder
+	r := &runner{out: &out, errOut: &strings.Builder{}}
+
+	entries := []engine.SnapshotEntry{
+		{
+			Ref: "snapshot/abc",
+			Snap: core.Snapshot{
+				Seq:     1,
+				Created: "2024-01-01T00:00:00Z",
+				Source: &core.SourceInfo{
+					Type:        "gdrive",
+					Account:     "user@gmail.com",
+					Path:        "/",
+					VolumeLabel: "My Drive",
+				},
+			},
+		},
+	}
+	r.renderSnapshotTable(entries, nil)
+
+	got := out.String()
+	if !strings.Contains(got, "gdrive (My Drive)") {
+		t.Errorf("expected 'gdrive (My Drive)' in Source column, got:\n%s", got)
+	}
+	if !strings.Contains(got, "user@gmail.com") {
+		t.Errorf("expected account in Account column, got:\n%s", got)
+	}
+}
+
+func TestSourceGroupKey(t *testing.T) {
+	tests := []struct {
+		name   string
+		source *core.SourceInfo
+		want   string
+	}{
+		{"nil source", nil, ""},
+		{
+			"local with UUID",
+			&core.SourceInfo{Type: "local", Account: "host", Path: ".", VolumeUUID: "UUID-1"},
+			"local\x00UUID-1\x00.",
+		},
+		{
+			"gdrive no UUID",
+			&core.SourceInfo{Type: "gdrive", Account: "user@gmail.com", Path: "/"},
+			"gdrive\x00user@gmail.com\x00/",
+		},
+		{
+			"shared drive with UUID",
+			&core.SourceInfo{Type: "gdrive", Account: "user@gmail.com", Path: "/", VolumeUUID: "drive-123"},
+			"gdrive\x00drive-123\x00/",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sourceGroupKey(tt.source)
+			if got != tt.want {
+				t.Errorf("sourceGroupKey() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSourceGroupLabel(t *testing.T) {
+	tests := []struct {
+		name   string
+		source *core.SourceInfo
+		want   string
+	}{
+		{"nil source", nil, "(unknown source)"},
+		{
+			"local no label",
+			&core.SourceInfo{Type: "local", Account: "macbook", Path: "/data"},
+			"local · macbook · /data",
+		},
+		{
+			"gdrive with label",
+			&core.SourceInfo{Type: "gdrive", Account: "user@gmail.com", Path: "/", VolumeLabel: "My Drive"},
+			"gdrive (My Drive) · user@gmail.com · /",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sourceGroupLabel(tt.source)
+			if got != tt.want {
+				t.Errorf("sourceGroupLabel() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRenderGroupedSnapshotTables(t *testing.T) {
+	var out strings.Builder
+	r := &runner{out: &out, errOut: &strings.Builder{}}
+
+	entries := []engine.SnapshotEntry{
+		{
+			Ref: "snapshot/aaa",
+			Snap: core.Snapshot{
+				Seq: 1, Created: "2024-01-01T00:00:00Z",
+				Source: &core.SourceInfo{Type: "gdrive", Account: "user@gmail.com", Path: "/", VolumeLabel: "My Drive"},
+			},
+		},
+		{
+			Ref: "snapshot/bbb",
+			Snap: core.Snapshot{
+				Seq: 2, Created: "2024-01-02T00:00:00Z",
+				Source: &core.SourceInfo{Type: "local", Account: "macbook", Path: "."},
+			},
+		},
+		{
+			Ref: "snapshot/ccc",
+			Snap: core.Snapshot{
+				Seq: 3, Created: "2024-01-03T00:00:00Z",
+				Source: &core.SourceInfo{Type: "gdrive", Account: "user@gmail.com", Path: "/", VolumeLabel: "My Drive"},
+			},
+		},
+	}
+
+	r.renderGroupedSnapshotTables(entries)
+
+	got := out.String()
+	// Should have two group headers.
+	if strings.Count(got, "──") != 2 {
+		t.Errorf("expected 2 group headers, got:\n%s", got)
+	}
+	if !strings.Contains(got, "gdrive (My Drive) · user@gmail.com · / (2 snapshots)") {
+		t.Errorf("expected gdrive group header with 2 snapshots, got:\n%s", got)
+	}
+	if !strings.Contains(got, "local · macbook · . (1 snapshots)") {
+		t.Errorf("expected local group header with 1 snapshot, got:\n%s", got)
+	}
+	// Both snapshot hashes should appear.
+	if !strings.Contains(got, "aaa") || !strings.Contains(got, "bbb") || !strings.Contains(got, "ccc") {
+		t.Errorf("expected all snapshot hashes in output, got:\n%s", got)
+	}
+}

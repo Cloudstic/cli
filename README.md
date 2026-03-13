@@ -48,13 +48,13 @@ Or download a binary from [Releases](https://github.com/cloudstic/cli/releases).
 cloudstic init
 
 # Back up a local directory (prompts for password if not set via flag or env)
-cloudstic backup -source local -source-path ~/Documents
+cloudstic backup -source local:~/Documents
 
 # Back up Google Drive (opens browser for auth on first run)
 cloudstic backup -source gdrive-changes
 
 # Back up a USB drive (auto-detected by partition UUID)
-cloudstic backup -source local -source-path /Volumes/MyUSB
+cloudstic backup -source local:/Volumes/MyUSB
 
 # List snapshots
 cloudstic list
@@ -63,14 +63,14 @@ cloudstic list
 cloudstic restore
 
 # Preview what a backup would do (dry run)
-cloudstic backup -source local -source-path ~/Documents -dry-run
+cloudstic backup -source local:~/Documents -dry-run
 ```
 
-When running interactively, Cloudstic prompts for the repository password if no credential is provided via flags or environment variables. For non-interactive use (scripts, cron), pass `-encryption-password` or set `CLOUDSTIC_ENCRYPTION_PASSWORD`:
+When running interactively, Cloudstic prompts for the repository password if no credential is provided via flags or environment variables. For non-interactive use (scripts, cron), pass `-password` or set `CLOUDSTIC_PASSWORD`:
 
 ```bash
-cloudstic init -encryption-password "my passphrase"
-cloudstic backup -source local -source-path ~/Documents -encryption-password "my passphrase"
+cloudstic init -password "my passphrase"
+cloudstic backup -source local:~/Documents -password "my passphrase"
 ```
 
 ## Portable Drive Backup
@@ -79,10 +79,10 @@ Cloudstic automatically detects when a source path is on a portable drive (USB s
 
 ```bash
 # On macOS — drive mounts at /Volumes/MyUSB
-cloudstic backup -source local -source-path /Volumes/MyUSB
+cloudstic backup -source local:/Volumes/MyUSB
 
 # On Linux — same drive mounts at /mnt/usb
-cloudstic backup -source local -source-path /mnt/usb
+cloudstic backup -source local:/mnt/usb
 
 # Both produce identical snapshots with the same source identity
 cloudstic list

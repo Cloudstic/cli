@@ -310,12 +310,12 @@ benchmark_cloudstic() {
     if [ "$STORE" == "s3" ]; then
         BENCH_REPO_DIR=""
         BENCH_S3_PREFIX="s3://$S3_BUCKET/cloudstic/"
-        store_flags="-store s3 -encryption-password $PASSWORD -store-path $S3_BUCKET -store-prefix cloudstic/"
+        store_flags="-store s3:$S3_BUCKET/cloudstic/ -encryption-password $PASSWORD"
         $CLOUDSTIC_BIN init $store_flags >/dev/null || true
     else
         BENCH_REPO_DIR="$repo"
         BENCH_S3_PREFIX=""
-        store_flags="-store local -store-path $repo"
+        store_flags="-store local:$repo"
         $CLOUDSTIC_BIN init $store_flags >/dev/null
     fi
     
@@ -325,7 +325,7 @@ benchmark_cloudstic() {
         source_flags="-source gdrive-changes"
     else
         reset_data_dir
-        source_flags="-source local -source-path $DATA_DIR"
+        source_flags="-source local:$DATA_DIR"
     fi
     
     run_bench "Initial Backup" $CLOUDSTIC_BIN backup $store_flags $source_flags -quiet $DEBUG_FLAG

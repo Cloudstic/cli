@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/logger"
@@ -46,7 +48,7 @@ func (g *globalFlags) openClient() (*cloudstic.Client, error) {
 	}
 	raw = g.applyDebug(raw)
 
-	packfileEnabled := g.enablePackfile != nil && *g.enablePackfile
+	packfileEnabled := g.disablePackfile == nil || !*g.disablePackfile
 
 	var reporter cloudstic.Reporter
 	if *g.quiet {
@@ -111,13 +113,13 @@ func (g *globalFlags) buildKeychain(ctx context.Context) (keychain.Chain, error)
 	if len(platformKey) > 0 {
 		chain = append(chain, keychain.WithPlatformKey(platformKey))
 	}
-	if *g.encryptionPassword != "" {
-		chain = append(chain, keychain.WithPassword(*g.encryptionPassword))
+	if *g.password != "" {
+		chain = append(chain, keychain.WithPassword(*g.password))
 	}
 	if *g.recoveryKey != "" {
 		chain = append(chain, keychain.WithRecoveryKey(*g.recoveryKey))
 	}
-	promptRequested := g.password != nil && *g.password
+	promptRequested := g.prompt != nil && *g.prompt
 	if (len(chain) == 0 || promptRequested) && term.IsTerminal(os.Stdin.Fd()) {
 		chain = append(chain, keychain.WithPrompt(
 			func() (string, error) { return ui.PromptPassword("Repository password") },
@@ -143,40 +145,107 @@ func (g *globalFlags) parsePlatformKey() ([]byte, error) {
 	return platformKey, nil
 }
 
-func (g *globalFlags) initObjectStore() (store.ObjectStore, error) {
-	var inner store.ObjectStore
-	var err error
+// storeURIParts holds the parsed components of a --store URI.
+type storeURIParts struct {
+	scheme string // "local", "s3", "b2", "sftp"
+	// S3/B2 fields
+	bucket string
+	prefix string
+	// local field
+	path string
+	// SFTP fields
+	host string
+	port string
+	user string
+}
 
-	switch *g.storeType {
+// parseStoreURI parses a --store flag value into its components.
+//
+// Supported formats:
+//
+//	local:<path>                        e.g. local:./backup_store
+//	s3:<bucket>[/<prefix>]              e.g. s3:my-bucket or s3:my-bucket/prod
+//	b2:<bucket>[/<prefix>]              e.g. b2:my-bucket or b2:my-bucket/prod
+//	sftp://[user@]host[:port]/<path>    e.g. sftp://backup@host.com/backups
+func parseStoreURI(raw string) (*storeURIParts, error) {
+	if strings.HasPrefix(raw, "sftp://") {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid store URI %q: %w", raw, err)
+		}
+		if u.Hostname() == "" {
+			return nil, fmt.Errorf("invalid store URI %q: sftp URI must include a hostname", raw)
+		}
+		user := ""
+		if u.User != nil {
+			user = u.User.Username()
+		}
+		return &storeURIParts{
+			scheme: "sftp",
+			host:   u.Hostname(),
+			port:   u.Port(),
+			user:   user,
+			path:   u.Path,
+		}, nil
+	}
+
+	idx := strings.IndexByte(raw, ':')
+	if idx < 0 {
+		return nil, fmt.Errorf("invalid store URI %q: missing scheme (e.g. local:./path, s3:bucket, b2:bucket, sftp://host/path)", raw)
+	}
+	scheme := raw[:idx]
+	rest := raw[idx+1:]
+
+	switch scheme {
 	case "local":
-		inner, err = store.NewLocalStore(*g.storePath)
+		if rest == "" {
+			return nil, fmt.Errorf("invalid store URI %q: local path cannot be empty", raw)
+		}
+		return &storeURIParts{scheme: "local", path: rest}, nil
+	case "s3", "b2":
+		if rest == "" {
+			return nil, fmt.Errorf("invalid store URI %q: bucket name cannot be empty", raw)
+		}
+		bucket, prefix, _ := strings.Cut(rest, "/")
+		if bucket == "" {
+			return nil, fmt.Errorf("invalid store URI %q: bucket name cannot be empty", raw)
+		}
+		return &storeURIParts{scheme: scheme, bucket: bucket, prefix: prefix}, nil
+	default:
+		return nil, fmt.Errorf("unknown store scheme %q in %q: supported schemes are local, s3, b2, sftp", scheme, raw)
+	}
+}
+
+func (g *globalFlags) initObjectStore() (store.ObjectStore, error) {
+	uri, err := parseStoreURI(*g.store)
+	if err != nil {
+		return nil, err
+	}
+
+	var inner store.ObjectStore
+	switch uri.scheme {
+	case "local":
+		inner, err = store.NewLocalStore(uri.path)
 	case "b2":
 		keyID := os.Getenv("B2_KEY_ID")
 		appKey := os.Getenv("B2_APP_KEY")
 		if keyID == "" || appKey == "" {
 			return nil, fmt.Errorf("B2_KEY_ID and B2_APP_KEY env vars required for b2 store")
 		}
-		inner, err = store.NewB2Store(*g.storePath, store.WithCredentials(keyID, appKey), store.WithPrefix(*g.storePrefix))
+		inner, err = store.NewB2Store(uri.bucket, store.WithCredentials(keyID, appKey), store.WithPrefix(uri.prefix))
 	case "s3":
-		if *g.storePath == "" {
-			return nil, fmt.Errorf("-store-path must be set to the S3 bucket name")
-		}
 		inner, err = store.NewS3Store(
 			context.Background(),
-			*g.storePath,
+			uri.bucket,
 			store.WithS3Endpoint(*g.s3Endpoint),
 			store.WithS3Region(*g.s3Region),
 			store.WithS3Credentials(*g.s3AccessKey, *g.s3SecretKey),
-			store.WithS3Prefix(*g.storePrefix),
+			store.WithS3Prefix(uri.prefix),
 		)
 	case "sftp":
-		sftpHost, sftpOpts := g.sftpStoreOpts(g.storeSFTPHost, g.storeSFTPPort, g.storeSFTPUser, g.storeSFTPPassword, g.storeSFTPKey, g.storePath)
-		if sftpHost == "" {
-			return nil, fmt.Errorf("--sftp-host is required for sftp store")
-		}
-		inner, err = store.NewSFTPStore(sftpHost, sftpOpts...)
+		inner, err = store.NewSFTPStore(uri.host, g.buildSFTPStoreOpts(uri)...)
 	default:
-		return nil, fmt.Errorf("unsupported store type: %s", *g.storeType)
+		return nil, fmt.Errorf("unsupported store type: %s", uri.scheme)
 	}
 
 	if err != nil {
@@ -186,92 +255,107 @@ func (g *globalFlags) initObjectStore() (store.ObjectStore, error) {
 	return inner, nil
 }
 
-func (g *globalFlags) sftpStoreOpts(host, port, user, pass, key, path *string) (string, []store.SFTPStoreOption) {
-	h := *host
-	if h == "" {
-		h = *g.sftpHost
-	}
-	p := *port
-	if p == "" {
-		p = *g.sftpPort
-	}
-	u := *user
-	if u == "" {
-		u = *g.sftpUser
-	}
-	pw := *pass
-	if pw == "" {
-		pw = *g.sftpPassword
-	}
-	k := *key
-	if k == "" {
-		k = *g.sftpKey
-	}
-	bp := *path
-
-	if h == "" {
-		return "", nil
-	}
-
+func (g *globalFlags) buildSFTPStoreOpts(uri *storeURIParts) []store.SFTPStoreOption {
 	opts := []store.SFTPStoreOption{
-		store.WithSFTPBasePath(bp),
+		store.WithSFTPBasePath(uri.path),
 	}
-	if p != "" {
-		opts = append(opts, store.WithSFTPPort(p))
+	if uri.port != "" {
+		opts = append(opts, store.WithSFTPPort(uri.port))
 	}
-	if u != "" {
-		opts = append(opts, store.WithSFTPUser(u))
+	if uri.user != "" {
+		opts = append(opts, store.WithSFTPUser(uri.user))
 	}
-	if pw != "" {
+	if pw := *g.storeSFTPPassword; pw != "" {
 		opts = append(opts, store.WithSFTPPassword(pw))
 	}
-	if k != "" {
+	if k := *g.storeSFTPKey; k != "" {
 		opts = append(opts, store.WithSFTPKey(k))
 	}
-	return h, opts
+	return opts
 }
 
-func (g *globalFlags) sftpSourceOpts(host, port, user, pass, key, path *string) (string, []source.SFTPOption) {
-	h := *host
-	if h == "" {
-		h = *g.sftpHost
-	}
-	p := *port
-	if p == "" {
-		p = *g.sftpPort
-	}
-	u := *user
-	if u == "" {
-		u = *g.sftpUser
-	}
-	pw := *pass
-	if pw == "" {
-		pw = *g.sftpPassword
-	}
-	k := *key
-	if k == "" {
-		k = *g.sftpKey
-	}
-	bp := *path
+// sourceURIParts holds the parsed components of a --source URI or keyword.
+type sourceURIParts struct {
+	scheme string // "local", "sftp", "gdrive", "gdrive-changes", "onedrive", "onedrive-changes"
+	// local/sftp fields
+	path string
+	// sftp-specific fields
+	host string
+	port string
+	user string
+}
 
-	if h == "" {
-		return "", nil
+// parseSourceURI parses a --source flag value into its components.
+//
+// Supported formats:
+//
+//	local:<path>                        e.g. local:./documents
+//	sftp://[user@]host[:port]/<path>    e.g. sftp://backup@host.com/data
+//	gdrive
+//	gdrive-changes
+//	onedrive
+//	onedrive-changes
+func parseSourceURI(raw string) (*sourceURIParts, error) {
+	if strings.HasPrefix(raw, "sftp://") {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid source URI %q: %w", raw, err)
+		}
+		if u.Hostname() == "" {
+			return nil, fmt.Errorf("invalid source URI %q: sftp URI must include a hostname", raw)
+		}
+		user := ""
+		if u.User != nil {
+			user = u.User.Username()
+		}
+		return &sourceURIParts{
+			scheme: "sftp",
+			host:   u.Hostname(),
+			port:   u.Port(),
+			user:   user,
+			path:   u.Path,
+		}, nil
 	}
 
+	idx := strings.IndexByte(raw, ':')
+	if idx >= 0 {
+		scheme := raw[:idx]
+		rest := raw[idx+1:]
+		switch scheme {
+		case "local":
+			if rest == "" {
+				return nil, fmt.Errorf("invalid source URI %q: local path cannot be empty", raw)
+			}
+			return &sourceURIParts{scheme: "local", path: rest}, nil
+		default:
+			return nil, fmt.Errorf("unknown source scheme %q in %q: supported URI formats are local:<path> and sftp://[user@]host[:port]/<path>", scheme, raw)
+		}
+	}
+
+	// Bare keyword (cloud sources)
+	switch raw {
+	case "gdrive", "gdrive-changes", "onedrive", "onedrive-changes":
+		return &sourceURIParts{scheme: raw}, nil
+	default:
+		return nil, fmt.Errorf("unknown source %q: supported values are local:<path>, sftp://[user@]host[:port]/<path>, gdrive, gdrive-changes, onedrive, onedrive-changes", raw)
+	}
+}
+
+func (g *globalFlags) buildSFTPSourceOpts(uri *sourceURIParts) []source.SFTPOption {
 	opts := []source.SFTPOption{
-		source.WithSFTPSourceBasePath(bp),
+		source.WithSFTPSourceBasePath(uri.path),
 	}
-	if p != "" {
-		opts = append(opts, source.WithSFTPSourcePort(p))
+	if uri.port != "" {
+		opts = append(opts, source.WithSFTPSourcePort(uri.port))
 	}
-	if u != "" {
-		opts = append(opts, source.WithSFTPSourceUser(u))
+	if uri.user != "" {
+		opts = append(opts, source.WithSFTPSourceUser(uri.user))
 	}
-	if pw != "" {
+	if pw := *g.sourceSFTPPassword; pw != "" {
 		opts = append(opts, source.WithSFTPSourcePassword(pw))
 	}
-	if k != "" {
+	if k := *g.sourceSFTPKey; k != "" {
 		opts = append(opts, source.WithSFTPSourceKey(k))
 	}
-	return h, opts
+	return opts
 }

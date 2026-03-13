@@ -117,7 +117,6 @@ func NewGDriveSource(ctx context.Context, opts ...GDriveOption) (*GDriveSource, 
 
 	var srv *drive.Service
 	var err error
-
 	if cfg.httpClient != nil {
 		srv, err = drive.NewService(ctx, option.WithHTTPClient(cfg.httpClient))
 		if err != nil {

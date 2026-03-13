@@ -187,8 +187,15 @@ func matchesFilter(snap *core.Snapshot, f snapshotFilter) bool {
 	if f.source != "" && (snap.Source == nil || snap.Source.Type != f.source) {
 		return false
 	}
-	if f.account != "" && (snap.Source == nil || snap.Source.Account != f.account) {
-		return false
+	if f.account != "" {
+		if snap.Source == nil {
+			return false
+		}
+		// Accept either the human-readable account (hostname/email) or the
+		// VolumeUUID so that portable-drive snapshots can be targeted by UUID.
+		if snap.Source.Account != f.account && snap.Source.VolumeUUID != f.account {
+			return false
+		}
 	}
 	if f.path != "" && (snap.Source == nil || snap.Source.Path != f.path) {
 		return false

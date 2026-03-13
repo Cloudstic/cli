@@ -46,11 +46,7 @@ func (s *sftpTestStore) Name() string { return "sftp" }
 func (s *sftpTestStore) Env() TestEnv { return Hermetic }
 func (s *sftpTestStore) Setup(t *testing.T) []string {
 	return []string{
-		"-store", "sftp",
-		"-store-path", s.basePath,
-		"-store-sftp-host", s.host,
-		"-store-sftp-port", s.port,
-		"-store-sftp-user", s.user,
+		"-store", "sftp://" + s.user + "@" + s.host + ":" + s.port + s.basePath,
 		"-store-sftp-password", s.password,
 	}
 }
@@ -108,11 +104,7 @@ func (s *sftpTestSource) Name() string { return "sftp" }
 func (s *sftpTestSource) Env() TestEnv { return Hermetic }
 func (s *sftpTestSource) Setup(t *testing.T) []string {
 	return []string{
-		"-source", "sftp",
-		"-source-path", s.rootPath,
-		"-source-sftp-host", s.host,
-		"-source-sftp-port", s.port,
-		"-source-sftp-user", s.user,
+		"-source", "sftp://" + s.user + "@" + s.host + ":" + s.port + s.rootPath,
 		"-source-sftp-password", s.password,
 	}
 }

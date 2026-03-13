@@ -164,7 +164,7 @@ func TestCLI_EndToEnd_Matrix(t *testing.T) {
 				storeArgs := store.Setup(t)
 
 				password := "test-matrix-passphrase"
-				baseEncArgs := append(storeArgs, "-encryption-password", password)
+				baseEncArgs := append(storeArgs, "-password", password)
 
 				// 1. Initial State
 				src.WriteFile(t, "file1.txt", "hello world")
@@ -276,7 +276,7 @@ func TestCLI_EndToEnd_Matrix(t *testing.T) {
 
 				run(t, bin, append([]string{"list"}, baseEncArgs...)...)
 				// 10. Test Key Validation (Wrong Password)
-				out = runExpectFail(t, bin, append([]string{"list", "--encryption-password", "wrong-password"}, storeArgs...)...)
+				out = runExpectFail(t, bin, append([]string{"list", "--password", "wrong-password"}, storeArgs...)...)
 				if !strings.Contains(out, "no provided credential matches") {
 					t.Errorf("Expected credential mismatch error, got: %s", out)
 				}
@@ -284,7 +284,7 @@ func TestCLI_EndToEnd_Matrix(t *testing.T) {
 				// 11. Test Init Requires Encryption
 				// (We use a fresh initialized dummy temp dir for this test to not ruin the matrix store)
 				dummyStoreDir := t.TempDir()
-				dummyStoreArgs := []string{"--store", "local", "--store-path", dummyStoreDir}
+				dummyStoreArgs := []string{"--store", "local:" + dummyStoreDir}
 				out = runExpectFail(t, bin, append([]string{"init"}, dummyStoreArgs...)...)
 				if !strings.Contains(out, "encryption is required") {
 					t.Errorf("Expected encryption-required error, got: %s", out)
@@ -298,7 +298,7 @@ func TestCLI_EndToEnd_Matrix(t *testing.T) {
 
 				// 13. Test Backup Storage Backend With Recovery Key Generation & Restore
 				// Re-init the isolated dummy store with recovery key enabled
-				out = run(t, bin, append([]string{"init", "--adopt-slots", "--encryption-password", password, "--recovery"}, dummyStoreArgs...)...)
+				out = run(t, bin, append([]string{"init", "--adopt-slots", "--password", password, "--add-recovery-key"}, dummyStoreArgs...)...)
 				if !strings.Contains(out, "RECOVERY KEY") {
 					t.Fatalf("Expected recovery key output on init, got: %s", out)
 				}
@@ -307,7 +307,7 @@ func TestCLI_EndToEnd_Matrix(t *testing.T) {
 					t.Fatal("Could not extract mnemonic from recovery key output")
 				}
 
-				run(t, bin, append([]string{"backup", "--encryption-password", password}, append(srcArgs, dummyStoreArgs...)...)...)
+				run(t, bin, append([]string{"backup", "--password", password}, append(srcArgs, dummyStoreArgs...)...)...)
 
 				zipRecoveryPath := filepath.Join(restoreDir, "recovery_restore.zip")
 				restoreRecoveryArgs := append([]string{"restore", "--output", zipRecoveryPath, "--recovery-key", mnemonic}, dummyStoreArgs...)
@@ -320,21 +320,21 @@ func TestCLI_EndToEnd_Matrix(t *testing.T) {
 				// 14. Test Forget Policy & Dry Run
 				// Re-init another dummy store to test forget logic
 				dummyPolicyDir := t.TempDir()
-				dummyPolicyStoreArgs := []string{"--store", "local", "--store-path", dummyPolicyDir}
-				run(t, bin, append([]string{"init", "--encryption-password", password}, dummyPolicyStoreArgs...)...)
+				dummyPolicyStoreArgs := []string{"--store", "local:" + dummyPolicyDir}
+				run(t, bin, append([]string{"init", "--password", password}, dummyPolicyStoreArgs...)...)
 
 				for i := range 3 {
 					src.WriteFile(t, "policy-file.txt", strings.Repeat("x", i+1))
-					run(t, bin, append([]string{"backup", "--encryption-password", password}, append(srcArgs, dummyPolicyStoreArgs...)...)...)
+					run(t, bin, append([]string{"backup", "--password", password}, append(srcArgs, dummyPolicyStoreArgs...)...)...)
 				}
 
-				out = run(t, bin, append([]string{"forget", "--keep-last", "1", "--dry-run", "--encryption-password", password}, dummyPolicyStoreArgs...)...)
+				out = run(t, bin, append([]string{"forget", "--keep-last", "1", "--dry-run", "--password", password}, dummyPolicyStoreArgs...)...)
 				if !strings.Contains(out, "would remove") {
 					t.Errorf("Expected dry-run output, got: %s", out)
 				}
 
-				run(t, bin, append([]string{"forget", "--keep-last", "1", "--prune", "--encryption-password", password}, dummyPolicyStoreArgs...)...)
-				out = run(t, bin, append([]string{"list", "--encryption-password", password}, dummyPolicyStoreArgs...)...)
+				run(t, bin, append([]string{"forget", "--keep-last", "1", "--prune", "--password", password}, dummyPolicyStoreArgs...)...)
+				out = run(t, bin, append([]string{"list", "--password", password}, dummyPolicyStoreArgs...)...)
 				if !strings.Contains(out, "1 snapshot") {
 					t.Errorf("Expected 1 snapshot after policy, got: %s", out)
 				}
@@ -342,7 +342,7 @@ func TestCLI_EndToEnd_Matrix(t *testing.T) {
 				// 15. Test Unencrypted Backup Lifecycle
 				// Verify that the full backup/restore flow works without encryption.
 				unencDir := t.TempDir()
-				unencStoreArgs := []string{"--store", "local", "--store-path", unencDir}
+				unencStoreArgs := []string{"--store", "local:" + unencDir}
 
 				// 15a. Init with --no-encryption
 				out = run(t, bin, append([]string{"init", "--no-encryption"}, unencStoreArgs...)...)
@@ -441,16 +441,15 @@ func TestCLI_EndToEnd_BackupExcludePatterns(t *testing.T) {
 	}
 
 	password := "test-exclude-pass"
-	storeArgs := []string{"--store", "local", "--store-path", storeDir}
-	baseArgs := append(storeArgs, "--encryption-password", password)
+	storeArgs := []string{"--store", "local:" + storeDir}
+	baseArgs := append(storeArgs, "--password", password)
 
 	// Init repo.
 	run(t, bin, append([]string{"init"}, baseArgs...)...)
 
 	// Backup with -exclude flags and -exclude-file.
 	backupArgs := append([]string{"backup",
-		"-source", "local",
-		"-source-path", srcDir,
+		"-source", "local:" + srcDir,
 		"-exclude", ".git/",
 		"-exclude", "node_modules/",
 		"-exclude", "*.tmp",

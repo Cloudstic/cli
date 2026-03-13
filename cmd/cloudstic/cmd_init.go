@@ -23,7 +23,7 @@ func parseInitArgs() *initArgs {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
 	a := &initArgs{}
 	a.g = addGlobalFlags(fs)
-	recovery := fs.Bool("recovery", false, "Generate a recovery key (24-word seed phrase) during init")
+	recovery := fs.Bool("add-recovery-key", false, "Generate a recovery key (24-word seed phrase) during init")
 	noEncryption := fs.Bool("no-encryption", false, "Create an unencrypted repository (NOT recommended)")
 	adoptSlots := fs.Bool("adopt-slots", false, "Initialize by adopting existing key slots if found (prevents error if already has slots)")
 	mustParse(fs)
@@ -53,11 +53,11 @@ func (r *runner) runInit() int {
 			if err != nil {
 				return r.fail("Error: %v", err)
 			}
-			*a.g.encryptionPassword = pw
+			*a.g.password = pw
 			kc, _ = a.g.buildKeychain(context.Background())
 		} else {
 			_, _ = fmt.Fprintln(r.errOut, "Error: encryption is required by default.")
-			_, _ = fmt.Fprintln(r.errOut, "Provide --encryption-password or --encryption-key to encrypt your repository.")
+			_, _ = fmt.Fprintln(r.errOut, "Provide --password or --encryption-key to encrypt your repository.")
 			_, _ = fmt.Fprintln(r.errOut, "To create an unencrypted repository, pass --no-encryption (not recommended).")
 			return 1
 		}

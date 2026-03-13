@@ -90,14 +90,9 @@ func newMinIOTestStore(t *testing.T) *minIOTestStore {
 func (s *minIOTestStore) Name() string { return "minio" }
 func (s *minIOTestStore) Env() TestEnv { return Hermetic }
 func (s *minIOTestStore) Setup(t *testing.T) []string {
-	// Let's inject a random store prefix down in the bucket just to be safe,
-	// though the bucket itself is randomly named.
 	prefix := "e2e-root/"
-
 	return []string{
-		"-store", "s3",
-		"-store-path", s.bucket,
-		"-store-prefix", prefix,
+		"-store", "s3:" + s.bucket + "/" + prefix,
 		"-s3-endpoint", s.endpoint,
 		"-s3-region", "us-east-1",
 		"-s3-access-key", s.accessKey,

@@ -17,7 +17,7 @@ func newLocalSource(t *testing.T) *localSource {
 func (s *localSource) Name() string { return "local" }
 func (s *localSource) Env() TestEnv { return Hermetic }
 func (s *localSource) Setup(t *testing.T) []string {
-	return []string{"-source", "local", "-source-path", s.dir}
+	return []string{"-source", "local:" + s.dir}
 }
 func (s *localSource) WriteFile(t *testing.T, relPath, content string) {
 	t.Helper()
@@ -41,5 +41,5 @@ func newLocalStore(t *testing.T) *localStore {
 func (s *localStore) Name() string { return "local" }
 func (s *localStore) Env() TestEnv { return Hermetic }
 func (s *localStore) Setup(t *testing.T) []string {
-	return []string{"-store", "local", "-store-path", s.dir}
+	return []string{"-store", "local:" + s.dir}
 }

@@ -58,7 +58,7 @@ if _, err := os.Stat(s.mountPoint); os.IsNotExist(err) {
 t.Fatalf("expected mount point %s after partitioning", s.mountPoint)
 }
 
-return []string{"-source", "local", "-source-path", s.mountPoint}
+return []string{"-source", "local:" + s.mountPoint}
 }
 
 func (s *portableDriveSource) WriteFile(t *testing.T, relPath, content string) {

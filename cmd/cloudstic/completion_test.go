@@ -25,11 +25,11 @@ func TestCompletionBash(t *testing.T) {
 		// Key subcommands
 		"list add-recovery passwd",
 		// Global flags
-		"-store", "-encryption-password", "-verbose",
+		"-store", "-password", "-verbose",
 		// Command-specific flags
-		"-dry-run", "-recovery", "-source", "-output",
+		"-dry-run", "-add-recovery-key", "-source", "-output",
 		// Value completions
-		"local b2 s3 sftp",
+		"local: s3: b2: sftp://",
 		"gdrive", "onedrive",
 	} {
 		if !strings.Contains(out, marker) {
@@ -62,15 +62,14 @@ func TestCompletionZsh(t *testing.T) {
 		"passwd:Change the repository password",
 		"-new-password[New repository password]",
 		// Global flags with descriptions
-		"-store[Storage backend]",
+		"-store[Storage backend URI",
 		"-verbose[Log detailed operations]",
 		// Subcommand-specific flags
-		"-recovery[Generate a 24-word recovery key]",
+		"-add-recovery-key[Generate a 24-word recovery key]",
 		"-dry-run[Scan without writing]",
 		"-keep-last[Keep N most recent snapshots]",
-		// Value completions
-		"(local b2 s3 sftp)",
-		"(local sftp gdrive gdrive-changes onedrive onedrive-changes)",
+		// Value completions (source type list still present)
+		"(local: sftp:// gdrive gdrive-changes onedrive onedrive-changes)",
 		"(bash zsh fish)",
 	} {
 		if !strings.Contains(out, marker) {
@@ -109,10 +108,9 @@ func TestCompletionFish(t *testing.T) {
 		"__fish_seen_subcommand_from forget",
 		"-l dry-run",
 		"-l keep-last",
-		"-l recovery",
-		// Value completions
-		"'local b2 s3 sftp'",
-		"'local sftp gdrive gdrive-changes onedrive onedrive-changes'",
+		"-l add-recovery-key",
+		// Value completions (source type list still present)
+		"'local: sftp:// gdrive gdrive-changes onedrive onedrive-changes'",
 		"'bash zsh fish'",
 	} {
 		if !strings.Contains(out, marker) {

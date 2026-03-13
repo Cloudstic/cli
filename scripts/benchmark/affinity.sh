@@ -118,10 +118,10 @@ echo "=== Scenario A: Clustered (all $CHANGED changes in dir_01) ==="
 
 REPO_A="$TMP_DIR/repo_a"
 mkdir -p "$REPO_A"
-$CLI init -store local -store-path "$REPO_A" --no-encryption 2>&1 | tail -1
+$CLI init -store "local:$REPO_A" --no-encryption 2>&1 | tail -1
 
 # Backup 1: full initial backup.
-run_backup "-store local -store-path $REPO_A" "-source local -source-path $DATA" > /dev/null
+run_backup "-store local:$REPO_A" "-source local:$DATA" > /dev/null
 NODES_BEFORE_A=$(count_nodes "$REPO_A")
 echo "  After backup 1: $NODES_BEFORE_A node objects in store"
 
@@ -131,7 +131,7 @@ for f in $(seq 1 $CHANGED); do
 done
 
 # Backup 2: incremental (full scan, but only changed nodes reach persistent store).
-run_backup "-store local -store-path $REPO_A" "-source local -source-path $DATA" > /dev/null
+run_backup "-store local:$REPO_A" "-source local:$DATA" > /dev/null
 NODES_AFTER_A=$(count_nodes "$REPO_A")
 NEW_NODES_A=$((NODES_AFTER_A - NODES_BEFORE_A))
 
@@ -151,10 +151,10 @@ echo "=== Scenario B: Scattered (1 change in each of $CHANGED dirs) ==="
 
 REPO_B="$TMP_DIR/repo_b"
 mkdir -p "$REPO_B"
-$CLI init -store local -store-path "$REPO_B" --no-encryption 2>&1 | tail -1
+$CLI init -store "local:$REPO_B" --no-encryption 2>&1 | tail -1
 
 # Backup 1: full initial backup.
-run_backup "-store local -store-path $REPO_B" "-source local -source-path $DATA" > /dev/null
+run_backup "-store local:$REPO_B" "-source local:$DATA" > /dev/null
 NODES_BEFORE_B=$(count_nodes "$REPO_B")
 echo "  After backup 1: $NODES_BEFORE_B node objects in store"
 
@@ -165,7 +165,7 @@ for d in $(seq 1 $CHANGED); do
 done
 
 # Backup 2.
-run_backup "-store local -store-path $REPO_B" "-source local -source-path $DATA" > /dev/null
+run_backup "-store local:$REPO_B" "-source local:$DATA" > /dev/null
 NODES_AFTER_B=$(count_nodes "$REPO_B")
 NEW_NODES_B=$((NODES_AFTER_B - NODES_BEFORE_B))
 

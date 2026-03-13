@@ -219,17 +219,18 @@ cloudstic init -no-encryption
 
 When no encryption credential is provided and stdin is a terminal, `init` prompts for a new password with confirmation. In non-interactive environments (piped input, cron jobs), you must pass `-password`, `-encryption-key`, or `-no-encryption` explicitly.
 
-If you are using a platform key or KMS but also want to protect the repository with a password, pass `-password` to explicitly trigger the prompt:
+If you are using a platform key or KMS but also want to protect the repository with a password, use `-prompt` to trigger an interactive password prompt alongside other credentials:
 
 ```bash
-cloudstic init -encryption-key <hex> -password
+cloudstic init -encryption-key <hex> -prompt
 ```
 
 **Flags:**
 
 | Flag | Description |
 |------|-------------|
-| `-password` | Password for password-based encryption. Omit the value to force an interactive prompt even when other credentials are provided |
+| `-password <value>` | Password for password-based encryption (non-interactive) |
+| `-prompt` | Prompt for password interactively (use alongside `-encryption-key` or `-kms-key-arn` to add a password layer) |
 | `-encryption-key` | Platform key (64 hex chars = 32 bytes) |
 | `-add-recovery-key` | Generate a 24-word recovery key during init |
 | `-no-encryption` | Create an unencrypted repository (not recommended) |
@@ -1154,10 +1155,10 @@ Encryption is **required by default**. All backup data is encrypted with AES-256
 
 When running in a terminal, Cloudstic prompts for the repository password **only if no other credential is provided** via flags (`-password`, `-encryption-key`, `-recovery-key`, `-kms-key-arn`) or environment variables (`CLOUDSTIC_PASSWORD`, etc.).
 
-To explicitly request an interactive password prompt alongside a platform key or KMS key, use the `-password` flag:
+To explicitly request an interactive password prompt alongside a platform key or KMS key, use the `-prompt` flag:
 
 ```bash
-cloudstic backup -encryption-key <hex> -password  # decrypt with key + password layer
+cloudstic backup -encryption-key <hex> -prompt  # decrypt with key + password layer
 ```
 
 This applies to all commands that access an encrypted repository — `backup`, `restore`, `list`, `ls`, `diff`, `check`, `cat`, `key passwd`, `key add-recovery`, and `init`.

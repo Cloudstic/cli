@@ -36,27 +36,33 @@ func printUsage() {
 
 	t.HeadingSub("GLOBAL OPTIONS", "(also settable via env vars)")
 	t.Flags([][2]string{
-		{"-store <type>", ui.Env("Storage backend: local, b2, s3, sftp", "CLOUDSTIC_STORE")},
-		{"-store-path <path>", ui.Env("Local/SFTP path or B2/S3 bucket name", "CLOUDSTIC_STORE_PATH")},
-		{"-store-prefix <pfx>", ui.Env("Key prefix for B2/S3 objects", "CLOUDSTIC_STORE_PREFIX")},
+		{"-store <uri>", ui.Env("Storage backend URI (see formats below)", "CLOUDSTIC_STORE")},
 		{"-s3-endpoint <url>", ui.Env("S3 compatible endpoint (for MinIO, R2, etc.)", "CLOUDSTIC_S3_ENDPOINT")},
 		{"-s3-region <region>", ui.Env("S3 region", "CLOUDSTIC_S3_REGION")},
 		{"-s3-access-key <key>", ui.Env("S3 Access Key ID", "AWS_ACCESS_KEY_ID")},
 		{"-s3-secret-key <secret>", ui.Env("S3 Secret Access Key", "AWS_SECRET_ACCESS_KEY")},
-		{"-sftp-host <host>", ui.Env("SFTP server hostname", "CLOUDSTIC_SFTP_HOST")},
-		{"-sftp-port <port>", ui.Env("SFTP server port (default 22)", "CLOUDSTIC_SFTP_PORT")},
-		{"-sftp-user <user>", ui.Env("SFTP username", "CLOUDSTIC_SFTP_USER")},
-		{"-sftp-password <pw>", ui.Env("SFTP password", "CLOUDSTIC_SFTP_PASSWORD")},
-		{"-sftp-key <path>", ui.Env("Path to SSH private key", "CLOUDSTIC_SFTP_KEY")},
+		{"-source-sftp-password <pw>", ui.Env("SFTP source password", "CLOUDSTIC_SOURCE_SFTP_PASSWORD")},
+		{"-source-sftp-key <path>", ui.Env("Path to SSH private key for SFTP source", "CLOUDSTIC_SOURCE_SFTP_KEY")},
+		{"-store-sftp-password <pw>", ui.Env("SFTP store password", "CLOUDSTIC_STORE_SFTP_PASSWORD")},
+		{"-store-sftp-key <path>", ui.Env("Path to SSH private key for SFTP store", "CLOUDSTIC_STORE_SFTP_KEY")},
 		{"-verbose", "Log detailed file-level operations"},
 		{"-quiet", "Suppress progress bars (keeps final summary)"},
 		{"-debug", "Log every store request (network calls, timing, sizes)"},
 	})
+	t.Blank()
+	t.Note(
+		"Store URI formats:",
+		"  local:<path>                       e.g. local:./backup_store",
+		"  s3:<bucket>[/<prefix>]             e.g. s3:my-bucket or s3:my-bucket/prod",
+		"  b2:<bucket>[/<prefix>]             e.g. b2:my-bucket or b2:my-bucket/prod",
+		"  sftp://[user@]host[:port]/<path>   e.g. sftp://backup@host.com/backups",
+	)
 
 	t.Heading("ENCRYPTION OPTIONS")
 	t.Flags([][2]string{
+		{"-password <pw>", ui.Env("Repository password", "CLOUDSTIC_PASSWORD")},
+		{"-prompt", "Prompt for password interactively (use alongside --encryption-key or --kms-key-arn)"},
 		{"-encryption-key <hex>", ui.Env("Platform key (64 hex chars = 32 bytes)", "CLOUDSTIC_ENCRYPTION_KEY")},
-		{"-encryption-password", ui.Env("Password for password-based encryption", "CLOUDSTIC_ENCRYPTION_PASSWORD")},
 		{"-recovery-key <words>", ui.Env("Recovery key (24-word seed phrase)", "CLOUDSTIC_RECOVERY_KEY")},
 		{"-kms-key-arn <arn>", ui.Env("AWS KMS key ARN for kms-platform slots", "CLOUDSTIC_KMS_KEY_ARN")},
 		{"-kms-region <region>", ui.Env("AWS KMS region", "CLOUDSTIC_KMS_REGION")},
@@ -64,7 +70,7 @@ func printUsage() {
 	})
 	t.Blank()
 	t.Note(
-		"Encryption is required by default (AES-256-GCM). Provide -encryption-password",
+		"Encryption is required by default (AES-256-GCM). Provide -password",
 		"or -encryption-key when running 'cloudstic init'. Use -recovery-key to open a",
 		"repository with a recovery seed phrase.",
 	)
@@ -73,7 +79,7 @@ func printUsage() {
 
 	t.Command("init", "")
 	t.Flags([][2]string{
-		{"-recovery", "Generate a 24-word recovery key during init"},
+		{"-add-recovery-key", "Generate a 24-word recovery key during init"},
 		{"-no-encryption", "Create an unencrypted repository (not recommended)"},
 		{"-adopt-slots", "Initialize by adopting existing key slots if found"},
 	})
@@ -96,22 +102,35 @@ func printUsage() {
 	})
 	t.Note(
 		"  Change the repository password. Provide current credentials via",
-		"  -encryption-password, -encryption-key, or -kms-key-arn to unlock.",
+		"  -password, -encryption-key, or -kms-key-arn to unlock.",
 	)
 	t.Blank()
 
 	t.Command("backup", "")
 	t.Flags([][2]string{
-		{"-source <type>", "local, sftp, gdrive, gdrive-changes, onedrive, onedrive-changes"},
-		{"-source-path <path>", "Path to source directory (local or SFTP remote path)"},
+		{"-source <uri>", ui.Env("Source URI: local:<path>, sftp://[user@]host[:port]/<path>, gdrive, gdrive-changes, onedrive, onedrive-changes", "CLOUDSTIC_SOURCE")},
 		{"-drive-id <id>", "Shared drive ID for gdrive (omit for My Drive)"},
 		{"-root-folder <id>", "Root folder ID for gdrive (defaults to entire drive)"},
+		{"-skip-native-files", "Exclude Google-native files (Docs, Sheets, Slides, etc.)"},
+		{"-google-credentials <path>", ui.Env("Path to Google service account credentials JSON", "GOOGLE_APPLICATION_CREDENTIALS")},
+		{"-google-token-file <path>", ui.Env("Path to Google OAuth token file", "GOOGLE_TOKEN_FILE")},
+		{"-onedrive-client-id <id>", ui.Env("OneDrive OAuth client ID", "ONEDRIVE_CLIENT_ID")},
+		{"-onedrive-token-file <path>", ui.Env("Path to OneDrive OAuth token file", "ONEDRIVE_TOKEN_FILE")},
 		{"-tag <tag>", "Tag to apply to the snapshot (repeatable)"},
 		{"-exclude <pattern>", "Exclude pattern, gitignore syntax (repeatable)"},
 		{"-exclude-file <path>", "Load exclude patterns from file (one per line, gitignore syntax)"},
 		{"-dry-run", "Scan source and report changes without writing to the store"},
 	})
 	t.Blank()
+	t.Note(
+		"Source URI formats:",
+		"  local:<path>                       e.g. local:./documents",
+		"  sftp://[user@]host[:port]/<path>   e.g. sftp://backup@host.com/data",
+		"  gdrive                             Google Drive (full scan)",
+		"  gdrive-changes                     Google Drive (incremental via Changes API)",
+		"  onedrive                           OneDrive (full scan)",
+		"  onedrive-changes                   OneDrive (incremental via delta API)",
+	)
 
 	t.Command("restore", "[snapshot_id]")
 	t.Flags([][2]string{
@@ -146,6 +165,10 @@ func printUsage() {
 		{"-keep-weekly N", "Keep N weekly snapshots"},
 		{"-keep-monthly N", "Keep N monthly snapshots"},
 		{"-keep-yearly N", "Keep N yearly snapshots"},
+		{"-source <uri>", "Filter by source URI (e.g. local:./docs, gdrive, sftp://host/path)"},
+		{"-account <id>", "Filter by account"},
+		{"-tag <tag>", "Filter by tag (repeatable)"},
+		{"-group-by <fields>", "Group snapshots by fields (default: source,account,path)"},
 	})
 	t.Blank()
 
@@ -161,11 +184,10 @@ func printUsage() {
 	t.Command("check", "[snapshot_id]")
 	t.Flags([][2]string{
 		{"-read-data", "Re-hash all chunk data for full byte-level verification"},
-		{"-snapshot <ref>", "Check a specific snapshot (default: all)"},
 	})
 	t.Note("  Verify the integrity of the repository by walking the full reference",
 		"  chain: index/latest → snapshot → HAMT nodes → filemeta → content → chunks.",
-		"  Reports missing, corrupt, or unreadable objects.")
+		"  Defaults to the latest snapshot. Reports missing, corrupt, or unreadable objects.")
 	t.Blank()
 
 	t.Command("cat", "<object_key> [object_key...]")
@@ -183,16 +205,17 @@ func printUsage() {
 
 	t.Heading("EXAMPLES")
 	t.Examples(
-		`cloudstic init -encryption-password "my secret passphrase"`,
-		`cloudstic init -encryption-password "my secret passphrase" -recovery`,
-		"cloudstic backup -source local -source-path ./documents",
-		"cloudstic backup -source gdrive -store b2 -store-path my-bucket",
+		`cloudstic init -password "my secret passphrase"`,
+		`cloudstic init -password "my secret passphrase" -add-recovery-key`,
+		"cloudstic backup -source local:./documents",
+		"cloudstic backup -source gdrive -store b2:my-bucket",
+		"cloudstic backup -source sftp://backup@host.com/data -source-sftp-key ~/.ssh/id_ed25519",
 		"cloudstic list",
 		"cloudstic restore",
 		"cloudstic restore abc123 -output ./my-backup.zip",
 		"cloudstic restore abc123 -path Documents/report.pdf",
 		"cloudstic restore abc123 -path Documents/",
-		"cloudstic backup -source local -source-path ./documents -dry-run",
+		"cloudstic backup -source local:./documents -dry-run",
 		"cloudstic prune -dry-run -verbose",
 	)
 	t.Blank()

@@ -19,12 +19,11 @@ func parseCheckArgs() *checkArgs {
 	a := &checkArgs{}
 	a.g = addGlobalFlags(fs)
 	readData := fs.Bool("read-data", false, "Re-hash all chunk data for full byte-level verification")
-	snapshotFlag := fs.String("snapshot", "", "Check a specific snapshot (default: all)")
 	mustParse(fs)
 	a.readData = *readData
-	a.snapshotRef = *snapshotFlag
-	if a.snapshotRef == "" && fs.NArg() > 0 {
-		a.snapshotRef = fs.Arg(0)
+	a.snapshotRef = fs.Arg(0)
+	if a.snapshotRef == "" {
+		a.snapshotRef = "latest"
 	}
 	return a
 }

@@ -43,7 +43,7 @@ _cloudstic() {
 
     local commands="init backup restore list ls prune forget diff break-lock key cat completion version help"
 
-    local global_flags="-store -store-path -store-prefix -s3-endpoint -s3-region -s3-access-key -s3-secret-key -sftp-host -sftp-port -sftp-user -sftp-password -sftp-key -source-sftp-host -source-sftp-port -source-sftp-user -source-sftp-password -source-sftp-key -store-sftp-host -store-sftp-port -store-sftp-user -store-sftp-password -store-sftp-key -encryption-key -encryption-password -recovery-key -kms-key-arn -kms-region -kms-endpoint -enable-packfile -verbose -quiet -debug"
+    local global_flags="-store -s3-endpoint -s3-region -s3-access-key -s3-secret-key -source-sftp-password -source-sftp-key -store-sftp-password -store-sftp-key -encryption-key -password -recovery-key -kms-key-arn -kms-region -kms-endpoint -disable-packfile -prompt -verbose -quiet -debug"
 
     # Identify the subcommand
     local cmd=""
@@ -53,7 +53,7 @@ _cloudstic() {
             -*)
                 # skip flags and their values
                 case "${words[i]}" in
-                    -store|-store-path|-store-prefix|-s3-endpoint|-s3-region|-s3-access-key|-s3-secret-key|-sftp-host|-sftp-port|-sftp-user|-sftp-password|-sftp-key|-source-sftp-host|-source-sftp-port|-source-sftp-user|-source-sftp-password|-source-sftp-key|-store-sftp-host|-store-sftp-port|-store-sftp-user|-store-sftp-password|-store-sftp-key|-encryption-key|-encryption-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-source-path|-drive-id|-root-folder|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-snapshot|-account|-path|-json)
+                    -store|-s3-endpoint|-s3-region|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-store-sftp-password|-store-sftp-key|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-drive-id|-root-folder|-google-credentials|-google-token-file|-onedrive-client-id|-onedrive-token-file|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account|-json)
                         ((i++)) ;;
                 esac
                 ;;
@@ -74,15 +74,15 @@ _cloudstic() {
     local cmd_flags=""
     case "$cmd" in
         init)
-            cmd_flags="-recovery -no-encryption -adopt-slots" ;;
+            cmd_flags="-add-recovery-key -no-encryption -adopt-slots" ;;
         backup)
-            cmd_flags="-source -source-path -drive-id -root-folder -tag -dry-run" ;;
+            cmd_flags="-source -drive-id -root-folder -skip-native-files -google-credentials -google-token-file -onedrive-client-id -onedrive-token-file -tag -dry-run" ;;
         restore)
             cmd_flags="-output -dry-run" ;;
         prune)
             cmd_flags="-dry-run" ;;
         forget)
-            cmd_flags="-prune -dry-run -keep-last -keep-hourly -keep-daily -keep-weekly -keep-monthly -keep-yearly -tag -source -account -path -group-by" ;;
+            cmd_flags="-prune -dry-run -keep-last -keep-hourly -keep-daily -keep-weekly -keep-monthly -keep-yearly -tag -source -account -group-by" ;;
         cat)
             cmd_flags="-json -raw" ;;
         completion)
@@ -111,6 +111,8 @@ _cloudstic() {
             ;;
         list)
             cmd_flags="-group" ;;
+        check)
+            cmd_flags="-read-data" ;;
         ls|diff|break-lock|version|help)
             cmd_flags="" ;;
     esac
@@ -123,12 +125,14 @@ _cloudstic() {
     # Value completions for specific flags
     case "$prev" in
         -store)
-            COMPREPLY=($(compgen -W "local b2 s3 sftp" -- "$cur"))
+            # URI completion hint: show scheme prefixes
+            COMPREPLY=($(compgen -W "local: s3: b2: sftp://" -- "$cur"))
             return ;;
         -source)
-            COMPREPLY=($(compgen -W "local sftp gdrive gdrive-changes onedrive onedrive-changes" -- "$cur"))
+            # URI completion hint: show scheme prefixes and bare keywords
+            COMPREPLY=($(compgen -W "local: sftp:// gdrive gdrive-changes onedrive onedrive-changes" -- "$cur"))
             return ;;
-        -source-path|-store-path|-sftp-key|-source-sftp-key|-store-sftp-key|-output)
+        -source-sftp-key|-store-sftp-key|-output)
             _filedir
             return ;;
     esac
@@ -165,35 +169,23 @@ _cloudstic() {
 
     local -a global_flags
     global_flags=(
-        '-store[Storage backend]:backend:(local b2 s3 sftp)'
-        '-store-path[Local/SFTP path or bucket name]:path:_files'
-        '-store-prefix[Key prefix for B2/S3 objects]:prefix:'
+        '-store[Storage backend URI (local:<path>, s3:<bucket>[/<prefix>], b2:<bucket>[/<prefix>], sftp://[user@]host[:port]/<path>)]:uri:'
         '-s3-endpoint[S3 compatible endpoint URL]:url:'
         '-s3-region[S3 region]:region:'
         '-s3-access-key[S3 access key ID]:key:'
         '-s3-secret-key[S3 secret access key]:secret:'
-        '-sftp-host[SFTP server hostname]:host:_hosts'
-        '-sftp-port[SFTP server port]:port:'
-        '-sftp-user[SFTP username]:user:_users'
-        '-sftp-password[SFTP password]:password:'
-        '-sftp-key[Path to SSH private key]:key:_files'
-        '-source-sftp-host[Override SFTP source hostname]:host:_hosts'
-        '-source-sftp-port[Override SFTP source port]:port:'
-        '-source-sftp-user[Override SFTP source username]:user:'
-        '-source-sftp-password[Override SFTP source password]:password:'
-        '-source-sftp-key[Override SFTP source private key]:key:_files'
-        '-store-sftp-host[Override SFTP store hostname]:host:_hosts'
-        '-store-sftp-port[Override SFTP store port]:port:'
-        '-store-sftp-user[Override SFTP store username]:user:'
-        '-store-sftp-password[Override SFTP store password]:password:'
-        '-store-sftp-key[Override SFTP store private key]:key:_files'
+        '-source-sftp-password[SFTP source password]:password:'
+        '-source-sftp-key[Path to SSH private key for SFTP source]:key:_files'
+        '-store-sftp-password[SFTP store password]:password:'
+        '-store-sftp-key[Path to SSH private key for SFTP store]:key:_files'
         '-encryption-key[Platform key (hex-encoded)]:key:'
-        '-encryption-password[Password for encryption]:password:'
+        '-password[Repository password]:password:'
         '-recovery-key[Recovery key (24-word mnemonic)]:words:'
         '-kms-key-arn[AWS KMS key ARN]:arn:'
         '-kms-region[AWS KMS region]:region:'
         '-kms-endpoint[Custom AWS KMS endpoint]:url:'
-        '-enable-packfile[Bundle small objects into packs]'
+        '-disable-packfile[Disable bundling small objects into packs]'
+        '-prompt[Prompt for password interactively]'
         '-verbose[Log detailed operations]'
         '-quiet[Suppress progress bars]'
         '-debug[Log every store request]'
@@ -207,7 +199,7 @@ _cloudstic() {
             -*)
                 # Skip flags with values
                 case "${words[i]}" in
-                    -store|-store-path|-store-prefix|-s3-endpoint|-s3-region|-s3-access-key|-s3-secret-key|-sftp-host|-sftp-port|-sftp-user|-sftp-password|-sftp-key|-source-sftp-host|-source-sftp-port|-source-sftp-user|-source-sftp-password|-source-sftp-key|-store-sftp-host|-store-sftp-port|-store-sftp-user|-store-sftp-password|-source-sftp-key|-store-sftp-host|-store-sftp-port|-store-sftp-user|-store-sftp-password|-store-sftp-key|-encryption-key|-encryption-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-source-path|-drive-id|-root-folder|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-snapshot|-account|-path)
+                    -store|-s3-endpoint|-s3-region|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-store-sftp-password|-store-sftp-key|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-drive-id|-root-folder|-google-credentials|-google-token-file|-onedrive-client-id|-onedrive-token-file|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account)
                         (( i++ )) ;;
                 esac
                 ;;
@@ -228,16 +220,20 @@ _cloudstic() {
     case "$cmd" in
         init)
             _arguments $global_flags \
-                '-recovery[Generate a 24-word recovery key]' \
+                '-add-recovery-key[Generate a 24-word recovery key]' \
                 '-no-encryption[Create an unencrypted repository]' \
                 '-adopt-slots[Adopt existing key slots]'
             ;;
         backup)
             _arguments $global_flags \
-                '-source[Source type]:type:(local sftp gdrive gdrive-changes onedrive onedrive-changes)' \
-                '-source-path[Path to source directory]:path:_files' \
+                '-source[Source URI]:uri:(local: sftp:// gdrive gdrive-changes onedrive onedrive-changes)' \
                 '-drive-id[Shared drive ID]:id:' \
                 '-root-folder[Root folder ID]:id:' \
+                '-skip-native-files[Exclude Google-native files]' \
+                '-google-credentials[Google service account credentials JSON]:path:_files' \
+                '-google-token-file[Google OAuth token file]:path:_files' \
+                '-onedrive-client-id[OneDrive OAuth client ID]:id:' \
+                '-onedrive-token-file[OneDrive OAuth token file]:path:_files' \
                 '*-tag[Tag for the snapshot]:tag:' \
                 '-dry-run[Scan without writing]'
             ;;
@@ -270,9 +266,8 @@ _cloudstic() {
                 '-keep-monthly[Keep N monthly snapshots]:count:' \
                 '-keep-yearly[Keep N yearly snapshots]:count:' \
                 '*-tag[Filter by tag]:tag:' \
-                '-source[Filter by source type]:type:' \
+                '-source[Filter by source URI (e.g. local:./docs, gdrive)]:uri:' \
                 '-account[Filter by account]:account:' \
-                '-path[Filter by path]:path:' \
                 '-group-by[Group snapshots by fields]:fields:' \
                 ':snapshot ID:'
             ;;
@@ -355,49 +350,41 @@ complete -c cloudstic -n __fish_use_subcommand -a version -d 'Print version info
 complete -c cloudstic -n __fish_use_subcommand -a help -d 'Show usage information'
 
 # Global flags (available for all subcommands)
-complete -c cloudstic -l store -x -a 'local b2 s3 sftp' -d 'Storage backend'
-complete -c cloudstic -l store-path -r -F -d 'Local/SFTP path or bucket name'
-complete -c cloudstic -l store-prefix -x -d 'Key prefix for B2/S3 objects'
+complete -c cloudstic -l store -x -d 'Storage backend URI (local:<path>, s3:<bucket>[/<prefix>], b2:<bucket>[/<prefix>], sftp://[user@]host[:port]/<path>)'
 complete -c cloudstic -l s3-endpoint -x -d 'S3 compatible endpoint URL'
 complete -c cloudstic -l s3-region -x -d 'S3 region'
 complete -c cloudstic -l s3-access-key -x -d 'S3 access key ID'
 complete -c cloudstic -l s3-secret-key -x -d 'S3 secret access key'
-complete -c cloudstic -l sftp-host -x -d 'SFTP server hostname'
-complete -c cloudstic -l sftp-port -x -d 'SFTP server port'
-complete -c cloudstic -l sftp-user -x -d 'SFTP username'
-complete -c cloudstic -l sftp-password -x -d 'SFTP password'
-complete -c cloudstic -l sftp-key -r -F -d 'Path to SSH private key'
-complete -c cloudstic -l source-sftp-host -x -d 'Override: SFTP source hostname'
-complete -c cloudstic -l source-sftp-port -x -d 'Override: SFTP source port'
-complete -c cloudstic -l source-sftp-user -x -d 'Override: SFTP source username'
-complete -c cloudstic -l source-sftp-password -x -d 'Override: SFTP source password'
-complete -c cloudstic -l source-sftp-key -r -F -d 'Override: SFTP source private key'
-complete -c cloudstic -l store-sftp-host -x -d 'Override: SFTP store hostname'
-complete -c cloudstic -l store-sftp-port -x -d 'Override: SFTP store port'
-complete -c cloudstic -l store-sftp-user -x -d 'Override: SFTP store username'
-complete -c cloudstic -l store-sftp-password -x -d 'Override: SFTP store password'
-complete -c cloudstic -l store-sftp-key -r -F -d 'Override: SFTP store private key'
+complete -c cloudstic -l source-sftp-password -x -d 'SFTP source password'
+complete -c cloudstic -l source-sftp-key -r -F -d 'Path to SSH private key for SFTP source'
+complete -c cloudstic -l store-sftp-password -x -d 'SFTP store password'
+complete -c cloudstic -l store-sftp-key -r -F -d 'Path to SSH private key for SFTP store'
 complete -c cloudstic -l encryption-key -x -d 'Platform key (hex-encoded)'
-complete -c cloudstic -l encryption-password -x -d 'Password for encryption'
+complete -c cloudstic -l password -x -d 'Repository password'
 complete -c cloudstic -l recovery-key -x -d 'Recovery key (24-word mnemonic)'
 complete -c cloudstic -l kms-key-arn -x -d 'AWS KMS key ARN'
 complete -c cloudstic -l kms-region -x -d 'AWS KMS region'
 complete -c cloudstic -l kms-endpoint -x -d 'Custom AWS KMS endpoint'
-complete -c cloudstic -l enable-packfile -d 'Bundle small objects into packs'
+complete -c cloudstic -l disable-packfile -d 'Disable bundling small objects into packs'
+complete -c cloudstic -l prompt -d 'Prompt for password interactively'
 complete -c cloudstic -l verbose -d 'Log detailed operations'
 complete -c cloudstic -l quiet -d 'Suppress progress bars'
 complete -c cloudstic -l debug -d 'Log every store request'
 
 # init
-complete -c cloudstic -n '__fish_seen_subcommand_from init' -l recovery -d 'Generate a 24-word recovery key'
+complete -c cloudstic -n '__fish_seen_subcommand_from init' -l add-recovery-key -d 'Generate a 24-word recovery key'
 complete -c cloudstic -n '__fish_seen_subcommand_from init' -l no-encryption -d 'Create an unencrypted repository'
 complete -c cloudstic -n '__fish_seen_subcommand_from init' -l adopt-slots -d 'Adopt existing key slots'
 
 # backup
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l source -x -a 'local sftp gdrive gdrive-changes onedrive onedrive-changes' -d 'Source type'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l source-path -r -F -d 'Path to source directory'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l source -x -a 'local: sftp:// gdrive gdrive-changes onedrive onedrive-changes' -d 'Source URI'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l drive-id -x -d 'Shared drive ID'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l root-folder -x -d 'Root folder ID'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-native-files -d 'Exclude Google-native files'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l google-credentials -r -F -d 'Google service account credentials JSON'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l google-token-file -r -F -d 'Google OAuth token file'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l onedrive-client-id -x -d 'OneDrive OAuth client ID'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l onedrive-token-file -r -F -d 'OneDrive OAuth token file'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l tag -x -d 'Tag for the snapshot'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l dry-run -d 'Scan without writing'
 
@@ -421,9 +408,8 @@ complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l keep-weekly -x 
 complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l keep-monthly -x -d 'Keep N monthly snapshots'
 complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l keep-yearly -x -d 'Keep N yearly snapshots'
 complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l tag -x -d 'Filter by tag'
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l source -x -d 'Filter by source type'
+complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l source -x -d 'Filter by source URI (e.g. local:./docs, gdrive)'
 complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l account -x -d 'Filter by account'
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l path -x -d 'Filter by path'
 complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l group-by -x -d 'Group snapshots by fields'
 
 # key subcommands

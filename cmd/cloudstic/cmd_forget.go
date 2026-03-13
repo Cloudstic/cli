@@ -23,8 +23,8 @@ type forgetArgs struct {
 	keepYearly    int
 	filterTags    stringArrayFlags
 	filterSource  string
-	filterAccount string
 	filterPath    string
+	filterAccount string
 	groupBy       string
 	snapshotID    string
 	hasPolicy     bool
@@ -43,9 +43,8 @@ func parseForgetArgs() *forgetArgs {
 	keepMonthly := fs.Int("keep-monthly", 0, "Keep n monthly snapshots")
 	keepYearly := fs.Int("keep-yearly", 0, "Keep n yearly snapshots")
 	fs.Var(&a.filterTags, "tag", "Filter by tag (can be specified multiple times)")
-	filterSource := fs.String("source", "", "Filter by source type")
+	filterSource := fs.String("source", "", "Filter by source URI (e.g. local:./docs, gdrive)")
 	filterAccount := fs.String("account", "", "Filter by account")
-	filterPath := fs.String("path", "", "Filter by path")
 	groupBy := fs.String("group-by", "source,account,path", "Group snapshots by fields (comma-separated)")
 	mustParse(fs)
 	a.prune = *prune
@@ -56,10 +55,23 @@ func parseForgetArgs() *forgetArgs {
 	a.keepWeekly = *keepWeekly
 	a.keepMonthly = *keepMonthly
 	a.keepYearly = *keepYearly
-	a.filterSource = *filterSource
 	a.filterAccount = *filterAccount
-	a.filterPath = *filterPath
 	a.groupBy = *groupBy
+	if *filterSource != "" {
+		// Allow bare source type keywords (e.g. "local", "sftp") without a path for type-only filtering.
+		switch *filterSource {
+		case "local", "sftp", "gdrive", "gdrive-changes", "onedrive", "onedrive-changes":
+			a.filterSource = *filterSource
+		default:
+			parts, err := parseSourceURI(*filterSource)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Invalid -source filter: %v\n", err)
+				os.Exit(1)
+			}
+			a.filterSource = parts.scheme
+			a.filterPath = parts.path
+		}
+	}
 	a.hasPolicy = a.keepLast > 0 || a.keepHourly > 0 || a.keepDaily > 0 ||
 		a.keepWeekly > 0 || a.keepMonthly > 0 || a.keepYearly > 0
 	a.snapshotID = fs.Arg(0)

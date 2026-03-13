@@ -29,7 +29,7 @@ strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
 
 echo "Testing Selective Restore (Google Drive source) in $TMP_DIR"
 
-STORE="-store local -store-path $TMP_DIR/repo"
+STORE="-store local:$TMP_DIR/repo"
 
 # ---------------------------------------------------------
 # Step 1: Backup from Google Drive

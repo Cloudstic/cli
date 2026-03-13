@@ -25,8 +25,8 @@ cleanup() {
 trap cleanup EXIT
 
 CLI="go run cmd/cloudstic/main.go"
-STORE_FLAGS="-store local -store-path $TMP_DIR/repo"
-SOURCE_FLAGS="-source local -source-path $TMP_DIR/data"
+STORE_FLAGS="-store local:$TMP_DIR/repo"
+SOURCE_FLAGS="-source local:$TMP_DIR/data"
 
 # Strip ANSI color codes, then extract the 64-char hex hash from "Snapshot <hash> saved"
 strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }

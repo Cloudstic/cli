@@ -159,6 +159,34 @@ func TestMatchesFilter(t *testing.T) {
 	}
 }
 
+// TestMatchesFilter_VolumeUUID verifies that filtering by -account accepts
+// VolumeUUID as an alternative to the hostname, so that portable-drive
+// snapshots can be targeted by their stable UUID.
+func TestMatchesFilter_VolumeUUID(t *testing.T) {
+	const uuid = "A1B2C3D4-1234-5678-ABCD-EF0123456789"
+
+	portable := &core.SourceInfo{
+		Type:       "local",
+		Account:    "macbook-pro", // hostname on machine A
+		Path:       "Documents",
+		VolumeUUID: uuid,
+	}
+	snap := core.Snapshot{Source: portable}
+
+	// Filtering by VolumeUUID should match.
+	if !matchesFilter(&snap, snapshotFilter{account: uuid}) {
+		t.Error("should match when account filter equals VolumeUUID")
+	}
+	// Filtering by hostname still works.
+	if !matchesFilter(&snap, snapshotFilter{account: "macbook-pro"}) {
+		t.Error("should still match when account filter equals hostname")
+	}
+	// A different UUID or hostname should not match.
+	if matchesFilter(&snap, snapshotFilter{account: "OTHER-UUID"}) {
+		t.Error("should not match a different UUID")
+	}
+}
+
 // TestGroupSnapshots_VolumeUUID verifies that snapshots from different
 // machines but the same VolumeUUID are grouped together.
 func TestGroupSnapshots_VolumeUUID(t *testing.T) {

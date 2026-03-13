@@ -52,7 +52,7 @@ Cloudstic is a content-addressable backup tool that creates encrypted, deduplica
 cloudstic init
 
 # 2. Back up a local directory (prompts for password)
-cloudstic backup -source local -source-path ~/Documents
+cloudstic backup -source local:~/Documents
 
 # 3. List snapshots
 cloudstic list
@@ -64,8 +64,8 @@ cloudstic restore
 When running in a terminal, Cloudstic prompts for the repository password if no credential is provided via flags or environment variables. For non-interactive use (scripts, cron), pass the password explicitly:
 
 ```bash
-cloudstic init -encryption-password "my secret passphrase"
-cloudstic backup -source local -source-path ~/Documents -encryption-password "my secret passphrase"
+cloudstic init -password "my secret passphrase"
+cloudstic backup -source local:~/Documents -password "my secret passphrase"
 ```
 
 ## Installation
@@ -160,14 +160,13 @@ Override with the `CLOUDSTIC_CONFIG_DIR` environment variable.
 Most flags can be set via environment variables to avoid repeating them. For example:
 
 ```bash
-export CLOUDSTIC_STORE=s3
-export CLOUDSTIC_STORE_PATH=my-backup-bucket
-export CLOUDSTIC_ENCRYPTION_PASSWORD="my secret passphrase"
+export CLOUDSTIC_STORE=s3:my-backup-bucket
+export CLOUDSTIC_PASSWORD="my secret passphrase"
 export AWS_ACCESS_KEY_ID=your-access-key
 export AWS_SECRET_ACCESS_KEY=your-secret-key
 
 # Now commands are much shorter:
-cloudstic backup -source local -source-path ~/Documents
+cloudstic backup -source local:~/Documents
 cloudstic list
 cloudstic restore
 ```
@@ -187,7 +186,7 @@ These flags apply to all commands:
 | `-verbose` | Log detailed file-level operations (files scanned, written, deleted) |
 | `-quiet` | Suppress progress bars (keeps final summary output) |
 | `-debug` | Log every store request (network calls, timing, sizes) |
-| `-enable-packfile` | Bundle small objects into 8MB packs to save S3 PUTs (default: true) |
+| `-disable-packfile` | Disable bundling small objects into 8MB packs (packfile is on by default) — env: `CLOUDSTIC_DISABLE_PACKFILE=1` |
 
 `-verbose` and `-quiet` are mutually exclusive. If both are set, `-quiet` takes precedence.
 
@@ -200,25 +199,25 @@ Initialize a new repository. Encryption is **required by default**.
 cloudstic init
 
 # Interactive with a recovery key (strongly recommended)
-cloudstic init -recovery
+cloudstic init -add-recovery-key
 
 # Non-interactive — password provided via flag
-cloudstic init -encryption-password "my secret passphrase"
+cloudstic init -password "my secret passphrase"
 
 # Non-interactive with a recovery key
-cloudstic init -encryption-password "my secret passphrase" -recovery
+cloudstic init -password "my secret passphrase" -add-recovery-key
 
 # Platform key encryption (for automation)
 cloudstic init -encryption-key <64-hex-chars>
 
 # Both password and platform key (dual access)
-cloudstic init -encryption-password "passphrase" -encryption-key <hex>
+cloudstic init -password "passphrase" -encryption-key <hex>
 
 # Unencrypted (must be explicit — not recommended)
 cloudstic init -no-encryption
 ```
 
-When no encryption credential is provided and stdin is a terminal, `init` prompts for a new password with confirmation. In non-interactive environments (piped input, cron jobs), you must pass `-encryption-password`, `-encryption-key`, or `-no-encryption` explicitly.
+When no encryption credential is provided and stdin is a terminal, `init` prompts for a new password with confirmation. In non-interactive environments (piped input, cron jobs), you must pass `-password`, `-encryption-key`, or `-no-encryption` explicitly.
 
 If you are using a platform key or KMS but also want to protect the repository with a password, pass `-password` to explicitly trigger the prompt:
 
@@ -230,14 +229,13 @@ cloudstic init -encryption-key <hex> -password
 
 | Flag | Description |
 |------|-------------|
-| `-encryption-password` | Password for password-based encryption |
+| `-password` | Password for password-based encryption. Omit the value to force an interactive prompt even when other credentials are provided |
 | `-encryption-key` | Platform key (64 hex chars = 32 bytes) |
-| `-password` | Force interactive password prompt (even when other credentials are provided) |
-| `-recovery` | Generate a 24-word recovery key during init |
+| `-add-recovery-key` | Generate a 24-word recovery key during init |
 | `-no-encryption` | Create an unencrypted repository (not recommended) |
 | `-adopt-slots` | Adopt existing key slots (and add new credentials to them) |
 
-When `-recovery` is used, a 24-word seed phrase is displayed **once**. Write it down and store it safely — it's your last resort if you lose your password.
+When `-add-recovery-key` is used, a 24-word seed phrase is displayed **once**. Write it down and store it safely — it's your last resort if you lose your password.
 
 ---
 
@@ -247,7 +245,7 @@ Create a new snapshot from a source.
 
 ```bash
 # Back up a local directory
-cloudstic backup -source local -source-path ~/Documents
+cloudstic backup -source local:~/Documents
 
 # Back up Google Drive (My Drive)
 cloudstic backup -source gdrive
@@ -256,21 +254,20 @@ cloudstic backup -source gdrive
 cloudstic backup -source gdrive -drive-id <shared-drive-id> -root-folder <folder-id>
 
 # Back up with tags
-cloudstic backup -source local -source-path ~/Documents -tag daily -tag important
+cloudstic backup -source local:~/Documents -tag daily -tag important
 
 # Verbose output (shows individual files)
-cloudstic backup -source local -source-path ~/Documents -verbose
+cloudstic backup -source local:~/Documents -verbose
 
 # Dry run — see what would change without writing to the store
-cloudstic backup -source local -source-path ~/Documents -dry-run
+cloudstic backup -source local:~/Documents -dry-run
 ```
 
 **Flags:**
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-source` | `gdrive` | Source type: `local`, `sftp`, `gdrive`, `gdrive-changes`, `onedrive`, `onedrive-changes` |
-| `-source-path` | `.` | Path to source directory (local filesystem or SFTP remote path) |
+| `-source` | `gdrive` | Source type: `local:<path>`, `sftp://[user@]host[:port]/<path>`, `gdrive`, `gdrive-changes`, `onedrive`, `onedrive-changes` |
 | `-drive-id` | | Shared drive ID for Google Drive (omit for My Drive) |
 | `-root-folder` | | Root folder ID for Google Drive (defaults to entire drive) |
 | `-tag` | | Tag to apply to the snapshot (repeatable) |
@@ -289,17 +286,17 @@ You can exclude files and directories from the backup using gitignore-style patt
 
 ```bash
 # Exclude specific directories and file types
-cloudstic backup -source local -source-path ~/project \
+cloudstic backup -source local:~/project \
   -exclude ".git/" -exclude "node_modules/" -exclude "*.tmp" -exclude "*.log"
 
 # Works with cloud sources too
 cloudstic backup -source gdrive-changes -exclude "node_modules/" -exclude "*.tmp"
 
 # Load patterns from a file
-cloudstic backup -source local -source-path ~/project -exclude-file ~/project/.backupignore
+cloudstic backup -source local:~/project -exclude-file ~/project/.backupignore
 
 # Combine both
-cloudstic backup -source local -source-path ~/project \
+cloudstic backup -source local:~/project \
   -exclude "build/" -exclude-file .backupignore
 ```
 
@@ -469,9 +466,8 @@ cloudstic forget -keep-last 5 -source gdrive -account user@gmail.com
 | Flag | Description |
 |------|-------------|
 | `-tag` | Filter by tag (repeatable) |
-| `-source` | Filter by source type |
+| `-source` | Filter by source URI (e.g., `local:/path`, `gdrive`, `sftp://host/path`) |
 | `-account` | Filter by account |
-| `-path` | Filter by path |
 | `-group-by` | Group snapshots by fields (default: `source,account,path`) |
 
 **Other flags:**
@@ -549,7 +545,7 @@ cloudstic check -read-data
 
 # Check a specific snapshot
 cloudstic check <snapshot-hash>
-cloudstic check -snapshot latest
+cloudstic check latest
 
 # Verbose output — log each verified object
 cloudstic check -verbose
@@ -634,7 +630,7 @@ Generate a 24-word recovery key for an existing encrypted repository. Requires y
 cloudstic key add-recovery
 
 # Non-interactive
-cloudstic key add-recovery -encryption-password "my secret passphrase"
+cloudstic key add-recovery -password "my secret passphrase"
 
 # For KMS-managed repositories
 cloudstic key add-recovery -kms-key-arn arn:aws:kms:us-east-1:123:key/abc
@@ -655,7 +651,7 @@ Change (or add) the repository password. You must provide your current credentia
 cloudstic key passwd
 
 # Non-interactive
-cloudstic key passwd -encryption-password "old passphrase" -new-password "new passphrase"
+cloudstic key passwd -password "old passphrase" -new-password "new passphrase"
 
 # Unlock with platform key, set a password
 cloudstic key passwd -encryption-key <hex> -new-password "my passphrase"
@@ -761,7 +757,7 @@ See [Shell Completions](#shell-completions) below for setup instructions.
 
 ## Shell Completions
 
-Cloudstic can generate tab-completion scripts for popular shells. Once set up, pressing `Tab` will complete commands, flags, and flag values (like `-store local|b2|s3|sftp` and `-source local|sftp|gdrive|...`).
+Cloudstic can generate tab-completion scripts for popular shells. Once set up, pressing `Tab` will complete commands, flags, and flag values (like `-store local:<path>|s3:<bucket>|b2:<bucket>|sftp://...` and `-source local:<path>|sftp://[user@]host/<path>|gdrive|...`).
 
 ### Bash
 
@@ -824,22 +820,21 @@ All sources produce the same snapshot format. You can back up different sources 
 
 ### Local Directory
 
-Back up files from a local filesystem path. No authentication or environment variables required.
+Back up files from a local filesystem path. No authentication or environment variables required. Specify the path as part of the source URI: `-source local:<path>`.
 
 ```bash
-cloudstic backup -source local -source-path /path/to/directory
+cloudstic backup -source local:/path/to/directory
 
 # Skip common development directories
-cloudstic backup -source local -source-path ~/project \
+cloudstic backup -source local:~/project \
   -exclude ".git/" -exclude "node_modules/" -exclude "*.tmp"
 
 # Use an exclude file
-cloudstic backup -source local -source-path ~/project -exclude-file .backupignore
+cloudstic backup -source local:~/project -exclude-file .backupignore
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-source-path` | `.` | Root directory to back up |
 | `-exclude` | | Exclude pattern, gitignore syntax (repeatable) |
 | `-exclude-file` | | File containing exclude patterns (one per line) |
 | `-volume-uuid` | | Override volume UUID (see [Portable drives](#portable-drives)) |
@@ -854,10 +849,10 @@ When backing up a portable or external drive from multiple machines, Cloudstic a
 
 ```bash
 # Back up a portable drive — UUID is auto-detected
-cloudstic backup -source local -source-path /Volumes/MyDrive
+cloudstic backup -source local:/Volumes/MyDrive
 
 # Override UUID when auto-detection fails or for custom lineage
-cloudstic backup -source local -source-path /mnt/backup -volume-uuid "A1B2C3D4-1234-5678-ABCD-EF0123456789"
+cloudstic backup -source local:/mnt/backup -volume-uuid "A1B2C3D4-1234-5678-ABCD-EF0123456789"
 ```
 
 The volume UUID can also be set via the `CLOUDSTIC_VOLUME_UUID` environment variable. When provided, the explicit UUID takes precedence over auto-detection.
@@ -884,44 +879,35 @@ The volume UUID is determined from the backup root path only. If your backup dir
 
 ```bash
 # Good: back up each volume independently
-cloudstic backup -source local -source-path /Volumes/MyDrive
-cloudstic backup -source local -source-path /Volumes/OtherDrive
+cloudstic backup -source local:/Volumes/MyDrive
+cloudstic backup -source local:/Volumes/OtherDrive
 
 # Avoid: backing up a parent that contains mount points from different volumes
-cloudstic backup -source local -source-path /Volumes
+cloudstic backup -source local:/Volumes
 ```
 
 Note that symlinks to other volumes are **not followed** — only direct mount points within the tree are traversed.
 
 ### SFTP Source
 
-Back up files from a remote SFTP server. Supports password authentication, SSH private key, and ssh-agent.
+Back up files from a remote SFTP server. Supports password authentication, SSH private key, and ssh-agent. Specify the server and path using a URI: `sftp://[user@]host[:port]/<path>`.
 
 ```bash
 # Back up a remote directory via SFTP
-cloudstic backup -source sftp -source-path /data/documents \
-  -sftp-host myserver.com -sftp-user backup -sftp-key ~/.ssh/id_ed25519
+cloudstic backup -source sftp://backup@myserver.com/data/documents \
+  -source-sftp-key ~/.ssh/id_ed25519
 
 # Using password auth
-cloudstic backup -source sftp -source-path /home/user/files \
-  -sftp-host myserver.com -sftp-user backup -sftp-password "secret"
+cloudstic backup -source sftp://backup@myserver.com/home/user/files \
+  -source-sftp-password "secret"
 ```
 
 | Flag | Description |
 |------|-------------|
-| `-source-path` | Remote directory path to back up |
-| `-sftp-host` | SFTP server hostname |
-| `-sftp-port` | SFTP server port (default: `22`) |
-| `-sftp-user` | SFTP username |
-| `-sftp-password` | SFTP password (optional if using key auth) |
-| `-sftp-key` | Path to SSH private key (optional if using password auth) |
+| `-source-sftp-password` | SFTP password (optional if using key auth) |
+| `-source-sftp-key` | Path to SSH private key (optional if using password auth) |
 
-> [!TIP]
-> **Advanced: Source-Specific Overrides**
-> If you are using SFTP as *both* a source and a store (e.g. backing up one SFTP server to another), you can use the `-source-sftp-*` flags to override the global SFTP settings for the source:
-> `-source-sftp-host`, `-source-sftp-port`, `-source-sftp-user`, `-source-sftp-password`, `-source-sftp-key`.
-
-If neither `-sftp-password` nor `-sftp-key` is provided, Cloudstic will fall back to your `SSH_AUTH_SOCK` agent.
+If neither `-source-sftp-password` nor `-source-sftp-key` is provided, Cloudstic will fall back to your `SSH_AUTH_SOCK` agent.
 
 Cloudstic walks the remote directory recursively. File permissions are not preserved — only name, size, modification time, and content are captured.
 
@@ -1044,7 +1030,7 @@ Each snapshot records which source produced it. This metadata is used by retenti
 ```bash
 # Keep 30 daily snapshots for Google Drive, 7 for local
 cloudstic forget -keep-daily 30 -source gdrive -prune
-cloudstic forget -keep-daily 7 -source local -prune
+cloudstic forget -keep-daily 7 -source local:~/Documents -prune
 ```
 
 ---
@@ -1057,10 +1043,10 @@ Store backups on the local filesystem. This is the default.
 
 ```bash
 # Uses default path ./backup_store
-cloudstic init -encryption-password "passphrase"
+cloudstic init -password "passphrase"
 
 # Custom path
-cloudstic init -store local -store-path /mnt/external/backups -encryption-password "passphrase"
+cloudstic init -store local:/mnt/external/backups -password "passphrase"
 ```
 
 ### Backblaze B2
@@ -1071,14 +1057,14 @@ Store backups in a Backblaze B2 bucket. Requires B2 application keys.
 export B2_KEY_ID=your-key-id
 export B2_APP_KEY=your-app-key
 
-cloudstic init -store b2 -store-path my-bucket-name -encryption-password "passphrase"
-cloudstic backup -store b2 -store-path my-bucket-name -source local -source-path ~/Documents
+cloudstic init -store b2:my-bucket-name -password "passphrase"
+cloudstic backup -store b2:my-bucket-name -source local:~/Documents
 ```
 
-Use `-store-prefix` to namespace objects within a bucket:
+Use a prefix to namespace objects within a bucket:
 
 ```bash
-cloudstic init -store b2 -store-path my-bucket -store-prefix "laptop/" -encryption-password "passphrase"
+cloudstic init -store b2:my-bucket/laptop/ -password "passphrase"
 ```
 
 **Environment variables:**
@@ -1098,23 +1084,23 @@ Cloudstic uses the standard AWS SDK for Go, meaning it automatically loads crede
 # Using explicit environment variables
 export AWS_ACCESS_KEY_ID=your-access-key
 export AWS_SECRET_ACCESS_KEY=your-secret-key
-cloudstic init -store s3 -store-path my-bucket-name -encryption-password "passphrase"
+cloudstic init -store s3:my-bucket-name -password "passphrase"
 
 # Using an existing AWS CLI profile (e.g., from ~/.aws/credentials)
 export AWS_PROFILE=my-profile
-cloudstic backup -store s3 -store-path my-bucket-name -source local -source-path ~/Documents
+cloudstic backup -store s3:my-bucket-name -source local:~/Documents
 ```
 
 If using an alternative S3 provider, you must specific the custom endpoint URL. Keep in mind you may also need to modify the `-s3-region` (defaults to `us-east-1`):
 
 ```bash
-cloudstic init -store s3 -s3-endpoint https://<account_id>.r2.cloudflarestorage.com -store-path my-bucket -s3-region auto -encryption-password "passphrase"
+cloudstic init -store s3:my-bucket -s3-endpoint https://<account_id>.r2.cloudflarestorage.com -s3-region auto -password "passphrase"
 ```
 
-Use `-store-prefix` to namespace objects within a bucket:
+Use a prefix to namespace objects within a bucket:
 
 ```bash
-cloudstic init -store s3 -store-path my-bucket -store-prefix "laptop/" -encryption-password "passphrase"
+cloudstic init -store s3:my-bucket/laptop/ -password "passphrase"
 ```
 
 **Environment variables:**
@@ -1132,27 +1118,31 @@ Store backups on a remote SFTP server. Supports password authentication, SSH pri
 
 ```bash
 # Initialize a repository on an SFTP server
-cloudstic init -store sftp -store-path /backups/cloudstic \
-  -sftp-host myserver.com -sftp-user backup -sftp-key ~/.ssh/id_ed25519 \
-  -encryption-password "passphrase"
+cloudstic init -store sftp://backup@myserver.com/backups/cloudstic \
+  -store-sftp-key ~/.ssh/id_ed25519 \
+  -password "passphrase"
 
 # Back up to the SFTP store
-cloudstic backup -store sftp -store-path /backups/cloudstic \
-  -sftp-host myserver.com -sftp-user backup -sftp-key ~/.ssh/id_ed25519 \
-  -source local -source-path ~/Documents
+cloudstic backup -store sftp://backup@myserver.com/backups/cloudstic \
+  -store-sftp-key ~/.ssh/id_ed25519 \
+  -source local:~/Documents
 ```
 
-The `-store-path` is the remote directory path on the SFTP server where backup objects will be stored. It will be created if it doesn't exist.
+The path component of the URI (`/backups/cloudstic` in the example above) is the remote directory where backup objects will be stored. It will be created if it doesn't exist.
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `-store-sftp-password` | SFTP password for the store (optional if using key auth) |
+| `-store-sftp-key` | Path to SSH private key for the store (optional if using password auth) |
 
 **Environment variables:**
 
 | Variable | Description |
 | :--- | :--- |
-| `CLOUDSTIC_SFTP_HOST` | SFTP server hostname |
-| `CLOUDSTIC_SFTP_PORT` | SFTP server port (default: `22`) |
-| `CLOUDSTIC_SFTP_USER` | SFTP username |
-| `CLOUDSTIC_SFTP_PASSWORD` | SFTP password |
-| `CLOUDSTIC_SFTP_KEY` | Path to SSH private key |
+| `CLOUDSTIC_STORE_SFTP_PASSWORD` | SFTP password for the store |
+| `CLOUDSTIC_STORE_SFTP_KEY` | Path to SSH private key for the store |
 
 ---
 
@@ -1162,7 +1152,7 @@ Encryption is **required by default**. All backup data is encrypted with AES-256
 
 ### Interactive password prompt
 
-When running in a terminal, Cloudstic prompts for the repository password **only if no other credential is provided** via flags (`-encryption-password`, `-encryption-key`, `-recovery-key`, `-kms-key-arn`) or environment variables (`CLOUDSTIC_ENCRYPTION_PASSWORD`, etc.).
+When running in a terminal, Cloudstic prompts for the repository password **only if no other credential is provided** via flags (`-password`, `-encryption-key`, `-recovery-key`, `-kms-key-arn`) or environment variables (`CLOUDSTIC_PASSWORD`, etc.).
 
 To explicitly request an interactive password prompt alongside a platform key or KMS key, use the `-password` flag:
 
@@ -1187,7 +1177,7 @@ In non-interactive environments (piped input, cron, CI), you must provide creden
 
 | Slot type | Credential | Use case |
 | :--- | :--- | :--- |
-| `password` | `--encryption-password` | Day-to-day personal use |
+| `password` | `--password` | Day-to-day personal use |
 | `platform` | `--encryption-key` | Automation, CI/CD, platform integration (legacy) |
 | `kms-platform` | `--kms-key-arn` | HSM-backed platform integration via AWS KMS (also supports `--kms-region` and `--kms-endpoint`) |
 | `recovery` | `--recovery-key` | Emergency access when password is lost |
@@ -1196,7 +1186,7 @@ In non-interactive environments (piped input, cron, CI), you must provide creden
 
 ```bash
 # Initialize with password + recovery key
-cloudstic init -encryption-password "strong passphrase" -recovery
+cloudstic init -password "strong passphrase" -add-recovery-key
 
 # Write down the 24-word recovery phrase and store it safely!
 ```
@@ -1217,7 +1207,7 @@ cloudstic restore -recovery-key "word1 word2 ... word24"
 cloudstic key add-recovery
 
 # Non-interactive
-cloudstic key add-recovery -encryption-password "my passphrase"
+cloudstic key add-recovery -password "my passphrase"
 
 # For KMS-managed repositories
 cloudstic key add-recovery -kms-key-arn arn:aws:kms:us-east-1:123:key/abc
@@ -1230,7 +1220,7 @@ cloudstic key add-recovery -kms-key-arn arn:aws:kms:us-east-1:123:key/abc
 cloudstic key passwd
 
 # Non-interactive
-cloudstic key passwd -encryption-password "old passphrase" -new-password "new passphrase"
+cloudstic key passwd -password "old passphrase" -new-password "new passphrase"
 ```
 
 ---
@@ -1267,19 +1257,20 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 
 | Variable | Flag equivalent | Description |
 | :--- | :--- | :--- |
-| `CLOUDSTIC_STORE` | `-store` | Storage backend: `local`, `s3`, `b2`, `sftp` |
-| `CLOUDSTIC_STORE_PATH` | `-store-path` | Local/SFTP path or S3/B2 bucket name |
-| `CLOUDSTIC_STORE_PREFIX` | `-store-prefix` | Key prefix for S3/B2 objects |
+| `CLOUDSTIC_STORE` | `-store` | Storage backend URI: `local:<path>`, `s3:<bucket>[/<prefix>]`, `b2:<bucket>[/<prefix>]`, `sftp://[user@]host[:port]/<path>` |
 | `CLOUDSTIC_S3_ENDPOINT` | `-s3-endpoint` | S3 compatible endpoint (for MinIO, R2, etc.) |
 | `CLOUDSTIC_S3_REGION` | `-s3-region` | S3 Region |
 | `AWS_ACCESS_KEY_ID` | `-s3-access-key` | S3 Access Key ID |
 | `AWS_SECRET_ACCESS_KEY` | `-s3-secret-key` | S3 Secret Access Key |
-| `CLOUDSTIC_SOURCE` | `-source` | Source type: `local`, `sftp`, `gdrive`, `gdrive-changes`, `onedrive`, `onedrive-changes` |
-| `CLOUDSTIC_SOURCE_PATH` | `-source-path` | Source directory path (local or SFTP remote) |
+| `CLOUDSTIC_STORE_SFTP_PASSWORD` | `-store-sftp-password` | SFTP password for the store |
+| `CLOUDSTIC_STORE_SFTP_KEY` | `-store-sftp-key` | Path to SSH private key for the store |
+| `CLOUDSTIC_SOURCE` | `-source` | Source URI: `local:<path>`, `sftp://[user@]host[:port]/<path>`, `gdrive`, `gdrive-changes`, `onedrive`, `onedrive-changes` |
+| `CLOUDSTIC_SOURCE_SFTP_PASSWORD` | `-source-sftp-password` | SFTP password for the source |
+| `CLOUDSTIC_SOURCE_SFTP_KEY` | `-source-sftp-key` | Path to SSH private key for the source |
 | `CLOUDSTIC_DRIVE_ID` | `-drive-id` | Shared drive ID for Google Drive |
 | `CLOUDSTIC_ROOT_FOLDER` | `-root-folder` | Root folder ID for Google Drive |
 | `CLOUDSTIC_ENCRYPTION_KEY` | `-encryption-key` | Platform key (hex) |
-| `CLOUDSTIC_ENCRYPTION_PASSWORD` | `-encryption-password` | Encryption password |
+| `CLOUDSTIC_PASSWORD` | `-password` | Encryption password |
 | `CLOUDSTIC_RECOVERY_KEY` | `-recovery-key` | Recovery seed phrase |
 | `CLOUDSTIC_KMS_KEY_ARN` | `-kms-key-arn` | AWS KMS key ARN for kms-platform slots |
 | `CLOUDSTIC_KMS_REGION` | `-kms-region` | AWS KMS region |
@@ -1291,10 +1282,3 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 | `ONEDRIVE_TOKEN_FILE` | — | Override OneDrive token path |
 | `B2_KEY_ID` | — | Backblaze B2 key ID |
 | `B2_APP_KEY` | — | Backblaze B2 application key |
-| `CLOUDSTIC_SFTP_HOST` | `-sftp-host` | SFTP server hostname |
-| `CLOUDSTIC_SFTP_PORT` | `-sftp-port` | SFTP server port (default: `22`) |
-| `CLOUDSTIC_SFTP_USER` | `-sftp-user` | SFTP username |
-| `CLOUDSTIC_SFTP_PASSWORD` | `-sftp-password` | SFTP password |
-| `CLOUDSTIC_SFTP_KEY` | `-sftp-key` | Path to SSH private key |
-| — | `-source-sftp-*` | Advanced: Overrides global `-sftp-*` for the source |
-| — | `-store-sftp-*` | Advanced: Overrides global `-sftp-*` for the store |

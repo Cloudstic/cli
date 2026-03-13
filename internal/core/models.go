@@ -71,11 +71,11 @@ type LeafEntry struct {
 // first-class field on the snapshot so that forget policies can group by
 // source identity (Type + Account + Path).
 type SourceInfo struct {
-	Type        string `json:"type"`                        // e.g. "gdrive", "local"
-	Account     string `json:"account,omitempty"`           // Google account email, hostname, etc.
-	Path        string `json:"path,omitempty"`              // root folder ID, filesystem path, etc.
-	VolumeUUID  string `json:"volume_uuid,omitempty"`       // stable volume identity across mounts/machines
-	VolumeLabel string `json:"volume_label,omitempty"`      // human-readable volume name (e.g. "MyDrive")
+	Type        string `json:"type"`                   // e.g. "gdrive", "local"
+	Account     string `json:"account,omitempty"`      // Google account email, hostname, etc.
+	Path        string `json:"path,omitempty"`         // root folder ID, filesystem path, etc.
+	VolumeUUID  string `json:"volume_uuid,omitempty"`  // stable volume identity across mounts/machines
+	VolumeLabel string `json:"volume_label,omitempty"` // human-readable volume name (e.g. "MyDrive")
 }
 
 // Snapshot represents a backup checkpoint
@@ -90,7 +90,6 @@ type Snapshot struct {
 	Tags        []string          `json:"tags,omitempty"`
 	ChangeToken string            `json:"change_token,omitempty"`
 	ExcludeHash string            `json:"exclude_hash,omitempty"`
-	HAMTVersion int               `json:"hamt_version,omitempty"` // 1 = legacy, 2 = affinity keys
 }
 
 // Index represents a pointer to the latest snapshot

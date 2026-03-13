@@ -129,7 +129,7 @@ func (s *portableDriveSource) Setup(t *testing.T) []string {
 		t.Logf("warning: GPT partition UUID symlink not found for %s; udev triggered", partDev)
 	}
 
-	return []string{"-source", "local", "-source-path", s.mountPoint}
+	return []string{"-source", "local:" + s.mountPoint}
 }
 
 func (s *portableDriveSource) WriteFile(t *testing.T, relPath, content string) {

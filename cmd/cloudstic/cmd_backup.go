@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -18,14 +17,17 @@ import (
 
 type backupArgs struct {
 	g               *globalFlags
-	sourceType      string
-	sourcePath      string
+	sourceURI       string
 	driveID         string
 	rootFolder      string
 	dryRun          bool
 	excludeFile     string
 	skipNativeFiles bool
 	volumeUUID      string
+	googleCreds     string
+	googleTokenFile string
+	onedriveClientID string
+	onedriveTokenFile string
 	tags            stringArrayFlags
 	excludes        stringArrayFlags
 }
@@ -34,25 +36,31 @@ func parseBackupArgs() *backupArgs {
 	fs := flag.NewFlagSet("backup", flag.ExitOnError)
 	a := &backupArgs{}
 	a.g = addGlobalFlags(fs)
-	sourceType := fs.String("source", envDefault("CLOUDSTIC_SOURCE", "gdrive"), "source type (gdrive, gdrive-changes, local, onedrive, onedrive-changes)")
-	sourcePath := fs.String("source-path", envDefault("CLOUDSTIC_SOURCE_PATH", "."), "Local source path (if source=local)")
+	sourceURI := fs.String("source", envDefault("CLOUDSTIC_SOURCE", "gdrive"), "Source URI: local:<path>, sftp://[user@]host[:port]/<path>, gdrive, gdrive-changes, onedrive, onedrive-changes")
 	driveID := fs.String("drive-id", envDefault("CLOUDSTIC_DRIVE_ID", ""), "Shared drive ID for gdrive source (omit for My Drive)")
 	rootFolder := fs.String("root-folder", envDefault("CLOUDSTIC_ROOT_FOLDER", ""), "Root folder ID for gdrive source (defaults to entire drive)")
 	dryRun := fs.Bool("dry-run", false, "Scan source and report changes without writing to the store")
 	skipNativeFiles := fs.Bool("skip-native-files", false, "Exclude Google-native files (Docs, Sheets, Slides, etc.) from the backup")
 	excludeFile := fs.String("exclude-file", "", "Path to file with exclude patterns (one per line, gitignore syntax)")
 	volumeUUID := fs.String("volume-uuid", envDefault("CLOUDSTIC_VOLUME_UUID", ""), "Override volume UUID for local source (enables cross-machine incremental backup)")
+	googleCreds := fs.String("google-credentials", envDefault("GOOGLE_APPLICATION_CREDENTIALS", ""), "Path to Google service account credentials JSON file")
+	googleTokenFile := fs.String("google-token-file", envDefault("GOOGLE_TOKEN_FILE", ""), "Path to Google OAuth token file")
+	onedriveClientID := fs.String("onedrive-client-id", envDefault("ONEDRIVE_CLIENT_ID", ""), "OneDrive OAuth client ID")
+	onedriveTokenFile := fs.String("onedrive-token-file", envDefault("ONEDRIVE_TOKEN_FILE", ""), "Path to OneDrive OAuth token file")
 	fs.Var(&a.tags, "tag", "Tag to apply to the snapshot (can be specified multiple times)")
 	fs.Var(&a.excludes, "exclude", "Exclude pattern (gitignore syntax, repeatable)")
 	mustParse(fs)
-	a.sourceType = *sourceType
-	a.sourcePath = *sourcePath
+	a.sourceURI = *sourceURI
 	a.driveID = *driveID
 	a.rootFolder = *rootFolder
 	a.dryRun = *dryRun
 	a.skipNativeFiles = *skipNativeFiles
 	a.excludeFile = *excludeFile
 	a.volumeUUID = *volumeUUID
+	a.googleCreds = *googleCreds
+	a.googleTokenFile = *googleTokenFile
+	a.onedriveClientID = *onedriveClientID
+	a.onedriveTokenFile = *onedriveTokenFile
 	return a
 }
 
@@ -66,7 +74,7 @@ func (r *runner) runBackup() int {
 
 	ctx := context.Background()
 
-	src, err := initSource(ctx, a.sourceType, a.sourcePath, a.driveID, a.rootFolder, a.skipNativeFiles, a.volumeUUID, a.g, excludePatterns)
+	src, err := initSource(ctx, a.sourceURI, a.driveID, a.rootFolder, a.skipNativeFiles, a.volumeUUID, a.googleCreds, a.googleTokenFile, a.onedriveClientID, a.onedriveTokenFile, a.g, excludePatterns)
 	if err != nil {
 		return r.fail("Failed to init source: %v", err)
 	}
@@ -138,32 +146,30 @@ func (r *runner) printBackupSummary(res *engine.RunResult) {
 	}
 }
 
-func initSource(ctx context.Context, sourceType, sourcePath, driveID, rootFolder string, skipNativeFiles bool, volumeUUID string, g *globalFlags, excludePatterns []string) (source.Source, error) {
-	switch sourceType {
+func initSource(ctx context.Context, sourceURI, driveID, rootFolder string, skipNativeFiles bool, volumeUUID, googleCreds, googleTokenFile, onedriveClientID, onedriveTokenFile string, g *globalFlags, excludePatterns []string) (source.Source, error) {
+	uri, err := parseSourceURI(sourceURI)
+	if err != nil {
+		return nil, err
+	}
+
+	switch uri.scheme {
 	case "local":
 		opts := []source.LocalOption{source.WithLocalExcludePatterns(excludePatterns)}
 		if volumeUUID != "" {
 			opts = append(opts, source.WithVolumeUUID(volumeUUID))
 		}
-		return source.NewLocalSource(sourcePath, opts...), nil
+		return source.NewLocalSource(uri.path, opts...), nil
 	case "sftp":
-		sftpHost, sftpOpts := g.sftpSourceOpts(g.sourceSFTPHost, g.sourceSFTPPort, g.sourceSFTPUser, g.sourceSFTPPassword, g.sourceSFTPKey, &sourcePath)
-		if sftpHost == "" {
-			return nil, fmt.Errorf("--sftp-host is required for sftp source")
-		}
-		if sourcePath == "" {
-			return nil, fmt.Errorf("-source-path is required for sftp source")
-		}
+		sftpOpts := g.buildSFTPSourceOpts(uri)
 		sftpOpts = append(sftpOpts, source.WithSFTPExcludePatterns(excludePatterns))
-		return source.NewSFTPSource(sftpHost, sftpOpts...)
+		return source.NewSFTPSource(uri.host, sftpOpts...)
 	case "gdrive":
-		creds := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") // optional; uses built-in OAuth client when empty
-		tokenPath, err := resolveTokenPath("GOOGLE_TOKEN_FILE", "google_token.json")
+		tokenPath, err := resolveTokenPath(googleTokenFile, "google_token.json")
 		if err != nil {
 			return nil, err
 		}
 		gdriveOpts := []source.GDriveOption{
-			source.WithCredsPath(creds),
+			source.WithCredsPath(googleCreds),
 			source.WithTokenPath(tokenPath),
 			source.WithDriveID(driveID),
 			source.WithRootFolderID(rootFolder),
@@ -174,13 +180,12 @@ func initSource(ctx context.Context, sourceType, sourcePath, driveID, rootFolder
 		}
 		return source.NewGDriveSource(ctx, gdriveOpts...)
 	case "gdrive-changes":
-		creds := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") // optional; uses built-in OAuth client when empty
-		tokenPath, err := resolveTokenPath("GOOGLE_TOKEN_FILE", "google_token.json")
+		tokenPath, err := resolveTokenPath(googleTokenFile, "google_token.json")
 		if err != nil {
 			return nil, err
 		}
 		gdriveOpts := []source.GDriveOption{
-			source.WithCredsPath(creds),
+			source.WithCredsPath(googleCreds),
 			source.WithTokenPath(tokenPath),
 			source.WithDriveID(driveID),
 			source.WithRootFolderID(rootFolder),
@@ -191,38 +196,35 @@ func initSource(ctx context.Context, sourceType, sourcePath, driveID, rootFolder
 		}
 		return source.NewGDriveChangeSource(ctx, gdriveOpts...)
 	case "onedrive":
-		clientID := os.Getenv("ONEDRIVE_CLIENT_ID") // optional; uses built-in OAuth client when empty
-		tokenPath, err := resolveTokenPath("ONEDRIVE_TOKEN_FILE", "onedrive_token.json")
+		tokenPath, err := resolveTokenPath(onedriveTokenFile, "onedrive_token.json")
 		if err != nil {
 			return nil, err
 		}
 		return source.NewOneDriveSource(ctx,
-			source.WithOneDriveClientID(clientID),
+			source.WithOneDriveClientID(onedriveClientID),
 			source.WithOneDriveTokenPath(tokenPath),
 			source.WithOneDriveExcludePatterns(excludePatterns),
 		)
 	case "onedrive-changes":
-		clientID := os.Getenv("ONEDRIVE_CLIENT_ID") // optional; uses built-in OAuth client when empty
-		tokenPath, err := resolveTokenPath("ONEDRIVE_TOKEN_FILE", "onedrive_token.json")
+		tokenPath, err := resolveTokenPath(onedriveTokenFile, "onedrive_token.json")
 		if err != nil {
 			return nil, err
 		}
 		return source.NewOneDriveChangeSource(ctx,
-			source.WithOneDriveClientID(clientID),
+			source.WithOneDriveClientID(onedriveClientID),
 			source.WithOneDriveTokenPath(tokenPath),
 			source.WithOneDriveExcludePatterns(excludePatterns),
 		)
 	default:
-		return nil, fmt.Errorf("unsupported source type: %s", sourceType)
+		return nil, fmt.Errorf("unsupported source: %s", uri.scheme)
 	}
 }
 
-// resolveTokenPath returns an absolute path for a token file. If the
-// environment variable envKey is set, that value is used as-is. Otherwise
-// the filename is placed inside the cloudstic config directory.
-func resolveTokenPath(envKey, defaultFilename string) (string, error) {
-	if v := os.Getenv(envKey); v != "" {
-		return v, nil
+// resolveTokenPath returns the token file path to use. If explicit is non-empty
+// it is used as-is; otherwise the filename is placed in the cloudstic config dir.
+func resolveTokenPath(explicit, defaultFilename string) (string, error) {
+	if explicit != "" {
+		return explicit, nil
 	}
 	return paths.TokenPath(defaultFilename)
 }

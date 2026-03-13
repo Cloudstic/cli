@@ -36,8 +36,8 @@ echo "Testing Repack Strategy in $TMP_DIR"
 echo ""
 echo "=== Test 1: Full Orphan Repack ==="
 
-STORE1="-store local -store-path $TMP_DIR/repo"
-SOURCE1="-source local -source-path $TMP_DIR/data"
+STORE1="-store local:$TMP_DIR/repo"
+SOURCE1="-source local:$TMP_DIR/data"
 
 mkdir -p "$TMP_DIR/data" "$TMP_DIR/repo"
 
@@ -84,8 +84,8 @@ check "ls shows all 20 files after prune (got $FILE_COUNT)" "[ '$FILE_COUNT' -eq
 echo ""
 echo "=== Test 2: Partial Fragment Repack ==="
 
-STORE2="-store local -store-path $TMP_DIR/repo2"
-SOURCE2="-source local -source-path $TMP_DIR/data2"
+STORE2="-store local:$TMP_DIR/repo2"
+SOURCE2="-source local:$TMP_DIR/data2"
 
 mkdir -p "$TMP_DIR/data2" "$TMP_DIR/repo2"
 

@@ -342,7 +342,6 @@ func (bm *BackupManager) saveSnapshot(ctx context.Context, root string, seq int,
 		Meta:        meta,
 		ChangeToken: changeToken,
 		ExcludeHash: bm.cfg.excludeHash,
-		HAMTVersion: 2,
 	}
 
 	hash, snapData, err := core.ComputeJSONHash(&snap)

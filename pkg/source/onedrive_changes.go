@@ -36,7 +36,11 @@ func (s *OneDriveChangeSource) Info() core.SourceInfo {
 // GetStartPageToken returns the current head of the OneDrive delta stream by
 // requesting a "latest" delta token. The returned string is a full deltaLink URL.
 func (s *OneDriveChangeSource) GetStartPageToken() (string, error) {
-	resp, err := s.fetchDeltaPage(context.Background(), "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=latest")
+	url := "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=latest"
+	if s.rootPath != "" && s.rootPath != "/" {
+		url = fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/root:%s:/delta?token=latest", s.rootPath)
+	}
+	resp, err := s.fetchDeltaPage(context.Background(), url)
 	if err != nil {
 		return "", fmt.Errorf("get latest delta token: %w", err)
 	}
@@ -82,6 +86,9 @@ func (s *OneDriveChangeSource) WalkChanges(ctx context.Context, token string, ca
 		hasExclude := !s.exclude.Empty()
 		excludedIDs := make(map[string]bool)
 
+		folderChanges = s.filterChangesByRootPath(folderChanges)
+		fileChanges = s.filterChangesByRootPath(fileChanges)
+
 		for _, fc := range folderChanges {
 			if hasExclude && fc.Type == ChangeUpsert && shouldExcludeOneDriveChange(s.exclude, fc, excludedIDs) {
 				continue
@@ -90,6 +97,7 @@ func (s *OneDriveChangeSource) WalkChanges(ctx context.Context, token string, ca
 				return "", err
 			}
 		}
+
 		for _, fc := range fileChanges {
 			if hasExclude && fc.Type == ChangeUpsert && shouldExcludeOneDriveChange(s.exclude, fc, excludedIDs) {
 				continue
@@ -100,6 +108,34 @@ func (s *OneDriveChangeSource) WalkChanges(ctx context.Context, token string, ca
 		}
 		return resp.DeltaLink, nil
 	}
+}
+
+func (s *OneDriveChangeSource) filterChangesByRootPath(changes []FileChange) []FileChange {
+	if s.rootPath == "" || s.rootPath == "/" {
+		return changes
+	}
+	var valid []FileChange
+	trimmedRoot := strings.TrimPrefix(s.rootPath, "/")
+	for _, fc := range changes {
+		if len(fc.Meta.Paths) > 0 {
+			p := fc.Meta.Paths[0]
+			if !strings.HasPrefix(p, trimmedRoot+"/") && p != trimmedRoot {
+				continue // Outside of root path
+			}
+			// Adjust path relative to root
+			stripped := strings.TrimPrefix(p, trimmedRoot+"/")
+			stripped = strings.TrimPrefix(stripped, trimmedRoot)
+			if stripped == "" {
+				fc.Meta.Paths = []string{fc.Meta.Name}
+			} else {
+				fc.Meta.Paths = []string{stripped}
+			}
+		} else if fc.Type == ChangeUpsert {
+			continue
+		}
+		valid = append(valid, fc)
+	}
+	return valid
 }
 
 func (s *OneDriveChangeSource) itemToFileChange(item graphItem) FileChange {

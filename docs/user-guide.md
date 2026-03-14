@@ -252,7 +252,7 @@ cloudstic backup -source local:~/Documents
 cloudstic backup -source gdrive
 
 # Back up a specific Google Drive shared drive and folder
-cloudstic backup -source gdrive -drive-id <shared-drive-id> -root-folder <folder-id>
+cloudstic backup -source gdrive:/path/to/folder -drive-id <shared-drive-id>
 
 # Back up with tags
 cloudstic backup -source local:~/Documents -tag daily -tag important
@@ -268,9 +268,8 @@ cloudstic backup -source local:~/Documents -dry-run
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-source` | `gdrive` | Source type: `local:<path>`, `sftp://[user@]host[:port]/<path>`, `gdrive`, `gdrive-changes`, `onedrive`, `onedrive-changes` |
+| `-source` | `gdrive` | Source type: `local:<path>`, `sftp://[user@]host[:port]/<path>`, `gdrive[:<path>]`, `gdrive-changes[:<path>]`, `onedrive[:<path>]`, `onedrive-changes[:<path>]` |
 | `-drive-id` | | Shared drive ID for Google Drive (omit for My Drive) |
-| `-root-folder` | | Root folder ID for Google Drive (defaults to entire drive) |
 | `-tag` | | Tag to apply to the snapshot (repeatable) |
 | `-exclude` | | Exclude pattern using gitignore syntax (repeatable) |
 | `-exclude-file` | | Path to file containing exclude patterns, one per line |
@@ -928,19 +927,18 @@ No configuration is required — Cloudstic ships with built-in OAuth credentials
 
 ```bash
 # Back up entire My Drive
-cloudstic backup -source gdrive
+cloudstic backup -source gdrive:/
 
 # Back up a shared drive
-cloudstic backup -source gdrive -drive-id <shared-drive-id>
+cloudstic backup -source gdrive:/ -drive-id <shared-drive-id>
 
-# Back up only a specific folder (by Google Drive folder ID)
-cloudstic backup -source gdrive -root-folder <folder-id>
+# Back up only a specific folder
+cloudstic backup -source gdrive:/path/to/folder
 ```
 
 | Flag | Description |
 |------|-------------|
 | `-drive-id` | Shared Drive ID (omit for personal My Drive) |
-| `-root-folder` | Restrict backup to a specific folder by ID |
 
 **Environment variables (optional overrides):**
 
@@ -965,7 +963,7 @@ cloudstic backup -source gdrive-changes
 cloudstic backup -source gdrive-changes
 ```
 
-Uses the same authentication and flags as [Google Drive](#google-drive) (`-drive-id`, `-root-folder`). No setup required — just run the command and authorize in the browser.
+Uses the same authentication and flags as [Google Drive](#google-drive) (`-drive-id`). No setup required — just run the command and authorize in the browser.
 
 > **Tip:** You can use `-source gdrive-changes` from day one — the first run performs a full scan just like `gdrive`. Only fall back to `-source gdrive` if you need to force a complete rescan.
 
@@ -1265,11 +1263,10 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 | `AWS_SECRET_ACCESS_KEY` | `-s3-secret-key` | S3 Secret Access Key |
 | `CLOUDSTIC_STORE_SFTP_PASSWORD` | `-store-sftp-password` | SFTP password for the store |
 | `CLOUDSTIC_STORE_SFTP_KEY` | `-store-sftp-key` | Path to SSH private key for the store |
-| `CLOUDSTIC_SOURCE` | `-source` | Source URI: `local:<path>`, `sftp://[user@]host[:port]/<path>`, `gdrive`, `gdrive-changes`, `onedrive`, `onedrive-changes` |
+| `CLOUDSTIC_SOURCE` | `-source` | Source URI: `local:<path>`, `sftp://[user@]host[:port]/<path>`, `gdrive[:<path>]`, `gdrive-changes[:<path>]`, `onedrive[:<path>]`, `onedrive-changes[:<path>]` |
 | `CLOUDSTIC_SOURCE_SFTP_PASSWORD` | `-source-sftp-password` | SFTP password for the source |
 | `CLOUDSTIC_SOURCE_SFTP_KEY` | `-source-sftp-key` | Path to SSH private key for the source |
 | `CLOUDSTIC_DRIVE_ID` | `-drive-id` | Shared drive ID for Google Drive |
-| `CLOUDSTIC_ROOT_FOLDER` | `-root-folder` | Root folder ID for Google Drive |
 | `CLOUDSTIC_ENCRYPTION_KEY` | `-encryption-key` | Platform key (hex) |
 | `CLOUDSTIC_PASSWORD` | `-password` | Encryption password |
 | `CLOUDSTIC_RECOVERY_KEY` | `-recovery-key` | Recovery seed phrase |

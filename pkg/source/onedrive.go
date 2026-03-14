@@ -20,6 +20,7 @@ import (
 type oneDriveOptions struct {
 	clientID        string
 	tokenPath       string
+	rootPath        string
 	excludePatterns []string
 }
 
@@ -30,6 +31,13 @@ type OneDriveOption func(*oneDriveOptions)
 func WithOneDriveClientID(id string) OneDriveOption {
 	return func(o *oneDriveOptions) {
 		o.clientID = id
+	}
+}
+
+// WithOneDriveRootPath sets the path to the root folder.
+func WithOneDriveRootPath(path string) OneDriveOption {
+	return func(o *oneDriveOptions) {
+		o.rootPath = path
 	}
 }
 
@@ -48,9 +56,10 @@ func WithOneDriveExcludePatterns(patterns []string) OneDriveOption {
 }
 
 type OneDriveSource struct {
-	client  *http.Client
-	account string // cached user principal name; populated lazily by Info()
-	exclude *ExcludeMatcher
+	client   *http.Client
+	account  string // cached user principal name; populated lazily by Info()
+	rootPath string // The string path the user specified, or "/"
+	exclude  *ExcludeMatcher
 }
 
 // NewOneDriveSource creates a new OneDriveSource from the given config.
@@ -81,7 +90,12 @@ func NewOneDriveSource(ctx context.Context, opts ...OneDriveOption) (*OneDriveSo
 	}
 
 	client := conf.Client(ctx, token)
-	return &OneDriveSource{client: client, exclude: NewExcludeMatcher(cfg.excludePatterns)}, nil
+
+	rootPath := cfg.rootPath
+	if rootPath == "" {
+		rootPath = "/"
+	}
+	return &OneDriveSource{client: client, rootPath: rootPath, exclude: NewExcludeMatcher(cfg.excludePatterns)}, nil
 }
 
 func (s *OneDriveSource) Info() core.SourceInfo {
@@ -91,7 +105,7 @@ func (s *OneDriveSource) Info() core.SourceInfo {
 	return core.SourceInfo{
 		Type:        "onedrive",
 		Account:     s.account,
-		Path:        "/",
+		Path:        s.rootPath,
 		VolumeLabel: "My Drive",
 	}
 }
@@ -219,6 +233,11 @@ func (s *OneDriveSource) toFileMeta(item graphItem) core.FileMeta {
 
 func (s *OneDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) error) error {
 	rootURL := "https://graph.microsoft.com/v1.0/me/drive/root"
+	if s.rootPath != "" && s.rootPath != "/" {
+		// Graph API allows addressing items by path relative to root
+		// e.g. /me/drive/root:/path/to/folder
+		rootURL = fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/root:%s", s.rootPath)
+	}
 
 	var rootItem graphItem
 	err := retry.Do(ctx, retry.DefaultPolicy(), func() error {
@@ -244,13 +263,15 @@ func (s *OneDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) 
 
 	// pathMap tracks itemID → full path for all emitted entries.
 	pathMap := make(map[string]string)
+	pathMap[rootItem.ID] = "" // Root folder has empty path relative to itself
 
 	// Iterative DFS using an explicit stack instead of recursion.
 	type stackEntry struct {
 		folderID string
 		url      string
 	}
-	stack := []stackEntry{{folderID: rootItem.ID, url: fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/items/%s/children", rootItem.ID)}}
+	childrenURL := fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/items/%s/children", rootItem.ID)
+	stack := []stackEntry{{folderID: rootItem.ID, url: childrenURL}}
 
 	for len(stack) > 0 {
 		top := stack[len(stack)-1]
@@ -274,7 +295,9 @@ func (s *OneDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) 
 				p := meta.Name
 				if item.ParentReference != nil && item.ParentReference.ID != "" {
 					if parentPath, ok := pathMap[item.ParentReference.ID]; ok {
-						p = parentPath + "/" + meta.Name
+						if parentPath != "" {
+							p = parentPath + "/" + meta.Name
+						}
 					}
 				}
 				meta.Paths = []string{p}

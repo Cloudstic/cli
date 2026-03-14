@@ -22,18 +22,18 @@ func envBool(key string) bool {
 }
 
 type globalFlags struct {
-	store                                             *string
-	s3Endpoint, s3Region                              *string
-	s3AccessKey, s3SecretKey                          *string
+	store                             *string
+	s3Endpoint, s3Region              *string
+	s3AccessKey, s3SecretKey          *string
 	sourceSFTPPassword, sourceSFTPKey *string
-	storeSFTPPassword, storeSFTPKey                   *string
-	encryptionKey                                     *string
-	password                                          *string
-	recoveryKey                                       *string
-	kmsKeyARN, kmsRegion, kmsEndpoint                 *string
-	disablePackfile                                   *bool
-	prompt, verbose, quiet, debug                     *bool
-	debugLog                                          *ui.SafeLogWriter
+	storeSFTPPassword, storeSFTPKey   *string
+	encryptionKey                     *string
+	password                          *string
+	recoveryKey                       *string
+	kmsKeyARN, kmsRegion, kmsEndpoint *string
+	disablePackfile                   *bool
+	prompt, verbose, quiet, debug     *bool
+	debugLog                          *ui.SafeLogWriter
 }
 
 func addGlobalFlags(fs *flag.FlagSet) *globalFlags {

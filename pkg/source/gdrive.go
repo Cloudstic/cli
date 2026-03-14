@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/cloudstic/cli/internal/core"
@@ -26,6 +27,7 @@ type gDriveOptions struct {
 	tokenPath       string
 	driveID         string
 	rootFolderID    string
+	rootPath        string
 	accountEmail    string
 	excludePatterns []string
 	skipNativeFiles bool
@@ -63,11 +65,18 @@ func WithDriveID(id string) GDriveOption {
 	}
 }
 
-// WithRootFolderID sets the root folder ID.
-// If empty, defaults to the root of the specified drive.
+// WithRootFolderID sets the root folder ID directly (for client API).
 func WithRootFolderID(id string) GDriveOption {
 	return func(o *gDriveOptions) {
 		o.rootFolderID = id
+	}
+}
+
+// WithRootPath sets the path to the root folder.
+// This is resolved to a folder ID during initialization.
+func WithRootPath(path string) GDriveOption {
+	return func(o *gDriveOptions) {
+		o.rootPath = path
 	}
 }
 
@@ -101,6 +110,7 @@ type GDriveSource struct {
 	service         *drive.Service
 	driveID         string // shared drive ID; empty means "My Drive"
 	rootFolderID    string // if empty, defaults to "root" (entire drive)
+	rootPath        string // The string path the user specified, or "/"
 	account         string // Google account email; populated automatically
 	driveName       string // shared drive name; populated during construction
 	exclude         *ExcludeMatcher
@@ -164,6 +174,7 @@ func NewGDriveSource(ctx context.Context, opts ...GDriveOption) (*GDriveSource, 
 		service:         srv,
 		driveID:         cfg.driveID,
 		rootFolderID:    cfg.rootFolderID,
+		rootPath:        cfg.rootPath,
 		account:         cfg.accountEmail,
 		exclude:         NewExcludeMatcher(cfg.excludePatterns),
 		skipNativeFiles: cfg.skipNativeFiles,
@@ -174,6 +185,16 @@ func NewGDriveSource(ctx context.Context, opts ...GDriveOption) (*GDriveSource, 
 		if d, err := srv.Drives.Get(cfg.driveID).Fields("name").Do(); err == nil {
 			src.driveName = d.Name
 		}
+	}
+
+	if src.rootPath != "" && src.rootPath != "/" {
+		id, err := src.resolvePathToFolderID(ctx, src.rootPath)
+		if err != nil {
+			return nil, fmt.Errorf("invalid source path %q: %w", src.rootPath, err)
+		}
+		src.rootFolderID = id
+	} else if src.rootPath == "" {
+		src.rootPath = "/"
 	}
 
 	return src, nil
@@ -188,15 +209,10 @@ func (s *GDriveSource) Info() core.SourceInfo {
 		}
 	}
 
-	path := "/"
-	if s.rootFolderID != "" {
-		path = s.rootFolderID
-	}
-
 	info := core.SourceInfo{
 		Type:    "gdrive",
 		Account: account,
-		Path:    path,
+		Path:    s.rootPath,
 	}
 
 	if s.isSharedDrive() {
@@ -211,6 +227,47 @@ func (s *GDriveSource) Info() core.SourceInfo {
 
 func (s *GDriveSource) isSharedDrive() bool {
 	return s.driveID != ""
+}
+
+// resolvePathToFolderID resolves a string path (e.g. "/foo/bar") to a Drive folder ID.
+func (s *GDriveSource) resolvePathToFolderID(ctx context.Context, path string) (string, error) {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	currentParent := "root"
+	if s.isSharedDrive() {
+		currentParent = s.driveID
+	}
+
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		query := fmt.Sprintf("trashed = false and mimeType = 'application/vnd.google-apps.folder' and name = '%s' and '%s' in parents",
+			strings.ReplaceAll(part, "'", "\\'"), currentParent)
+		call := s.service.Files.List().
+			Q(query).
+			Fields("files(id)").
+			PageSize(2).
+			Context(ctx)
+		if s.isSharedDrive() {
+			call.DriveId(s.driveID).
+				Corpora("drive").
+				SupportsAllDrives(true).
+				IncludeItemsFromAllDrives(true)
+		}
+
+		r, err := driveCallWithRetry(ctx, func() (*drive.FileList, error) { return call.Do() })
+		if err != nil {
+			return "", fmt.Errorf("resolve path segment %q: %w", part, err)
+		}
+		if len(r.Files) == 0 {
+			return "", fmt.Errorf("folder not found in Drive: %q", part)
+		}
+		if len(r.Files) > 1 {
+			return "", fmt.Errorf("ambiguous path: multiple folders named %q found", part)
+		}
+		currentParent = r.Files[0].Id
+	}
+	return currentParent, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -321,6 +378,36 @@ func (s *GDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) er
 		}
 	}
 
+	// If rootFolderID is set, we need to filter to only its descendants.
+	// We also don't want to yield the root folder itself.
+	var filteredFolders []*drive.File
+	if s.rootFolderID != "" {
+		descendants := make(map[string]bool)
+		descendants[s.rootFolderID] = true
+
+		// folders are topo-sorted, so parents always come before children
+		topoFolders := topoSortFolders(folders)
+		for _, f := range topoFolders {
+			if f.Id == s.rootFolderID {
+				continue // Skip yielding the root folder itself
+			}
+			isDescendant := false
+			for _, pid := range f.Parents {
+				if descendants[pid] {
+					isDescendant = true
+					break
+				}
+			}
+			if isDescendant {
+				descendants[f.Id] = true
+				filteredFolders = append(filteredFolders, f)
+			}
+		}
+		folders = filteredFolders
+	} else {
+		folders = topoSortFolders(folders)
+	}
+
 	// pathMap tracks fileID → full path for all emitted entries.
 	// Folders are topo-sorted (parents before children) so the parent
 	// path is always known when we compute the child path.
@@ -329,8 +416,11 @@ func (s *GDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) er
 	// their children are also skipped.
 	excludedPaths := make(map[string]bool)
 
+	if s.rootFolderID != "" {
+		pathMap[s.rootFolderID] = "" // Root folder has empty path relative to itself
+	}
+
 	// Emit folders first (topo-sorted so parents before children).
-	folders = topoSortFolders(folders)
 	for _, f := range folders {
 		if err := s.visitEntryWithPath(f, pathMap, excludedPaths, callback); err != nil {
 			return err
@@ -361,6 +451,22 @@ func (s *GDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) er
 		}
 
 		for _, f := range r.Files {
+			// If rootFolderID is set, filter files
+			if s.rootFolderID != "" {
+				isDescendant := false
+				for _, pid := range f.Parents {
+					// A file's parent must be in pathMap if it's a descendant of rootFolderID
+					// because all descendant folders have been processed and added to pathMap
+					if _, ok := pathMap[pid]; ok {
+						isDescendant = true
+						break
+					}
+				}
+				if !isDescendant {
+					continue
+				}
+			}
+
 			if err := s.visitEntryWithPath(f, pathMap, excludedPaths, callback); err != nil {
 				return err
 			}

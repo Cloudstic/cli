@@ -95,26 +95,14 @@ func (s *GDriveChangeSource) WalkChanges(ctx context.Context, token string, call
 			excludedIDs := make(map[string]bool)
 			hasExclude := !s.exclude.Empty()
 
-			for i := range folderChanges {
-				fc := &folderChanges[i]
-				if fc.Type != ChangeUpsert {
-					continue
-				}
-				p, err := s.resolveChangePath(ctx, fc.Meta, pathMap)
-				if err == nil && p != "" {
-					fc.Meta.Paths = []string{p}
-					pathMap[fc.Meta.FileID] = p
-				}
+			var err error
+			folderChanges, err = s.processChanges(ctx, folderChanges, pathMap, true)
+			if err != nil {
+				return "", err
 			}
-			for i := range fileChanges {
-				fc := &fileChanges[i]
-				if fc.Type != ChangeUpsert {
-					continue
-				}
-				p, err := s.resolveChangePath(ctx, fc.Meta, pathMap)
-				if err == nil && p != "" {
-					fc.Meta.Paths = []string{p}
-				}
+			fileChanges, err = s.processChanges(ctx, fileChanges, pathMap, false)
+			if err != nil {
+				return "", err
 			}
 
 			for _, fc := range folderChanges {
@@ -136,6 +124,80 @@ func (s *GDriveChangeSource) WalkChanges(ctx context.Context, token string, call
 			return resp.NewStartPageToken, nil
 		}
 	}
+}
+
+func (s *GDriveChangeSource) processChanges(ctx context.Context, changes []FileChange, pathMap map[string]string, isFolder bool) ([]FileChange, error) {
+	// Fast-path: if no root folder is specified, we don't need to filter anything out,
+	// and we can update the slice in-place without allocating a new one.
+	if s.rootFolderID == "" {
+		for i := range changes {
+			fc := &changes[i]
+			if fc.Type != ChangeUpsert {
+				continue
+			}
+			p, err := s.resolveChangePath(ctx, fc.Meta, pathMap)
+			if err != nil {
+				return nil, err
+			}
+			if p != "" {
+				fc.Meta.Paths = []string{p}
+				if isFolder {
+					pathMap[fc.Meta.FileID] = p
+				}
+			}
+		}
+		return changes, nil
+	}
+
+	var validChanges []FileChange
+	for i := range changes {
+		fc := changes[i]
+		if fc.Type != ChangeUpsert {
+			validChanges = append(validChanges, fc)
+			continue
+		}
+		// Skip changes strictly outside our root folder
+		if !s.isDescendantOfRoot(ctx, fc.Meta) {
+			continue
+		}
+		p, err := s.resolveChangePath(ctx, fc.Meta, pathMap)
+		if err != nil {
+			return nil, err
+		}
+		// If p == "" and we have a rootFolderID, it means resolveChangePath
+		// determined this is not a descendant of rootFolderID.
+		if p == "" {
+			continue
+		}
+		if p != "" {
+			fc.Meta.Paths = []string{p}
+			if isFolder {
+				pathMap[fc.Meta.FileID] = p
+			}
+		}
+		validChanges = append(validChanges, fc)
+	}
+	return validChanges, nil
+}
+
+// isDescendantOfRoot checks if a changed file belongs to the rootFolderID tree.
+func (s *GDriveChangeSource) isDescendantOfRoot(ctx context.Context, meta core.FileMeta) bool {
+	if s.rootFolderID == "" {
+		return true // No root folder specified, everything is a descendant
+	}
+	if len(meta.Parents) == 0 {
+		return false // It's in the drive root, not inside rootFolderID
+	}
+	for _, pid := range meta.Parents {
+		if pid == s.rootFolderID {
+			return true
+		}
+		// We need to resolve the path up to the root to verify.
+		// s.resolveChangePath naturally stops at rootFolderID because
+		// we check it, and returns errNotDescendant if it goes past it.
+		// We'll rely on resolveChangePath for the full strict check.
+	}
+	return true // Optimistic check, rely on resolveChangePath for definitive answer
 }
 
 // topoSortFolderChanges orders folder upsert changes so that every parent
@@ -175,10 +237,16 @@ func topoSortFolderChanges(changes []FileChange) []FileChange {
 // Drive hierarchy via API calls and caches every resolved segment.
 func (s *GDriveChangeSource) resolveChangePath(ctx context.Context, meta core.FileMeta, pathMap map[string]string) (string, error) {
 	if len(meta.Parents) == 0 {
+		if s.rootFolderID != "" {
+			return "", nil // Not in our root folder
+		}
 		return meta.Name, nil
 	}
 	parentPath, err := s.resolveDrivePath(ctx, meta.Parents[0], pathMap)
 	if err != nil {
+		if err == errNotDescendant {
+			return "", nil
+		}
 		return "", err
 	}
 	if parentPath == "" {
@@ -187,9 +255,14 @@ func (s *GDriveChangeSource) resolveChangePath(ctx context.Context, meta core.Fi
 	return parentPath + "/" + meta.Name, nil
 }
 
+var errNotDescendant = fmt.Errorf("not a descendant of root folder")
+
 // resolveDrivePath resolves a Drive folder ID to its full path by walking
 // up the parent chain via the Files.Get API. Results are cached in pathMap.
 func (s *GDriveChangeSource) resolveDrivePath(ctx context.Context, folderID string, pathMap map[string]string) (string, error) {
+	if s.rootFolderID != "" && folderID == s.rootFolderID {
+		return "", nil // Base of the tree
+	}
 	if p, ok := pathMap[folderID]; ok {
 		return p, nil
 	}
@@ -204,6 +277,10 @@ func (s *GDriveChangeSource) resolveDrivePath(ctx context.Context, folderID stri
 
 	p := f.Name
 	if len(f.Parents) > 0 {
+		if s.rootFolderID != "" && f.Parents[0] == s.rootFolderID {
+			pathMap[folderID] = p
+			return p, nil
+		}
 		parentPath, err := s.resolveDrivePath(ctx, f.Parents[0], pathMap)
 		if err != nil {
 			return "", err
@@ -211,6 +288,9 @@ func (s *GDriveChangeSource) resolveDrivePath(ctx context.Context, folderID stri
 		if parentPath != "" {
 			p = parentPath + "/" + f.Name
 		}
+	} else if s.rootFolderID != "" {
+		// Reached the root of the drive, but it wasn't our rootFolderID
+		return "", errNotDescendant
 	}
 	pathMap[folderID] = p
 	return p, nil

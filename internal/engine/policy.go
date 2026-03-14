@@ -132,20 +132,21 @@ func makeGroupKey(snap *core.Snapshot, gf groupFields) GroupKey {
 		if gf.source {
 			k.Source = snap.Source.Type
 		}
-		// When VolumeUUID is present, use it as the primary grouping
-		// identity instead of account. Path is kept (it is relative to
-		// the volume root) so that different sub-directories of the same
-		// drive are grouped independently.
-		if snap.Source.VolumeUUID != "" && (gf.account || gf.path) {
-			k.Account = snap.Source.VolumeUUID
-			if gf.path {
-				k.Path = snap.Source.Path
-			}
-		} else {
-			if gf.account {
+		// Prefer new identity fields, then legacy volume UUID, then account/path.
+		if gf.account {
+			switch {
+			case snap.Source.Identity != "":
+				k.Account = snap.Source.Identity
+			case snap.Source.VolumeUUID != "":
+				k.Account = snap.Source.VolumeUUID
+			default:
 				k.Account = snap.Source.Account
 			}
-			if gf.path {
+		}
+		if gf.path {
+			if snap.Source.PathID != "" {
+				k.Path = snap.Source.PathID
+			} else {
 				k.Path = snap.Source.Path
 			}
 		}
@@ -191,14 +192,24 @@ func matchesFilter(snap *core.Snapshot, f snapshotFilter) bool {
 		if snap.Source == nil {
 			return false
 		}
-		// Accept either the human-readable account (hostname/email) or the
-		// VolumeUUID so that portable-drive snapshots can be targeted by UUID.
-		if snap.Source.Account != f.account && snap.Source.VolumeUUID != f.account {
+		// Accept display account and identity fields for compatibility.
+		if snap.Source.Account != f.account &&
+			snap.Source.Identity != f.account &&
+			snap.Source.VolumeUUID != f.account {
 			return false
 		}
 	}
-	if f.path != "" && (snap.Source == nil || snap.Source.Path != f.path) {
-		return false
+	if f.path != "" {
+		if snap.Source == nil {
+			return false
+		}
+		if snap.Source.PathID != "" {
+			if snap.Source.PathID != f.path && snap.Source.Path != f.path {
+				return false
+			}
+		} else if snap.Source.Path != f.path {
+			return false
+		}
 	}
 	if len(f.tags) > 0 {
 		tagSet := make(map[string]bool, len(snap.Tags))

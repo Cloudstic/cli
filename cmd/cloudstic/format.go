@@ -47,8 +47,12 @@ func (r *runner) renderSnapshotTable(entries []engine.SnapshotEntry, reasons map
 		var source, account, path string
 		if e.Snap.Source != nil {
 			source = e.Snap.Source.Type
-			if e.Snap.Source.VolumeLabel != "" {
-				source += " (" + e.Snap.Source.VolumeLabel + ")"
+			driveName := e.Snap.Source.DriveName
+			if driveName == "" {
+				driveName = e.Snap.Source.VolumeLabel
+			}
+			if driveName != "" {
+				source += " (" + driveName + ")"
 			}
 			account = e.Snap.Source.Account
 			path = e.Snap.Source.Path
@@ -74,10 +78,17 @@ func sourceGroupKey(s *core.SourceInfo) string {
 	if s == nil {
 		return ""
 	}
-	if s.VolumeUUID != "" {
-		return s.Type + "\x00" + s.VolumeUUID + "\x00" + s.Path
+	pathToken := s.Path
+	if s.PathID != "" {
+		pathToken = s.PathID
 	}
-	return s.Type + "\x00" + s.Account + "\x00" + s.Path
+	if s.Identity != "" {
+		return s.Type + "\x00" + s.Identity + "\x00" + pathToken
+	}
+	if s.VolumeUUID != "" {
+		return s.Type + "\x00" + s.VolumeUUID + "\x00" + pathToken
+	}
+	return s.Type + "\x00" + s.Account + "\x00" + pathToken
 }
 
 // sourceGroupLabel returns a human-readable label for a source group.
@@ -87,8 +98,12 @@ func sourceGroupLabel(s *core.SourceInfo) string {
 	}
 	var parts []string
 	label := s.Type
-	if s.VolumeLabel != "" {
-		label += " (" + s.VolumeLabel + ")"
+	driveName := s.DriveName
+	if driveName == "" {
+		driveName = s.VolumeLabel
+	}
+	if driveName != "" {
+		label += " (" + driveName + ")"
 	}
 	parts = append(parts, label)
 	if s.Account != "" {

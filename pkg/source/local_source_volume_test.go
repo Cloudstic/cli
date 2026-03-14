@@ -69,8 +69,8 @@ func TestLocalSource_WithVolumeUUID_Override(t *testing.T) {
 	src := NewLocalSource(tmpDir, WithVolumeUUID(explicitUUID))
 
 	info := src.Info()
-	if info.VolumeUUID != explicitUUID {
-		t.Errorf("expected VolumeUUID=%q, got %q", explicitUUID, info.VolumeUUID)
+	if info.Identity != explicitUUID {
+		t.Errorf("expected Identity=%q, got %q", explicitUUID, info.Identity)
 	}
 }
 
@@ -91,20 +91,30 @@ func TestLocalSource_Info_PopulatesVolumeFields(t *testing.T) {
 		t.Error("expected non-empty Account (hostname)")
 	}
 
-	// VolumeUUID and VolumeLabel are populated via the platform-specific
-	// detectVolumeIdentity. We just verify they're set correctly on the
-	// Info output (they may be empty on stub platforms).
-	if info.VolumeUUID != src.VolumeUUID() {
-		t.Errorf("Info().VolumeUUID=%q != VolumeUUID()=%q", info.VolumeUUID, src.VolumeUUID())
+	// Identity and DriveName are populated from platform-specific volume
+	// discovery (or hostname fallback for identity when UUID is unavailable).
+	if src.VolumeUUID() != "" {
+		if info.Identity != src.VolumeUUID() {
+			t.Errorf("Info().Identity=%q != VolumeUUID()=%q", info.Identity, src.VolumeUUID())
+		}
+	} else if info.Identity == "" {
+		t.Error("expected non-empty Identity when VolumeUUID is unavailable")
 	}
-	if info.VolumeLabel != src.VolumeLabel() {
-		t.Errorf("Info().VolumeLabel=%q != VolumeLabel()=%q", info.VolumeLabel, src.VolumeLabel())
+	if info.DriveName != src.VolumeLabel() {
+		t.Errorf("Info().DriveName=%q != VolumeLabel()=%q", info.DriveName, src.VolumeLabel())
 	}
 
-	// When VolumeUUID is set, Path should be relative to the volume mount
-	// point (not an absolute path).
-	if info.VolumeUUID != "" && len(info.Path) > 0 && info.Path[0] == '/' {
-		t.Errorf("Path should be volume-relative when VolumeUUID is set, got absolute: %q", info.Path)
+	// When VolumeUUID is set, Path and PathID should both be absolute from
+	// drive root.
+	if src.VolumeUUID() != "" && (len(info.Path) == 0 || info.Path[0] != '/') {
+		t.Errorf("Path should be absolute-from-root display when VolumeUUID is set, got: %q", info.Path)
+	}
+	if src.VolumeUUID() != "" {
+		if info.PathID != info.Path {
+			t.Errorf("expected portable PathID to be absolute-from-root, got PathID=%q Path=%q", info.PathID, info.Path)
+		}
+	} else if info.PathID != info.Path {
+		t.Errorf("expected PathID to equal Path for non-portable sources, got PathID=%q Path=%q", info.PathID, info.Path)
 	}
 }
 

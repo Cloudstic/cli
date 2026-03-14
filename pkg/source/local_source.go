@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/cloudstic/cli/internal/core"
 )
@@ -29,12 +30,31 @@ func (s *LocalSource) Info() core.SourceInfo {
 		}
 	}
 
+	pathID := infoPath
+	displayPath := infoPath
+	if s.volumeUUID != "" {
+		clean := strings.TrimPrefix(pathID, "./")
+		switch clean {
+		case "", ".":
+			displayPath = "/"
+		default:
+			displayPath = "/" + strings.TrimPrefix(clean, "/")
+		}
+		pathID = displayPath
+	}
+
 	return core.SourceInfo{
-		Type:        "local",
-		Account:     hostname,
-		Path:        infoPath,
-		VolumeUUID:  s.volumeUUID,
-		VolumeLabel: s.volumeLabel,
+		Type:      "local",
+		Account:   hostname,
+		Path:      displayPath,
+		PathID:    pathID,
+		DriveName: s.volumeLabel,
+		Identity: func() string {
+			if s.volumeUUID != "" {
+				return s.volumeUUID
+			}
+			return hostname
+		}(),
 	}
 }
 

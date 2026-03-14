@@ -122,6 +122,7 @@ type GDriveSource struct {
 	rootFolderID    string // if empty, defaults to "root" (entire drive)
 	rootPath        string // The string path the user specified, or "/"
 	account         string // Google account email; populated automatically
+	accountID       string // stable Google account identity; populated automatically
 	driveName       string // shared drive name; populated during construction
 	exclude         *ExcludeMatcher
 	skipNativeFiles bool
@@ -237,24 +238,35 @@ func NewGDriveSource(ctx context.Context, opts ...GDriveOption) (*GDriveSource, 
 
 func (s *GDriveSource) Info() core.SourceInfo {
 	account := s.account
-	if account == "" {
-		if about, err := s.service.About.Get().Fields("user(emailAddress)").Do(); err == nil && about.User != nil {
-			account = about.User.EmailAddress
-			s.account = account
+	accountID := s.accountID
+	if s.service != nil && (account == "" || accountID == "") {
+		if about, err := s.service.About.Get().Fields("user(emailAddress,permissionId)").Do(); err == nil && about.User != nil {
+			if account == "" {
+				account = about.User.EmailAddress
+				s.account = account
+			}
+			if accountID == "" {
+				accountID = about.User.PermissionId
+				s.accountID = accountID
+			}
 		}
 	}
 
 	info := core.SourceInfo{
-		Type:    "gdrive",
-		Account: account,
-		Path:    s.rootPath,
+		Type:      "gdrive",
+		Account:   account,
+		Path:      s.rootPath,
+		PathID:    s.selectedRootID(),
+		DriveName: "My Drive",
 	}
 
 	if s.isSharedDrive() {
-		info.VolumeUUID = s.driveID
-		info.VolumeLabel = s.driveName
+		info.Identity = s.driveID
+		info.DriveName = s.driveName
+	} else if accountID != "" {
+		info.Identity = accountID
 	} else {
-		info.VolumeLabel = "My Drive"
+		info.Identity = account
 	}
 
 	return info
@@ -262,6 +274,16 @@ func (s *GDriveSource) Info() core.SourceInfo {
 
 func (s *GDriveSource) isSharedDrive() bool {
 	return s.driveID != ""
+}
+
+func (s *GDriveSource) selectedRootID() string {
+	if s.rootFolderID != "" {
+		return s.rootFolderID
+	}
+	if s.isSharedDrive() {
+		return s.driveID
+	}
+	return "root"
 }
 
 // resolvePathToFolderID resolves a string path (e.g. "/foo/bar") to a Drive folder ID.

@@ -1,0 +1,11 @@
+# RFC Index
+
+- [RFC 0001: HAMT Evolution](0001-hamt-evolution.md)
+- [RFC 0002: Affinity Model](0002-affinity-model.md)
+- [RFC 0003: Google Native File Export](0003-google-native-file-export.md)
+- [RFC 0004: Extended File Attributes](0004-extended-file-attributes.md)
+- [RFC 0005: Portable Drive Identity](0005-portable-drive-identity.md)
+- [RFC 0006: Direct to Filesystem Restore](0006-direct-to-filesystem-restore.md)
+- [RFC 0007: Cloud Subdirectory Backup](0007-cloud-subdirectory-backup.md)
+- [RFC 0008: Drive Identity by Name](0008-drive-identity-by-name.md)
+- [RFC 0009: Unified Source Identity](0009-unified-source-identity.md)

@@ -126,15 +126,25 @@ func TestLocalSource(t *testing.T) {
 	if info.Type != "local" {
 		t.Errorf("Expected type 'local', got %s", info.Type)
 	}
-	if info.VolumeUUID != "" {
+	if src.VolumeUUID() != "" {
 		// Path is volume-relative when UUID is detected.
-		if len(info.Path) > 0 && info.Path[0] == '/' {
-			t.Errorf("Expected volume-relative Path when UUID is set, got absolute: %s", info.Path)
+		if len(info.Path) == 0 || info.Path[0] != '/' {
+			t.Errorf("Expected display Path absolute from drive root when UUID is set, got: %s", info.Path)
+		}
+		if info.Identity != src.VolumeUUID() {
+			t.Errorf("Expected Identity %q, got %q", src.VolumeUUID(), info.Identity)
 		}
 	} else {
 		if info.Path != tmpDir {
 			t.Errorf("Expected Path '%s', got %s", tmpDir, info.Path)
 		}
+	}
+	if src.VolumeUUID() != "" {
+		if info.PathID != info.Path {
+			t.Errorf("Expected portable PathID to be absolute-from-root, got PathID=%q Path=%q", info.PathID, info.Path)
+		}
+	} else if info.PathID != info.Path {
+		t.Errorf("Expected PathID to equal Path for non-portable source, got PathID=%q Path=%q", info.PathID, info.Path)
 	}
 
 	// Test Size()

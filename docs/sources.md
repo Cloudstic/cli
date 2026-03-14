@@ -21,7 +21,7 @@ type Source interface {
 |--------|-------------|
 | `Walk` | Enumerate every file and folder. Parents **must** be emitted before their children. |
 | `GetFileStream` | Return a readable stream for a file, identified by its source-specific `fileID`. |
-| `Info` | Return metadata about the source (type, account, path) stored in the snapshot. |
+| `Info` | Return source identity and display metadata stored in the snapshot. |
 | `Size` | Return the total size of the source (used for progress reporting). |
 
 ### IncrementalSource
@@ -54,16 +54,30 @@ Returned by `Info()` and stored in the snapshot's `source` field:
 
 ```go
 type SourceInfo struct {
-    Type    string // e.g. "gdrive", "local", "sftp", "onedrive", "gdrive-changes"
-    Account string // Google email, hostname, user@host, etc.
-    Path    string // drive path, filesystem path, etc.
+    Type      string // e.g. "gdrive", "local", "sftp", "onedrive", "gdrive-changes"
+    Account   string // friendly display account (email, hostname, user@host)
+    Path      string // friendly display path
+    Identity  string // stable container identity for lineage matching
+    PathID    string // stable selected-root identity within the container
+    DriveName string // friendly container label (e.g. "My Drive")
+
+    // Legacy compatibility fields (read from older snapshots).
+    VolumeUUID  string
+    VolumeLabel string
 }
 ```
 
 The engine uses `SourceInfo` to:
 
-- Find the previous snapshot from the same source (for incremental comparison)
+- Match previous snapshots for incremental comparison
 - Group snapshots in retention policies (`forget --group-by source,account,path`)
+
+Matching precedence:
+
+1. `Type + Identity + PathID`
+2. `Type + Identity + Path` (bridge fallback)
+3. `Type + VolumeUUID + Path` (legacy fallback)
+4. `Type + Account + Path` (legacy fallback)
 
 ### FileMeta
 
@@ -97,8 +111,11 @@ type FileMeta struct {
 | **FileID** | Relative path from root (e.g. `subdir/file.txt`) |
 | **Parents** | Parent directory's relative path |
 | **ContentHash** | Not provided (computed by the engine during upload) |
-| **SourceInfo.Account** | Machine hostname |
-| **SourceInfo.Path** | Absolute path to the backed-up directory |
+| **SourceInfo.Identity** | Partition UUID (portable) or hostname (fallback) |
+| **SourceInfo.PathID** | Stable path token (portable drives use absolute-from-root, e.g. `/Photos`) |
+| **SourceInfo.Account** | Machine hostname (display) |
+| **SourceInfo.DriveName** | Volume label when available |
+| **SourceInfo.Path** | Display path (portable drives are shown absolute from drive root, e.g. `/Photos`) |
 
 Walks the directory tree using `filepath.Walk`. Symbolic links are not followed.
 
@@ -111,7 +128,10 @@ Walks the directory tree using `filepath.Walk`. Symbolic links are not followed.
 | **FileID** | Relative path from root (e.g. `subdir/file.txt`) |
 | **Parents** | Parent directory's relative path |
 | **ContentHash** | Not provided (computed by the engine during upload) |
+| **SourceInfo.Identity** | `user@host` |
+| **SourceInfo.PathID** | Remote root directory path |
 | **SourceInfo.Account** | `user@host` |
+| **SourceInfo.DriveName** | *(empty)* |
 | **SourceInfo.Path** | Remote root directory path |
 
 Walks the remote directory tree via SFTP. Supports password, SSH private key, and ssh-agent authentication.
@@ -125,8 +145,11 @@ Walks the remote directory tree via SFTP. Supports password, SSH private key, an
 | **FileID** | Google Drive file ID (e.g. `1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgV`) |
 | **Parents** | Google Drive parent folder IDs |
 | **ContentHash** | SHA-256 checksum from the Drive API (avoids re-downloading unchanged files) |
-| **SourceInfo.Account** | Google account email |
-| **SourceInfo.Path** | `my-drive://` or `<driveID>://<rootFolderID>` |
+| **SourceInfo.Identity** | My Drive: stable Google account ID; Shared Drive: shared drive ID |
+| **SourceInfo.PathID** | Resolved root folder ID (stable across rename/move) |
+| **SourceInfo.Account** | Google account email (display) |
+| **SourceInfo.DriveName** | `My Drive` or shared drive name |
+| **SourceInfo.Path** | User-selected display path |
 
 Lists all files and folders via `files.list`, then topologically sorts folders so parents are emitted before children. Supports My Drive and Shared Drives (via `gdrive://<Drive Name>`), with optional folder scoping (via `gdrive://<Drive Name>/path/to/folder`).
 
@@ -139,7 +162,10 @@ Lists all files and folders via `files.list`, then topologically sorts folders s
 | **FileID** | Same as `gdrive` |
 | **Parents** | Same as `gdrive` |
 | **ContentHash** | Same as `gdrive` |
+| **SourceInfo.Identity** | Same as `gdrive` |
+| **SourceInfo.PathID** | Same as `gdrive` |
 | **SourceInfo.Account** | Same as `gdrive` |
+| **SourceInfo.DriveName** | Same as `gdrive` |
 | **SourceInfo.Path** | Same as `gdrive` |
 | **Change token** | Google Drive Changes API start page token |
 
@@ -156,8 +182,11 @@ Folder changes are topologically sorted before file changes, ensuring parent ref
 | **FileID** | OneDrive item ID |
 | **Parents** | OneDrive parent item ID |
 | **ContentHash** | Not provided (computed by the engine during upload) |
-| **SourceInfo.Account** | User principal name from Microsoft Graph `/me` |
-| **SourceInfo.Path** | `onedrive://` |
+| **SourceInfo.Identity** | Selected drive ID or stable account ID |
+| **SourceInfo.PathID** | Resolved root item ID (fallback to root path) |
+| **SourceInfo.Account** | User principal name from Microsoft Graph `/me` (display) |
+| **SourceInfo.DriveName** | `My Drive` or selected drive name |
+| **SourceInfo.Path** | User-selected display path |
 
 Walks the drive recursively starting from the root item via the Microsoft Graph API. Folders are visited depth-first, ensuring parents are emitted before children.
 
@@ -170,7 +199,10 @@ Walks the drive recursively starting from the root item via the Microsoft Graph 
 | **FileID** | Same as `onedrive` |
 | **Parents** | Same as `onedrive` |
 | **ContentHash** | Same as `onedrive` |
+| **SourceInfo.Identity** | Same as `onedrive` |
+| **SourceInfo.PathID** | Same as `onedrive` |
 | **SourceInfo.Account** | Same as `onedrive` |
+| **SourceInfo.DriveName** | Same as `onedrive` |
 | **SourceInfo.Path** | Same as `onedrive` |
 | **Change token** | Microsoft Graph delta link |
 
@@ -183,7 +215,7 @@ Embeds `OneDriveSource` and reuses its `Walk`, `GetFileStream`, and metadata con
 The backup engine (`internal/engine/backup.go`) interacts with sources as follows:
 
 1. **Detect source type** — check if the source implements `IncrementalSource`
-2. **Load previous state** — find the most recent snapshot with a matching `SourceInfo`
+2. **Load previous state** — find the most recent snapshot with a matching source identity
 3. **If incremental and a previous token exists** — call `WalkChanges(token)` to get a delta, then apply upserts and deletes to the previous HAMT
 4. **Otherwise** — call `GetStartPageToken()` (if incremental) then `Walk()` for a full scan, comparing each entry against the previous HAMT
 5. **Upload changed files** — call `GetFileStream(fileID)` for each file that needs uploading
@@ -204,5 +236,5 @@ To add a new source:
 2. `Walk` must emit parents before children
 3. `FileID` must be a stable, unique identifier within the source — it's used as the HAMT key
 4. `GetFileStream` must return the raw file bytes for the given `FileID`
-5. `Info()` should return a unique `SourceInfo` so snapshots from different sources are distinguishable
+5. `Info()` should return stable `Identity` + `PathID` values so lineage remains consistent over time
 6. Register the source type in `cmd/cloudstic/main.go` in the `initSource` function

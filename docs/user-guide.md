@@ -277,6 +277,8 @@ cloudstic backup -source local:~/Documents -dry-run
 
 The `gdrive-changes` and `onedrive-changes` source types use their respective change/delta APIs for faster incremental backups after the first full backup.
 
+Cloudstic tracks source lineage using stable source identities internally (container identity + root location identity), not just display labels. For cloud sources, this uses stable drive/folder IDs so incremental continuity is preserved across folder renames or moves.
+
 > **Locking:** `backup` acquires a **shared lock** on the repository at the start of the run (skipped for `-dry-run`). Multiple backups can run concurrently. The lock is released when the command exits. If the repository is exclusively locked by a `prune` run, `backup` will fail immediately with an error message. Use `break-lock` if a lock is stale.
 
 #### Exclude patterns

@@ -71,11 +71,16 @@ type LeafEntry struct {
 // first-class field on the snapshot so that forget policies can group by
 // source identity (Type + Account + Path).
 type SourceInfo struct {
-	Type        string `json:"type"`                   // e.g. "gdrive", "local"
-	Account     string `json:"account,omitempty"`      // Google account email, hostname, etc.
-	Path        string `json:"path,omitempty"`         // root folder ID, filesystem path, etc.
-	VolumeUUID  string `json:"volume_uuid,omitempty"`  // stable volume identity across mounts/machines
-	VolumeLabel string `json:"volume_label,omitempty"` // human-readable volume name (e.g. "MyDrive")
+	Type      string `json:"type"`                 // e.g. "gdrive", "local"
+	Account   string `json:"account,omitempty"`    // friendly account/host label for display
+	Path      string `json:"path,omitempty"`       // display path within the source container
+	Identity  string `json:"identity,omitempty"`   // stable container identity for lineage matching
+	PathID    string `json:"path_id,omitempty"`    // stable selected-root identity within container
+	DriveName string `json:"drive_name,omitempty"` // human-readable container label (e.g. "My Drive")
+
+	// Legacy fields (read-only compatibility path; slated for future removal).
+	VolumeUUID  string `json:"volume_uuid,omitempty"`
+	VolumeLabel string `json:"volume_label,omitempty"`
 }
 
 // Snapshot represents a backup checkpoint

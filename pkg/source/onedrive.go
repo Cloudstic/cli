@@ -65,10 +65,12 @@ func WithOneDriveExcludePatterns(patterns []string) OneDriveOption {
 
 type OneDriveSource struct {
 	client    *http.Client
+	accountID string // cached stable account identity; populated lazily by Info()
 	account   string // cached user principal name; populated lazily by Info()
 	driveID   string // The resolved Drive ID
 	driveName string // The Drive Name (from config)
 	rootPath  string // The string path the user specified, or "/"
+	rootID    string // stable selected root folder/item ID
 	exclude   *ExcludeMatcher
 }
 
@@ -193,26 +195,66 @@ func (s *OneDriveSource) resolveDriveName(ctx context.Context) error {
 }
 
 func (s *OneDriveSource) Info() core.SourceInfo {
-	if s.account == "" {
-		s.account = s.fetchAccount()
+	if s.client != nil && (s.account == "" || s.accountID == "") {
+		id, upn := s.fetchAccountInfo()
+		if s.accountID == "" {
+			s.accountID = id
+		}
+		if s.account == "" {
+			s.account = upn
+		}
+	}
+	if s.client != nil && s.rootID == "" {
+		s.rootID = s.resolveRootID(context.Background())
 	}
 	info := core.SourceInfo{
-		Type:    "onedrive",
-		Account: s.account,
-		Path:    s.rootPath,
+		Type:      "onedrive",
+		Account:   s.account,
+		Path:      s.rootPath,
+		PathID:    s.rootID,
+		DriveName: "My Drive",
 	}
 	if s.driveID != "" {
-		info.VolumeUUID = s.driveID
-		info.VolumeLabel = s.driveName
+		info.Identity = s.driveID
+		info.DriveName = s.driveName
+	} else if s.accountID != "" {
+		info.Identity = s.accountID
 	} else {
-		info.VolumeLabel = "My Drive"
+		info.Identity = s.account
+	}
+	if info.PathID == "" {
+		info.PathID = s.rootPath
 	}
 	return info
 }
 
-func (s *OneDriveSource) fetchAccount() string {
+func (s *OneDriveSource) fetchAccountInfo() (id, upn string) {
 	req, err := http.NewRequestWithContext(context.Background(), "GET",
-		"https://graph.microsoft.com/v1.0/me?$select=userPrincipalName", nil)
+		"https://graph.microsoft.com/v1.0/me?$select=id,userPrincipalName", nil)
+	if err != nil {
+		return "", ""
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return "", ""
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", ""
+	}
+	var me struct {
+		ID  string `json:"id"`
+		UPN string `json:"userPrincipalName"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&me); err != nil {
+		return "", ""
+	}
+	return me.ID, me.UPN
+}
+
+func (s *OneDriveSource) resolveRootID(ctx context.Context) string {
+	rootURL := s.getRootURL()
+	req, err := http.NewRequestWithContext(ctx, "GET", rootURL, nil)
 	if err != nil {
 		return ""
 	}
@@ -224,13 +266,16 @@ func (s *OneDriveSource) fetchAccount() string {
 	if resp.StatusCode != http.StatusOK {
 		return ""
 	}
-	var me struct {
-		UPN string `json:"userPrincipalName"`
+	var item struct {
+		ID string `json:"id"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&me); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&item); err != nil {
 		return ""
 	}
-	return me.UPN
+	if item.ID == "" {
+		return ""
+	}
+	return item.ID
 }
 
 func loadToken(file string) (*oauth2.Token, error) {

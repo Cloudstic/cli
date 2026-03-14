@@ -500,11 +500,14 @@ func TestGDriveInfo_MyDrive_Root(t *testing.T) {
 	if info.Path != "/" {
 		t.Errorf("Path = %q, want /", info.Path)
 	}
-	if info.VolumeUUID != "" {
-		t.Errorf("VolumeUUID = %q, want empty for My Drive", info.VolumeUUID)
+	if info.Identity != "user@gmail.com" {
+		t.Errorf("Identity = %q, want user@gmail.com", info.Identity)
 	}
-	if info.VolumeLabel != "My Drive" {
-		t.Errorf("VolumeLabel = %q, want My Drive", info.VolumeLabel)
+	if info.DriveName != "My Drive" {
+		t.Errorf("DriveName = %q, want My Drive", info.DriveName)
+	}
+	if info.PathID != "root" {
+		t.Errorf("PathID = %q, want root", info.PathID)
 	}
 }
 
@@ -515,11 +518,14 @@ func TestGDriveInfo_MyDrive_Subfolder(t *testing.T) {
 	if info.Path != "/myfolder" {
 		t.Errorf("Path = %q, want /myfolder", info.Path)
 	}
-	if info.VolumeUUID != "" {
-		t.Errorf("VolumeUUID = %q, want empty for My Drive", info.VolumeUUID)
+	if info.Identity != "user@gmail.com" {
+		t.Errorf("Identity = %q, want user@gmail.com", info.Identity)
 	}
-	if info.VolumeLabel != "My Drive" {
-		t.Errorf("VolumeLabel = %q, want My Drive", info.VolumeLabel)
+	if info.DriveName != "My Drive" {
+		t.Errorf("DriveName = %q, want My Drive", info.DriveName)
+	}
+	if info.PathID != "folder123" {
+		t.Errorf("PathID = %q, want folder123", info.PathID)
 	}
 }
 
@@ -535,11 +541,14 @@ func TestGDriveInfo_SharedDrive_Root(t *testing.T) {
 	if info.Path != "/" {
 		t.Errorf("Path = %q, want /", info.Path)
 	}
-	if info.VolumeUUID != "shared-drive-abc" {
-		t.Errorf("VolumeUUID = %q, want shared-drive-abc", info.VolumeUUID)
+	if info.Identity != "shared-drive-abc" {
+		t.Errorf("Identity = %q, want shared-drive-abc", info.Identity)
 	}
-	if info.VolumeLabel != "Team Photos" {
-		t.Errorf("VolumeLabel = %q, want Team Photos", info.VolumeLabel)
+	if info.DriveName != "Team Photos" {
+		t.Errorf("DriveName = %q, want Team Photos", info.DriveName)
+	}
+	if info.PathID != "shared-drive-abc" {
+		t.Errorf("PathID = %q, want shared-drive-abc", info.PathID)
 	}
 }
 
@@ -556,11 +565,14 @@ func TestGDriveInfo_SharedDrive_Subfolder(t *testing.T) {
 	if info.Path != "/team/folder456" {
 		t.Errorf("Path = %q, want /team/folder456", info.Path)
 	}
-	if info.VolumeUUID != "shared-drive-abc" {
-		t.Errorf("VolumeUUID = %q, want shared-drive-abc", info.VolumeUUID)
+	if info.Identity != "shared-drive-abc" {
+		t.Errorf("Identity = %q, want shared-drive-abc", info.Identity)
 	}
-	if info.VolumeLabel != "Team Photos" {
-		t.Errorf("VolumeLabel = %q, want Team Photos", info.VolumeLabel)
+	if info.DriveName != "Team Photos" {
+		t.Errorf("DriveName = %q, want Team Photos", info.DriveName)
+	}
+	if info.PathID != "folder456" {
+		t.Errorf("PathID = %q, want folder456", info.PathID)
 	}
 }
 
@@ -573,7 +585,7 @@ func TestGDriveChangesInfo_Type(t *testing.T) {
 	if info.Type != "gdrive-changes" {
 		t.Errorf("Type = %q, want gdrive-changes", info.Type)
 	}
-	if info.VolumeLabel != "My Drive" {
-		t.Errorf("VolumeLabel = %q, want My Drive", info.VolumeLabel)
+	if info.DriveName != "My Drive" {
+		t.Errorf("DriveName = %q, want My Drive", info.DriveName)
 	}
 }

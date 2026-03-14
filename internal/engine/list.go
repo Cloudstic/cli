@@ -54,6 +54,17 @@ func (lm *ListManager) Run(ctx context.Context, opts ...ListOption) (*ListResult
 			source := ""
 			if e.Snap.Source != nil {
 				source = fmt.Sprintf(" source=%s account=%s path=%s", e.Snap.Source.Type, e.Snap.Source.Account, e.Snap.Source.Path)
+				if e.Snap.Source.DriveName != "" {
+					source += fmt.Sprintf(" drive=%s", e.Snap.Source.DriveName)
+				} else if e.Snap.Source.VolumeLabel != "" {
+					source += fmt.Sprintf(" drive=%s", e.Snap.Source.VolumeLabel)
+				}
+				if e.Snap.Source.Identity != "" {
+					source += fmt.Sprintf(" identity=%s", e.Snap.Source.Identity)
+				}
+				if e.Snap.Source.PathID != "" {
+					source += fmt.Sprintf(" path_id=%s", e.Snap.Source.PathID)
+				}
 			}
 			fmt.Fprintf(os.Stderr, "  %s seq=%d created=%s%s\n", e.Ref, e.Snap.Seq, e.Snap.Created, source)
 		}

@@ -19,11 +19,14 @@ func TestOneDriveInfo(t *testing.T) {
 	if info.Path != "/" {
 		t.Errorf("Path = %q, want /", info.Path)
 	}
-	if info.VolumeUUID != "" {
-		t.Errorf("VolumeUUID = %q, want empty", info.VolumeUUID)
+	if info.Identity != "user@outlook.com" {
+		t.Errorf("Identity = %q, want user@outlook.com", info.Identity)
 	}
-	if info.VolumeLabel != "My Drive" {
-		t.Errorf("VolumeLabel = %q, want My Drive", info.VolumeLabel)
+	if info.DriveName != "My Drive" {
+		t.Errorf("DriveName = %q, want My Drive", info.DriveName)
+	}
+	if info.PathID != "/" {
+		t.Errorf("PathID = %q, want /", info.PathID)
 	}
 }
 
@@ -36,8 +39,8 @@ func TestOneDriveChangesInfo_Type(t *testing.T) {
 	if info.Type != "onedrive-changes" {
 		t.Errorf("Type = %q, want onedrive-changes", info.Type)
 	}
-	if info.VolumeLabel != "My Drive" {
-		t.Errorf("VolumeLabel = %q, want My Drive", info.VolumeLabel)
+	if info.DriveName != "My Drive" {
+		t.Errorf("DriveName = %q, want My Drive", info.DriveName)
 	}
 	if info.Path != "/" {
 		t.Errorf("Path = %q, want /", info.Path)

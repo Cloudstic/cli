@@ -287,9 +287,8 @@ func (bm *BackupManager) loadLatestSeq() int {
 }
 
 // findPreviousSnapshot lists all snapshots and returns the most recent one
-// whose Source matches the given info. When VolumeUUID is set, it is preferred
-// over the legacy (Type + Account + Path) match to enable cross-machine
-// incremental backup for portable drives.
+// whose Source matches the given info. Matching prefers the new identity
+// fields and falls back to legacy fields for backward compatibility.
 // Returns nil when no matching snapshot exists.
 func (bm *BackupManager) findPreviousSnapshot(info core.SourceInfo) *core.Snapshot {
 	entries, err := LoadSnapshotCatalog(bm.store)
@@ -297,14 +296,25 @@ func (bm *BackupManager) findPreviousSnapshot(info core.SourceInfo) *core.Snapsh
 		return nil
 	}
 
-	// Pass 1: UUID + path match (cross-machine, mount-point-agnostic).
-	// Path is relative to the volume root, so different sub-directories
-	// of the same drive are tracked independently.
-	if info.VolumeUUID != "" {
+	// Pass 1: identity + path_id (preferred).
+	if info.Identity != "" && info.PathID != "" {
 		for _, e := range entries {
 			if e.Snap.Source != nil &&
 				e.Snap.Source.Type == info.Type &&
-				e.Snap.Source.VolumeUUID == info.VolumeUUID &&
+				e.Snap.Source.Identity == info.Identity &&
+				e.Snap.Source.PathID == info.PathID {
+				snap := e.Snap
+				return &snap
+			}
+		}
+	}
+
+	// Pass 2: identity + path bridge for snapshots without path_id.
+	if info.Identity != "" {
+		for _, e := range entries {
+			if e.Snap.Source != nil &&
+				e.Snap.Source.Type == info.Type &&
+				e.Snap.Source.Identity == info.Identity &&
 				e.Snap.Source.Path == info.Path {
 				snap := e.Snap
 				return &snap
@@ -312,7 +322,24 @@ func (bm *BackupManager) findPreviousSnapshot(info core.SourceInfo) *core.Snapsh
 		}
 	}
 
-	// Pass 2: legacy match (type + account + path)
+	// Pass 3: legacy UUID + path match.
+	if info.VolumeUUID != "" {
+		legacyPath := info.PathID
+		if legacyPath == "" {
+			legacyPath = info.Path
+		}
+		for _, e := range entries {
+			if e.Snap.Source != nil &&
+				e.Snap.Source.Type == info.Type &&
+				e.Snap.Source.VolumeUUID == info.VolumeUUID &&
+				(e.Snap.Source.Path == legacyPath || e.Snap.Source.Path == info.Path) {
+				snap := e.Snap
+				return &snap
+			}
+		}
+	}
+
+	// Pass 4: legacy match (type + account + path)
 	for _, e := range entries {
 		if e.Snap.Source != nil &&
 			e.Snap.Source.Type == info.Type &&

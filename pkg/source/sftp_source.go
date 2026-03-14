@@ -135,10 +135,13 @@ func (s *SFTPSource) Close() error {
 }
 
 func (s *SFTPSource) Info() core.SourceInfo {
+	identity := fmt.Sprintf("%s@%s", s.user, s.host)
 	return core.SourceInfo{
-		Type:    "sftp",
-		Account: fmt.Sprintf("%s@%s", s.user, s.host),
-		Path:    s.rootPath,
+		Type:     "sftp",
+		Account:  identity,
+		Path:     s.rootPath,
+		Identity: identity,
+		PathID:   s.rootPath,
 	}
 }
 

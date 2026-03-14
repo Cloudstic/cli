@@ -327,6 +327,8 @@ func parseSourceURI(raw string) (*sourceURIParts, error) {
 				return nil, fmt.Errorf("invalid source URI %q: local path cannot be empty", raw)
 			}
 			return &sourceURIParts{scheme: "local", path: rest}, nil
+		case "gdrive", "gdrive-changes", "onedrive", "onedrive-changes":
+			return &sourceURIParts{scheme: scheme, path: ensureLeadingSlash(rest)}, nil
 		default:
 			return nil, fmt.Errorf("unknown source scheme %q in %q: supported URI formats are local:<path> and sftp://[user@]host[:port]/<path>", scheme, raw)
 		}
@@ -335,10 +337,17 @@ func parseSourceURI(raw string) (*sourceURIParts, error) {
 	// Bare keyword (cloud sources)
 	switch raw {
 	case "gdrive", "gdrive-changes", "onedrive", "onedrive-changes":
-		return &sourceURIParts{scheme: raw}, nil
+		return &sourceURIParts{scheme: raw, path: "/"}, nil
 	default:
-		return nil, fmt.Errorf("unknown source %q: supported values are local:<path>, sftp://[user@]host[:port]/<path>, gdrive, gdrive-changes, onedrive, onedrive-changes", raw)
+		return nil, fmt.Errorf("unknown source %q: supported values are local:<path>, sftp://[user@]host[:port]/<path>, gdrive[:<path>], gdrive-changes[:<path>], onedrive[:<path>], onedrive-changes[:<path>]", raw)
 	}
+}
+
+func ensureLeadingSlash(s string) string {
+	if s == "" || !strings.HasPrefix(s, "/") {
+		return "/" + s
+	}
+	return s
 }
 
 func (g *globalFlags) buildSFTPSourceOpts(uri *sourceURIParts) []source.SFTPOption {

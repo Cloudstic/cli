@@ -10,15 +10,15 @@ import (
 func TestToFileMeta_RegularFile(t *testing.T) {
 	s := &GDriveSource{exclude: NewExcludeMatcher(nil)}
 	f := &drive.File{
-		Id:              "file1",
-		Name:            "photo.jpg",
-		MimeType:        "image/jpeg",
-		Size:            1024,
-		ModifiedTime:    "2024-01-15T10:30:00Z",
-		Sha256Checksum:  "abc123",
-		Parents:         []string{"folder1"},
-		Owners:          []*drive.User{{EmailAddress: "user@example.com"}},
-		HeadRevisionId:  "rev42",
+		Id:             "file1",
+		Name:           "photo.jpg",
+		MimeType:       "image/jpeg",
+		Size:           1024,
+		ModifiedTime:   "2024-01-15T10:30:00Z",
+		Sha256Checksum: "abc123",
+		Parents:        []string{"folder1"},
+		Owners:         []*drive.User{{EmailAddress: "user@example.com"}},
+		HeadRevisionId: "rev42",
 	}
 
 	meta := s.toFileMeta(f)
@@ -488,7 +488,7 @@ func TestWithSkipNativeFiles(t *testing.T) {
 }
 
 func TestGDriveInfo_MyDrive_Root(t *testing.T) {
-	s := &GDriveSource{account: "user@gmail.com"}
+	s := &GDriveSource{account: "user@gmail.com", rootPath: "/"}
 	info := s.Info()
 
 	if info.Type != "gdrive" {
@@ -509,11 +509,11 @@ func TestGDriveInfo_MyDrive_Root(t *testing.T) {
 }
 
 func TestGDriveInfo_MyDrive_Subfolder(t *testing.T) {
-	s := &GDriveSource{account: "user@gmail.com", rootFolderID: "folder123"}
+	s := &GDriveSource{account: "user@gmail.com", rootFolderID: "folder123", rootPath: "/myfolder"}
 	info := s.Info()
 
-	if info.Path != "folder123" {
-		t.Errorf("Path = %q, want folder123", info.Path)
+	if info.Path != "/myfolder" {
+		t.Errorf("Path = %q, want /myfolder", info.Path)
 	}
 	if info.VolumeUUID != "" {
 		t.Errorf("VolumeUUID = %q, want empty for My Drive", info.VolumeUUID)
@@ -528,6 +528,7 @@ func TestGDriveInfo_SharedDrive_Root(t *testing.T) {
 		account:   "user@gmail.com",
 		driveID:   "shared-drive-abc",
 		driveName: "Team Photos",
+		rootPath:  "/",
 	}
 	info := s.Info()
 
@@ -548,11 +549,12 @@ func TestGDriveInfo_SharedDrive_Subfolder(t *testing.T) {
 		driveID:      "shared-drive-abc",
 		driveName:    "Team Photos",
 		rootFolderID: "folder456",
+		rootPath:     "/team/folder456",
 	}
 	info := s.Info()
 
-	if info.Path != "folder456" {
-		t.Errorf("Path = %q, want folder456", info.Path)
+	if info.Path != "/team/folder456" {
+		t.Errorf("Path = %q, want /team/folder456", info.Path)
 	}
 	if info.VolumeUUID != "shared-drive-abc" {
 		t.Errorf("VolumeUUID = %q, want shared-drive-abc", info.VolumeUUID)

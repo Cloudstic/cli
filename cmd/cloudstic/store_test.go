@@ -88,10 +88,13 @@ func TestParseSourceURI(t *testing.T) {
 		{raw: "sftp:///no-host", wantErr: true},
 
 		// cloud keywords
-		{raw: "gdrive", want: sourceURIParts{scheme: "gdrive"}},
-		{raw: "gdrive-changes", want: sourceURIParts{scheme: "gdrive-changes"}},
-		{raw: "onedrive", want: sourceURIParts{scheme: "onedrive"}},
-		{raw: "onedrive-changes", want: sourceURIParts{scheme: "onedrive-changes"}},
+		{raw: "gdrive", want: sourceURIParts{scheme: "gdrive", path: "/"}},
+		{raw: "gdrive-changes", want: sourceURIParts{scheme: "gdrive-changes", path: "/"}},
+		{raw: "onedrive", want: sourceURIParts{scheme: "onedrive", path: "/"}},
+		{raw: "onedrive-changes", want: sourceURIParts{scheme: "onedrive-changes", path: "/"}},
+		{raw: "gdrive:/some/path", want: sourceURIParts{scheme: "gdrive", path: "/some/path"}},
+		{raw: "gdrive:some/path", want: sourceURIParts{scheme: "gdrive", path: "/some/path"}},
+		{raw: "onedrive:/documents", want: sourceURIParts{scheme: "onedrive", path: "/documents"}},
 
 		// invalid
 		{raw: "sftp", wantErr: true},

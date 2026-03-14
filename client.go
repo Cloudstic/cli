@@ -308,6 +308,10 @@ func (c *Client) Store() store.ObjectStore { return c.store }
 
 type BackupOption = engine.BackupOption
 type BackupResult = engine.RunResult
+type ProfilesConfig = engine.ProfilesConfig
+type ProfileStore = engine.ProfileStore
+type ProfileAuth = engine.ProfileAuth
+type BackupProfile = engine.BackupProfile
 
 var (
 	WithVerbose      = engine.WithVerbose
@@ -331,6 +335,16 @@ func (c *Client) Backup(ctx context.Context, src source.Source, opts ...BackupOp
 	result.BytesAddedRaw = rawMeter.BytesWritten()
 	result.BytesAddedStored = c.storedMeter.BytesWritten()
 	return result, nil
+}
+
+// LoadProfilesFile parses a backup profiles YAML file.
+func LoadProfilesFile(path string) (*ProfilesConfig, error) {
+	return engine.LoadProfilesFile(path)
+}
+
+// SaveProfilesFile writes a backup profiles YAML file.
+func SaveProfilesFile(path string, cfg *ProfilesConfig) error {
+	return engine.SaveProfilesFile(path, cfg)
 }
 
 // ---------------------------------------------------------------------------

@@ -41,9 +41,9 @@ _cloudstic() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="init backup restore list ls prune forget diff break-lock key cat completion version help"
+    local commands="init backup auth profile store restore list ls prune forget diff break-lock key cat completion version help"
 
-    local global_flags="-store -s3-endpoint -s3-region -s3-access-key -s3-secret-key -source-sftp-password -source-sftp-key -store-sftp-password -store-sftp-key -encryption-key -password -recovery-key -kms-key-arn -kms-region -kms-endpoint -disable-packfile -prompt -verbose -quiet -debug"
+    local global_flags="-store -profile -profiles-file -s3-endpoint -s3-region -s3-profile -s3-access-key -s3-secret-key -source-sftp-password -source-sftp-key -store-sftp-password -store-sftp-key -encryption-key -password -recovery-key -kms-key-arn -kms-region -kms-endpoint -disable-packfile -prompt -no-prompt -verbose -quiet -debug"
 
     # Identify the subcommand
     local cmd=""
@@ -53,7 +53,7 @@ _cloudstic() {
             -*)
                 # skip flags and their values
                 case "${words[i]}" in
-                    -store|-s3-endpoint|-s3-region|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-store-sftp-password|-store-sftp-key|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-google-credentials|-google-token-file|-onedrive-client-id|-onedrive-token-file|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account|-json)
+                    -store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-store-sftp-password|-store-sftp-key|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-all-profiles|-auth-ref|-google-credentials|-google-token-file|-onedrive-client-id|-onedrive-token-file|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account|-json)
                         ((i++)) ;;
                 esac
                 ;;
@@ -76,7 +76,7 @@ _cloudstic() {
         init)
             cmd_flags="-add-recovery-key -no-encryption -adopt-slots" ;;
         backup)
-            cmd_flags="-source -skip-native-files -google-credentials -google-token-file -onedrive-client-id -onedrive-token-file -tag -dry-run" ;;
+            cmd_flags="-source -profile -all-profiles -auth-ref -profiles-file -skip-native-files -google-credentials -google-token-file -onedrive-client-id -onedrive-token-file -tag -dry-run" ;;
         restore)
             cmd_flags="-output -dry-run" ;;
         prune)
@@ -111,6 +111,80 @@ _cloudstic() {
             ;;
         list)
             cmd_flags="-group" ;;
+        profile)
+            local profile_sub=""
+            local j
+            for ((j=i+1; j < cword; j++)); do
+                case "${words[j]}" in
+                    -*) ;;
+                    *) profile_sub="${words[j]}"; break ;;
+                esac
+            done
+            if [[ -z "$profile_sub" ]]; then
+                COMPREPLY=($(compgen -W "list show new" -- "$cur"))
+                return
+            fi
+            case "$profile_sub" in
+                list)
+                    cmd_flags="-profiles-file" ;;
+                show)
+                    cmd_flags="-profiles-file" ;;
+                new)
+                    cmd_flags="-profiles-file -name -source -store-ref -store -auth-ref -tag -exclude -exclude-file -skip-native-files -volume-uuid -google-credentials -google-token-file -onedrive-client-id -onedrive-token-file" ;;
+                *)
+                    cmd_flags="" ;;
+            esac
+            ;;
+        auth)
+            local auth_sub=""
+            local j
+            for ((j=i+1; j < cword; j++)); do
+                case "${words[j]}" in
+                    -*) ;;
+                    *) auth_sub="${words[j]}"; break ;;
+                esac
+            done
+            if [[ -z "$auth_sub" ]]; then
+                COMPREPLY=($(compgen -W "list show new login" -- "$cur"))
+                return
+            fi
+            case "$auth_sub" in
+                list)
+                    cmd_flags="-profiles-file" ;;
+                show)
+                    cmd_flags="-profiles-file" ;;
+                new)
+                    cmd_flags="-profiles-file -name -provider -google-credentials -google-token-file -onedrive-client-id -onedrive-token-file" ;;
+                login)
+                    cmd_flags="-profiles-file -name" ;;
+                *)
+                    cmd_flags="" ;;
+            esac
+            ;;
+        store)
+            local store_sub=""
+            local j
+            for ((j=i+1; j < cword; j++)); do
+                case "${words[j]}" in
+                    -*) ;;
+                    *) store_sub="${words[j]}"; break ;;
+                esac
+            done
+            if [[ -z "$store_sub" ]]; then
+                COMPREPLY=($(compgen -W "list show new" -- "$cur"))
+                return
+            fi
+            case "$store_sub" in
+                list)
+                    cmd_flags="-profiles-file" ;;
+                show)
+                    cmd_flags="-profiles-file" ;;
+                new)
+                    cmd_flags="-profiles-file -name -uri -s3-region -s3-profile -s3-endpoint -s3-access-key -s3-secret-key -s3-access-key-env -s3-secret-key-env -s3-profile-env -store-sftp-password -store-sftp-key -store-sftp-password-env -store-sftp-key-env -password-env -encryption-key-env -recovery-key-env -kms-key-arn -kms-region -kms-endpoint" ;;
+                *)
+                    cmd_flags="" ;;
+            esac
+            ;;
         check)
             cmd_flags="-read-data" ;;
         ls|diff|break-lock|version|help)
@@ -132,7 +206,7 @@ _cloudstic() {
             # URI completion hint: show scheme prefixes and bare keywords
             COMPREPLY=($(compgen -W "local: sftp:// gdrive gdrive-changes onedrive onedrive-changes" -- "$cur"))
             return ;;
-        -source-sftp-key|-store-sftp-key|-output)
+        -source-sftp-key|-store-sftp-key|-output|-profiles-file)
             _filedir
             return ;;
     esac
@@ -153,6 +227,8 @@ _cloudstic() {
     commands=(
         'init:Initialize a new repository'
         'backup:Create a new backup snapshot from a source'
+        'auth:Manage reusable cloud auth entries'
+        'profile:Manage backup profiles'
         'restore:Restore files from a backup snapshot'
         'list:List all backup snapshots in the repository'
         'ls:List files within a specific snapshot'
@@ -170,8 +246,11 @@ _cloudstic() {
     local -a global_flags
     global_flags=(
         '-store[Storage backend URI (local:<path>, s3:<bucket>[/<prefix>], b2:<bucket>[/<prefix>], sftp://[user@]host[:port]/<path>)]:uri:'
+        '-profile[Profile name from profiles.yaml]:name:'
+        '-profiles-file[Path to profiles YAML file]:path:_files'
         '-s3-endpoint[S3 compatible endpoint URL]:url:'
         '-s3-region[S3 region]:region:'
+        '-s3-profile[AWS shared config profile for S3 auth]:name:'
         '-s3-access-key[S3 access key ID]:key:'
         '-s3-secret-key[S3 secret access key]:secret:'
         '-source-sftp-password[SFTP source password]:password:'
@@ -186,6 +265,7 @@ _cloudstic() {
         '-kms-endpoint[Custom AWS KMS endpoint]:url:'
         '-disable-packfile[Disable bundling small objects into packs]'
         '-prompt[Prompt for password interactively]'
+        '-no-prompt[Disable interactive prompts (for scripts and CI)]'
         '-verbose[Log detailed operations]'
         '-quiet[Suppress progress bars]'
         '-debug[Log every store request]'
@@ -199,7 +279,7 @@ _cloudstic() {
             -*)
                 # Skip flags with values
                 case "${words[i]}" in
-                    -store|-s3-endpoint|-s3-region|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-store-sftp-password|-store-sftp-key|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-google-credentials|-google-token-file|-onedrive-client-id|-onedrive-token-file|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account)
+                    -store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-store-sftp-password|-store-sftp-key|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-all-profiles|-auth-ref|-google-credentials|-google-token-file|-onedrive-client-id|-onedrive-token-file|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account)
                         (( i++ )) ;;
                 esac
                 ;;
@@ -227,6 +307,10 @@ _cloudstic() {
         backup)
             _arguments $global_flags \
                 '-source[Source URI]:uri:(local: sftp:// gdrive gdrive-changes onedrive onedrive-changes)' \
+                '-profile[Backup profile name]:name:' \
+                '-all-profiles[Run all enabled backup profiles]' \
+                '-auth-ref[Use named auth entry from profiles.yaml]:name:' \
+                '-profiles-file[Path to profiles YAML file]:path:_files' \
                 '-skip-native-files[Exclude Google-native files]' \
                 '-google-credentials[Google service account credentials JSON]:path:_files' \
                 '-google-token-file[Google OAuth token file]:path:_files' \
@@ -234,6 +318,160 @@ _cloudstic() {
                 '-onedrive-token-file[OneDrive OAuth token file]:path:_files' \
                 '*-tag[Tag for the snapshot]:tag:' \
                 '-dry-run[Scan without writing]'
+            ;;
+        profile)
+            local -a profile_commands
+            profile_commands=(
+                'list:List stores, auth entries, and backup profiles'
+                'show:Show one profile and resolved store/auth references'
+                'new:Create or update a backup profile'
+            )
+            local profile_sub
+            local -i pi=$((i+1))
+            while (( pi < CURRENT )); do
+                case "${words[pi]}" in
+                    -*) ;;
+                    *) profile_sub="${words[pi]}"; break ;;
+                esac
+                (( pi++ ))
+            done
+            if [[ -z "$profile_sub" ]]; then
+                _describe -t profile-commands 'profile subcommand' profile_commands
+                return
+            fi
+            case "$profile_sub" in
+                list)
+                    _arguments '-profiles-file[Path to profiles YAML file]:path:_files'
+                    ;;
+                show)
+                    _arguments '-profiles-file[Path to profiles YAML file]:path:_files' ':profile name:'
+                    ;;
+                new)
+                    _arguments \
+                        '-profiles-file[Path to profiles YAML file]:path:_files' \
+                        '-name[Profile name]:name:' \
+                        '-source[Source URI]:uri:(local: sftp:// gdrive gdrive-changes onedrive onedrive-changes)' \
+                        '-store-ref[Store reference name]:name:' \
+                        '-store[Store URI]:uri:' \
+                        '-auth-ref[Auth reference name]:name:' \
+                        '*-tag[Tag for snapshots]:tag:' \
+                        '*-exclude[Exclude pattern]:pattern:' \
+                        '-exclude-file[Path to exclude file]:path:_files' \
+                        '-skip-native-files[Exclude Google-native files]' \
+                        '-volume-uuid[Volume UUID override]:uuid:' \
+                        '-google-credentials[Google service account credentials JSON]:path:_files' \
+                        '-google-token-file[Google OAuth token file]:path:_files' \
+                        '-onedrive-client-id[OneDrive OAuth client ID]:id:' \
+                        '-onedrive-token-file[OneDrive OAuth token file]:path:_files'
+                    ;;
+                *)
+                    _arguments
+                    ;;
+            esac
+            ;;
+        auth)
+            local -a auth_commands
+            auth_commands=(
+                'list:List auth entries from profiles.yaml'
+                'show:Show one auth entry'
+                'new:Create or update a reusable cloud auth entry'
+                'login:Run OAuth login flow for one auth entry'
+            )
+            local auth_sub
+            local -i ai=$((i+1))
+            while (( ai < CURRENT )); do
+                case "${words[ai]}" in
+                    -*) ;;
+                    *) auth_sub="${words[ai]}"; break ;;
+                esac
+                (( ai++ ))
+            done
+            if [[ -z "$auth_sub" ]]; then
+                _describe -t auth-commands 'auth subcommand' auth_commands
+                return
+            fi
+            case "$auth_sub" in
+                list)
+                    _arguments '-profiles-file[Path to profiles YAML file]:path:_files'
+                    ;;
+                show)
+                    _arguments '-profiles-file[Path to profiles YAML file]:path:_files' ':auth name:'
+                    ;;
+                new)
+                    _arguments \
+                        '-profiles-file[Path to profiles YAML file]:path:_files' \
+                        '-name[Auth reference name]:name:' \
+                        '-provider[Auth provider]:provider:(google onedrive)' \
+                        '-google-credentials[Google service account credentials JSON]:path:_files' \
+                        '-google-token-file[Google OAuth token file]:path:_files' \
+                        '-onedrive-client-id[OneDrive OAuth client ID]:id:' \
+                        '-onedrive-token-file[OneDrive OAuth token file]:path:_files'
+                    ;;
+                login)
+                    _arguments \
+                        '-profiles-file[Path to profiles YAML file]:path:_files' \
+                        '-name[Auth reference name]:name:'
+                    ;;
+                *)
+                    _arguments
+                    ;;
+            esac
+            ;;
+        store)
+            local -a store_commands
+            store_commands=(
+                'list:List configured stores'
+                'show:Show one store and its configuration'
+                'new:Create or update a store entry'
+            )
+            local store_sub
+            local -i si=$((i+1))
+            while (( si < CURRENT )); do
+                case "${words[si]}" in
+                    -*) ;;
+                    *) store_sub="${words[si]}"; break ;;
+                esac
+                (( si++ ))
+            done
+            if [[ -z "$store_sub" ]]; then
+                _describe -t store-commands 'store subcommand' store_commands
+                return
+            fi
+            case "$store_sub" in
+                list)
+                    _arguments '-profiles-file[Path to profiles YAML file]:path:_files'
+                    ;;
+                show)
+                    _arguments '-profiles-file[Path to profiles YAML file]:path:_files' ':store name:'
+                    ;;
+                new)
+                    _arguments \
+                        '-profiles-file[Path to profiles YAML file]:path:_files' \
+                        '-name[Store reference name]:name:' \
+                        '-uri[Store URI]:uri:' \
+                        '-s3-region[S3 region]:region:' \
+                        '-s3-profile[AWS shared config profile]:profile:' \
+                        '-s3-endpoint[S3-compatible endpoint URL]:url:' \
+                        '-s3-access-key[S3 static access key]:key:' \
+                        '-s3-secret-key[S3 static secret key]:key:' \
+                        '-s3-access-key-env[Env var for S3 access key]:var:' \
+                        '-s3-secret-key-env[Env var for S3 secret key]:var:' \
+                        '-s3-profile-env[Env var for AWS profile]:var:' \
+                        '-store-sftp-password[SFTP password]:password:' \
+                        '-store-sftp-key[SFTP private key path]:path:_files' \
+                        '-store-sftp-password-env[Env var for SFTP password]:var:' \
+                        '-store-sftp-key-env[Env var for SFTP key path]:var:' \
+                        '-password-env[Env var for repository password]:var:' \
+                        '-encryption-key-env[Env var for platform key]:var:' \
+                        '-recovery-key-env[Env var for recovery key mnemonic]:var:' \
+                        '-kms-key-arn[AWS KMS key ARN]:arn:' \
+                        '-kms-region[AWS KMS region]:region:' \
+                        '-kms-endpoint[Custom KMS endpoint URL]:url:'
+                    ;;
+                *)
+                    _arguments
+                    ;;
+            esac
             ;;
         restore)
             _arguments $global_flags \
@@ -334,6 +572,8 @@ complete -c cloudstic -f
 # Subcommands
 complete -c cloudstic -n __fish_use_subcommand -a init -d 'Initialize a new repository'
 complete -c cloudstic -n __fish_use_subcommand -a backup -d 'Create a new backup snapshot'
+complete -c cloudstic -n __fish_use_subcommand -a auth -d 'Manage reusable cloud auth entries'
+complete -c cloudstic -n __fish_use_subcommand -a profile -d 'Manage backup profiles'
 complete -c cloudstic -n __fish_use_subcommand -a restore -d 'Restore files from a snapshot'
 complete -c cloudstic -n __fish_use_subcommand -a list -d 'List all backup snapshots'
 complete -c cloudstic -n __fish_use_subcommand -a ls -d 'List files within a snapshot'
@@ -349,8 +589,11 @@ complete -c cloudstic -n __fish_use_subcommand -a help -d 'Show usage informatio
 
 # Global flags (available for all subcommands)
 complete -c cloudstic -l store -x -d 'Storage backend URI (local:<path>, s3:<bucket>[/<prefix>], b2:<bucket>[/<prefix>], sftp://[user@]host[:port]/<path>)'
+complete -c cloudstic -l profile -x -d 'Profile name from profiles.yaml'
+complete -c cloudstic -l profiles-file -r -F -d 'Path to profiles YAML file'
 complete -c cloudstic -l s3-endpoint -x -d 'S3 compatible endpoint URL'
 complete -c cloudstic -l s3-region -x -d 'S3 region'
+complete -c cloudstic -l s3-profile -x -d 'AWS shared config profile for S3 auth'
 complete -c cloudstic -l s3-access-key -x -d 'S3 access key ID'
 complete -c cloudstic -l s3-secret-key -x -d 'S3 secret access key'
 complete -c cloudstic -l source-sftp-password -x -d 'SFTP source password'
@@ -365,6 +608,7 @@ complete -c cloudstic -l kms-region -x -d 'AWS KMS region'
 complete -c cloudstic -l kms-endpoint -x -d 'Custom AWS KMS endpoint'
 complete -c cloudstic -l disable-packfile -d 'Disable bundling small objects into packs'
 complete -c cloudstic -l prompt -d 'Prompt for password interactively'
+complete -c cloudstic -l no-prompt -d 'Disable interactive prompts (for scripts and CI)'
 complete -c cloudstic -l verbose -d 'Log detailed operations'
 complete -c cloudstic -l quiet -d 'Suppress progress bars'
 complete -c cloudstic -l debug -d 'Log every store request'
@@ -376,6 +620,10 @@ complete -c cloudstic -n '__fish_seen_subcommand_from init' -l adopt-slots -d 'A
 
 # backup
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l source -x -a 'local: sftp:// gdrive gdrive-changes onedrive onedrive-changes' -d 'Source URI'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l profile -x -d 'Backup profile name'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l all-profiles -d 'Run all enabled backup profiles'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l auth-ref -x -d 'Use named auth entry from profiles.yaml'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l profiles-file -r -F -d 'Path to profiles YAML file'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-native-files -d 'Exclude Google-native files'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l google-credentials -r -F -d 'Google service account credentials JSON'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l google-token-file -r -F -d 'Google OAuth token file'
@@ -383,6 +631,45 @@ complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l onedrive-client
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l onedrive-token-file -r -F -d 'OneDrive OAuth token file'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l tag -x -d 'Tag for the snapshot'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l dry-run -d 'Scan without writing'
+
+# profile subcommands
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and not __fish_seen_subcommand_from list show new' -a list -d 'List stores, auth entries, and backup profiles'
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and not __fish_seen_subcommand_from list show new' -a show -d 'Show one profile and resolved refs'
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and not __fish_seen_subcommand_from list show new' -a new -d 'Create or update backup profile'
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from list' -l profiles-file -r -F -d 'Path to profiles YAML file'
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from show' -l profiles-file -r -F -d 'Path to profiles YAML file'
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l profiles-file -r -F -d 'Path to profiles YAML file'
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l name -x -d 'Profile name'
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l source -x -a 'local: sftp:// gdrive gdrive-changes onedrive onedrive-changes' -d 'Source URI'
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l store-ref -x -d 'Store reference name'
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l store -x -d 'Store URI'
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l auth-ref -x -d 'Auth reference name'
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l tag -x -d 'Tag for snapshots'
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l exclude -x -d 'Exclude pattern'
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l exclude-file -r -F -d 'Path to exclude file'
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l skip-native-files -d 'Exclude Google-native files'
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l volume-uuid -x -d 'Volume UUID override'
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l google-credentials -r -F -d 'Google service account credentials JSON'
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l google-token-file -r -F -d 'Google OAuth token file'
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l onedrive-client-id -x -d 'OneDrive OAuth client ID'
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l onedrive-token-file -r -F -d 'OneDrive OAuth token file'
+
+# auth subcommands
+complete -c cloudstic -n '__fish_seen_subcommand_from auth; and not __fish_seen_subcommand_from list show new login' -a list -d 'List auth entries from profiles.yaml'
+complete -c cloudstic -n '__fish_seen_subcommand_from auth; and not __fish_seen_subcommand_from list show new login' -a show -d 'Show one auth entry'
+complete -c cloudstic -n '__fish_seen_subcommand_from auth; and not __fish_seen_subcommand_from list show new login' -a new -d 'Create or update reusable auth entry'
+complete -c cloudstic -n '__fish_seen_subcommand_from auth; and not __fish_seen_subcommand_from list show new login' -a login -d 'Run OAuth login flow for auth entry'
+complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from list' -l profiles-file -r -F -d 'Path to profiles YAML file'
+complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from show' -l profiles-file -r -F -d 'Path to profiles YAML file'
+complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l profiles-file -r -F -d 'Path to profiles YAML file'
+complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l name -x -d 'Auth reference name'
+complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l provider -x -a 'google onedrive' -d 'Auth provider'
+complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l google-credentials -r -F -d 'Google service account credentials JSON'
+complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l google-token-file -r -F -d 'Google OAuth token file'
+complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l onedrive-client-id -x -d 'OneDrive OAuth client ID'
+complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l onedrive-token-file -r -F -d 'OneDrive OAuth token file'
+complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from login' -l profiles-file -r -F -d 'Path to profiles YAML file'
+complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from login' -l name -x -d 'Auth reference name'
 
 # restore
 complete -c cloudstic -n '__fish_seen_subcommand_from restore' -l output -r -F -d 'Output ZIP file path'

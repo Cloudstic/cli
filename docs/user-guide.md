@@ -13,6 +13,9 @@ Cloudstic is a content-addressable backup tool that creates encrypted, deduplica
 - [Commands](#commands)
   - [init](#init)
   - [backup](#backup)
+  - [auth](#auth)
+  - [profile](#profile)
+  - [store](#store)
   - [restore](#restore)
   - [list](#list)
   - [ls](#ls)
@@ -269,11 +272,26 @@ cloudstic backup -source local:~/Documents -dry-run
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-source` | `gdrive` | Source type: `local:<path>`, `sftp://[user@]host[:port]/<path>`, `gdrive[://<Drive Name>][/<path>]`, `gdrive-changes[://<Drive Name>][/<path>]`, `onedrive[://<Drive Name>][/<path>]`, `onedrive-changes[://<Drive Name>][/<path>]` |
+| `-profile` | | Run backup using one named profile from `profiles.yaml` |
+| `-all-profiles` | `false` | Run backup for all enabled profiles from `profiles.yaml` |
+| `-auth-ref` | | Use one named auth entry from `profiles.yaml` for cloud source credentials |
+| `-profiles-file` | `<config-dir>/profiles.yaml` | Override profile YAML location (also `CLOUDSTIC_PROFILES_FILE`) |
 | `-tag` | | Tag to apply to the snapshot (repeatable) |
 | `-exclude` | | Exclude pattern using gitignore syntax (repeatable) |
 | `-exclude-file` | | Path to file containing exclude patterns, one per line |
 | `-volume-uuid` | | Override volume UUID for local source (enables cross-machine incremental backup for portable drives) |
 | `-dry-run` | `false` | Scan source and report changes without writing to the store |
+
+`-profile` and `-all-profiles` are mutually exclusive.
+
+`-auth-ref` can be used with direct `backup -source ...` runs (outside profile
+mode) to reuse a cloud auth entry from `profiles.yaml`.
+
+If you run a cloud backup without `-auth-ref`, Cloudstic automatically records a
+provider default auth entry in `profiles.yaml` so it is discoverable later:
+
+- Google sources -> `google-default`
+- OneDrive sources -> `onedrive-default`
 
 The `gdrive-changes` and `onedrive-changes` source types use their respective change/delta APIs for faster incremental backups after the first full backup.
 
@@ -344,6 +362,202 @@ For cloud sources (Google Drive, OneDrive), exclude patterns are matched against
 > When using incremental sources (`gdrive-changes`, `onedrive-changes`), Cloudstic stores a hash of the active exclude patterns in each snapshot. If the patterns change between runs (added, removed, or reordered), the next backup automatically performs a full rescan instead of an incremental one. This ensures the new patterns are applied comprehensively. The full rescan also captures a fresh change token, so subsequent runs resume incremental mode from that point.
 >
 > No manual intervention is required — just update your `-exclude` / `-exclude-file` flags and run the backup as usual.
+
+---
+
+### profile
+
+Manage backup profiles stored in YAML.
+
+Profiles are stored by default at `<config-dir>/profiles.yaml`.
+
+#### profile list
+
+List configured stores, auth entries, and profiles.
+
+```bash
+cloudstic profile list
+
+# Custom file location
+cloudstic profile list -profiles-file ./profiles.yaml
+```
+
+If the profiles file does not exist yet, `profile list` exits successfully with
+no output.
+
+#### profile show
+
+Show one profile with resolved store and auth references.
+
+```bash
+cloudstic profile show work-drive
+
+# Custom file location
+cloudstic profile show -profiles-file ./profiles.yaml work-drive
+```
+
+#### profile new
+
+Create or update one profile entry.
+
+```bash
+# Create profile and create/update referenced store entry
+cloudstic profile new \
+  -name google-drive \
+  -source gdrive-changes \
+  -store-ref home-s3 \
+  -store s3:my-bucket/cloudstic
+
+# Reuse an existing store reference (no -store needed)
+cloudstic profile new \
+  -name documents \
+  -source local:~/Documents \
+  -store-ref home-s3
+
+# Create auth entry first, then attach it to a profile
+cloudstic auth new \
+  -name google-work \
+  -provider google \
+  -google-token-file ~/.config/cloudstic/tokens/google-work.json
+
+cloudstic profile new \
+  -name work-drive \
+  -source "gdrive-changes:/Team Folder" \
+  -auth-ref google-work
+```
+
+**Important:** `profile new` requires explicit `-name` and `-source`.
+
+If these required flags are omitted and you are in an interactive terminal,
+Cloudstic prompts for the missing values.
+
+It intentionally does **not** read `CLOUDSTIC_SOURCE` for these required fields,
+to avoid accidentally persisting environment-specific defaults into
+`profiles.yaml`.
+
+Use `--no-prompt` to disable all interactive prompts. Missing required fields will cause an error instead.
+
+Use `-store-ref` by itself to reference an existing store entry.
+Add `-store` with `-store-ref` to create or update that store entry in the same
+command.
+
+Use `-auth-ref` to reference reusable cloud OAuth settings under top-level
+`auth:` in `profiles.yaml`.
+
+`-auth-ref` must point to an existing auth entry.
+
+You can also use `-auth-ref` directly with `backup` when not using `-profile`:
+
+```bash
+cloudstic backup \
+  -source "gdrive-changes:/Team Folder" \
+  -auth-ref google-work
+```
+
+`profile new` validates that `-auth-ref` points to an existing auth entry and
+that provider matches the source type.
+
+`-auth-ref` is only valid for cloud sources.
+
+---
+
+### store
+
+Manage named store entries in `profiles.yaml`. Stores define storage backend, connection credentials, and encryption settings.
+
+#### store list
+
+List configured stores.
+
+```bash
+cloudstic store list
+```
+
+#### store show
+
+Show details for a named store.
+
+```bash
+cloudstic store show prod-s3
+```
+
+#### store new
+
+Create or update a named store entry in `profiles.yaml`. Stores define storage backend, connection credentials, and encryption settings.
+
+```bash
+cloudstic store new \
+  -name prod-s3 \
+  -uri s3:my-bucket/backups \
+  -s3-region eu-west-1
+```
+
+Store names must start with a letter or digit and contain only letters, digits, dots, hyphens, or underscores. URIs must use a supported scheme (`local`, `s3`, `b2`, `sftp`).
+
+In interactive mode, `store new` prompts for:
+
+- Missing required fields (name, URI)
+- Encryption configuration (if no encryption flags provided):
+  1. Password — saves env var name (default: `CLOUDSTIC_PASSWORD`) as `password_env`
+  2. Platform key — saves env var name (default: `CLOUDSTIC_ENCRYPTION_KEY`) as `encryption_key_env`
+  3. AWS KMS key — saves ARN and region
+  4. No encryption
+- Store initialization (if the store is accessible but not yet initialized)
+
+Encryption settings use **env var indirection** — only the environment variable name is stored in `profiles.yaml`, never the secret itself.
+
+Use `--no-prompt` to disable all interactive prompts (for scripts/CI).
+
+---
+
+### auth
+
+Manage reusable cloud OAuth entries in `profiles.yaml`.
+
+#### auth new
+
+Create or update an auth entry.
+
+```bash
+# Google auth entry
+cloudstic auth new \
+  -name google-work \
+  -provider google \
+  -google-token-file ~/.config/cloudstic/tokens/google-work.json
+
+# OneDrive auth entry
+cloudstic auth new \
+  -name ms-personal \
+  -provider onedrive \
+  -onedrive-token-file ~/.config/cloudstic/tokens/ms-personal.json
+```
+
+If token file flags are omitted, Cloudstic derives a default token path from
+the auth name under `<config-dir>/tokens/`.
+
+If required flags are omitted and you are in an interactive terminal,
+`auth new` prompts for missing values.
+
+#### auth login
+
+Trigger OAuth login for an auth entry and save token in its configured token
+file.
+
+```bash
+cloudstic auth login -name google-work
+```
+
+This is useful to pre-authorize before first backup.
+
+#### auth list / auth show
+
+```bash
+cloudstic auth list
+cloudstic auth show google-work
+```
+
+`auth list` exits successfully with no output when the profiles file does not
+exist yet.
 
 ---
 
@@ -1099,12 +1313,19 @@ Use a prefix to namespace objects within a bucket:
 cloudstic init -store s3:my-bucket/laptop/ -password "passphrase"
 ```
 
+If you rely on shared AWS config profiles, you can pin one explicitly:
+
+```bash
+cloudstic backup -store s3:my-bucket -s3-profile my-profile -source local:~/Documents
+```
+
 **Environment variables:**
 
 | Variable | Description |
 |----------|-------------|
 | `AWS_ACCESS_KEY_ID` | S3 access key ID |
 | `AWS_SECRET_ACCESS_KEY` | S3 secret access key |
+| `AWS_PROFILE` | Shared AWS config profile name (also `CLOUDSTIC_S3_PROFILE`) |
 | `CLOUDSTIC_S3_ENDPOINT` | Custom endpoint URL (for R2, MinIO, etc.) |
 | `CLOUDSTIC_S3_REGION` | S3 Region |
 
@@ -1256,6 +1477,7 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 | `CLOUDSTIC_STORE` | `-store` | Storage backend URI: `local:<path>`, `s3:<bucket>[/<prefix>]`, `b2:<bucket>[/<prefix>]`, `sftp://[user@]host[:port]/<path>` |
 | `CLOUDSTIC_S3_ENDPOINT` | `-s3-endpoint` | S3 compatible endpoint (for MinIO, R2, etc.) |
 | `CLOUDSTIC_S3_REGION` | `-s3-region` | S3 Region |
+| `CLOUDSTIC_S3_PROFILE` | `-s3-profile` | AWS shared config profile for S3 auth |
 | `AWS_ACCESS_KEY_ID` | `-s3-access-key` | S3 Access Key ID |
 | `AWS_SECRET_ACCESS_KEY` | `-s3-secret-key` | S3 Secret Access Key |
 | `CLOUDSTIC_STORE_SFTP_PASSWORD` | `-store-sftp-password` | SFTP password for the store |
@@ -1269,6 +1491,7 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 | `CLOUDSTIC_KMS_KEY_ARN` | `-kms-key-arn` | AWS KMS key ARN for kms-platform slots |
 | `CLOUDSTIC_KMS_REGION` | `-kms-region` | AWS KMS region |
 | `CLOUDSTIC_KMS_ENDPOINT` | `-kms-endpoint` | Custom AWS KMS endpoint URL |
+| `CLOUDSTIC_PROFILES_FILE` | `-profiles-file` | Path to profiles YAML file |
 | `CLOUDSTIC_CONFIG_DIR` | — | Override config directory path |
 | `GOOGLE_APPLICATION_CREDENTIALS` | — | Path to your own Google OAuth credentials file (optional, overrides built-in) |
 | `GOOGLE_TOKEN_FILE` | — | Override Google OAuth token path |

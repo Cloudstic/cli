@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/cloudstic/cli/internal/core"
@@ -290,6 +291,9 @@ func loadToken(file string) (*oauth2.Token, error) {
 }
 
 func saveTokenJSON(file string, token *oauth2.Token) error {
+	if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
+		return fmt.Errorf("create token directory: %w", err)
+	}
 	f, err := os.OpenFile(file, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return err

@@ -9,3 +9,4 @@
 - [RFC 0007: Cloud Subdirectory Backup](0007-cloud-subdirectory-backup.md)
 - [RFC 0008: Drive Identity by Name](0008-drive-identity-by-name.md)
 - [RFC 0009: Unified Source Identity](0009-unified-source-identity.md)
+- [RFC 0010: Backup Profiles (YAML Presets)](0010-backup-profiles.md)

@@ -7,13 +7,30 @@ import (
 )
 
 type runner struct {
-	out    io.Writer
-	errOut io.Writer
-	client cloudsticClient
+	out      io.Writer
+	errOut   io.Writer
+	client   cloudsticClient
+	noPrompt bool
 }
 
 func newRunner() *runner {
-	return &runner{out: os.Stdout, errOut: os.Stderr}
+	return &runner{
+		out:      os.Stdout,
+		errOut:   os.Stderr,
+		noPrompt: hasGlobalFlag("no-prompt"),
+	}
+}
+
+// hasGlobalFlag checks whether a boolean flag appears anywhere in os.Args.
+// This is used for flags that must be parsed before subcommand flag sets.
+func hasGlobalFlag(name string) bool {
+	for _, arg := range os.Args[1:] {
+		if arg == "-"+name || arg == "--"+name ||
+			arg == "-"+name+"=true" || arg == "--"+name+"=true" {
+			return true
+		}
+	}
+	return false
 }
 
 // fail writes a formatted error to r.errOut and returns exit code 1.

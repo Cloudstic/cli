@@ -119,7 +119,7 @@ func (r *runner) runKeyPasswd() int {
 	newPassword := cloudstic.PasswordProviderFunc(func(ctx context.Context) (string, error) {
 		newPw := a.newPassword
 		if newPw == "" {
-			if !term.IsTerminal(os.Stdin.Fd()) {
+			if r.noPrompt || !term.IsTerminal(os.Stdin.Fd()) {
 				return "", errors.New("provide --new-password or run interactively")
 			}
 			p1, err := ui.PromptPasswordConfirm("Enter new repository password")

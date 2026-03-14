@@ -328,6 +328,20 @@ func parseSourceURI(raw string) (*sourceURIParts, error) {
 			}
 			return &sourceURIParts{scheme: "local", path: rest}, nil
 		case "gdrive", "gdrive-changes", "onedrive", "onedrive-changes":
+			if strings.HasPrefix(rest, "//") {
+				// Format: scheme://Drive Name/path
+				rest = rest[2:]
+				idx := strings.IndexByte(rest, '/')
+				driveName := ""
+				path := "/"
+				if idx >= 0 {
+					driveName = rest[:idx]
+					path = ensureLeadingSlash(rest[idx:])
+				} else {
+					driveName = rest
+				}
+				return &sourceURIParts{scheme: scheme, host: driveName, path: path}, nil
+			}
 			return &sourceURIParts{scheme: scheme, path: ensureLeadingSlash(rest)}, nil
 		default:
 			return nil, fmt.Errorf("unknown source scheme %q in %q: supported URI formats are local:<path> and sftp://[user@]host[:port]/<path>", scheme, raw)

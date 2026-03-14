@@ -1,6 +1,6 @@
 # RFC 0007: Cloud Subdirectory Backup
 
-- **Status:** Adopted
+- **Status:** Implemented
 - **Date:** 2026-03-14
 
 ## Abstract

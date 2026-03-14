@@ -108,8 +108,7 @@ func printUsage() {
 
 	t.Command("backup", "")
 	t.Flags([][2]string{
-		{"-source <uri>", ui.Env("Source URI: local:<path>, sftp://[user@]host[:port]/<path>, gdrive, gdrive-changes, onedrive, onedrive-changes", "CLOUDSTIC_SOURCE")},
-		{"-drive-id <id>", "Shared drive ID for gdrive (omit for My Drive)"},
+		{"-source <uri>", ui.Env("Source URI: local:<path>, sftp://[user@]host[:port]/<path>, gdrive[://<Drive Name>][/<path>], gdrive-changes[://<Drive Name>][/<path>], onedrive[://<Drive Name>][/<path>], onedrive-changes[://<Drive Name>][/<path>]", "CLOUDSTIC_SOURCE")},
 		{"-skip-native-files", "Exclude Google-native files (Docs, Sheets, Slides, etc.)"},
 		{"-google-credentials <path>", ui.Env("Path to Google service account credentials JSON", "GOOGLE_APPLICATION_CREDENTIALS")},
 		{"-google-token-file <path>", ui.Env("Path to Google OAuth token file", "GOOGLE_TOKEN_FILE")},

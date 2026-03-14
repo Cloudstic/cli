@@ -20,6 +20,7 @@ import (
 type oneDriveOptions struct {
 	clientID        string
 	tokenPath       string
+	driveName       string
 	rootPath        string
 	excludePatterns []string
 }
@@ -31,6 +32,13 @@ type OneDriveOption func(*oneDriveOptions)
 func WithOneDriveClientID(id string) OneDriveOption {
 	return func(o *oneDriveOptions) {
 		o.clientID = id
+	}
+}
+
+// WithOneDriveDriveName sets the shared drive name.
+func WithOneDriveDriveName(name string) OneDriveOption {
+	return func(o *oneDriveOptions) {
+		o.driveName = name
 	}
 }
 
@@ -56,10 +64,12 @@ func WithOneDriveExcludePatterns(patterns []string) OneDriveOption {
 }
 
 type OneDriveSource struct {
-	client   *http.Client
-	account  string // cached user principal name; populated lazily by Info()
-	rootPath string // The string path the user specified, or "/"
-	exclude  *ExcludeMatcher
+	client    *http.Client
+	account   string // cached user principal name; populated lazily by Info()
+	driveID   string // The resolved Drive ID
+	driveName string // The Drive Name (from config)
+	rootPath  string // The string path the user specified, or "/"
+	exclude   *ExcludeMatcher
 }
 
 // NewOneDriveSource creates a new OneDriveSource from the given config.
@@ -95,19 +105,109 @@ func NewOneDriveSource(ctx context.Context, opts ...OneDriveOption) (*OneDriveSo
 	if rootPath == "" {
 		rootPath = "/"
 	}
-	return &OneDriveSource{client: client, rootPath: rootPath, exclude: NewExcludeMatcher(cfg.excludePatterns)}, nil
+	src := &OneDriveSource{
+		client:    client,
+		driveName: cfg.driveName,
+		rootPath:  rootPath,
+		exclude:   NewExcludeMatcher(cfg.excludePatterns),
+	}
+
+	if src.driveName != "" {
+		err = src.resolveDriveName(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return src, nil
+}
+
+func (s *OneDriveSource) resolveDriveName(ctx context.Context) error {
+	// Try fetching by ID first
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://graph.microsoft.com/v1.0/drives/"+s.driveName+"?$select=id,name", nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	resp, err := s.client.Do(req)
+	if err == nil {
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode == http.StatusOK {
+			var drive struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&drive); err == nil {
+				s.driveID = drive.ID
+				s.driveName = drive.Name
+				return nil
+			}
+		}
+	}
+
+	// Fetch all drives and find by name
+	req, err = http.NewRequestWithContext(ctx, "GET", "https://graph.microsoft.com/v1.0/me/drives?$select=id,name", nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	resp, err = s.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("list drives: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("list drives returned status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Value []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"value"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("decode drives: %w", err)
+	}
+
+	var matchedID string
+	var matchedName string
+	matches := 0
+	for _, d := range result.Value {
+		if d.Name == s.driveName {
+			matchedID = d.ID
+			matchedName = d.Name
+			matches++
+		}
+	}
+
+	if matches == 0 {
+		return fmt.Errorf("drive %q not found", s.driveName)
+	}
+	if matches > 1 {
+		return fmt.Errorf("ambiguous drive name: multiple drives named %q found", s.driveName)
+	}
+
+	s.driveID = matchedID
+	s.driveName = matchedName
+	return nil
 }
 
 func (s *OneDriveSource) Info() core.SourceInfo {
 	if s.account == "" {
 		s.account = s.fetchAccount()
 	}
-	return core.SourceInfo{
-		Type:        "onedrive",
-		Account:     s.account,
-		Path:        s.rootPath,
-		VolumeLabel: "My Drive",
+	info := core.SourceInfo{
+		Type:    "onedrive",
+		Account: s.account,
+		Path:    s.rootPath,
 	}
+	if s.driveID != "" {
+		info.VolumeUUID = s.driveID
+		info.VolumeLabel = s.driveName
+	} else {
+		info.VolumeLabel = "My Drive"
+	}
+	return info
 }
 
 func (s *OneDriveSource) fetchAccount() string {
@@ -231,13 +331,19 @@ func (s *OneDriveSource) toFileMeta(item graphItem) core.FileMeta {
 	}
 }
 
-func (s *OneDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) error) error {
-	rootURL := "https://graph.microsoft.com/v1.0/me/drive/root"
-	if s.rootPath != "" && s.rootPath != "/" {
-		// Graph API allows addressing items by path relative to root
-		// e.g. /me/drive/root:/path/to/folder
-		rootURL = fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/root:%s", s.rootPath)
+func (s *OneDriveSource) getRootURL() string {
+	base := "https://graph.microsoft.com/v1.0/me/drive/root"
+	if s.driveID != "" {
+		base = fmt.Sprintf("https://graph.microsoft.com/v1.0/drives/%s/root", s.driveID)
 	}
+	if s.rootPath != "" && s.rootPath != "/" {
+		return fmt.Sprintf("%s:%s", base, s.rootPath)
+	}
+	return base
+}
+
+func (s *OneDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) error) error {
+	rootURL := s.getRootURL()
 
 	var rootItem graphItem
 	err := retry.Do(ctx, retry.DefaultPolicy(), func() error {

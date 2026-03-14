@@ -18,8 +18,6 @@ import (
 type backupArgs struct {
 	g                 *globalFlags
 	sourceURI         string
-	driveID           string
-	rootFolder        string
 	dryRun            bool
 	excludeFile       string
 	skipNativeFiles   bool
@@ -36,8 +34,7 @@ func parseBackupArgs() *backupArgs {
 	fs := flag.NewFlagSet("backup", flag.ExitOnError)
 	a := &backupArgs{}
 	a.g = addGlobalFlags(fs)
-	sourceURI := fs.String("source", envDefault("CLOUDSTIC_SOURCE", "gdrive"), "Source URI: local:<path>, sftp://[user@]host[:port]/<path>, gdrive[:<path>], gdrive-changes[:<path>], onedrive[:<path>], onedrive-changes[:<path>]")
-	driveID := fs.String("drive-id", envDefault("CLOUDSTIC_DRIVE_ID", ""), "Shared drive ID for gdrive source (omit for My Drive)")
+	sourceURI := fs.String("source", envDefault("CLOUDSTIC_SOURCE", "gdrive"), "Source URI: local:<path>, sftp://[user@]host[:port]/<path>, gdrive[://<Drive Name>][/<path>], gdrive-changes[://<Drive Name>][/<path>], onedrive[://<Drive Name>][/<path>], onedrive-changes[://<Drive Name>][/<path>]")
 	dryRun := fs.Bool("dry-run", false, "Scan source and report changes without writing to the store")
 	skipNativeFiles := fs.Bool("skip-native-files", false, "Exclude Google-native files (Docs, Sheets, Slides, etc.) from the backup")
 	excludeFile := fs.String("exclude-file", "", "Path to file with exclude patterns (one per line, gitignore syntax)")
@@ -50,8 +47,6 @@ func parseBackupArgs() *backupArgs {
 	fs.Var(&a.excludes, "exclude", "Exclude pattern (gitignore syntax, repeatable)")
 	mustParse(fs)
 	a.sourceURI = *sourceURI
-	a.driveID = *driveID
-	a.rootFolder = ""
 	a.dryRun = *dryRun
 	a.skipNativeFiles = *skipNativeFiles
 	a.excludeFile = *excludeFile
@@ -73,7 +68,7 @@ func (r *runner) runBackup() int {
 
 	ctx := context.Background()
 
-	src, err := initSource(ctx, a.sourceURI, a.driveID, a.rootFolder, a.skipNativeFiles, a.volumeUUID, a.googleCreds, a.googleTokenFile, a.onedriveClientID, a.onedriveTokenFile, a.g, excludePatterns)
+	src, err := initSource(ctx, a.sourceURI, a.skipNativeFiles, a.volumeUUID, a.googleCreds, a.googleTokenFile, a.onedriveClientID, a.onedriveTokenFile, a.g, excludePatterns)
 	if err != nil {
 		return r.fail("Failed to init source: %v", err)
 	}
@@ -145,7 +140,7 @@ func (r *runner) printBackupSummary(res *engine.RunResult) {
 	}
 }
 
-func initSource(ctx context.Context, sourceURI, driveID, rootFolder string, skipNativeFiles bool, volumeUUID, googleCreds, googleTokenFile, onedriveClientID, onedriveTokenFile string, g *globalFlags, excludePatterns []string) (source.Source, error) {
+func initSource(ctx context.Context, sourceURI string, skipNativeFiles bool, volumeUUID, googleCreds, googleTokenFile, onedriveClientID, onedriveTokenFile string, g *globalFlags, excludePatterns []string) (source.Source, error) {
 	uri, err := parseSourceURI(sourceURI)
 	if err != nil {
 		return nil, err
@@ -170,7 +165,7 @@ func initSource(ctx context.Context, sourceURI, driveID, rootFolder string, skip
 		gdriveOpts := []source.GDriveOption{
 			source.WithCredsPath(googleCreds),
 			source.WithTokenPath(tokenPath),
-			source.WithDriveID(driveID),
+			source.WithDriveName(uri.host),
 			source.WithRootPath(uri.path),
 			source.WithGDriveExcludePatterns(excludePatterns),
 		}
@@ -186,7 +181,7 @@ func initSource(ctx context.Context, sourceURI, driveID, rootFolder string, skip
 		gdriveOpts := []source.GDriveOption{
 			source.WithCredsPath(googleCreds),
 			source.WithTokenPath(tokenPath),
-			source.WithDriveID(driveID),
+			source.WithDriveName(uri.host),
 			source.WithRootPath(uri.path),
 			source.WithGDriveExcludePatterns(excludePatterns),
 		}
@@ -202,6 +197,7 @@ func initSource(ctx context.Context, sourceURI, driveID, rootFolder string, skip
 		return source.NewOneDriveSource(ctx,
 			source.WithOneDriveClientID(onedriveClientID),
 			source.WithOneDriveTokenPath(tokenPath),
+			source.WithOneDriveDriveName(uri.host),
 			source.WithOneDriveRootPath(uri.path),
 			source.WithOneDriveExcludePatterns(excludePatterns),
 		)
@@ -213,6 +209,7 @@ func initSource(ctx context.Context, sourceURI, driveID, rootFolder string, skip
 		return source.NewOneDriveChangeSource(ctx,
 			source.WithOneDriveClientID(onedriveClientID),
 			source.WithOneDriveTokenPath(tokenPath),
+			source.WithOneDriveDriveName(uri.host),
 			source.WithOneDriveRootPath(uri.path),
 			source.WithOneDriveExcludePatterns(excludePatterns),
 		)

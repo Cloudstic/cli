@@ -31,9 +31,9 @@ Cloudstic is a content-addressable backup tool that creates encrypted, deduplica
   - [Local Directory](#local-directory)
   - [SFTP](#sftp-source)
   - [Google Drive](#google-drive)
-  - [Google Drive (Changes API)](#google-drive-changes-api)
+  - [Google Drive (Incremental)](#google-drive-incremental)
   - [OneDrive](#onedrive)
-  - [OneDrive (Changes API)](#onedrive-changes-api)
+  - [OneDrive (Incremental)](#onedrive-incremental)
 - [Storage Backends](#storage-backends)
   - [Local](#local-storage)
   - [Amazon S3](#amazon-s3)
@@ -252,7 +252,7 @@ cloudstic backup -source local:~/Documents
 cloudstic backup -source gdrive
 
 # Back up a specific Google Drive shared drive and folder
-cloudstic backup -source gdrive:/path/to/folder -drive-id <shared-drive-id>
+cloudstic backup -source "gdrive://Company Data/path/to/folder"
 
 # Back up with tags
 cloudstic backup -source local:~/Documents -tag daily -tag important
@@ -268,8 +268,7 @@ cloudstic backup -source local:~/Documents -dry-run
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-source` | `gdrive` | Source type: `local:<path>`, `sftp://[user@]host[:port]/<path>`, `gdrive[:<path>]`, `gdrive-changes[:<path>]`, `onedrive[:<path>]`, `onedrive-changes[:<path>]` |
-| `-drive-id` | | Shared drive ID for Google Drive (omit for My Drive) |
+| `-source` | `gdrive` | Source type: `local:<path>`, `sftp://[user@]host[:port]/<path>`, `gdrive[://<Drive Name>][/<path>]`, `gdrive-changes[://<Drive Name>][/<path>]`, `onedrive[://<Drive Name>][/<path>]`, `onedrive-changes[://<Drive Name>][/<path>]` |
 | `-tag` | | Tag to apply to the snapshot (repeatable) |
 | `-exclude` | | Exclude pattern using gitignore syntax (repeatable) |
 | `-exclude-file` | | Path to file containing exclude patterns, one per line |
@@ -812,9 +811,9 @@ A **source** is where Cloudstic reads files from during a backup. Each source ty
 | [Local directory](#local-directory) | `local` | Files on your local filesystem | None |
 | [SFTP](#sftp-source) | `sftp` | Files on a remote SFTP server | Password, SSH key, or ssh-agent |
 | [Google Drive](#google-drive) | `gdrive` | Full scan of Google Drive (My Drive or Shared Drive) | Automatic (browser) |
-| [Google Drive (Changes API)](#google-drive-changes-api) | `gdrive-changes` | Incremental changes since last backup (recommended for Google Drive) | Automatic (browser) |
+| [Google Drive (Incremental)](#google-drive-incremental) | `gdrive-changes` | Incremental changes since last backup (recommended for Google Drive) | Automatic (browser) |
 | [OneDrive](#onedrive) | `onedrive` | Full scan of Microsoft OneDrive | Automatic (browser) |
-| [OneDrive (Changes API)](#onedrive-changes-api) | `onedrive-changes` | Incremental changes since last backup (recommended for OneDrive) | Automatic (browser) |
+| [OneDrive (Incremental)](#onedrive-incremental) | `onedrive-changes` | Incremental changes since last backup (recommended for OneDrive) | Automatic (browser) |
 
 All sources produce the same snapshot format. You can back up different sources into the same repository, and snapshots are tagged with source metadata so retention policies can be applied per-source.
 
@@ -917,7 +916,7 @@ The `-exclude` and `-exclude-file` flags work with SFTP sources. See [Exclude pa
 
 Full scan of a Google Drive account. On each backup, Cloudstic lists every file and folder, compares metadata against the previous snapshot, and uploads anything new or changed.
 
-> **Note:** For routine backups, prefer [`gdrive-changes`](#google-drive-changes-api) instead — it is significantly faster and makes far fewer API requests.
+> **Note:** For routine backups, prefer [`gdrive-changes`](#google-drive-incremental) instead — it is significantly faster and makes far fewer API requests.
 
 **When to use:** First backup of a Google Drive, or when you want a guaranteed complete rescan (e.g. after recovering from an error).
 
@@ -930,15 +929,11 @@ No configuration is required — Cloudstic ships with built-in OAuth credentials
 cloudstic backup -source gdrive:/
 
 # Back up a shared drive
-cloudstic backup -source gdrive:/ -drive-id <shared-drive-id>
+cloudstic backup -source "gdrive://Company Data"
 
 # Back up only a specific folder
-cloudstic backup -source gdrive:/path/to/folder
+cloudstic backup -source "gdrive://Company Data/path/to/folder"
 ```
-
-| Flag | Description |
-|------|-------------|
-| `-drive-id` | Shared Drive ID (omit for personal My Drive) |
 
 **Environment variables (optional overrides):**
 
@@ -947,7 +942,7 @@ cloudstic backup -source gdrive:/path/to/folder
 | `GOOGLE_APPLICATION_CREDENTIALS` | Path to your own Google OAuth credentials JSON file (overrides built-in credentials) |
 | `GOOGLE_TOKEN_FILE` | Override token cache path (default: `<config-dir>/google_token.json`) |
 
-### Google Drive (Changes API)
+### Google Drive (Incremental)
 
 **This is the recommended way to back up Google Drive.** Uses the Google Drive Changes API to fetch only files that changed since the last backup, rather than listing every file on the drive. This dramatically reduces both backup duration and the number of API requests — a drive with 100,000 files but 50 daily changes only needs to process those 50 files instead of listing all 100,000.
 
@@ -963,7 +958,7 @@ cloudstic backup -source gdrive-changes
 cloudstic backup -source gdrive-changes
 ```
 
-Uses the same authentication and flags as [Google Drive](#google-drive) (`-drive-id`). No setup required — just run the command and authorize in the browser.
+Uses the same authentication and flags as [Google Drive](#google-drive). No setup required — just run the command and authorize in the browser.
 
 > **Tip:** You can use `-source gdrive-changes` from day one — the first run performs a full scan just like `gdrive`. Only fall back to `-source gdrive` if you need to force a complete rescan.
 
@@ -1002,7 +997,7 @@ No client secret is needed — Cloudstic uses the public client flow with PKCE.
 | `ONEDRIVE_CLIENT_ID` | Azure app client ID (overrides built-in credentials) |
 | `ONEDRIVE_TOKEN_FILE` | Override token cache path (default: `<config-dir>/onedrive_token.json`) |
 
-### OneDrive (Changes API)
+### OneDrive (Incremental)
 
 **This is the recommended way to back up OneDrive.** Uses the Microsoft Graph delta API to fetch only files that changed since the last backup, rather than listing every file on the drive. This dramatically reduces both backup duration and the number of API requests.
 
@@ -1263,10 +1258,9 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 | `AWS_SECRET_ACCESS_KEY` | `-s3-secret-key` | S3 Secret Access Key |
 | `CLOUDSTIC_STORE_SFTP_PASSWORD` | `-store-sftp-password` | SFTP password for the store |
 | `CLOUDSTIC_STORE_SFTP_KEY` | `-store-sftp-key` | Path to SSH private key for the store |
-| `CLOUDSTIC_SOURCE` | `-source` | Source URI: `local:<path>`, `sftp://[user@]host[:port]/<path>`, `gdrive[:<path>]`, `gdrive-changes[:<path>]`, `onedrive[:<path>]`, `onedrive-changes[:<path>]` |
+| `CLOUDSTIC_SOURCE` | `-source` | Source URI: `local:<path>`, `sftp://[user@]host[:port]/<path>`, `gdrive[://<Drive Name>][/<path>]`, `gdrive-changes[://<Drive Name>][/<path>]`, `onedrive[://<Drive Name>][/<path>]`, `onedrive-changes[://<Drive Name>][/<path>]` |
 | `CLOUDSTIC_SOURCE_SFTP_PASSWORD` | `-source-sftp-password` | SFTP password for the source |
 | `CLOUDSTIC_SOURCE_SFTP_KEY` | `-source-sftp-key` | Path to SSH private key for the source |
-| `CLOUDSTIC_DRIVE_ID` | `-drive-id` | Shared drive ID for Google Drive |
 | `CLOUDSTIC_ENCRYPTION_KEY` | `-encryption-key` | Platform key (hex) |
 | `CLOUDSTIC_PASSWORD` | `-password` | Encryption password |
 | `CLOUDSTIC_RECOVERY_KEY` | `-recovery-key` | Recovery seed phrase |

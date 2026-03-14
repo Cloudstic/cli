@@ -36,9 +36,11 @@ func (s *OneDriveChangeSource) Info() core.SourceInfo {
 // GetStartPageToken returns the current head of the OneDrive delta stream by
 // requesting a "latest" delta token. The returned string is a full deltaLink URL.
 func (s *OneDriveChangeSource) GetStartPageToken() (string, error) {
-	url := "https://graph.microsoft.com/v1.0/me/drive/root/delta?token=latest"
+	url := s.getRootURL()
 	if s.rootPath != "" && s.rootPath != "/" {
-		url = fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/root:%s:/delta?token=latest", s.rootPath)
+		url += ":/delta?token=latest"
+	} else {
+		url += "/delta?token=latest"
 	}
 	resp, err := s.fetchDeltaPage(context.Background(), url)
 	if err != nil {

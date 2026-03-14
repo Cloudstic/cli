@@ -95,6 +95,10 @@ func TestParseSourceURI(t *testing.T) {
 		{raw: "gdrive:/some/path", want: sourceURIParts{scheme: "gdrive", path: "/some/path"}},
 		{raw: "gdrive:some/path", want: sourceURIParts{scheme: "gdrive", path: "/some/path"}},
 		{raw: "onedrive:/documents", want: sourceURIParts{scheme: "onedrive", path: "/documents"}},
+		{raw: "gdrive://My Shared Drive/some/path", want: sourceURIParts{scheme: "gdrive", host: "My Shared Drive", path: "/some/path"}},
+		{raw: "gdrive-changes://Company Data/finance", want: sourceURIParts{scheme: "gdrive-changes", host: "Company Data", path: "/finance"}},
+		{raw: "onedrive://Personal/documents", want: sourceURIParts{scheme: "onedrive", host: "Personal", path: "/documents"}},
+		{raw: "onedrive-changes://Shared/photos", want: sourceURIParts{scheme: "onedrive-changes", host: "Shared", path: "/photos"}},
 
 		// invalid
 		{raw: "sftp", wantErr: true},

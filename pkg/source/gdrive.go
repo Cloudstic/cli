@@ -26,6 +26,7 @@ type gDriveOptions struct {
 	credsPath       string
 	tokenPath       string
 	driveID         string
+	driveName       string
 	rootFolderID    string
 	rootPath        string
 	accountEmail    string
@@ -55,6 +56,15 @@ func WithCredsPath(path string) GDriveOption {
 func WithTokenPath(path string) GDriveOption {
 	return func(o *gDriveOptions) {
 		o.tokenPath = path
+	}
+}
+
+// WithDriveName sets the shared drive name to use. It will be resolved to a Drive ID.
+func WithDriveName(name string) GDriveOption {
+	return func(o *gDriveOptions) {
+		if name != "" {
+			o.driveName = name
+		}
 	}
 }
 
@@ -170,18 +180,43 @@ func NewGDriveSource(ctx context.Context, opts ...GDriveOption) (*GDriveSource, 
 		}
 	}
 
+	if cfg.driveName != "" && cfg.driveID == "" {
+		// Try to see if the provided name is actually an ID
+		if d, err := srv.Drives.Get(cfg.driveName).Fields("id, name").Do(); err == nil {
+			cfg.driveID = d.Id
+			cfg.driveName = d.Name
+		} else {
+			// Search by name
+			query := fmt.Sprintf("name = '%s'", strings.ReplaceAll(cfg.driveName, "'", "\\'"))
+			call := srv.Drives.List().Q(query).Fields("drives(id, name)").Context(ctx)
+			r, err := driveCallWithRetry(ctx, func() (*drive.DriveList, error) { return call.Do() })
+			if err != nil {
+				return nil, fmt.Errorf("resolve drive %q: %w", cfg.driveName, err)
+			}
+			if len(r.Drives) == 0 {
+				return nil, fmt.Errorf("shared drive %q not found", cfg.driveName)
+			}
+			if len(r.Drives) > 1 {
+				return nil, fmt.Errorf("ambiguous shared drive name: multiple drives named %q found", cfg.driveName)
+			}
+			cfg.driveID = r.Drives[0].Id
+			cfg.driveName = r.Drives[0].Name
+		}
+	}
+
 	src := &GDriveSource{
 		service:         srv,
 		driveID:         cfg.driveID,
 		rootFolderID:    cfg.rootFolderID,
 		rootPath:        cfg.rootPath,
 		account:         cfg.accountEmail,
+		driveName:       cfg.driveName,
 		exclude:         NewExcludeMatcher(cfg.excludePatterns),
 		skipNativeFiles: cfg.skipNativeFiles,
 	}
 
-	// Resolve the shared drive name for VolumeLabel.
-	if cfg.driveID != "" {
+	// Resolve the shared drive name for VolumeLabel if driveID was set directly
+	if cfg.driveID != "" && src.driveName == "" {
 		if d, err := srv.Drives.Get(cfg.driveID).Fields("name").Do(); err == nil {
 			src.driveName = d.Name
 		}

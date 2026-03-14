@@ -128,7 +128,7 @@ Walks the remote directory tree via SFTP. Supports password, SSH private key, an
 | **SourceInfo.Account** | Google account email |
 | **SourceInfo.Path** | `my-drive://` or `<driveID>://<rootFolderID>` |
 
-Lists all files and folders via `files.list`, then topologically sorts folders so parents are emitted before children. Supports My Drive and Shared Drives (via `-drive-id`), with optional folder scoping (via `gdrive:/path/to/folder`).
+Lists all files and folders via `files.list`, then topologically sorts folders so parents are emitted before children. Supports My Drive and Shared Drives (via `gdrive://<Drive Name>`), with optional folder scoping (via `gdrive://<Drive Name>/path/to/folder`).
 
 ### `gdrive-changes` — Google Drive (Changes API)
 

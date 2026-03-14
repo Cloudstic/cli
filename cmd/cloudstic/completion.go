@@ -53,7 +53,7 @@ _cloudstic() {
             -*)
                 # skip flags and their values
                 case "${words[i]}" in
-                    -store|-s3-endpoint|-s3-region|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-store-sftp-password|-store-sftp-key|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-drive-id|-google-credentials|-google-token-file|-onedrive-client-id|-onedrive-token-file|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account|-json)
+                    -store|-s3-endpoint|-s3-region|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-store-sftp-password|-store-sftp-key|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-google-credentials|-google-token-file|-onedrive-client-id|-onedrive-token-file|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account|-json)
                         ((i++)) ;;
                 esac
                 ;;
@@ -76,7 +76,7 @@ _cloudstic() {
         init)
             cmd_flags="-add-recovery-key -no-encryption -adopt-slots" ;;
         backup)
-            cmd_flags="-source -drive-id -skip-native-files -google-credentials -google-token-file -onedrive-client-id -onedrive-token-file -tag -dry-run" ;;
+            cmd_flags="-source -skip-native-files -google-credentials -google-token-file -onedrive-client-id -onedrive-token-file -tag -dry-run" ;;
         restore)
             cmd_flags="-output -dry-run" ;;
         prune)
@@ -199,7 +199,7 @@ _cloudstic() {
             -*)
                 # Skip flags with values
                 case "${words[i]}" in
-                    -store|-s3-endpoint|-s3-region|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-store-sftp-password|-store-sftp-key|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-drive-id|-google-credentials|-google-token-file|-onedrive-client-id|-onedrive-token-file|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account)
+                    -store|-s3-endpoint|-s3-region|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-store-sftp-password|-store-sftp-key|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-google-credentials|-google-token-file|-onedrive-client-id|-onedrive-token-file|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account)
                         (( i++ )) ;;
                 esac
                 ;;
@@ -227,7 +227,6 @@ _cloudstic() {
         backup)
             _arguments $global_flags \
                 '-source[Source URI]:uri:(local: sftp:// gdrive gdrive-changes onedrive onedrive-changes)' \
-                '-drive-id[Shared drive ID]:id:' \
                 '-skip-native-files[Exclude Google-native files]' \
                 '-google-credentials[Google service account credentials JSON]:path:_files' \
                 '-google-token-file[Google OAuth token file]:path:_files' \
@@ -377,7 +376,6 @@ complete -c cloudstic -n '__fish_seen_subcommand_from init' -l adopt-slots -d 'A
 
 # backup
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l source -x -a 'local: sftp:// gdrive gdrive-changes onedrive onedrive-changes' -d 'Source URI'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l drive-id -x -d 'Shared drive ID'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-native-files -d 'Exclude Google-native files'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l google-credentials -r -F -d 'Google service account credentials JSON'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l google-token-file -r -F -d 'Google OAuth token file'

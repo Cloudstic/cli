@@ -12,3 +12,4 @@
 - [RFC 0010: Backup Profiles (YAML Presets)](0010-backup-profiles.md)
 - [RFC 0011: Profile Credential Storage Backends](0011-profile-credential-storage-backends.md)
 - [RFC 0012: Interactive TUI Mode](0012-interactive-tui-mode.md)
+- [RFC 0013: Daemon Mode and Profile Scheduling](0013-daemon-mode-and-profile-scheduling.md)

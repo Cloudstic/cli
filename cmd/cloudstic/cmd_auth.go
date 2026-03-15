@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	cloudstic "github.com/cloudstic/cli"
@@ -36,14 +35,6 @@ func (r *runner) runAuth() int {
 	}
 }
 
-func defaultProfilesPathFallback() string {
-	defaultPath, err := defaultProfilesPath()
-	if err != nil {
-		return defaultProfilesFilename
-	}
-	return defaultPath
-}
-
 func (r *runner) runAuthList() int {
 	fs := flag.NewFlagSet("auth list", flag.ExitOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
@@ -57,11 +48,7 @@ func (r *runner) runAuthList() int {
 		return r.fail("Failed to load profiles: %v", err)
 	}
 
-	names := make([]string, 0, len(cfg.Auth))
-	for name := range cfg.Auth {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	names := sortedKeys(cfg.Auth)
 
 	_, _ = fmt.Fprintf(r.out, "%d auth entries\n", len(names))
 	for _, name := range names {
@@ -101,11 +88,7 @@ func (r *runner) runAuthShow() int {
 		if !r.canPrompt() {
 			return r.fail("usage: cloudstic auth show [-profiles-file <path>] <name>")
 		}
-		names := make([]string, 0, len(cfg.Auth))
-		for n := range cfg.Auth {
-			names = append(names, n)
-		}
-		sort.Strings(names)
+		names := sortedKeys(cfg.Auth)
 		picked, pickErr := r.promptSelect("Select auth entry", names)
 		if pickErr != nil {
 			return r.fail("Failed to select auth entry: %v", pickErr)
@@ -158,8 +141,8 @@ func (r *runner) runAuthNew() int {
 			return r.fail("-name is required")
 		}
 	}
-	if !validRefName.MatchString(*name) {
-		return r.fail("invalid auth name %q: must start with a letter or digit and contain only letters, digits, dots, hyphens, or underscores", *name)
+	if err := validateRefName("auth", *name); err != nil {
+		return r.fail("%v", err)
 	}
 	if *provider != "google" && *provider != "onedrive" {
 		if r.canPrompt() {
@@ -216,17 +199,11 @@ func (r *runner) runAuthNew() int {
 		auth.OneDriveTokenFile = *onedriveTokenFile
 	}
 
-	cfg, err := cloudstic.LoadProfilesFile(*profilesFile)
+	cfg, err := loadProfilesOrInit(*profilesFile)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			cfg = &cloudstic.ProfilesConfig{Version: 1}
-		} else {
-			return r.fail("Failed to load profiles: %v", err)
-		}
+		return r.fail("Failed to load profiles: %v", err)
 	}
-	if cfg.Auth == nil {
-		cfg.Auth = map[string]cloudstic.ProfileAuth{}
-	}
+	ensureProfilesMaps(cfg)
 	cfg.Auth[*name] = auth
 
 	if err := cloudstic.SaveProfilesFile(*profilesFile, cfg); err != nil {
@@ -249,11 +226,7 @@ func (r *runner) runAuthLogin() int {
 
 	if *name == "" {
 		if r.canPrompt() {
-			names := make([]string, 0, len(cfg.Auth))
-			for n := range cfg.Auth {
-				names = append(names, n)
-			}
-			sort.Strings(names)
+			names := sortedKeys(cfg.Auth)
 			picked, pickErr := r.promptSelect("Select auth entry", names)
 			if pickErr != nil {
 				return r.fail("Failed to select auth entry: %v", pickErr)

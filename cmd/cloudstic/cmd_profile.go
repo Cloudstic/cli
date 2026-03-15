@@ -80,11 +80,7 @@ func (r *runner) runProfileShow() int {
 		if !r.canPrompt() {
 			return r.fail("usage: cloudstic profile show [-profiles-file <path>] <name>")
 		}
-		names := make([]string, 0, len(cfg.Profiles))
-		for name := range cfg.Profiles {
-			names = append(names, name)
-		}
-		sort.Strings(names)
+		names := sortedKeys(cfg.Profiles)
 		picked, pickErr := r.promptSelect("Select profile", names)
 		if pickErr != nil {
 			return r.fail("Failed to select profile: %v", pickErr)
@@ -184,11 +180,7 @@ func (r *runner) runProfileList() int {
 		return r.fail("Failed to load profiles: %v", err)
 	}
 
-	storeNames := make([]string, 0, len(cfg.Stores))
-	for name := range cfg.Stores {
-		storeNames = append(storeNames, name)
-	}
-	sort.Strings(storeNames)
+	storeNames := sortedKeys(cfg.Stores)
 
 	_, _ = fmt.Fprintf(r.out, "%d stores\n", len(storeNames))
 	for _, name := range storeNames {
@@ -201,11 +193,7 @@ func (r *runner) runProfileList() int {
 	}
 	_, _ = fmt.Fprintln(r.out)
 
-	authNames := make([]string, 0, len(cfg.Auth))
-	for name := range cfg.Auth {
-		authNames = append(authNames, name)
-	}
-	sort.Strings(authNames)
+	authNames := sortedKeys(cfg.Auth)
 
 	_, _ = fmt.Fprintf(r.out, "%d auth entries\n", len(authNames))
 	for _, name := range authNames {
@@ -224,11 +212,7 @@ func (r *runner) runProfileList() int {
 	}
 	_, _ = fmt.Fprintln(r.out)
 
-	names := make([]string, 0, len(cfg.Profiles))
-	for name := range cfg.Profiles {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	names := sortedKeys(cfg.Profiles)
 
 	_, _ = fmt.Fprintf(r.out, "%d profiles\n", len(names))
 	for _, name := range names {
@@ -326,27 +310,15 @@ func (r *runner) runProfileNew() int {
 			return r.fail("-name is required")
 		}
 	}
-	if !validRefName.MatchString(a.name) {
-		return r.fail("invalid profile name %q: must start with a letter or digit and contain only letters, digits, dots, hyphens, or underscores", a.name)
+	if err := validateRefName("profile", a.name); err != nil {
+		return r.fail("%v", err)
 	}
 
-	cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
+	cfg, err := loadProfilesOrInit(a.profilesFile)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			cfg = &cloudstic.ProfilesConfig{Version: 1}
-		} else {
-			return r.fail("Failed to load profiles: %v", err)
-		}
+		return r.fail("Failed to load profiles: %v", err)
 	}
-	if cfg.Stores == nil {
-		cfg.Stores = map[string]cloudstic.ProfileStore{}
-	}
-	if cfg.Profiles == nil {
-		cfg.Profiles = map[string]cloudstic.BackupProfile{}
-	}
-	if cfg.Auth == nil {
-		cfg.Auth = map[string]cloudstic.ProfileAuth{}
-	}
+	ensureProfilesMaps(cfg)
 
 	// When editing an existing profile, prefill unset fields with current values.
 	if existing, ok := cfg.Profiles[a.name]; ok {

@@ -15,6 +15,7 @@ import (
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/engine"
 	"github.com/cloudstic/cli/internal/paths"
+	"github.com/cloudstic/cli/internal/secretref"
 	"github.com/cloudstic/cli/pkg/source"
 )
 
@@ -438,6 +439,22 @@ func cloneGlobalFlags(src *globalFlags) *globalFlags {
 }
 
 func applyProfileStoreToGlobalFlags(g *globalFlags, s cloudstic.ProfileStore, flagsSet map[string]bool) {
+	resolver := secretref.NewDefaultResolver()
+	resolve := func(direct, secretRef, envName string) string {
+		if direct != "" {
+			return direct
+		}
+		if secretRef != "" {
+			if v, err := resolver.Resolve(context.Background(), secretRef); err == nil {
+				return v
+			}
+		}
+		if envName != "" {
+			return os.Getenv(envName)
+		}
+		return ""
+	}
+
 	if !flagsSet["store"] && s.URI != "" {
 		*g.store = s.URI
 	}
@@ -448,48 +465,28 @@ func applyProfileStoreToGlobalFlags(g *globalFlags, s cloudstic.ProfileStore, fl
 		*g.s3Region = s.S3Region
 	}
 	if !flagsSet["s3-profile"] {
-		if s.S3Profile != "" {
-			*g.s3Profile = s.S3Profile
-		} else if s.S3ProfileEnv != "" {
-			*g.s3Profile = os.Getenv(s.S3ProfileEnv)
-		}
+		*g.s3Profile = resolve(s.S3Profile, "", s.S3ProfileEnv)
 	}
 	if !flagsSet["s3-access-key"] {
-		if s.S3AccessKey != "" {
-			*g.s3AccessKey = s.S3AccessKey
-		} else if s.S3AccessKeyEnv != "" {
-			*g.s3AccessKey = os.Getenv(s.S3AccessKeyEnv)
-		}
+		*g.s3AccessKey = resolve(s.S3AccessKey, s.S3AccessKeySecret, s.S3AccessKeyEnv)
 	}
 	if !flagsSet["s3-secret-key"] {
-		if s.S3SecretKey != "" {
-			*g.s3SecretKey = s.S3SecretKey
-		} else if s.S3SecretKeyEnv != "" {
-			*g.s3SecretKey = os.Getenv(s.S3SecretKeyEnv)
-		}
+		*g.s3SecretKey = resolve(s.S3SecretKey, s.S3SecretKeySecret, s.S3SecretKeyEnv)
 	}
 	if !flagsSet["store-sftp-password"] {
-		if s.StoreSFTPPassword != "" {
-			*g.storeSFTPPassword = s.StoreSFTPPassword
-		} else if s.StoreSFTPPasswordEnv != "" {
-			*g.storeSFTPPassword = os.Getenv(s.StoreSFTPPasswordEnv)
-		}
+		*g.storeSFTPPassword = resolve(s.StoreSFTPPassword, s.StoreSFTPPasswordSecret, s.StoreSFTPPasswordEnv)
 	}
 	if !flagsSet["store-sftp-key"] {
-		if s.StoreSFTPKey != "" {
-			*g.storeSFTPKey = s.StoreSFTPKey
-		} else if s.StoreSFTPKeyEnv != "" {
-			*g.storeSFTPKey = os.Getenv(s.StoreSFTPKeyEnv)
-		}
+		*g.storeSFTPKey = resolve(s.StoreSFTPKey, s.StoreSFTPKeySecret, s.StoreSFTPKeyEnv)
 	}
-	if !flagsSet["password"] && s.PasswordEnv != "" {
-		*g.password = os.Getenv(s.PasswordEnv)
+	if !flagsSet["password"] {
+		*g.password = resolve("", s.PasswordSecret, s.PasswordEnv)
 	}
-	if !flagsSet["encryption-key"] && s.EncryptionKeyEnv != "" {
-		*g.encryptionKey = os.Getenv(s.EncryptionKeyEnv)
+	if !flagsSet["encryption-key"] {
+		*g.encryptionKey = resolve("", s.EncryptionKeySecret, s.EncryptionKeyEnv)
 	}
-	if !flagsSet["recovery-key"] && s.RecoveryKeyEnv != "" {
-		*g.recoveryKey = os.Getenv(s.RecoveryKeyEnv)
+	if !flagsSet["recovery-key"] {
+		*g.recoveryKey = resolve("", s.RecoveryKeySecret, s.RecoveryKeyEnv)
 	}
 	if !flagsSet["kms-key-arn"] && s.KMSKeyARN != "" {
 		*g.kmsKeyARN = s.KMSKeyARN

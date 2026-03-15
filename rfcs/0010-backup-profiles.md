@@ -1,6 +1,6 @@
 # RFC 0010: Backup Profiles (YAML Presets)
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Date:** 2026-03-14
 - **Affects:** `cmd/cloudstic/backup`, new `cmd/cloudstic/profile`, docs
 

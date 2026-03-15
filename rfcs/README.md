@@ -13,3 +13,4 @@
 - [RFC 0011: Profile Credential Storage Backends](0011-profile-credential-storage-backends.md)
 - [RFC 0012: Interactive TUI Mode](0012-interactive-tui-mode.md)
 - [RFC 0013: Daemon Mode and Profile Scheduling](0013-daemon-mode-and-profile-scheduling.md)
+- [RFC 0014: Workstation Onboarding and Profile Scaffolding](0014-workstation-onboarding-and-profile-scaffolding.md)

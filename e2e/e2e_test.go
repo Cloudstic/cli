@@ -107,6 +107,17 @@ func runExpectFail(t *testing.T, bin string, args ...string) string {
 	return string(out)
 }
 
+func runWithEnv(t *testing.T, bin string, extraEnv []string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command(bin, args...)
+	cmd.Env = append(cleanEnv(), extraEnv...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Command %v failed: %v\n%s", args, err, out)
+	}
+	return string(out)
+}
+
 func writeFile(t *testing.T, dir, name, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0755); err != nil {
@@ -521,6 +532,91 @@ func TestCLI_EndToEnd_Completion(t *testing.T) {
 	out = runExpectFail(t, bin, "completion")
 	if !strings.Contains(out, "Usage:") {
 		t.Errorf("Expected usage message, got: %s", out)
+	}
+}
+
+func TestCLI_EndToEnd_Profiles_LocalStore(t *testing.T) {
+	if !shouldRun(Hermetic) {
+		t.Skip("skipping hermetic test")
+	}
+
+	bin := buildBinary(t)
+	src1 := t.TempDir()
+	src2 := t.TempDir()
+	storeDir := t.TempDir()
+	profilesPath := filepath.Join(t.TempDir(), "profiles.yaml")
+
+	writeFile(t, src1, "alpha.txt", "from profile one")
+	writeFile(t, src2, "beta.txt", "from profile two")
+
+	passwordEnv := "E2E_PROFILE_PASSWORD"
+	password := "e2e-profile-pass"
+
+	// Create store and ensure the new secret-ref format is written.
+	run(t, bin,
+		"store", "new",
+		"-profiles-file", profilesPath,
+		"-name", "main",
+		"-uri", "local:"+storeDir,
+		"-password-env", passwordEnv,
+	)
+
+	raw, err := os.ReadFile(profilesPath)
+	if err != nil {
+		t.Fatalf("read profiles file: %v", err)
+	}
+	profilesYAML := string(raw)
+	if !strings.Contains(profilesYAML, "password_secret: env://"+passwordEnv) {
+		t.Fatalf("expected password_secret env ref in profiles file:\n%s", profilesYAML)
+	}
+	if strings.Contains(profilesYAML, "password_env:") {
+		t.Fatalf("did not expect legacy password_env in profiles file:\n%s", profilesYAML)
+	}
+
+	// Create two local backup profiles using the shared store.
+	run(t, bin,
+		"profile", "new",
+		"-profiles-file", profilesPath,
+		"-name", "p1",
+		"-source", "local:"+src1,
+		"-store-ref", "main",
+	)
+	run(t, bin,
+		"profile", "new",
+		"-profiles-file", profilesPath,
+		"-name", "p2",
+		"-source", "local:"+src2,
+		"-store-ref", "main",
+	)
+
+	// Initialize repository in the referenced store.
+	run(t, bin, "init", "--store", "local:"+storeDir, "--password", password)
+
+	// Run one profile; password is resolved from password_secret -> env://.
+	runWithEnv(t, bin, []string{passwordEnv + "=" + password},
+		"backup",
+		"-profiles-file", profilesPath,
+		"-profile", "p1",
+	)
+
+	out := run(t, bin, "list", "--store", "local:"+storeDir, "--password", password)
+	if !strings.Contains(out, "1 snapshot") {
+		t.Fatalf("expected one snapshot after single-profile backup, got:\n%s", out)
+	}
+	if !strings.Contains(out, src1) {
+		t.Fatalf("expected source path for p1 in list output, got:\n%s", out)
+	}
+
+	// Run all profiles; should cover both profile entries end-to-end.
+	runWithEnv(t, bin, []string{passwordEnv + "=" + password},
+		"backup",
+		"-profiles-file", profilesPath,
+		"-all-profiles",
+	)
+
+	out = run(t, bin, "list", "--store", "local:"+storeDir, "--password", password)
+	if !strings.Contains(out, src1) || !strings.Contains(out, src2) {
+		t.Fatalf("expected both profile sources in list output after -all-profiles, got:\n%s", out)
 	}
 }
 

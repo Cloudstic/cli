@@ -280,6 +280,10 @@ cloudstic backup -source local:~/Documents -dry-run
 | `-exclude` | | Exclude pattern using gitignore syntax (repeatable) |
 | `-exclude-file` | | Path to file containing exclude patterns, one per line |
 | `-volume-uuid` | | Override volume UUID for local source (enables cross-machine incremental backup for portable drives) |
+| `-skip-mode` | | Skip POSIX metadata collection (mode, uid, gid, btime, flags) |
+| `-skip-flags` | | Skip file flags collection (Linux `ioctl`; no effect on macOS) |
+| `-skip-xattrs` | | Skip extended attribute collection |
+| `-xattr-namespaces` | | Comma-separated xattr namespace prefixes to collect (e.g. `user.,com.apple.`) |
 | `-dry-run` | `false` | Scan source and report changes without writing to the store |
 
 `-profile` and `-all-profiles` are mutually exclusive.
@@ -1053,8 +1057,28 @@ cloudstic backup -source local:~/project -exclude-file .backupignore
 | `-exclude` | | Exclude pattern, gitignore syntax (repeatable) |
 | `-exclude-file` | | File containing exclude patterns (one per line) |
 | `-volume-uuid` | | Override volume UUID (see [Portable drives](#portable-drives)) |
+| `-skip-mode` | | Skip POSIX metadata collection (mode, uid, gid, btime, flags) |
+| `-skip-flags` | | Skip file flags collection (Linux `ioctl`; no effect on macOS) |
+| `-skip-xattrs` | | Skip extended attribute collection |
+| `-xattr-namespaces` | | Comma-separated xattr namespace prefixes to collect (e.g. `user.,com.apple.`) |
 
-Cloudstic walks the directory recursively. Symbolic links are not followed. File permissions are not preserved — only name, size, modification time, and content are captured.
+Cloudstic walks the directory recursively. Symbolic links are not followed.
+
+**Extended file attributes:** By default, Cloudstic captures POSIX permissions (mode bits), numeric ownership (uid/gid), file creation time (btime, where supported), per-file flags, and extended attributes (xattrs). These are stored in each snapshot and will be used by future restore modes to faithfully recreate file metadata. To control what is captured:
+
+```bash
+# Skip all POSIX metadata (mode, uid, gid, btime, flags)
+cloudstic backup -source local -source-path /data -skip-mode
+
+# Skip only file flags (Linux ioctl; no effect on macOS)
+cloudstic backup -source local -source-path /data -skip-flags
+
+# Skip extended attributes
+cloudstic backup -source local -source-path /data -skip-xattrs
+
+# Collect only user.* xattrs (skip security.*, system.*, etc.)
+cloudstic backup -source local -source-path /data -xattr-namespaces "user."
+```
 
 See [Exclude patterns](#exclude-patterns) for the full pattern syntax reference.
 
@@ -1123,6 +1147,8 @@ cloudstic backup -source sftp://backup@myserver.com/home/user/files \
 | `-source-sftp-key` | Path to SSH private key (optional if using password auth) |
 
 If neither `-source-sftp-password` nor `-source-sftp-key` is provided, Cloudstic will fall back to your `SSH_AUTH_SOCK` agent.
+
+SFTP backups capture file permissions (mode bits) and numeric ownership (uid/gid) via the SFTPv3 protocol. Birth time, file flags, and extended attributes are not available over SFTP.
 
 Cloudstic walks the remote directory recursively. File permissions are not preserved — only name, size, modification time, and content are captured.
 

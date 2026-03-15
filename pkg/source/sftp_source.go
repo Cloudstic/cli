@@ -142,6 +142,7 @@ func (s *SFTPSource) Info() core.SourceInfo {
 		Path:     s.rootPath,
 		Identity: identity,
 		PathID:   s.rootPath,
+		FsType:   "sftp",
 	}
 }
 
@@ -202,6 +203,13 @@ func (s *SFTPSource) Walk(ctx context.Context, callback func(core.FileMeta) erro
 			Paths:   []string{rel},
 			Size:    info.Size(),
 			Mtime:   info.ModTime().Unix(),
+		}
+
+		// Extract POSIX metadata from SFTPv3 Attrs.
+		if fs, ok := info.Sys().(*sftp.FileStat); ok {
+			meta.Mode = fs.Mode & 0xFFF
+			meta.Uid = fs.UID
+			meta.Gid = fs.GID
 		}
 
 		if err := callback(meta); err != nil {

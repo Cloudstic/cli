@@ -34,6 +34,10 @@ type backupArgs struct {
 	googleTokenFile   string
 	onedriveClientID  string
 	onedriveTokenFile string
+	skipMode          bool
+	skipFlags         bool
+	skipXattrs        bool
+	xattrNamespaces   string
 	tags              stringArrayFlags
 	excludes          stringArrayFlags
 	flagsSet          map[string]bool
@@ -54,6 +58,10 @@ func parseBackupArgs() *backupArgs {
 	googleTokenFile := fs.String("google-token-file", envDefault("GOOGLE_TOKEN_FILE", ""), "Path to Google OAuth token file")
 	onedriveClientID := fs.String("onedrive-client-id", envDefault("ONEDRIVE_CLIENT_ID", ""), "OneDrive OAuth client ID")
 	onedriveTokenFile := fs.String("onedrive-token-file", envDefault("ONEDRIVE_TOKEN_FILE", ""), "Path to OneDrive OAuth token file")
+	skipMode := fs.Bool("skip-mode", false, "Skip POSIX mode, uid, gid, btime, and flags collection")
+	skipFlags := fs.Bool("skip-flags", false, "Skip file flags ioctl (Linux only; no effect on macOS)")
+	skipXattrs := fs.Bool("skip-xattrs", false, "Skip extended attribute collection")
+	xattrNamespaces := fs.String("xattr-namespaces", "", "Restrict xattr collection to these prefixes (comma-separated, e.g. \"user.,com.apple.\")")
 	fs.Var(&a.tags, "tag", "Tag to apply to the snapshot (can be specified multiple times)")
 	fs.Var(&a.excludes, "exclude", "Exclude pattern (gitignore syntax, repeatable)")
 	mustParse(fs)
@@ -70,6 +78,10 @@ func parseBackupArgs() *backupArgs {
 	a.googleTokenFile = *googleTokenFile
 	a.onedriveClientID = *onedriveClientID
 	a.onedriveTokenFile = *onedriveTokenFile
+	a.skipMode = *skipMode
+	a.skipFlags = *skipFlags
+	a.skipXattrs = *skipXattrs
+	a.xattrNamespaces = *xattrNamespaces
 	a.flagsSet = map[string]bool{}
 	fs.Visit(func(f *flag.Flag) {
 		a.flagsSet[f.Name] = true
@@ -117,7 +129,22 @@ func (r *runner) runSingleBackup(a *backupArgs) int {
 
 	ctx := context.Background()
 
-	src, err := initSource(ctx, a.sourceURI, a.skipNativeFiles, a.volumeUUID, a.googleCreds, a.googleTokenFile, a.onedriveClientID, a.onedriveTokenFile, a.g, excludePatterns)
+	src, err := initSource(
+		ctx,
+		a.sourceURI,
+		a.skipNativeFiles,
+		a.volumeUUID,
+		a.googleCreds,
+		a.googleTokenFile,
+		a.onedriveClientID,
+		a.onedriveTokenFile,
+		a.skipMode,
+		a.skipFlags,
+		a.skipXattrs,
+		a.xattrNamespaces,
+		a.g,
+		excludePatterns,
+	)
 	if err != nil {
 		return r.fail("Failed to init source: %v", err)
 	}
@@ -552,7 +579,7 @@ func (r *runner) printBackupSummary(res *engine.RunResult) {
 	}
 }
 
-func initSource(ctx context.Context, sourceURI string, skipNativeFiles bool, volumeUUID, googleCreds, googleTokenFile, onedriveClientID, onedriveTokenFile string, g *globalFlags, excludePatterns []string) (source.Source, error) {
+func initSource(ctx context.Context, sourceURI string, skipNativeFiles bool, volumeUUID, googleCreds, googleTokenFile, onedriveClientID, onedriveTokenFile string, skipMode, skipFlags, skipXattrs bool, xattrNamespaces string, g *globalFlags, excludePatterns []string) (source.Source, error) {
 	uri, err := parseSourceURI(sourceURI)
 	if err != nil {
 		return nil, err
@@ -563,6 +590,22 @@ func initSource(ctx context.Context, sourceURI string, skipNativeFiles bool, vol
 		opts := []source.LocalOption{source.WithLocalExcludePatterns(excludePatterns)}
 		if volumeUUID != "" {
 			opts = append(opts, source.WithVolumeUUID(volumeUUID))
+		}
+		if skipMode {
+			opts = append(opts, source.WithSkipMode())
+		}
+		if skipFlags {
+			opts = append(opts, source.WithSkipFlags())
+		}
+		if skipXattrs {
+			opts = append(opts, source.WithSkipXattrs())
+		}
+		if xattrNamespaces != "" {
+			prefixes := strings.Split(xattrNamespaces, ",")
+			for i := range prefixes {
+				prefixes[i] = strings.TrimSpace(prefixes[i])
+			}
+			opts = append(opts, source.WithXattrNamespaces(prefixes))
 		}
 		return source.NewLocalSource(uri.path, opts...), nil
 	case "sftp":

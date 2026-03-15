@@ -633,7 +633,10 @@ exist yet.
 
 ### restore
 
-Restore a snapshot as a ZIP archive. By default the entire snapshot is restored; use `-path` to restore a single file or subtree.
+Restore a snapshot either as a ZIP archive (`-format zip`) or directly to a
+directory (`-format dir`). By default, the format is inferred from `-output`.
+If `-output` ends with `.zip`, Cloudstic uses ZIP format; otherwise it restores
+to a directory.
 
 ```bash
 # Restore the latest snapshot
@@ -645,13 +648,16 @@ cloudstic restore <snapshot-hash>
 # Restore to a custom output path
 cloudstic restore <snapshot-hash> -output ./my-backup.zip
 
+# Restore directly to a directory
+cloudstic restore <snapshot-hash> -format dir -output ./restored
+
 # Restore a single file
 cloudstic restore <snapshot-hash> -path Documents/report.pdf
 
 # Restore a subtree (trailing slash)
 cloudstic restore <snapshot-hash> -path Documents/
 
-# Dry run — see what would be restored without writing the archive
+# Dry run — see what would be restored without writing output
 cloudstic restore -dry-run
 ```
 
@@ -659,9 +665,10 @@ cloudstic restore -dry-run
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-output` | `./restore.zip` | Output ZIP file path |
+| `-output` | `./restore.zip` | Output path (ZIP file for `zip`, directory for `dir`) |
+| `-format` | auto | Restore format: `zip` or `dir` (auto-detected from `-output` when omitted) |
 | `-path` | | Restore only the given file or subtree. Use a trailing `/` to select an entire directory (e.g. `Documents/`). Without a trailing slash, the exact file path is matched (e.g. `Documents/report.pdf`). |
-| `-dry-run` | `false` | Show what would be restored without writing the archive |
+| `-dry-run` | `false` | Show what would be restored without writing output |
 
 The snapshot ID is a positional argument (defaults to latest if omitted).
 

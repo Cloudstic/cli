@@ -364,7 +364,18 @@ var (
 // snapshotRef can be "", "latest", a bare hash, or "snapshot/<hash>".
 func (c *Client) Restore(ctx context.Context, w io.Writer, snapshotRef string, opts ...RestoreOption) (*RestoreResult, error) {
 	mgr := engine.NewRestoreManager(c.store, c.reporter)
-	return mgr.Run(ctx, w, snapshotRef, opts...)
+	return mgr.Run(ctx, engine.NewZipRestoreWriter(w), snapshotRef, opts...)
+}
+
+// RestoreToDir writes the snapshot's file tree directly into outputDir.
+// snapshotRef can be "", "latest", a bare hash, or "snapshot/<hash>".
+func (c *Client) RestoreToDir(ctx context.Context, outputDir, snapshotRef string, opts ...RestoreOption) (*RestoreResult, error) {
+	mgr := engine.NewRestoreManager(c.store, c.reporter)
+	writer, err := engine.NewFSRestoreWriter(outputDir)
+	if err != nil {
+		return nil, err
+	}
+	return mgr.Run(ctx, writer, snapshotRef, opts...)
 }
 
 // ---------------------------------------------------------------------------

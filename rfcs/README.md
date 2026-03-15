@@ -10,3 +10,4 @@
 - [RFC 0008: Drive Identity by Name](0008-drive-identity-by-name.md)
 - [RFC 0009: Unified Source Identity](0009-unified-source-identity.md)
 - [RFC 0010: Backup Profiles (YAML Presets)](0010-backup-profiles.md)
+- [RFC 0011: Profile Credential Storage Backends](0011-profile-credential-storage-backends.md)

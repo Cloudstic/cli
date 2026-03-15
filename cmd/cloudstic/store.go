@@ -21,6 +21,9 @@ import (
 // openStore initializes the raw object store with debug wrapping applied.
 // Used by commands that operate on the store directly (init, key).
 func (g *globalFlags) openStore() (store.ObjectStore, error) {
+	if err := g.applyProfileStoreOverrides(); err != nil {
+		return nil, err
+	}
 	raw, err := g.initObjectStore()
 	if err != nil {
 		return nil, err
@@ -42,6 +45,9 @@ func (g *globalFlags) applyDebug(s store.ObjectStore) store.ObjectStore {
 }
 
 func (g *globalFlags) openClient() (*cloudstic.Client, error) {
+	if err := g.applyProfileStoreOverrides(); err != nil {
+		return nil, err
+	}
 	raw, err := g.initObjectStore()
 	if err != nil {
 		return nil, err
@@ -71,6 +77,41 @@ func (g *globalFlags) openClient() (*cloudstic.Client, error) {
 		cloudstic.WithReporter(reporter),
 		cloudstic.WithPackfile(packfileEnabled),
 	)
+}
+
+func (g *globalFlags) applyProfileStoreOverrides() error {
+	if g.profile == nil || *g.profile == "" {
+		return nil
+	}
+	profilesFile := defaultProfilesFilename
+	if g.profilesFile != nil && *g.profilesFile != "" {
+		profilesFile = *g.profilesFile
+	}
+	cfg, err := cloudstic.LoadProfilesFile(profilesFile)
+	if err != nil {
+		return fmt.Errorf("load profiles file %q: %w", profilesFile, err)
+	}
+	p, ok := cfg.Profiles[*g.profile]
+	if !ok {
+		return fmt.Errorf("unknown profile %q", *g.profile)
+	}
+	if p.Store == "" {
+		return nil
+	}
+	s, ok := cfg.Stores[p.Store]
+	if !ok {
+		return fmt.Errorf("profile %q references unknown store %q", *g.profile, p.Store)
+	}
+	flagsSet := map[string]bool{}
+	for _, name := range []string{
+		"store", "s3-endpoint", "s3-region", "s3-profile", "s3-access-key", "s3-secret-key",
+		"store-sftp-password", "store-sftp-key",
+		"password", "encryption-key", "recovery-key", "kms-key-arn", "kms-region", "kms-endpoint",
+	} {
+		flagsSet[name] = cliFlagProvided(name)
+	}
+	applyProfileStoreToGlobalFlags(g, s, flagsSet)
+	return nil
 }
 
 // buildKMSClient creates an AWS KMS client if -kms-key-arn is set, otherwise
@@ -120,7 +161,7 @@ func (g *globalFlags) buildKeychain(ctx context.Context) (keychain.Chain, error)
 		chain = append(chain, keychain.WithRecoveryKey(*g.recoveryKey))
 	}
 	promptRequested := g.prompt != nil && *g.prompt
-	if (len(chain) == 0 || promptRequested) && term.IsTerminal(os.Stdin.Fd()) {
+	if (len(chain) == 0 || promptRequested) && !hasGlobalFlag("no-prompt") && term.IsTerminal(os.Stdin.Fd()) {
 		chain = append(chain, keychain.WithPrompt(
 			func() (string, error) { return ui.PromptPassword("Repository password") },
 			func() (string, error) { return ui.PromptPasswordConfirm("Enter new repository password") },
@@ -239,6 +280,7 @@ func (g *globalFlags) initObjectStore() (store.ObjectStore, error) {
 			uri.bucket,
 			store.WithS3Endpoint(*g.s3Endpoint),
 			store.WithS3Region(*g.s3Region),
+			store.WithS3Profile(*g.s3Profile),
 			store.WithS3Credentials(*g.s3AccessKey, *g.s3SecretKey),
 			store.WithS3Prefix(uri.prefix),
 		)

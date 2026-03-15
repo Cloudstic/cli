@@ -66,6 +66,26 @@ cloudstic restore
 cloudstic backup -source local:~/Documents -dry-run
 ```
 
+## Profiles
+
+Save your backup configuration once and reuse it:
+
+```bash
+# Create a store (interactive — prompts for encryption setup)
+cloudstic store new -name my-s3 -uri s3:my-bucket/backups -s3-region us-east-1
+
+# Create a profile
+cloudstic profile new -name documents -source local:~/Documents -store-ref my-s3
+
+# Now backups are one command
+cloudstic backup -profile documents
+
+# Or back up all profiles at once
+cloudstic backup -all-profiles
+```
+
+See the [User Guide — Profiles](docs/user-guide.md#profile) for details.
+
 When running interactively, Cloudstic prompts for the repository password if no credential is provided via flags or environment variables. For non-interactive use (scripts, cron), pass `-password` or set `CLOUDSTIC_PASSWORD`:
 
 ```bash

@@ -23,7 +23,8 @@ func envBool(key string) bool {
 
 type globalFlags struct {
 	store                             *string
-	s3Endpoint, s3Region              *string
+	profile, profilesFile             *string
+	s3Endpoint, s3Region, s3Profile   *string
 	s3AccessKey, s3SecretKey          *string
 	sourceSFTPPassword, sourceSFTPKey *string
 	storeSFTPPassword, storeSFTPKey   *string
@@ -39,8 +40,15 @@ type globalFlags struct {
 func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 	g := &globalFlags{}
 	g.store = fs.String("store", envDefault("CLOUDSTIC_STORE", "local:./backup_store"), "Storage backend URI: local:<path>, s3:<bucket>[/<prefix>], b2:<bucket>[/<prefix>], sftp://[user@]host[:port]/<path>")
+	defaultProfilesPath, err := defaultProfilesPath()
+	if err != nil {
+		defaultProfilesPath = defaultProfilesFilename
+	}
+	g.profile = fs.String("profile", envDefault("CLOUDSTIC_PROFILE", ""), "Profile name from profiles.yaml")
+	g.profilesFile = fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPath), "Path to profiles YAML file")
 	g.s3Endpoint = fs.String("s3-endpoint", envDefault("CLOUDSTIC_S3_ENDPOINT", ""), "S3 compatible endpoint URL (for MinIO, R2, etc.)")
 	g.s3Region = fs.String("s3-region", envDefault("CLOUDSTIC_S3_REGION", "us-east-1"), "S3 region")
+	g.s3Profile = fs.String("s3-profile", envDefault("CLOUDSTIC_S3_PROFILE", envDefault("AWS_PROFILE", "")), "AWS shared config profile for S3 credentials")
 	g.s3AccessKey = fs.String("s3-access-key", envDefault("AWS_ACCESS_KEY_ID", ""), "S3 access key ID")
 	g.s3SecretKey = fs.String("s3-secret-key", envDefault("AWS_SECRET_ACCESS_KEY", ""), "S3 secret access key")
 
@@ -62,6 +70,18 @@ func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 	g.quiet = fs.Bool("quiet", false, "Suppress progress bars (keeps final summary)")
 	g.debug = fs.Bool("debug", false, "Log every store request (network calls, timing, sizes)")
 	return g
+}
+
+func cliFlagProvided(name string) bool {
+	for _, arg := range os.Args[1:] {
+		if arg == "-"+name || arg == "--"+name {
+			return true
+		}
+		if strings.HasPrefix(arg, "-"+name+"=") || strings.HasPrefix(arg, "--"+name+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 // mustParse parses os.Args[2:] into fs, reordering positional arguments after

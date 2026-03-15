@@ -19,6 +19,16 @@ func printUsage() {
 	t.Commands([][2]string{
 		{"init", "Initialize a new repository (must run before first backup)"},
 		{"backup", "Create a new backup snapshot from a source"},
+		{"auth new", "Create or update a reusable cloud auth entry"},
+		{"auth list", "List auth entries from profiles.yaml"},
+		{"auth show", "Show one auth entry"},
+		{"auth login", "Run OAuth login flow for one auth entry"},
+		{"store new", "Create or update a store entry in profiles.yaml"},
+		{"store list", "List configured stores"},
+		{"store show", "Show one store and its configuration"},
+		{"profile new", "Create or update a backup profile in profiles.yaml"},
+		{"profile list", "List stores, auth entries, and backup profiles"},
+		{"profile show", "Show one profile and resolved store/auth references"},
 		{"restore", "Restore files from a backup snapshot"},
 		{"list", "List all backup snapshots in the repository"},
 		{"ls", "List files within a specific snapshot"},
@@ -37,14 +47,18 @@ func printUsage() {
 	t.HeadingSub("GLOBAL OPTIONS", "(also settable via env vars)")
 	t.Flags([][2]string{
 		{"-store <uri>", ui.Env("Storage backend URI (see formats below)", "CLOUDSTIC_STORE")},
+		{"-profile <name>", ui.Env("Profile name from profiles.yaml", "CLOUDSTIC_PROFILE")},
+		{"-profiles-file <path>", ui.Env("Path to profiles YAML file", "CLOUDSTIC_PROFILES_FILE")},
 		{"-s3-endpoint <url>", ui.Env("S3 compatible endpoint (for MinIO, R2, etc.)", "CLOUDSTIC_S3_ENDPOINT")},
 		{"-s3-region <region>", ui.Env("S3 region", "CLOUDSTIC_S3_REGION")},
+		{"-s3-profile <name>", ui.Env("AWS shared config profile for S3 auth", "CLOUDSTIC_S3_PROFILE / AWS_PROFILE")},
 		{"-s3-access-key <key>", ui.Env("S3 Access Key ID", "AWS_ACCESS_KEY_ID")},
 		{"-s3-secret-key <secret>", ui.Env("S3 Secret Access Key", "AWS_SECRET_ACCESS_KEY")},
 		{"-source-sftp-password <pw>", ui.Env("SFTP source password", "CLOUDSTIC_SOURCE_SFTP_PASSWORD")},
 		{"-source-sftp-key <path>", ui.Env("Path to SSH private key for SFTP source", "CLOUDSTIC_SOURCE_SFTP_KEY")},
 		{"-store-sftp-password <pw>", ui.Env("SFTP store password", "CLOUDSTIC_STORE_SFTP_PASSWORD")},
 		{"-store-sftp-key <path>", ui.Env("Path to SSH private key for SFTP store", "CLOUDSTIC_STORE_SFTP_KEY")},
+		{"-no-prompt", "Disable interactive prompts (for scripts and CI)"},
 		{"-verbose", "Log detailed file-level operations"},
 		{"-quiet", "Suppress progress bars (keeps final summary)"},
 		{"-debug", "Log every store request (network calls, timing, sizes)"},
@@ -109,6 +123,10 @@ func printUsage() {
 	t.Command("backup", "")
 	t.Flags([][2]string{
 		{"-source <uri>", ui.Env("Source URI: local:<path>, sftp://[user@]host[:port]/<path>, gdrive[://<Drive Name>][/<path>], gdrive-changes[://<Drive Name>][/<path>], onedrive[://<Drive Name>][/<path>], onedrive-changes[://<Drive Name>][/<path>]", "CLOUDSTIC_SOURCE")},
+		{"-profile <name>", "Run backup from a named profile"},
+		{"-all-profiles", "Run backup for all enabled profiles"},
+		{"-auth-ref <name>", "Use named auth entry from profiles.yaml for cloud credentials"},
+		{"-profiles-file <path>", ui.Env("Path to profiles YAML file", "CLOUDSTIC_PROFILES_FILE")},
 		{"-skip-native-files", "Exclude Google-native files (Docs, Sheets, Slides, etc.)"},
 		{"-google-credentials <path>", ui.Env("Path to Google service account credentials JSON", "GOOGLE_APPLICATION_CREDENTIALS")},
 		{"-google-token-file <path>", ui.Env("Path to Google OAuth token file", "GOOGLE_TOKEN_FILE")},
@@ -129,6 +147,117 @@ func printUsage() {
 		"  onedrive                           OneDrive (full scan)",
 		"  onedrive-changes                   OneDrive (incremental via delta API)",
 	)
+
+	t.Command("store list", "")
+	t.Flags([][2]string{{"-profiles-file <path>", ui.Env("Path to profiles YAML file", "CLOUDSTIC_PROFILES_FILE")}})
+	t.Note("  List configured stores.")
+	t.Blank()
+
+	t.Command("store show", "<name>")
+	t.Flags([][2]string{{"-profiles-file <path>", ui.Env("Path to profiles YAML file", "CLOUDSTIC_PROFILES_FILE")}})
+	t.Note("  Show one store and its configuration.")
+	t.Blank()
+
+	t.Command("store new", "")
+	t.Flags([][2]string{
+		{"-name <name>", "Store reference name"},
+		{"-uri <uri>", "Store URI (e.g. s3:bucket/path, local:/path, sftp://host/path)"},
+		{"-s3-region <region>", "S3 region"},
+		{"-s3-profile <name>", "AWS shared config profile"},
+		{"-s3-endpoint <url>", "S3-compatible endpoint URL"},
+		{"-s3-access-key <key>", "S3 static access key"},
+		{"-s3-secret-key <key>", "S3 static secret key"},
+		{"-s3-access-key-env <var>", "Env var name for S3 access key"},
+		{"-s3-secret-key-env <var>", "Env var name for S3 secret key"},
+		{"-s3-profile-env <var>", "Env var name for AWS profile"},
+		{"-store-sftp-password <pass>", "SFTP password"},
+		{"-store-sftp-key <path>", "Path to SFTP private key"},
+		{"-store-sftp-password-env <var>", "Env var name for SFTP password"},
+		{"-store-sftp-key-env <var>", "Env var name for SFTP key path"},
+		{"-password-env <var>", "Env var name for repository password"},
+		{"-encryption-key-env <var>", "Env var name for platform key (hex)"},
+		{"-recovery-key-env <var>", "Env var name for recovery key mnemonic"},
+		{"-kms-key-arn <arn>", "AWS KMS key ARN for envelope encryption"},
+		{"-kms-region <region>", "AWS KMS region"},
+		{"-kms-endpoint <url>", "Custom AWS KMS endpoint URL"},
+		{"-profiles-file <path>", ui.Env("Path to profiles YAML file", "CLOUDSTIC_PROFILES_FILE")},
+	})
+	t.Note("  Create or update a store entry in profiles.yaml.",
+		"  Encryption credentials use env var indirection: -password-env, -encryption-key-env.",
+		"  KMS settings are stored directly (ARN is not a secret).",
+	)
+	t.Blank()
+
+	t.Command("profile list", "")
+	t.Flags([][2]string{
+		{"-profiles-file <path>", ui.Env("Path to profiles YAML file", "CLOUDSTIC_PROFILES_FILE")},
+	})
+	t.Note("  List configured stores, auth entries, and backup profiles.")
+	t.Blank()
+
+	t.Command("profile show", "<name>")
+	t.Flags([][2]string{
+		{"-profiles-file <path>", ui.Env("Path to profiles YAML file", "CLOUDSTIC_PROFILES_FILE")},
+	})
+	t.Note("  Show one profile and resolved store/auth references.")
+	t.Blank()
+
+	t.Command("profile new", "")
+	t.Flags([][2]string{
+		{"-name <name>", "Profile name"},
+		{"-source <uri>", "Source URI for this profile"},
+		{"-store-ref <name>", "Store reference name to use from top-level stores"},
+		{"-store <uri>", "Optional store URI to create/update under -store-ref"},
+		{"-auth-ref <name>", "Auth reference name to use from top-level auth"},
+		{"-tag <tag>", "Tag for snapshots (repeatable)"},
+		{"-exclude <pattern>", "Exclude pattern (repeatable)"},
+		{"-exclude-file <path>", "Path to exclude file"},
+		{"-skip-native-files", "Exclude Google-native files"},
+		{"-volume-uuid <uuid>", "Override local source volume UUID"},
+		{"-google-credentials <path>", "Path to Google service account credentials JSON"},
+		{"-google-token-file <path>", "Path to Google OAuth token file"},
+		{"-onedrive-client-id <id>", "OneDrive OAuth client ID"},
+		{"-onedrive-token-file <path>", "Path to OneDrive OAuth token file"},
+		{"-profiles-file <path>", ui.Env("Path to profiles YAML file", "CLOUDSTIC_PROFILES_FILE")},
+	})
+	t.Note(
+		"  Create or update a backup profile in profiles.yaml.",
+		"  Use -store-ref by itself to reference an existing store entry.",
+		"  Add -store to create or update that store entry in the same command.",
+		"  Use -auth-ref to reuse cloud OAuth settings across multiple profiles.",
+	)
+	t.Blank()
+
+	t.Command("auth list", "")
+	t.Flags([][2]string{{"-profiles-file <path>", ui.Env("Path to profiles YAML file", "CLOUDSTIC_PROFILES_FILE")}})
+	t.Note("  List configured auth entries.")
+	t.Blank()
+
+	t.Command("auth show", "<name>")
+	t.Flags([][2]string{{"-profiles-file <path>", ui.Env("Path to profiles YAML file", "CLOUDSTIC_PROFILES_FILE")}})
+	t.Note("  Show one auth entry.")
+	t.Blank()
+
+	t.Command("auth new", "")
+	t.Flags([][2]string{
+		{"-name <name>", "Auth reference name"},
+		{"-provider <google|onedrive>", "Cloud provider for this auth entry"},
+		{"-google-credentials <path>", "Google service account credentials JSON (optional)"},
+		{"-google-token-file <path>", "Google OAuth token file path (required for provider=google)"},
+		{"-onedrive-client-id <id>", "OneDrive OAuth client ID (optional)"},
+		{"-onedrive-token-file <path>", "OneDrive OAuth token file path (required for provider=onedrive)"},
+		{"-profiles-file <path>", ui.Env("Path to profiles YAML file", "CLOUDSTIC_PROFILES_FILE")},
+	})
+	t.Note("  Create or update a reusable cloud auth entry.")
+	t.Blank()
+
+	t.Command("auth login", "")
+	t.Flags([][2]string{
+		{"-name <name>", "Auth reference name"},
+		{"-profiles-file <path>", ui.Env("Path to profiles YAML file", "CLOUDSTIC_PROFILES_FILE")},
+	})
+	t.Note("  Trigger OAuth login for an auth entry and save token to its configured file.")
+	t.Blank()
 
 	t.Command("restore", "[snapshot_id]")
 	t.Flags([][2]string{

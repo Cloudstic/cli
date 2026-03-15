@@ -28,6 +28,7 @@ type S3Store struct {
 type s3Options struct {
 	endpoint  string
 	region    string
+	profile   string
 	accessKey string
 	secretKey string
 	prefix    string
@@ -50,6 +51,14 @@ func WithS3Endpoint(endpoint string) S3Option {
 func WithS3Region(region string) S3Option {
 	return func(o *s3Options) {
 		o.region = region
+	}
+}
+
+// WithS3Profile sets the AWS shared config profile name used by the SDK
+// default credential chain (e.g. profile from ~/.aws/config).
+func WithS3Profile(profile string) S3Option {
+	return func(o *s3Options) {
+		o.profile = profile
 	}
 }
 
@@ -105,6 +114,10 @@ func NewS3Store(ctx context.Context, bucketName string, opts ...S3Option) (*S3St
 		cfgOpts := []func(*config.LoadOptions) error{
 			config.WithRegion(o.region),
 			config.WithHTTPClient(httpClient),
+		}
+
+		if o.profile != "" {
+			cfgOpts = append(cfgOpts, config.WithSharedConfigProfile(o.profile))
 		}
 
 		if o.accessKey != "" && o.secretKey != "" {

@@ -48,7 +48,7 @@ func (r *runner) runInit() int {
 	hasEncryptionCreds := len(kc) > 0
 
 	if !hasEncryptionCreds && !a.noEncryption {
-		if term.IsTerminal(os.Stdin.Fd()) {
+		if !r.noPrompt && term.IsTerminal(os.Stdin.Fd()) {
 			pw, err := ui.PromptPasswordConfirm("Enter new repository password")
 			if err != nil {
 				return r.fail("Error: %v", err)

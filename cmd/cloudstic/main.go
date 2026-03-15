@@ -63,6 +63,12 @@ func runCmd(cmd string) int {
 		return r.runCheck()
 	case "cat":
 		return r.runCat()
+	case "profile":
+		return r.runProfile()
+	case "auth":
+		return r.runAuth()
+	case "store":
+		return r.runStore()
 	case "completion":
 		runCompletion()
 		return 0

@@ -7,6 +7,8 @@ BIN_NAME="cloudstic"
 VERSION="latest"
 INSTALL_DIR="/usr/local/bin"
 VERIFY_CHECKSUMS=1
+WITH_COMPLETION=0
+COMPLETION_SHELL="auto"
 
 usage() {
   cat <<EOF
@@ -21,12 +23,16 @@ Options:
   -d, --install-dir <path>      Destination directory for binary.
                                 Defaults to /usr/local/bin.
       --no-verify               Skip SHA256 checksum verification.
+      --with-completion         Install shell completion script.
+      --shell <name>            Completion shell: auto|bash|zsh|fish.
+                                Defaults to auto.
   -h, --help                    Show this help.
 
 Examples:
   curl -fsSL https://raw.githubusercontent.com/Cloudstic/cli/main/scripts/install.sh | sh
   curl -fsSL https://raw.githubusercontent.com/Cloudstic/cli/main/scripts/install.sh | sh -s -- --version v1.2.3
   curl -fsSL https://raw.githubusercontent.com/Cloudstic/cli/main/scripts/install.sh | sh -s -- --install-dir "$HOME/.local/bin"
+  curl -fsSL https://raw.githubusercontent.com/Cloudstic/cli/main/scripts/install.sh | sh -s -- --with-completion
 EOF
 }
 
@@ -96,6 +102,15 @@ parse_args() {
         VERIFY_CHECKSUMS=0
         shift
         ;;
+      --with-completion)
+        WITH_COMPLETION=1
+        shift
+        ;;
+      --shell)
+        [ "$#" -ge 2 ] || { echo "Error: missing value for $1" >&2; exit 1; }
+        COMPLETION_SHELL="$2"
+        shift 2
+        ;;
       -h|--help)
         usage
         exit 0
@@ -107,6 +122,78 @@ parse_args() {
         ;;
     esac
   done
+}
+
+detect_default_shell() {
+  if [ -n "${SHELL:-}" ]; then
+    shell_name="$(basename "$SHELL")"
+    case "$shell_name" in
+      bash|zsh|fish) echo "$shell_name"; return ;;
+    esac
+  fi
+  echo "bash"
+}
+
+resolve_completion_shell() {
+  case "$COMPLETION_SHELL" in
+    auto) detect_default_shell ;;
+    bash|zsh|fish) echo "$COMPLETION_SHELL" ;;
+    *)
+      echo "Error: unsupported shell '$COMPLETION_SHELL' (expected auto|bash|zsh|fish)" >&2
+      exit 1
+      ;;
+  esac
+}
+
+completion_target_path() {
+  shell_name="$1"
+  case "$shell_name" in
+    bash)
+      echo "${HOME}/.local/share/bash-completion/completions/${BIN_NAME}"
+      ;;
+    zsh)
+      echo "${HOME}/.zfunc/_${BIN_NAME}"
+      ;;
+    fish)
+      echo "${HOME}/.config/fish/completions/${BIN_NAME}.fish"
+      ;;
+    *)
+      echo "Error: unsupported shell: $shell_name" >&2
+      exit 1
+      ;;
+  esac
+}
+
+print_completion_hint() {
+  shell_name="$1"
+  target_path="$2"
+  case "$shell_name" in
+    bash)
+      echo "Completion installed at: $target_path"
+      echo "Restart your shell, or run: source \"$target_path\""
+      ;;
+    zsh)
+      echo "Completion installed at: $target_path"
+      echo "Ensure your ~/.zshrc contains:"
+      echo "  fpath=(\"$HOME/.zfunc\" \$fpath)"
+      echo "  autoload -Uz compinit && compinit"
+      ;;
+    fish)
+      echo "Completion installed at: $target_path"
+      echo "Restart fish to load completions."
+      ;;
+  esac
+}
+
+install_completion() {
+  target_bin="$1"
+  shell_name="$(resolve_completion_shell)"
+  target_path="$(completion_target_path "$shell_name")"
+  target_dir="$(dirname "$target_path")"
+
+  mkdir -p "$target_dir"
+  "$target_bin" completion "$shell_name" > "$target_path"
+  print_completion_hint "$shell_name" "$target_path"
 }
 
 install_binary() {
@@ -179,6 +266,10 @@ install_binary() {
 
   echo "Installed $BIN_NAME to $target"
   echo "Run: $BIN_NAME version"
+
+  if [ "$WITH_COMPLETION" -eq 1 ]; then
+    install_completion "$target"
+  fi
 }
 
 main() {

@@ -110,9 +110,17 @@ curl -fsSL https://raw.githubusercontent.com/Cloudstic/cli/main/scripts/install.
 
 # Install to a user-writable directory
 curl -fsSL https://raw.githubusercontent.com/Cloudstic/cli/main/scripts/install.sh | sh -s -- --install-dir "$HOME/.local/bin"
+
+# Install with shell completion (auto-detect shell)
+curl -fsSL https://raw.githubusercontent.com/Cloudstic/cli/main/scripts/install.sh | sh -s -- --with-completion
+
+# Install completion for a specific shell
+curl -fsSL https://raw.githubusercontent.com/Cloudstic/cli/main/scripts/install.sh | sh -s -- --with-completion --shell zsh
 ```
 
 The installer verifies release checksums by default.
+Completion files are written to user directories (for example `~/.zfunc` for zsh,
+`~/.config/fish/completions` for fish, and `~/.local/share/bash-completion/completions` for bash).
 
 ### Pre-built binaries
 

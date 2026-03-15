@@ -8,8 +8,10 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strings"
 
 	cloudstic "github.com/cloudstic/cli"
+	"github.com/cloudstic/cli/internal/secretref"
 )
 
 var validRefName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
@@ -116,28 +118,49 @@ func (r *runner) runStoreShow() int {
 		_, _ = fmt.Fprintf(r.out, "  s3_endpoint: %s\n", s.S3Endpoint)
 	}
 	if s.S3AccessKeyEnv != "" {
-		_, _ = fmt.Fprintf(r.out, "  s3_access_key_env: %s\n", s.S3AccessKeyEnv)
+		_, _ = fmt.Fprintf(r.out, "  s3_access_key_env (deprecated): %s\n", s.S3AccessKeyEnv)
+	}
+	if s.S3AccessKeySecret != "" {
+		_, _ = fmt.Fprintf(r.out, "  s3_access_key_secret: %s\n", s.S3AccessKeySecret)
 	}
 	if s.S3SecretKeyEnv != "" {
-		_, _ = fmt.Fprintf(r.out, "  s3_secret_key_env: %s\n", s.S3SecretKeyEnv)
+		_, _ = fmt.Fprintf(r.out, "  s3_secret_key_env (deprecated): %s\n", s.S3SecretKeyEnv)
+	}
+	if s.S3SecretKeySecret != "" {
+		_, _ = fmt.Fprintf(r.out, "  s3_secret_key_secret: %s\n", s.S3SecretKeySecret)
 	}
 	if s.S3ProfileEnv != "" {
 		_, _ = fmt.Fprintf(r.out, "  s3_profile_env: %s\n", s.S3ProfileEnv)
 	}
 	if s.StoreSFTPPasswordEnv != "" {
-		_, _ = fmt.Fprintf(r.out, "  store_sftp_password_env: %s\n", s.StoreSFTPPasswordEnv)
+		_, _ = fmt.Fprintf(r.out, "  store_sftp_password_env (deprecated): %s\n", s.StoreSFTPPasswordEnv)
+	}
+	if s.StoreSFTPPasswordSecret != "" {
+		_, _ = fmt.Fprintf(r.out, "  store_sftp_password_secret: %s\n", s.StoreSFTPPasswordSecret)
 	}
 	if s.StoreSFTPKeyEnv != "" {
-		_, _ = fmt.Fprintf(r.out, "  store_sftp_key_env: %s\n", s.StoreSFTPKeyEnv)
+		_, _ = fmt.Fprintf(r.out, "  store_sftp_key_env (deprecated): %s\n", s.StoreSFTPKeyEnv)
+	}
+	if s.StoreSFTPKeySecret != "" {
+		_, _ = fmt.Fprintf(r.out, "  store_sftp_key_secret: %s\n", s.StoreSFTPKeySecret)
 	}
 	if s.PasswordEnv != "" {
-		_, _ = fmt.Fprintf(r.out, "  password_env: %s\n", s.PasswordEnv)
+		_, _ = fmt.Fprintf(r.out, "  password_env (deprecated): %s\n", s.PasswordEnv)
+	}
+	if s.PasswordSecret != "" {
+		_, _ = fmt.Fprintf(r.out, "  password_secret: %s\n", s.PasswordSecret)
 	}
 	if s.EncryptionKeyEnv != "" {
-		_, _ = fmt.Fprintf(r.out, "  encryption_key_env: %s\n", s.EncryptionKeyEnv)
+		_, _ = fmt.Fprintf(r.out, "  encryption_key_env (deprecated): %s\n", s.EncryptionKeyEnv)
+	}
+	if s.EncryptionKeySecret != "" {
+		_, _ = fmt.Fprintf(r.out, "  encryption_key_secret: %s\n", s.EncryptionKeySecret)
 	}
 	if s.RecoveryKeyEnv != "" {
-		_, _ = fmt.Fprintf(r.out, "  recovery_key_env: %s\n", s.RecoveryKeyEnv)
+		_, _ = fmt.Fprintf(r.out, "  recovery_key_env (deprecated): %s\n", s.RecoveryKeyEnv)
+	}
+	if s.RecoveryKeySecret != "" {
+		_, _ = fmt.Fprintf(r.out, "  recovery_key_secret: %s\n", s.RecoveryKeySecret)
 	}
 	if s.KMSKeyARN != "" {
 		_, _ = fmt.Fprintf(r.out, "  kms_key_arn: %s\n", s.KMSKeyARN)
@@ -234,25 +257,32 @@ func (r *runner) runStoreNew() int {
 	}
 
 	cfg.Stores[*name] = cloudstic.ProfileStore{
-		URI:                  *uri,
-		S3Region:             *s3Region,
-		S3Profile:            *s3Profile,
-		S3Endpoint:           *s3Endpoint,
-		S3AccessKey:          *s3AccessKey,
-		S3SecretKey:          *s3SecretKey,
-		S3AccessKeyEnv:       *s3AccessKeyEnv,
-		S3SecretKeyEnv:       *s3SecretKeyEnv,
-		S3ProfileEnv:         *s3ProfileEnv,
-		StoreSFTPPassword:    *sftpPassword,
-		StoreSFTPKey:         *sftpKey,
-		StoreSFTPPasswordEnv: *sftpPasswordEnv,
-		StoreSFTPKeyEnv:      *sftpKeyEnv,
-		PasswordEnv:          *passwordEnv,
-		EncryptionKeyEnv:     *encryptionKeyEnv,
-		RecoveryKeyEnv:       *recoveryKeyEnv,
-		KMSKeyARN:            *kmsKeyARN,
-		KMSRegion:            *kmsRegion,
-		KMSEndpoint:          *kmsEndpoint,
+		URI:                     *uri,
+		S3Region:                *s3Region,
+		S3Profile:               *s3Profile,
+		S3Endpoint:              *s3Endpoint,
+		S3AccessKey:             *s3AccessKey,
+		S3SecretKey:             *s3SecretKey,
+		S3AccessKeyEnv:          "",
+		S3SecretKeyEnv:          "",
+		S3AccessKeySecret:       envRef(*s3AccessKeyEnv),
+		S3SecretKeySecret:       envRef(*s3SecretKeyEnv),
+		S3ProfileEnv:            *s3ProfileEnv,
+		StoreSFTPPassword:       *sftpPassword,
+		StoreSFTPKey:            *sftpKey,
+		StoreSFTPPasswordEnv:    "",
+		StoreSFTPKeyEnv:         "",
+		StoreSFTPPasswordSecret: envRef(*sftpPasswordEnv),
+		StoreSFTPKeySecret:      envRef(*sftpKeyEnv),
+		PasswordEnv:             "",
+		EncryptionKeyEnv:        "",
+		RecoveryKeyEnv:          "",
+		PasswordSecret:          envRef(*passwordEnv),
+		EncryptionKeySecret:     envRef(*encryptionKeyEnv),
+		RecoveryKeySecret:       envRef(*recoveryKeyEnv),
+		KMSKeyARN:               *kmsKeyARN,
+		KMSRegion:               *kmsRegion,
+		KMSEndpoint:             *kmsEndpoint,
 	}
 
 	if err := cloudstic.SaveProfilesFile(*profilesFile, cfg); err != nil {
@@ -264,7 +294,9 @@ func (r *runner) runStoreNew() int {
 		// If no encryption flags were provided, prompt for encryption config.
 		s := cfg.Stores[*name]
 		hasExplicitEncryption := s.PasswordEnv != "" || s.EncryptionKeyEnv != "" ||
-			s.RecoveryKeyEnv != "" || s.KMSKeyARN != ""
+			s.RecoveryKeyEnv != "" || s.PasswordSecret != "" ||
+			s.EncryptionKeySecret != "" || s.RecoveryKeySecret != "" ||
+			s.KMSKeyARN != ""
 		if !hasExplicitEncryption {
 			r.promptEncryptionConfig(cfg, *name, *profilesFile)
 		}
@@ -305,7 +337,9 @@ func (r *runner) checkOrInitStore(cfg *cloudstic.ProfilesConfig, storeName, prof
 
 	// Check if the store has encryption config.
 	hasEncryption := s.PasswordEnv != "" || s.EncryptionKeyEnv != "" ||
-		s.RecoveryKeyEnv != "" || s.KMSKeyARN != ""
+		s.RecoveryKeyEnv != "" || s.PasswordSecret != "" ||
+		s.EncryptionKeySecret != "" || s.RecoveryKeySecret != "" ||
+		s.KMSKeyARN != ""
 
 	if !hasEncryption {
 		// No encryption configured — init without encryption.
@@ -368,7 +402,8 @@ func (r *runner) promptEncryptionConfig(cfg *cloudstic.ProfilesConfig, storeName
 		if envName == "" {
 			envName = "CLOUDSTIC_PASSWORD"
 		}
-		s.PasswordEnv = envName
+		s.PasswordEnv = ""
+		s.PasswordSecret = envRef(envName)
 		_, _ = fmt.Fprintf(r.out, "Encryption: password via $%s\n", envName)
 
 	case options[1]: // Platform key
@@ -380,7 +415,8 @@ func (r *runner) promptEncryptionConfig(cfg *cloudstic.ProfilesConfig, storeName
 		if envName == "" {
 			envName = "CLOUDSTIC_ENCRYPTION_KEY"
 		}
-		s.EncryptionKeyEnv = envName
+		s.EncryptionKeyEnv = ""
+		s.EncryptionKeySecret = envRef(envName)
 		_, _ = fmt.Fprintf(r.out, "Encryption: platform key via $%s\n", envName)
 
 	case options[2]: // KMS
@@ -412,9 +448,16 @@ func (r *runner) promptEncryptionConfig(cfg *cloudstic.ProfilesConfig, storeName
 // globalFlagsFromProfileStore builds a globalFlags populated from a ProfileStore,
 // resolving env var indirections for secrets.
 func globalFlagsFromProfileStore(s cloudstic.ProfileStore) *globalFlags {
-	resolve := func(direct, envName string) string {
+	resolver := secretref.NewDefaultResolver()
+	resolve := func(direct, secretRef, envName string) string {
 		if direct != "" {
 			return direct
+		}
+		if secretRef != "" {
+			v, err := resolver.Resolve(context.Background(), secretRef)
+			if err == nil {
+				return v
+			}
 		}
 		if envName != "" {
 			return os.Getenv(envName)
@@ -432,21 +475,21 @@ func globalFlagsFromProfileStore(s cloudstic.ProfileStore) *globalFlags {
 		s3Region = "us-east-1"
 	}
 	g.s3Region = &s3Region
-	s3Profile := resolve(s.S3Profile, s.S3ProfileEnv)
+	s3Profile := resolve(s.S3Profile, "", s.S3ProfileEnv)
 	g.s3Profile = &s3Profile
-	s3AccessKey := resolve(s.S3AccessKey, s.S3AccessKeyEnv)
+	s3AccessKey := resolve(s.S3AccessKey, s.S3AccessKeySecret, s.S3AccessKeyEnv)
 	g.s3AccessKey = &s3AccessKey
-	s3SecretKey := resolve(s.S3SecretKey, s.S3SecretKeyEnv)
+	s3SecretKey := resolve(s.S3SecretKey, s.S3SecretKeySecret, s.S3SecretKeyEnv)
 	g.s3SecretKey = &s3SecretKey
-	storeSFTPPassword := resolve(s.StoreSFTPPassword, s.StoreSFTPPasswordEnv)
+	storeSFTPPassword := resolve(s.StoreSFTPPassword, s.StoreSFTPPasswordSecret, s.StoreSFTPPasswordEnv)
 	g.storeSFTPPassword = &storeSFTPPassword
-	storeSFTPKey := resolve(s.StoreSFTPKey, s.StoreSFTPKeyEnv)
+	storeSFTPKey := resolve(s.StoreSFTPKey, s.StoreSFTPKeySecret, s.StoreSFTPKeyEnv)
 	g.storeSFTPKey = &storeSFTPKey
-	password := resolve("", s.PasswordEnv)
+	password := resolve("", s.PasswordSecret, s.PasswordEnv)
 	g.password = &password
-	encryptionKey := resolve("", s.EncryptionKeyEnv)
+	encryptionKey := resolve("", s.EncryptionKeySecret, s.EncryptionKeyEnv)
 	g.encryptionKey = &encryptionKey
-	recoveryKey := resolve("", s.RecoveryKeyEnv)
+	recoveryKey := resolve("", s.RecoveryKeySecret, s.RecoveryKeyEnv)
 	g.recoveryKey = &recoveryKey
 	kmsKeyARN := s.KMSKeyARN
 	g.kmsKeyARN = &kmsKeyARN
@@ -469,4 +512,12 @@ func globalFlagsFromProfileStore(s cloudstic.ProfileStore) *globalFlags {
 	g.profilesFile = &empty
 
 	return g
+}
+
+func envRef(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	return "env://" + name
 }

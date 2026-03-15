@@ -196,7 +196,7 @@ func TestRunStoreNew_WithEncryption(t *testing.T) {
 	}
 	got := out.String()
 	for _, want := range []string{
-		"password_env: MY_BACKUP_PASSWORD",
+		"password_secret: env://MY_BACKUP_PASSWORD",
 		"kms_key_arn: arn:aws:kms:us-east-1:123456:key/abcd",
 		"kms_region: us-east-1",
 	} {
@@ -211,8 +211,8 @@ func TestRunStoreNew_WithEncryption(t *testing.T) {
 		t.Fatalf("read profiles: %v", err)
 	}
 	yaml := string(raw)
-	if !strings.Contains(yaml, "password_env: MY_BACKUP_PASSWORD") {
-		t.Fatalf("expected password_env in YAML:\n%s", yaml)
+	if !strings.Contains(yaml, "password_secret: env://MY_BACKUP_PASSWORD") {
+		t.Fatalf("expected password_secret in YAML:\n%s", yaml)
 	}
 	if !strings.Contains(yaml, "kms_key_arn:") {
 		t.Fatalf("expected kms_key_arn in YAML:\n%s", yaml)
@@ -361,9 +361,9 @@ stores:
 	}
 	got := out.String()
 	for _, want := range []string{
-		"password_env: MY_PW",
-		"encryption_key_env: MY_EK",
-		"recovery_key_env: MY_RK",
+		"password_env (deprecated): MY_PW",
+		"encryption_key_env (deprecated): MY_EK",
+		"recovery_key_env (deprecated): MY_RK",
 		"kms_key_arn: arn:aws:kms:us-east-1:111:key/xyz",
 		"kms_region: us-west-2",
 		"kms_endpoint: https://kms.custom.endpoint",
@@ -397,8 +397,8 @@ stores:
 	}
 	got := out.String()
 	for _, want := range []string{
-		"store_sftp_password_env: SFTP_PW_ENV",
-		"store_sftp_key_env: SFTP_KEY_ENV",
+		"store_sftp_password_env (deprecated): SFTP_PW_ENV",
+		"store_sftp_key_env (deprecated): SFTP_KEY_ENV",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in show output:\n%s", want, got)
@@ -430,8 +430,8 @@ stores:
 	}
 	got := out.String()
 	for _, want := range []string{
-		"s3_access_key_env: AK_ENV",
-		"s3_secret_key_env: SK_ENV",
+		"s3_access_key_env (deprecated): AK_ENV",
+		"s3_secret_key_env (deprecated): SK_ENV",
 		"s3_profile_env: PROF_ENV",
 	} {
 		if !strings.Contains(got, want) {
@@ -468,8 +468,8 @@ func TestRunStoreNew_WithSFTPOptions(t *testing.T) {
 	}
 	got := out.String()
 	for _, want := range []string{
-		"store_sftp_password_env: SFTP_PW",
-		"store_sftp_key_env: SFTP_KEY",
+		"store_sftp_password_secret: env://SFTP_PW",
+		"store_sftp_key_secret: env://SFTP_KEY",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in show output:\n%s", want, got)
@@ -509,8 +509,8 @@ func TestRunStoreNew_WithAllS3Options(t *testing.T) {
 		"s3_region: eu-west-1",
 		"s3_endpoint: https://custom.endpoint",
 		"s3_profile: prod",
-		"s3_access_key_env: AK",
-		"s3_secret_key_env: SK",
+		"s3_access_key_secret: env://AK",
+		"s3_secret_key_secret: env://SK",
 		"s3_profile_env: PROFILE",
 	} {
 		if !strings.Contains(yaml, want) {

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/cloudstic/cli/internal/secretref"
 	"gopkg.in/yaml.v3"
 )
 
@@ -18,27 +19,41 @@ type ProfilesConfig struct {
 
 // ProfileStore defines reusable backend settings.
 type ProfileStore struct {
-	URI                  string `yaml:"uri"`
-	S3Endpoint           string `yaml:"s3_endpoint,omitempty"`
-	S3Region             string `yaml:"s3_region,omitempty"`
-	S3Profile            string `yaml:"s3_profile,omitempty"`
-	S3AccessKey          string `yaml:"s3_access_key,omitempty"`
-	S3SecretKey          string `yaml:"s3_secret_key,omitempty"`
-	S3AccessKeyEnv       string `yaml:"s3_access_key_env,omitempty"`
-	S3SecretKeyEnv       string `yaml:"s3_secret_key_env,omitempty"`
-	S3ProfileEnv         string `yaml:"s3_profile_env,omitempty"`
-	StoreSFTPPassword    string `yaml:"store_sftp_password,omitempty"`
-	StoreSFTPKey         string `yaml:"store_sftp_key,omitempty"`
+	URI         string `yaml:"uri"`
+	S3Endpoint  string `yaml:"s3_endpoint,omitempty"`
+	S3Region    string `yaml:"s3_region,omitempty"`
+	S3Profile   string `yaml:"s3_profile,omitempty"`
+	S3AccessKey string `yaml:"s3_access_key,omitempty"`
+	S3SecretKey string `yaml:"s3_secret_key,omitempty"`
+	// Legacy field: use S3AccessKeySecret (e.g. env://AWS_ACCESS_KEY_ID).
+	S3AccessKeyEnv string `yaml:"s3_access_key_env,omitempty"`
+	// Legacy field: use S3SecretKeySecret (e.g. env://AWS_SECRET_ACCESS_KEY).
+	S3SecretKeyEnv    string `yaml:"s3_secret_key_env,omitempty"`
+	S3ProfileEnv      string `yaml:"s3_profile_env,omitempty"`
+	StoreSFTPPassword string `yaml:"store_sftp_password,omitempty"`
+	StoreSFTPKey      string `yaml:"store_sftp_key,omitempty"`
+	// Legacy field: use StoreSFTPPasswordSecret (e.g. env://CLOUDSTIC_STORE_SFTP_PASSWORD).
 	StoreSFTPPasswordEnv string `yaml:"store_sftp_password_env,omitempty"`
-	StoreSFTPKeyEnv      string `yaml:"store_sftp_key_env,omitempty"`
+	// Legacy field: use StoreSFTPKeySecret (e.g. env://CLOUDSTIC_STORE_SFTP_KEY).
+	StoreSFTPKeyEnv string `yaml:"store_sftp_key_env,omitempty"`
 
 	// Encryption: env var indirection for secrets, direct values for non-secrets.
-	PasswordEnv      string `yaml:"password_env,omitempty"`
+	// Legacy field: use PasswordSecret (e.g. env://CLOUDSTIC_PASSWORD).
+	PasswordEnv string `yaml:"password_env,omitempty"`
+	// Legacy field: use EncryptionKeySecret (e.g. env://CLOUDSTIC_ENCRYPTION_KEY).
 	EncryptionKeyEnv string `yaml:"encryption_key_env,omitempty"`
-	RecoveryKeyEnv   string `yaml:"recovery_key_env,omitempty"`
-	KMSKeyARN        string `yaml:"kms_key_arn,omitempty"`
-	KMSRegion        string `yaml:"kms_region,omitempty"`
-	KMSEndpoint      string `yaml:"kms_endpoint,omitempty"`
+	// Legacy field: use RecoveryKeySecret (e.g. env://CLOUDSTIC_RECOVERY_KEY).
+	RecoveryKeyEnv          string `yaml:"recovery_key_env,omitempty"`
+	PasswordSecret          string `yaml:"password_secret,omitempty"`
+	EncryptionKeySecret     string `yaml:"encryption_key_secret,omitempty"`
+	RecoveryKeySecret       string `yaml:"recovery_key_secret,omitempty"`
+	S3AccessKeySecret       string `yaml:"s3_access_key_secret,omitempty"`
+	S3SecretKeySecret       string `yaml:"s3_secret_key_secret,omitempty"`
+	StoreSFTPPasswordSecret string `yaml:"store_sftp_password_secret,omitempty"`
+	StoreSFTPKeySecret      string `yaml:"store_sftp_key_secret,omitempty"`
+	KMSKeyARN               string `yaml:"kms_key_arn,omitempty"`
+	KMSRegion               string `yaml:"kms_region,omitempty"`
+	KMSEndpoint             string `yaml:"kms_endpoint,omitempty"`
 }
 
 // BackupProfile defines one backup job preset.
@@ -94,6 +109,43 @@ func normalizeProfilesConfig(cfg *ProfilesConfig) *ProfilesConfig {
 	return cfg
 }
 
+func validateProfilesConfig(cfg *ProfilesConfig) error {
+	for storeName, s := range cfg.Stores {
+		if err := validateSecretRef(storeName, "password_secret", s.PasswordSecret); err != nil {
+			return err
+		}
+		if err := validateSecretRef(storeName, "encryption_key_secret", s.EncryptionKeySecret); err != nil {
+			return err
+		}
+		if err := validateSecretRef(storeName, "recovery_key_secret", s.RecoveryKeySecret); err != nil {
+			return err
+		}
+		if err := validateSecretRef(storeName, "s3_access_key_secret", s.S3AccessKeySecret); err != nil {
+			return err
+		}
+		if err := validateSecretRef(storeName, "s3_secret_key_secret", s.S3SecretKeySecret); err != nil {
+			return err
+		}
+		if err := validateSecretRef(storeName, "store_sftp_password_secret", s.StoreSFTPPasswordSecret); err != nil {
+			return err
+		}
+		if err := validateSecretRef(storeName, "store_sftp_key_secret", s.StoreSFTPKeySecret); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateSecretRef(storeName, fieldName, ref string) error {
+	if ref == "" {
+		return nil
+	}
+	if _, err := secretref.Parse(ref); err != nil {
+		return fmt.Errorf("store %q field %q: %w", storeName, fieldName, err)
+	}
+	return nil
+}
+
 // LoadProfilesFile reads and parses a profiles YAML file.
 func LoadProfilesFile(path string) (*ProfilesConfig, error) {
 	raw, err := os.ReadFile(path)
@@ -104,12 +156,19 @@ func LoadProfilesFile(path string) (*ProfilesConfig, error) {
 	if err := yaml.Unmarshal(raw, &cfg); err != nil {
 		return nil, fmt.Errorf("parse profiles file %q: %w", path, err)
 	}
-	return normalizeProfilesConfig(&cfg), nil
+	norm := normalizeProfilesConfig(&cfg)
+	if err := validateProfilesConfig(norm); err != nil {
+		return nil, fmt.Errorf("validate profiles file %q: %w", path, err)
+	}
+	return norm, nil
 }
 
 // SaveProfilesFile writes a profiles YAML file atomically.
 func SaveProfilesFile(path string, cfg *ProfilesConfig) error {
 	cfg = normalizeProfilesConfig(cfg)
+	if err := validateProfilesConfig(cfg); err != nil {
+		return fmt.Errorf("validate profiles config: %w", err)
+	}
 
 	data, err := yaml.Marshal(cfg)
 	if err != nil {

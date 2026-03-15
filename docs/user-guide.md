@@ -99,6 +99,21 @@ winget upgrade Cloudstic.CLI
 winget uninstall Cloudstic.CLI
 ```
 
+### Curl installer (macOS / Linux)
+
+```bash
+# Install latest
+curl -fsSL https://raw.githubusercontent.com/Cloudstic/cli/main/scripts/install.sh | sh
+
+# Install a specific version
+curl -fsSL https://raw.githubusercontent.com/Cloudstic/cli/main/scripts/install.sh | sh -s -- --version v1.2.3
+
+# Install to a user-writable directory
+curl -fsSL https://raw.githubusercontent.com/Cloudstic/cli/main/scripts/install.sh | sh -s -- --install-dir "$HOME/.local/bin"
+```
+
+The installer verifies release checksums by default.
+
 ### Pre-built binaries
 
 Download the latest release for your platform from the [GitHub Releases](https://github.com/cloudstic/cli/releases) page. Binaries are available for macOS (Intel & Apple Silicon), Linux (amd64 & arm64), and Windows.

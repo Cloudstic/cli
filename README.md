@@ -37,6 +37,9 @@ Google Drive and OneDrive work out of the box. On first run, Cloudstic opens you
 brew install cloudstic/tap/cloudstic   # macOS / Linux
 winget install Cloudstic.CLI           # Windows
 go install github.com/cloudstic/cli/cmd/cloudstic@latest  # with Go
+
+# Curl installer (macOS / Linux)
+curl -fsSL https://raw.githubusercontent.com/Cloudstic/cli/main/scripts/install.sh | sh
 ```
 
 Or download a binary from [Releases](https://github.com/cloudstic/cli/releases). See the [User Guide](docs/user-guide.md#installation) for all options.

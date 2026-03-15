@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	cloudstic "github.com/cloudstic/cli"
-	"github.com/cloudstic/cli/internal/secretref"
 )
 
 var validRefName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
@@ -313,7 +312,11 @@ func (r *runner) runStoreNew() int {
 // the store config has already been saved.
 func (r *runner) checkOrInitStore(cfg *cloudstic.ProfilesConfig, storeName, profilesFile string) {
 	s := cfg.Stores[storeName]
-	g := globalFlagsFromProfileStore(s)
+	g, err := globalFlagsFromProfileStore(s)
+	if err != nil {
+		_, _ = fmt.Fprintf(r.errOut, "Could not resolve store credentials: %v\n", err)
+		return
+	}
 	raw, err := g.initObjectStore()
 	if err != nil {
 		_, _ = fmt.Fprintf(r.errOut, "Could not connect to store: %v\n", err)
@@ -447,23 +450,7 @@ func (r *runner) promptEncryptionConfig(cfg *cloudstic.ProfilesConfig, storeName
 
 // globalFlagsFromProfileStore builds a globalFlags populated from a ProfileStore,
 // resolving env var indirections for secrets.
-func globalFlagsFromProfileStore(s cloudstic.ProfileStore) *globalFlags {
-	resolver := secretref.NewDefaultResolver()
-	resolve := func(direct, secretRef, envName string) string {
-		if direct != "" {
-			return direct
-		}
-		if secretRef != "" {
-			v, err := resolver.Resolve(context.Background(), secretRef)
-			if err == nil {
-				return v
-			}
-		}
-		if envName != "" {
-			return os.Getenv(envName)
-		}
-		return ""
-	}
+func globalFlagsFromProfileStore(s cloudstic.ProfileStore) (*globalFlags, error) {
 
 	g := &globalFlags{}
 	store := s.URI
@@ -475,21 +462,45 @@ func globalFlagsFromProfileStore(s cloudstic.ProfileStore) *globalFlags {
 		s3Region = "us-east-1"
 	}
 	g.s3Region = &s3Region
-	s3Profile := resolve(s.S3Profile, "", s.S3ProfileEnv)
+	s3Profile, err := resolveProfileStoreValue("s3_profile", s.S3Profile, "", s.S3ProfileEnv)
+	if err != nil {
+		return nil, err
+	}
 	g.s3Profile = &s3Profile
-	s3AccessKey := resolve(s.S3AccessKey, s.S3AccessKeySecret, s.S3AccessKeyEnv)
+	s3AccessKey, err := resolveProfileStoreValue("s3_access_key", s.S3AccessKey, s.S3AccessKeySecret, s.S3AccessKeyEnv)
+	if err != nil {
+		return nil, err
+	}
 	g.s3AccessKey = &s3AccessKey
-	s3SecretKey := resolve(s.S3SecretKey, s.S3SecretKeySecret, s.S3SecretKeyEnv)
+	s3SecretKey, err := resolveProfileStoreValue("s3_secret_key", s.S3SecretKey, s.S3SecretKeySecret, s.S3SecretKeyEnv)
+	if err != nil {
+		return nil, err
+	}
 	g.s3SecretKey = &s3SecretKey
-	storeSFTPPassword := resolve(s.StoreSFTPPassword, s.StoreSFTPPasswordSecret, s.StoreSFTPPasswordEnv)
+	storeSFTPPassword, err := resolveProfileStoreValue("store_sftp_password", s.StoreSFTPPassword, s.StoreSFTPPasswordSecret, s.StoreSFTPPasswordEnv)
+	if err != nil {
+		return nil, err
+	}
 	g.storeSFTPPassword = &storeSFTPPassword
-	storeSFTPKey := resolve(s.StoreSFTPKey, s.StoreSFTPKeySecret, s.StoreSFTPKeyEnv)
+	storeSFTPKey, err := resolveProfileStoreValue("store_sftp_key", s.StoreSFTPKey, s.StoreSFTPKeySecret, s.StoreSFTPKeyEnv)
+	if err != nil {
+		return nil, err
+	}
 	g.storeSFTPKey = &storeSFTPKey
-	password := resolve("", s.PasswordSecret, s.PasswordEnv)
+	password, err := resolveProfileStoreValue("password", "", s.PasswordSecret, s.PasswordEnv)
+	if err != nil {
+		return nil, err
+	}
 	g.password = &password
-	encryptionKey := resolve("", s.EncryptionKeySecret, s.EncryptionKeyEnv)
+	encryptionKey, err := resolveProfileStoreValue("encryption_key", "", s.EncryptionKeySecret, s.EncryptionKeyEnv)
+	if err != nil {
+		return nil, err
+	}
 	g.encryptionKey = &encryptionKey
-	recoveryKey := resolve("", s.RecoveryKeySecret, s.RecoveryKeyEnv)
+	recoveryKey, err := resolveProfileStoreValue("recovery_key", "", s.RecoveryKeySecret, s.RecoveryKeyEnv)
+	if err != nil {
+		return nil, err
+	}
 	g.recoveryKey = &recoveryKey
 	kmsKeyARN := s.KMSKeyARN
 	g.kmsKeyARN = &kmsKeyARN
@@ -511,7 +522,7 @@ func globalFlagsFromProfileStore(s cloudstic.ProfileStore) *globalFlags {
 	g.profile = &empty
 	g.profilesFile = &empty
 
-	return g
+	return g, nil
 }
 
 func envRef(name string) string {

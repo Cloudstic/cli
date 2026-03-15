@@ -381,8 +381,11 @@ func (r *runner) runProfileNew() int {
 		}
 	}
 
+	createdStore := false
+
 	if a.store != "" {
 		cfg.Stores[a.storeRef] = cloudstic.ProfileStore{URI: a.store}
+		createdStore = true
 	} else if a.storeRef != "" {
 		if _, ok := cfg.Stores[a.storeRef]; !ok {
 			return r.fail("Unknown store reference %q (use -store to create it)", a.storeRef)
@@ -390,14 +393,22 @@ func (r *runner) runProfileNew() int {
 	} else {
 		// No store provided — prompt or fail.
 		if r.canPrompt() {
-			ref, code := r.promptStoreSelection(cfg)
+			ref, created, code := r.promptStoreSelection(cfg)
 			if code != 0 {
 				return code
 			}
 			a.storeRef = ref
+			createdStore = created
 		}
 		if a.storeRef == "" {
 			return r.fail("-store-ref is required (or provide -store to create a new one)")
+		}
+	}
+
+	if createdStore && r.canPrompt() {
+		s := cfg.Stores[a.storeRef]
+		if !storeHasExplicitEncryption(s) {
+			r.promptEncryptionConfig(cfg, a.storeRef, a.profilesFile)
 		}
 	}
 
@@ -470,8 +481,9 @@ func (r *runner) runProfileNew() int {
 }
 
 // promptStoreSelection prompts the user to pick an existing store or create a
-// new one. It returns the chosen store-ref name and exit code 0 on success.
-func (r *runner) promptStoreSelection(cfg *cloudstic.ProfilesConfig) (string, int) {
+// new one. It returns the chosen store-ref name, whether a new store was
+// created, and exit code 0 on success.
+func (r *runner) promptStoreSelection(cfg *cloudstic.ProfilesConfig) (string, bool, int) {
 	options := []string{"Create new store"}
 	for name := range cfg.Stores {
 		options = append(options, name)
@@ -480,30 +492,30 @@ func (r *runner) promptStoreSelection(cfg *cloudstic.ProfilesConfig) (string, in
 
 	picked, err := r.promptSelect("Select a store", options)
 	if err != nil {
-		return "", r.fail("Failed to select store: %v", err)
+		return "", false, r.fail("Failed to select store: %v", err)
 	}
 
 	if picked != "Create new store" {
-		return picked, 0
+		return picked, false, 0
 	}
 
 	// Create a new store inline.
 	refName, err := r.promptLine("Store reference name", "default-store")
 	if err != nil {
-		return "", r.fail("Failed to read store reference name: %v", err)
+		return "", false, r.fail("Failed to read store reference name: %v", err)
 	}
 	if refName == "" {
-		return "", r.fail("Store reference name is required")
+		return "", false, r.fail("Store reference name is required")
 	}
 	uri, err := r.promptLine("Store URI (e.g. s3://bucket/path, local:/path, sftp://host/path)", "")
 	if err != nil {
-		return "", r.fail("Failed to read store URI: %v", err)
+		return "", false, r.fail("Failed to read store URI: %v", err)
 	}
 	if uri == "" {
-		return "", r.fail("Store URI is required")
+		return "", false, r.fail("Store URI is required")
 	}
 	cfg.Stores[refName] = cloudstic.ProfileStore{URI: uri}
-	return refName, 0
+	return refName, true, 0
 }
 
 // promptAuthSelection prompts the user to pick an existing auth entry (filtered

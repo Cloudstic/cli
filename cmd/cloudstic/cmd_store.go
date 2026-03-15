@@ -292,11 +292,7 @@ func (r *runner) runStoreNew() int {
 	if r.canPrompt() {
 		// If no encryption flags were provided, prompt for encryption config.
 		s := cfg.Stores[*name]
-		hasExplicitEncryption := s.PasswordEnv != "" || s.EncryptionKeyEnv != "" ||
-			s.RecoveryKeyEnv != "" || s.PasswordSecret != "" ||
-			s.EncryptionKeySecret != "" || s.RecoveryKeySecret != "" ||
-			s.KMSKeyARN != ""
-		if !hasExplicitEncryption {
+		if !storeHasExplicitEncryption(s) {
 			r.promptEncryptionConfig(cfg, *name, *profilesFile)
 		}
 		r.checkOrInitStore(cfg, *name, *profilesFile)
@@ -339,10 +335,7 @@ func (r *runner) checkOrInitStore(cfg *cloudstic.ProfilesConfig, storeName, prof
 	}
 
 	// Check if the store has encryption config.
-	hasEncryption := s.PasswordEnv != "" || s.EncryptionKeyEnv != "" ||
-		s.RecoveryKeyEnv != "" || s.PasswordSecret != "" ||
-		s.EncryptionKeySecret != "" || s.RecoveryKeySecret != "" ||
-		s.KMSKeyARN != ""
+	hasEncryption := storeHasExplicitEncryption(s)
 
 	if !hasEncryption {
 		// No encryption configured — init without encryption.
@@ -531,4 +524,11 @@ func envRef(name string) string {
 		return ""
 	}
 	return "env://" + name
+}
+
+func storeHasExplicitEncryption(s cloudstic.ProfileStore) bool {
+	return s.PasswordEnv != "" || s.EncryptionKeyEnv != "" ||
+		s.RecoveryKeyEnv != "" || s.PasswordSecret != "" ||
+		s.EncryptionKeySecret != "" || s.RecoveryKeySecret != "" ||
+		s.KMSKeyARN != ""
 }

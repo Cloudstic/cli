@@ -15,7 +15,6 @@ import (
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/engine"
 	"github.com/cloudstic/cli/internal/paths"
-	"github.com/cloudstic/cli/internal/secretref"
 	"github.com/cloudstic/cli/pkg/source"
 )
 
@@ -321,7 +320,9 @@ func mergeProfileBackupArgs(base *backupArgs, profileName string, p cloudstic.Ba
 		if !ok {
 			return nil, fmt.Errorf("profile %q references unknown store %q", profileName, p.Store)
 		}
-		applyProfileStoreToGlobalFlags(g, storeCfg, a.flagsSet)
+		if err := applyProfileStoreToGlobalFlags(g, storeCfg, a.flagsSet); err != nil {
+			return nil, fmt.Errorf("profile %q store %q: %w", profileName, p.Store, err)
+		}
 	}
 
 	if p.AuthRef != "" {
@@ -438,23 +439,7 @@ func cloneGlobalFlags(src *globalFlags) *globalFlags {
 	return &clone
 }
 
-func applyProfileStoreToGlobalFlags(g *globalFlags, s cloudstic.ProfileStore, flagsSet map[string]bool) {
-	resolver := secretref.NewDefaultResolver()
-	resolve := func(direct, secretRef, envName string) string {
-		if direct != "" {
-			return direct
-		}
-		if secretRef != "" {
-			if v, err := resolver.Resolve(context.Background(), secretRef); err == nil {
-				return v
-			}
-		}
-		if envName != "" {
-			return os.Getenv(envName)
-		}
-		return ""
-	}
-
+func applyProfileStoreToGlobalFlags(g *globalFlags, s cloudstic.ProfileStore, flagsSet map[string]bool) error {
 	if !flagsSet["store"] && s.URI != "" {
 		*g.store = s.URI
 	}
@@ -465,28 +450,60 @@ func applyProfileStoreToGlobalFlags(g *globalFlags, s cloudstic.ProfileStore, fl
 		*g.s3Region = s.S3Region
 	}
 	if !flagsSet["s3-profile"] {
-		*g.s3Profile = resolve(s.S3Profile, "", s.S3ProfileEnv)
+		v, err := resolveProfileStoreValue("s3_profile", s.S3Profile, "", s.S3ProfileEnv)
+		if err != nil {
+			return err
+		}
+		*g.s3Profile = v
 	}
 	if !flagsSet["s3-access-key"] {
-		*g.s3AccessKey = resolve(s.S3AccessKey, s.S3AccessKeySecret, s.S3AccessKeyEnv)
+		v, err := resolveProfileStoreValue("s3_access_key", s.S3AccessKey, s.S3AccessKeySecret, s.S3AccessKeyEnv)
+		if err != nil {
+			return err
+		}
+		*g.s3AccessKey = v
 	}
 	if !flagsSet["s3-secret-key"] {
-		*g.s3SecretKey = resolve(s.S3SecretKey, s.S3SecretKeySecret, s.S3SecretKeyEnv)
+		v, err := resolveProfileStoreValue("s3_secret_key", s.S3SecretKey, s.S3SecretKeySecret, s.S3SecretKeyEnv)
+		if err != nil {
+			return err
+		}
+		*g.s3SecretKey = v
 	}
 	if !flagsSet["store-sftp-password"] {
-		*g.storeSFTPPassword = resolve(s.StoreSFTPPassword, s.StoreSFTPPasswordSecret, s.StoreSFTPPasswordEnv)
+		v, err := resolveProfileStoreValue("store_sftp_password", s.StoreSFTPPassword, s.StoreSFTPPasswordSecret, s.StoreSFTPPasswordEnv)
+		if err != nil {
+			return err
+		}
+		*g.storeSFTPPassword = v
 	}
 	if !flagsSet["store-sftp-key"] {
-		*g.storeSFTPKey = resolve(s.StoreSFTPKey, s.StoreSFTPKeySecret, s.StoreSFTPKeyEnv)
+		v, err := resolveProfileStoreValue("store_sftp_key", s.StoreSFTPKey, s.StoreSFTPKeySecret, s.StoreSFTPKeyEnv)
+		if err != nil {
+			return err
+		}
+		*g.storeSFTPKey = v
 	}
 	if !flagsSet["password"] {
-		*g.password = resolve("", s.PasswordSecret, s.PasswordEnv)
+		v, err := resolveProfileStoreValue("password", "", s.PasswordSecret, s.PasswordEnv)
+		if err != nil {
+			return err
+		}
+		*g.password = v
 	}
 	if !flagsSet["encryption-key"] {
-		*g.encryptionKey = resolve("", s.EncryptionKeySecret, s.EncryptionKeyEnv)
+		v, err := resolveProfileStoreValue("encryption_key", "", s.EncryptionKeySecret, s.EncryptionKeyEnv)
+		if err != nil {
+			return err
+		}
+		*g.encryptionKey = v
 	}
 	if !flagsSet["recovery-key"] {
-		*g.recoveryKey = resolve("", s.RecoveryKeySecret, s.RecoveryKeyEnv)
+		v, err := resolveProfileStoreValue("recovery_key", "", s.RecoveryKeySecret, s.RecoveryKeyEnv)
+		if err != nil {
+			return err
+		}
+		*g.recoveryKey = v
 	}
 	if !flagsSet["kms-key-arn"] && s.KMSKeyARN != "" {
 		*g.kmsKeyARN = s.KMSKeyARN
@@ -497,6 +514,7 @@ func applyProfileStoreToGlobalFlags(g *globalFlags, s cloudstic.ProfileStore, fl
 	if !flagsSet["kms-endpoint"] && s.KMSEndpoint != "" {
 		*g.kmsEndpoint = s.KMSEndpoint
 	}
+	return nil
 }
 
 func (r *runner) parseExcludePatterns(a *backupArgs) ([]string, error) {

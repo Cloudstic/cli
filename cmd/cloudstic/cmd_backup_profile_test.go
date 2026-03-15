@@ -4,6 +4,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	cloudstic "github.com/cloudstic/cli"
@@ -291,23 +292,25 @@ func TestApplyProfileStoreToGlobalFlags_AllFields(t *testing.T) {
 	g := newTestGlobalFlags()
 	flagsSet := map[string]bool{}
 	s := cloudstic.ProfileStore{
-		URI:              "s3:my-bucket/prefix",
-		S3Region:         "us-east-1",
-		S3Endpoint:       "https://s3.example.com",
-		S3Profile:        "prod",
-		S3AccessKey:      "AKIATEST",
-		S3SecretKey:      "SECRETTEST",
+		URI:               "s3:my-bucket/prefix",
+		S3Region:          "us-east-1",
+		S3Endpoint:        "https://s3.example.com",
+		S3Profile:         "prod",
+		S3AccessKey:       "AKIATEST",
+		S3SecretKey:       "SECRETTEST",
 		StoreSFTPPassword: "sftp-pw",
-		StoreSFTPKey:     "/tmp/sftp.key",
-		PasswordEnv:      "TEST_PASSWORD",
-		EncryptionKeyEnv: "TEST_ENC_KEY",
-		RecoveryKeyEnv:   "TEST_REC_KEY",
-		KMSKeyARN:        "arn:aws:kms:us-east-1:123:key/abc",
-		KMSRegion:        "us-east-1",
-		KMSEndpoint:      "https://kms.example.com",
+		StoreSFTPKey:      "/tmp/sftp.key",
+		PasswordEnv:       "TEST_PASSWORD",
+		EncryptionKeyEnv:  "TEST_ENC_KEY",
+		RecoveryKeyEnv:    "TEST_REC_KEY",
+		KMSKeyARN:         "arn:aws:kms:us-east-1:123:key/abc",
+		KMSRegion:         "us-east-1",
+		KMSEndpoint:       "https://kms.example.com",
 	}
 
-	applyProfileStoreToGlobalFlags(g, s, flagsSet)
+	if err := applyProfileStoreToGlobalFlags(g, s, flagsSet); err != nil {
+		t.Fatalf("applyProfileStoreToGlobalFlags: %v", err)
+	}
 
 	if *g.store != "s3:my-bucket/prefix" {
 		t.Fatalf("store=%q want s3:my-bucket/prefix", *g.store)
@@ -359,10 +362,47 @@ func TestApplyProfileStoreToGlobalFlags_CLIFlagOverrides(t *testing.T) {
 	flagsSet := map[string]bool{"store": true}
 	s := cloudstic.ProfileStore{URI: "s3:profile-bucket"}
 
-	applyProfileStoreToGlobalFlags(g, s, flagsSet)
+	if err := applyProfileStoreToGlobalFlags(g, s, flagsSet); err != nil {
+		t.Fatalf("applyProfileStoreToGlobalFlags: %v", err)
+	}
 
 	if *g.store != "local:/cli-store" {
 		t.Fatalf("store=%q want local:/cli-store", *g.store)
+	}
+}
+
+func TestApplyProfileStoreToGlobalFlags_SecretPrecedenceOverLegacyEnv(t *testing.T) {
+	t.Setenv("LEGACY_PW", "legacy")
+	t.Setenv("SECRET_PW", "from-secret-ref")
+
+	g := newTestGlobalFlags()
+	flagsSet := map[string]bool{}
+	s := cloudstic.ProfileStore{
+		PasswordSecret: "env://SECRET_PW",
+		PasswordEnv:    "LEGACY_PW",
+	}
+
+	if err := applyProfileStoreToGlobalFlags(g, s, flagsSet); err != nil {
+		t.Fatalf("applyProfileStoreToGlobalFlags: %v", err)
+	}
+	if *g.password != "from-secret-ref" {
+		t.Fatalf("password=%q want from-secret-ref", *g.password)
+	}
+}
+
+func TestApplyProfileStoreToGlobalFlags_InvalidSecretRef(t *testing.T) {
+	g := newTestGlobalFlags()
+	flagsSet := map[string]bool{}
+	s := cloudstic.ProfileStore{
+		PasswordSecret: "env:/invalid-format",
+	}
+
+	err := applyProfileStoreToGlobalFlags(g, s, flagsSet)
+	if err == nil {
+		t.Fatal("expected error for invalid secret ref")
+	}
+	if !strings.Contains(err.Error(), "password") {
+		t.Fatalf("expected field context in error, got: %v", err)
 	}
 }
 

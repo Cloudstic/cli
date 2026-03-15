@@ -110,7 +110,9 @@ func (g *globalFlags) applyProfileStoreOverrides() error {
 	} {
 		flagsSet[name] = cliFlagProvided(name)
 	}
-	applyProfileStoreToGlobalFlags(g, s, flagsSet)
+	if err := applyProfileStoreToGlobalFlags(g, s, flagsSet); err != nil {
+		return fmt.Errorf("profile %q store %q: %w", *g.profile, p.Store, err)
+	}
 	return nil
 }
 

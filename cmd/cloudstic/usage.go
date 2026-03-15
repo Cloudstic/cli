@@ -275,9 +275,10 @@ func printUsage() {
 
 	t.Command("restore", "[snapshot_id]")
 	t.Flags([][2]string{
-		{"-output <path>", "Output ZIP file path (default: ./restore.zip)"},
+		{"-output <path>", "Output path (ZIP file for -format zip, directory for -format dir)"},
+		{"-format <zip|dir>", "Restore format (default: auto from -output)"},
 		{"-path <path>", "Restore only the given file or subtree (e.g. Documents/report.pdf or Documents/)"},
-		{"-dry-run", "Show what would be restored without writing the archive"},
+		{"-dry-run", "Show what would be restored without writing output"},
 	})
 	t.Blank()
 
@@ -354,6 +355,7 @@ func printUsage() {
 		"cloudstic list",
 		"cloudstic restore",
 		"cloudstic restore abc123 -output ./my-backup.zip",
+		"cloudstic restore abc123 -format dir -output ./restored",
 		"cloudstic restore abc123 -path Documents/report.pdf",
 		"cloudstic restore abc123 -path Documents/",
 		"cloudstic backup -source local:./documents -dry-run",

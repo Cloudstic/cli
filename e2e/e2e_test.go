@@ -247,6 +247,32 @@ func TestCLI_EndToEnd_Matrix(t *testing.T) {
 					}
 				}
 
+				// 8.1 Restore Latest directly to filesystem directory
+				dirOut := filepath.Join(restoreDir, "restore-dir")
+				restoreDirArgs := append([]string{"restore"}, baseEncArgs...)
+				restoreDirArgs = append(restoreDirArgs, "-format", "dir", "-output", dirOut)
+				run(t, bin, restoreDirArgs...)
+
+				for _, tc := range []struct {
+					path    string
+					content string
+				}{
+					{"file1.txt", "hello world"},
+					{"file2.txt", "new file"},
+					{"secret.txt", "updated classified data"},
+					{"subdir/nested.txt", "nested content"},
+				} {
+					contentPath := filepath.Join(dirOut, filepath.FromSlash(tc.path))
+					b, err := os.ReadFile(contentPath)
+					if err != nil {
+						t.Errorf("Direct restore missing %s: %v", tc.path, err)
+						continue
+					}
+					if got := string(b); got != tc.content {
+						t.Errorf("Direct restore content mismatch for %s: got %q, want %q", tc.path, got, tc.content)
+					}
+				}
+
 				// 8a. Partial Restore — single file
 				partialFilePath := filepath.Join(restoreDir, "partial_file.zip")
 				partialFileArgs := append([]string{"restore"}, baseEncArgs...)
@@ -272,6 +298,23 @@ func TestCLI_EndToEnd_Matrix(t *testing.T) {
 				// Verify root-level files are NOT in the zip.
 				assertZipMissing(t, partialSubtreePath, "file1.txt")
 				assertZipMissing(t, partialSubtreePath, "file2.txt")
+
+				// 8c. Partial Restore (dir format) — single file
+				partialDirOut := filepath.Join(restoreDir, "partial-dir")
+				partialDirArgs := append([]string{"restore"}, baseEncArgs...)
+				partialDirArgs = append(partialDirArgs, "-format", "dir", "-output", partialDirOut, "-path", "file1.txt")
+				run(t, bin, partialDirArgs...)
+
+				b, err := os.ReadFile(filepath.Join(partialDirOut, "file1.txt"))
+				if err != nil {
+					t.Fatalf("partial dir restore missing file1.txt: %v", err)
+				}
+				if got := string(b); got != "hello world" {
+					t.Errorf("Partial dir restore mismatch: got %q, want %q", got, "hello world")
+				}
+				if _, err := os.Stat(filepath.Join(partialDirOut, "file2.txt")); err == nil {
+					t.Errorf("file2.txt should not be present in partial dir restore")
+				}
 
 				// 9. Forget & Prune
 				forgetArgs := append([]string{"forget", "--keep-last", "1", "--prune"}, baseEncArgs...)

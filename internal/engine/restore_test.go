@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/cloudstic/cli/internal/core"
@@ -125,7 +127,7 @@ func TestRestoreManager_Run(t *testing.T) {
 	rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())
 
 	var buf bytes.Buffer
-	result, err := rsMgr.Run(context.Background(), &buf, "")
+	result, err := rsMgr.Run(context.Background(), NewZipRestoreWriter(&buf), "")
 	if err != nil {
 		t.Fatalf("Restore failed: %v", err)
 	}
@@ -175,7 +177,7 @@ func TestRestoreManager_PathFilter_SingleFile(t *testing.T) {
 	rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())
 
 	var buf bytes.Buffer
-	result, err := rsMgr.Run(context.Background(), &buf, "", WithRestorePath("subdir/nested.txt"))
+	result, err := rsMgr.Run(context.Background(), NewZipRestoreWriter(&buf), "", WithRestorePath("subdir/nested.txt"))
 	if err != nil {
 		t.Fatalf("Restore failed: %v", err)
 	}
@@ -206,12 +208,116 @@ func TestRestoreManager_PathFilter_SingleFile(t *testing.T) {
 	}
 }
 
+func TestRestoreManager_RunToDir(t *testing.T) {
+	dest := setupBackupForRestore(t)
+	rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())
+
+	outDir := filepath.Join(t.TempDir(), "restored")
+	writer, err := NewFSRestoreWriter(outDir)
+	if err != nil {
+		t.Fatalf("NewFSRestoreWriter failed: %v", err)
+	}
+	result, err := rsMgr.Run(context.Background(), writer, "")
+	if err != nil {
+		t.Fatalf("RunToDir failed: %v", err)
+	}
+	if result.FilesWritten < 3 {
+		t.Fatalf("expected at least 3 files, got %d", result.FilesWritten)
+	}
+
+	b, err := os.ReadFile(filepath.Join(outDir, "restore_me.txt"))
+	if err != nil {
+		t.Fatalf("read restore_me.txt: %v", err)
+	}
+	if string(b) != "restore content" {
+		t.Fatalf("restore_me.txt content=%q", string(b))
+	}
+
+	b, err = os.ReadFile(filepath.Join(outDir, "subdir", "nested.txt"))
+	if err != nil {
+		t.Fatalf("read subdir/nested.txt: %v", err)
+	}
+	if string(b) != "nested content" {
+		t.Fatalf("nested.txt content=%q", string(b))
+	}
+
+	if _, err := os.Stat(filepath.Join(outDir, "subdir", "deep")); err != nil {
+		t.Fatalf("expected deep directory: %v", err)
+	}
+}
+
+func TestRestoreManager_RunToDir_PathFilter(t *testing.T) {
+	dest := setupBackupForRestore(t)
+	rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())
+
+	outDir := filepath.Join(t.TempDir(), "restored")
+	writer, err := NewFSRestoreWriter(outDir)
+	if err != nil {
+		t.Fatalf("NewFSRestoreWriter failed: %v", err)
+	}
+	result, err := rsMgr.Run(context.Background(), writer, "", WithRestorePath("subdir/nested.txt"))
+	if err != nil {
+		t.Fatalf("RunToDir failed: %v", err)
+	}
+	if result.FilesWritten != 1 {
+		t.Fatalf("expected 1 file, got %d", result.FilesWritten)
+	}
+
+	if _, err := os.Stat(filepath.Join(outDir, "subdir", "nested.txt")); err != nil {
+		t.Fatalf("expected restored file: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "restore_me.txt")); err == nil {
+		t.Fatal("restore_me.txt should not be restored with path filter")
+	}
+}
+
+func TestRestoreManager_RunToDir_DryRun_NoWrites(t *testing.T) {
+	dest := setupBackupForRestore(t)
+	rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())
+
+	outDir := filepath.Join(t.TempDir(), "dry-run-out")
+	writer, err := NewFSRestoreWriter(outDir)
+	if err != nil {
+		t.Fatalf("NewFSRestoreWriter failed: %v", err)
+	}
+	result, err := rsMgr.Run(context.Background(), writer, "", WithRestoreDryRun())
+	if err != nil {
+		t.Fatalf("RunToDir dry-run failed: %v", err)
+	}
+	if !result.DryRun {
+		t.Fatal("expected dry-run result")
+	}
+	if _, err := os.Stat(outDir); err == nil {
+		t.Fatal("dry-run should not create output directory")
+	}
+}
+
+func TestSecureRestorePath(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "root")
+
+	got, err := secureRestorePath(root, "subdir/file.txt")
+	if err != nil {
+		t.Fatalf("secureRestorePath valid path: %v", err)
+	}
+	if got != filepath.Join(root, "subdir", "file.txt") {
+		t.Fatalf("path=%q", got)
+	}
+
+	got, err = secureRestorePath(root, "../../etc/passwd")
+	if err != nil {
+		t.Fatalf("secureRestorePath traversal normalization: %v", err)
+	}
+	if got != filepath.Join(root, "etc", "passwd") {
+		t.Fatalf("normalized traversal path=%q", got)
+	}
+}
+
 func TestRestoreManager_PathFilter_Subtree(t *testing.T) {
 	dest := setupBackupForRestore(t)
 	rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())
 
 	var buf bytes.Buffer
-	result, err := rsMgr.Run(context.Background(), &buf, "", WithRestorePath("subdir/"))
+	result, err := rsMgr.Run(context.Background(), NewZipRestoreWriter(&buf), "", WithRestorePath("subdir/"))
 	if err != nil {
 		t.Fatalf("Restore failed: %v", err)
 	}
@@ -247,7 +353,7 @@ func TestRestoreManager_PathFilter_NoMatch(t *testing.T) {
 	rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())
 
 	var buf bytes.Buffer
-	result, err := rsMgr.Run(context.Background(), &buf, "", WithRestorePath("nonexistent.txt"))
+	result, err := rsMgr.Run(context.Background(), NewZipRestoreWriter(&buf), "", WithRestorePath("nonexistent.txt"))
 	if err != nil {
 		t.Fatalf("Restore failed: %v", err)
 	}
@@ -268,7 +374,7 @@ func TestRestoreManager_PathFilter_DeepSingleFile(t *testing.T) {
 	rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())
 
 	var buf bytes.Buffer
-	result, err := rsMgr.Run(context.Background(), &buf, "", WithRestorePath("subdir/deep/file.txt"))
+	result, err := rsMgr.Run(context.Background(), NewZipRestoreWriter(&buf), "", WithRestorePath("subdir/deep/file.txt"))
 	if err != nil {
 		t.Fatalf("Restore failed: %v", err)
 	}
@@ -381,7 +487,7 @@ func TestRestoreManager_PathFilter_CloudLikeIDs(t *testing.T) {
 	t.Run("subtree filter", func(t *testing.T) {
 		rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())
 		var buf bytes.Buffer
-		result, err := rsMgr.Run(context.Background(), &buf, "", WithRestorePath("My Documents/"))
+		result, err := rsMgr.Run(context.Background(), NewZipRestoreWriter(&buf), "", WithRestorePath("My Documents/"))
 		if err != nil {
 			t.Fatalf("Restore failed: %v", err)
 		}
@@ -405,7 +511,7 @@ func TestRestoreManager_PathFilter_CloudLikeIDs(t *testing.T) {
 	t.Run("single deep file", func(t *testing.T) {
 		rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())
 		var buf bytes.Buffer
-		result, err := rsMgr.Run(context.Background(), &buf, "", WithRestorePath("My Documents/Photos/img.jpg"))
+		result, err := rsMgr.Run(context.Background(), NewZipRestoreWriter(&buf), "", WithRestorePath("My Documents/Photos/img.jpg"))
 		if err != nil {
 			t.Fatalf("Restore failed: %v", err)
 		}
@@ -437,7 +543,7 @@ func TestRestoreManager_PathFilter_DryRun(t *testing.T) {
 	rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())
 
 	var buf bytes.Buffer
-	result, err := rsMgr.Run(context.Background(), &buf, "", WithRestorePath("subdir/"), WithRestoreDryRun())
+	result, err := rsMgr.Run(context.Background(), NewZipRestoreWriter(&buf), "", WithRestorePath("subdir/"), WithRestoreDryRun())
 	if err != nil {
 		t.Fatalf("Restore dry run failed: %v", err)
 	}

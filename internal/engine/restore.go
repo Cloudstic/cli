@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -23,6 +25,14 @@ type restoreConfig struct {
 	dryRun     bool
 	verbose    bool
 	pathFilter string
+}
+
+type restorePlan struct {
+	cfg         restoreConfig
+	sorted      []core.FileMeta
+	byID        map[string]core.FileMeta
+	snapshotRef string
+	root        string
 }
 
 // WithRestoreDryRun resolves the snapshot and reports what would be restored without writing the archive.
@@ -53,6 +63,14 @@ type RestoreResult struct {
 	DryRun       bool
 }
 
+// RestoreWriter is the output abstraction for restore formats.
+type RestoreWriter interface {
+	MkdirAll(path string, meta core.FileMeta) error
+	WriteFile(path string, meta core.FileMeta, writeContent func(io.Writer) error) error
+	BytesWritten() int64
+	Close() error
+}
+
 // RestoreManager recreates a snapshot's file tree as a ZIP archive.
 type RestoreManager struct {
 	store     store.ObjectStore
@@ -69,69 +87,41 @@ func NewRestoreManager(s store.ObjectStore, reporter ui.Reporter) *RestoreManage
 	}
 }
 
-// Run writes the snapshot's file tree as a ZIP archive to w.
+// Run restores the snapshot's file tree to the provided writer format.
 // snapshotRef can be "", "latest", a bare hash, or "snapshot/<hash>".
-func (rm *RestoreManager) Run(ctx context.Context, w io.Writer, snapshotRef string, opts ...RestoreOption) (*RestoreResult, error) {
-	var cfg restoreConfig
-	for _, opt := range opts {
-		opt(&cfg)
-	}
-
+func (rm *RestoreManager) Run(ctx context.Context, writer RestoreWriter, snapshotRef string, opts ...RestoreOption) (*RestoreResult, error) {
 	lock, err := AcquireSharedLock(ctx, rm.store, "restore")
 	if err != nil {
 		return nil, err
 	}
 	defer lock.Release()
 
-	rm.metaCache = make(map[string]core.FileMeta)
-
-	snap, snapshotRef, err := rm.resolveSnapshot(ctx, snapshotRef)
+	plan, err := rm.prepareRestore(ctx, snapshotRef, opts...)
 	if err != nil {
 		return nil, err
 	}
 
-	byID, err := rm.collectMetadata(snap.Root)
-	if err != nil {
-		return nil, err
+	if plan.cfg.dryRun {
+		return rm.dryRunRestore(plan.sorted, plan.byID, plan.snapshotRef, plan.root), nil
 	}
+	return rm.runWithWriter(ctx, plan, writer)
+}
 
-	sorted := topoSort(byID)
-
-	if cfg.pathFilter != "" {
-		sorted = filterByPath(sorted, byID, cfg.pathFilter)
-	}
-
-	if cfg.dryRun {
-		return rm.dryRunRestore(sorted, byID, snapshotRef, snap.Root), nil
-	}
-
-	cw := &countingWriter{w: w}
-	zw := zip.NewWriter(cw)
-	defer func() { _ = zw.Close() }()
-
-	result := &RestoreResult{
-		SnapshotRef: snapshotRef,
-		Root:        snap.Root,
-	}
-
-	phase := rm.reporter.StartPhase("Restoring", int64(len(sorted)), false)
-
-	for _, meta := range sorted {
-		p := buildZipPath(meta, byID)
+func (rm *RestoreManager) runWithWriter(ctx context.Context, plan restorePlan, writer RestoreWriter) (*RestoreResult, error) {
+	result := &RestoreResult{SnapshotRef: plan.snapshotRef, Root: plan.root}
+	phase := rm.reporter.StartPhase("Restoring", int64(len(plan.sorted)), false)
+	for _, meta := range plan.sorted {
+		rel := buildRestorePath(meta, plan.byID)
 
 		if meta.Type == core.FileTypeFolder {
-			header := &zip.FileHeader{Name: p + "/", Method: zip.Store}
-			if meta.Mtime > 0 {
-				header.Modified = time.Unix(meta.Mtime, 0)
-			}
-			if _, err := zw.CreateHeader(header); err != nil {
-				phase.Log(fmt.Sprintf("Failed: %s: %v", p, err))
+			if err := writer.MkdirAll(rel, meta); err != nil {
+				phase.Log(fmt.Sprintf("Failed: %s: %v", rel, err))
 				result.Errors++
 				phase.Increment(1)
 				continue
 			}
-			if cfg.verbose {
-				phase.Log(fmt.Sprintf("Dir: %s", p))
+			if plan.cfg.verbose {
+				phase.Log(fmt.Sprintf("Dir: %s", rel))
 			}
 			result.DirsWritten++
 			phase.Increment(1)
@@ -143,39 +133,175 @@ func (rm *RestoreManager) Run(ctx context.Context, w io.Writer, snapshotRef stri
 			continue
 		}
 
-		header := &zip.FileHeader{Name: p, Method: zip.Deflate}
-		if meta.Mtime > 0 {
-			header.Modified = time.Unix(meta.Mtime, 0)
-		}
-		fw, err := zw.CreateHeader(header)
-		if err != nil {
-			phase.Log(fmt.Sprintf("Failed: %s: %v", p, err))
+		if err := writer.WriteFile(rel, meta, func(out io.Writer) error {
+			return rm.writeFileContent(ctx, out, meta)
+		}); err != nil {
+			phase.Log(fmt.Sprintf("Failed: %s: %v", rel, err))
 			result.Errors++
 			phase.Increment(1)
 			continue
 		}
 
-		if err := rm.writeFileContent(ctx, fw, meta); err != nil {
-			phase.Log(fmt.Sprintf("Failed: %s: %v", p, err))
-			result.Errors++
-			phase.Increment(1)
-			continue
-		}
-		if cfg.verbose {
-			phase.Log(fmt.Sprintf("File: %s (%d bytes)", p, meta.Size))
+		if plan.cfg.verbose {
+			phase.Log(fmt.Sprintf("File: %s (%d bytes)", rel, meta.Size))
 		}
 		result.FilesWritten++
 		phase.Increment(1)
 	}
 
 	phase.Done()
-
-	if err := zw.Close(); err != nil {
-		return nil, fmt.Errorf("finalize zip: %w", err)
+	if err := writer.Close(); err != nil {
+		return nil, err
 	}
-	result.BytesWritten = cw.count
+	result.BytesWritten = writer.BytesWritten()
 	return result, nil
 }
+
+func (rm *RestoreManager) prepareRestore(ctx context.Context, snapshotRef string, opts ...RestoreOption) (restorePlan, error) {
+	var cfg restoreConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	rm.metaCache = make(map[string]core.FileMeta)
+
+	snap, resolvedRef, err := rm.resolveSnapshot(ctx, snapshotRef)
+	if err != nil {
+		return restorePlan{}, err
+	}
+
+	byID, err := rm.collectMetadata(snap.Root)
+	if err != nil {
+		return restorePlan{}, err
+	}
+
+	sorted := topoSort(byID)
+	if cfg.pathFilter != "" {
+		sorted = filterByPath(sorted, byID, cfg.pathFilter)
+	}
+
+	return restorePlan{
+		cfg:         cfg,
+		sorted:      sorted,
+		byID:        byID,
+		snapshotRef: resolvedRef,
+		root:        snap.Root,
+	}, nil
+}
+
+func secureRestorePath(root, rel string) (string, error) {
+	cleanRel := strings.TrimPrefix(path.Clean("/"+rel), "/")
+	if cleanRel == "." || cleanRel == "" {
+		return filepath.Clean(root), nil
+	}
+	joined := filepath.Join(root, filepath.FromSlash(cleanRel))
+	rootClean := filepath.Clean(root)
+	joinedClean := filepath.Clean(joined)
+	if joinedClean != rootClean && !strings.HasPrefix(joinedClean, rootClean+string(filepath.Separator)) {
+		return "", fmt.Errorf("invalid restore path: %q", rel)
+	}
+	return joinedClean, nil
+}
+
+type zipRestoreWriter struct {
+	cw *countingWriter
+	zw *zip.Writer
+}
+
+func NewZipRestoreWriter(w io.Writer) RestoreWriter {
+	cw := &countingWriter{w: w}
+	return &zipRestoreWriter{cw: cw, zw: zip.NewWriter(cw)}
+}
+
+func (w *zipRestoreWriter) MkdirAll(path string, meta core.FileMeta) error {
+	header := &zip.FileHeader{Name: path + "/", Method: zip.Store}
+	if meta.Mtime > 0 {
+		header.Modified = time.Unix(meta.Mtime, 0)
+	}
+	_, err := w.zw.CreateHeader(header)
+	return err
+}
+
+func (w *zipRestoreWriter) WriteFile(path string, meta core.FileMeta, writeContent func(io.Writer) error) error {
+	header := &zip.FileHeader{Name: path, Method: zip.Deflate}
+	if meta.Mtime > 0 {
+		header.Modified = time.Unix(meta.Mtime, 0)
+	}
+	fw, err := w.zw.CreateHeader(header)
+	if err != nil {
+		return err
+	}
+	return writeContent(fw)
+}
+
+func (w *zipRestoreWriter) BytesWritten() int64 { return w.cw.count }
+
+func (w *zipRestoreWriter) Close() error {
+	if err := w.zw.Close(); err != nil {
+		return fmt.Errorf("finalize zip: %w", err)
+	}
+	return nil
+}
+
+type fsRestoreWriter struct {
+	root  string
+	bytes int64
+}
+
+func NewFSRestoreWriter(root string) (RestoreWriter, error) {
+	return &fsRestoreWriter{root: root}, nil
+}
+
+func (w *fsRestoreWriter) MkdirAll(relPath string, meta core.FileMeta) error {
+	fullPath, err := secureRestorePath(w.root, relPath)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(fullPath, 0o755); err != nil {
+		return err
+	}
+	if meta.Mtime > 0 {
+		mt := time.Unix(meta.Mtime, 0)
+		_ = os.Chtimes(fullPath, mt, mt)
+	}
+	return nil
+}
+
+func (w *fsRestoreWriter) WriteFile(relPath string, meta core.FileMeta, writeContent func(io.Writer) error) error {
+	fullPath, err := secureRestorePath(w.root, relPath)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		return err
+	}
+
+	f, err := os.OpenFile(fullPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+
+	cw := &countingWriter{w: f}
+	writeErr := writeContent(cw)
+	closeErr := f.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+
+	w.bytes += cw.count
+	if meta.Mtime > 0 {
+		mt := time.Unix(meta.Mtime, 0)
+		_ = os.Chtimes(fullPath, mt, mt)
+	}
+	return nil
+}
+
+func (w *fsRestoreWriter) BytesWritten() int64 { return w.bytes }
+
+func (w *fsRestoreWriter) Close() error { return nil }
 
 func (rm *RestoreManager) dryRunRestore(sorted []core.FileMeta, byID map[string]core.FileMeta, snapshotRef, root string) *RestoreResult {
 	result := &RestoreResult{
@@ -228,7 +354,7 @@ func (rm *RestoreManager) writeFileContent(ctx context.Context, w io.Writer, met
 	return nil
 }
 
-func buildZipPath(meta core.FileMeta, byID map[string]core.FileMeta) string {
+func buildRestorePath(meta core.FileMeta, byID map[string]core.FileMeta) string {
 	// Fast path: use stored Paths when available (new snapshots).
 	if len(meta.Paths) > 0 {
 		return meta.Paths[0]
@@ -252,7 +378,7 @@ func buildZipPath(meta core.FileMeta, byID map[string]core.FileMeta) string {
 	return path.Join(parts...)
 }
 
-// filterByPath returns only the entries whose zip path matches the given filter.
+// filterByPath returns only the entries whose restore path matches the given filter.
 // If the filter ends with "/", it matches all entries under that subtree.
 // Otherwise it matches only the entry with the exact path.
 // Ancestor directories of matched entries are always included.
@@ -263,16 +389,16 @@ func filterByPath(sorted []core.FileMeta, byID map[string]core.FileMeta, pathFil
 		prefix = strings.TrimSuffix(pathFilter, "/")
 	}
 
-	// Build a set of zip paths for each entry.
-	zipPaths := make(map[string]string, len(sorted))
+	// Build a set of restore paths for each entry.
+	restorePaths := make(map[string]string, len(sorted))
 	for _, meta := range sorted {
-		zipPaths[meta.FileID] = buildZipPath(meta, byID)
+		restorePaths[meta.FileID] = buildRestorePath(meta, byID)
 	}
 
 	// Determine which entries are matched.
 	matched := make(map[string]bool)
 	for _, meta := range sorted {
-		p := zipPaths[meta.FileID]
+		p := restorePaths[meta.FileID]
 		if isSubtree {
 			// Match the directory itself and anything under it.
 			if p == prefix || strings.HasPrefix(p, prefix+"/") {

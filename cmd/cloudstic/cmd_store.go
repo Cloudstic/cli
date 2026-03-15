@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -17,8 +16,6 @@ import (
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/store"
 )
-
-var validRefName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 
 func (r *runner) runStore() int {
 	if len(os.Args) < 3 {
@@ -55,11 +52,7 @@ func (r *runner) runStoreList() int {
 		return r.fail("Failed to load profiles: %v", err)
 	}
 
-	names := make([]string, 0, len(cfg.Stores))
-	for name := range cfg.Stores {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	names := sortedKeys(cfg.Stores)
 
 	_, _ = fmt.Fprintf(r.out, "%d stores\n", len(names))
 	for _, name := range names {
@@ -94,11 +87,7 @@ func (r *runner) runStoreShow() int {
 		if !r.canPrompt() {
 			return r.fail("usage: cloudstic store show [-profiles-file <path>] <name>")
 		}
-		names := make([]string, 0, len(cfg.Stores))
-		for n := range cfg.Stores {
-			names = append(names, n)
-		}
-		sort.Strings(names)
+		names := sortedKeys(cfg.Stores)
 		picked, pickErr := r.promptSelect("Select store", names)
 		if pickErr != nil {
 			return r.fail("Failed to select store: %v", pickErr)
@@ -226,6 +215,34 @@ func (r *runner) runStoreNew() int {
 
 	flagsSet := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { flagsSet[f.Name] = true })
+	storeFlags := storeNewFlagPtrs{
+		uri:                 uri,
+		s3Region:            s3Region,
+		s3Profile:           s3Profile,
+		s3Endpoint:          s3Endpoint,
+		s3AccessKey:         s3AccessKey,
+		s3SecretKey:         s3SecretKey,
+		s3AccessKeySecret:   s3AccessKeySecret,
+		s3SecretKeySecret:   s3SecretKeySecret,
+		s3AccessKeyEnv:      s3AccessKeyEnv,
+		s3SecretKeyEnv:      s3SecretKeyEnv,
+		s3ProfileEnv:        s3ProfileEnv,
+		sftpPassword:        sftpPassword,
+		sftpKey:             sftpKey,
+		sftpPasswordSecret:  sftpPasswordSecret,
+		sftpKeySecret:       sftpKeySecret,
+		sftpPasswordEnv:     sftpPasswordEnv,
+		sftpKeyEnv:          sftpKeyEnv,
+		passwordSecret:      passwordSecret,
+		encryptionKeySecret: encryptionKeySecret,
+		recoveryKeySecret:   recoveryKeySecret,
+		passwordEnv:         passwordEnv,
+		encryptionKeyEnv:    encryptionKeyEnv,
+		recoveryKeyEnv:      recoveryKeyEnv,
+		kmsKeyARN:           kmsKeyARN,
+		kmsRegion:           kmsRegion,
+		kmsEndpoint:         kmsEndpoint,
+	}
 
 	if *name == "" {
 		if r.canPrompt() {
@@ -239,83 +256,21 @@ func (r *runner) runStoreNew() int {
 			return r.fail("-name is required")
 		}
 	}
-	if !validRefName.MatchString(*name) {
-		return r.fail("invalid store name %q: must start with a letter or digit and contain only letters, digits, dots, hyphens, or underscores", *name)
+	if err := validateRefName("store", *name); err != nil {
+		return r.fail("%v", err)
 	}
-	cfg, err := cloudstic.LoadProfilesFile(*profilesFile)
+	cfg, err := loadProfilesOrInit(*profilesFile)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			cfg = &cloudstic.ProfilesConfig{Version: 1}
-		} else {
-			return r.fail("Failed to load profiles: %v", err)
-		}
+		return r.fail("Failed to load profiles: %v", err)
 	}
-	if cfg.Stores == nil {
-		cfg.Stores = map[string]cloudstic.ProfileStore{}
-	}
+	ensureProfilesMaps(cfg)
 
 	_, existedBefore := cfg.Stores[*name]
 	forcePromptURI := false
 	forcePromptEncryption := false
 	askKeepEncryption := false
 	if existing, ok := cfg.Stores[*name]; ok {
-		if !flagsSet["uri"] && existing.URI != "" {
-			*uri = existing.URI
-		}
-		if !flagsSet["s3-region"] && existing.S3Region != "" {
-			*s3Region = existing.S3Region
-		}
-		if !flagsSet["s3-profile"] && existing.S3Profile != "" {
-			*s3Profile = existing.S3Profile
-		}
-		if !flagsSet["s3-endpoint"] && existing.S3Endpoint != "" {
-			*s3Endpoint = existing.S3Endpoint
-		}
-		if !flagsSet["s3-access-key"] && existing.S3AccessKey != "" {
-			*s3AccessKey = existing.S3AccessKey
-		}
-		if !flagsSet["s3-secret-key"] && existing.S3SecretKey != "" {
-			*s3SecretKey = existing.S3SecretKey
-		}
-		if !flagsSet["s3-access-key-secret"] && !flagsSet["s3-access-key-env"] {
-			*s3AccessKeySecret = firstNonEmpty(existing.S3AccessKeySecret, envRef(existing.S3AccessKeyEnv))
-		}
-		if !flagsSet["s3-secret-key-secret"] && !flagsSet["s3-secret-key-env"] {
-			*s3SecretKeySecret = firstNonEmpty(existing.S3SecretKeySecret, envRef(existing.S3SecretKeyEnv))
-		}
-		if !flagsSet["s3-profile-env"] && existing.S3ProfileEnv != "" {
-			*s3ProfileEnv = existing.S3ProfileEnv
-		}
-		if !flagsSet["store-sftp-password"] && existing.StoreSFTPPassword != "" {
-			*sftpPassword = existing.StoreSFTPPassword
-		}
-		if !flagsSet["store-sftp-key"] && existing.StoreSFTPKey != "" {
-			*sftpKey = existing.StoreSFTPKey
-		}
-		if !flagsSet["store-sftp-password-secret"] && !flagsSet["store-sftp-password-env"] {
-			*sftpPasswordSecret = firstNonEmpty(existing.StoreSFTPPasswordSecret, envRef(existing.StoreSFTPPasswordEnv))
-		}
-		if !flagsSet["store-sftp-key-secret"] && !flagsSet["store-sftp-key-env"] {
-			*sftpKeySecret = firstNonEmpty(existing.StoreSFTPKeySecret, envRef(existing.StoreSFTPKeyEnv))
-		}
-		if !flagsSet["password-secret"] && !flagsSet["password-env"] {
-			*passwordSecret = firstNonEmpty(existing.PasswordSecret, envRef(existing.PasswordEnv))
-		}
-		if !flagsSet["encryption-key-secret"] && !flagsSet["encryption-key-env"] {
-			*encryptionKeySecret = firstNonEmpty(existing.EncryptionKeySecret, envRef(existing.EncryptionKeyEnv))
-		}
-		if !flagsSet["recovery-key-secret"] && !flagsSet["recovery-key-env"] {
-			*recoveryKeySecret = firstNonEmpty(existing.RecoveryKeySecret, envRef(existing.RecoveryKeyEnv))
-		}
-		if !flagsSet["kms-key-arn"] && existing.KMSKeyARN != "" {
-			*kmsKeyARN = existing.KMSKeyARN
-		}
-		if !flagsSet["kms-region"] && existing.KMSRegion != "" {
-			*kmsRegion = existing.KMSRegion
-		}
-		if !flagsSet["kms-endpoint"] && existing.KMSEndpoint != "" {
-			*kmsEndpoint = existing.KMSEndpoint
-		}
+		applyExistingStoreDefaults(flagsSet, existing, storeFlags)
 		if promptURI, askKeep := existingStoreInteractivePlan(r.canPrompt(), hasStoreNewOverrideFlags(flagsSet), storeHasExplicitEncryption(existing)); promptURI {
 			forcePromptURI = true
 			askKeepEncryption = askKeep
@@ -340,34 +295,7 @@ func (r *runner) runStoreNew() int {
 		return r.fail("%v", err)
 	}
 
-	cfg.Stores[*name] = cloudstic.ProfileStore{
-		URI:                     *uri,
-		S3Region:                *s3Region,
-		S3Profile:               *s3Profile,
-		S3Endpoint:              *s3Endpoint,
-		S3AccessKey:             *s3AccessKey,
-		S3SecretKey:             *s3SecretKey,
-		S3AccessKeyEnv:          "",
-		S3SecretKeyEnv:          "",
-		S3AccessKeySecret:       firstNonEmpty(*s3AccessKeySecret, envRef(*s3AccessKeyEnv)),
-		S3SecretKeySecret:       firstNonEmpty(*s3SecretKeySecret, envRef(*s3SecretKeyEnv)),
-		S3ProfileEnv:            *s3ProfileEnv,
-		StoreSFTPPassword:       *sftpPassword,
-		StoreSFTPKey:            *sftpKey,
-		StoreSFTPPasswordEnv:    "",
-		StoreSFTPKeyEnv:         "",
-		StoreSFTPPasswordSecret: firstNonEmpty(*sftpPasswordSecret, envRef(*sftpPasswordEnv)),
-		StoreSFTPKeySecret:      firstNonEmpty(*sftpKeySecret, envRef(*sftpKeyEnv)),
-		PasswordEnv:             "",
-		EncryptionKeyEnv:        "",
-		RecoveryKeyEnv:          "",
-		PasswordSecret:          firstNonEmpty(*passwordSecret, envRef(*passwordEnv)),
-		EncryptionKeySecret:     firstNonEmpty(*encryptionKeySecret, envRef(*encryptionKeyEnv)),
-		RecoveryKeySecret:       firstNonEmpty(*recoveryKeySecret, envRef(*recoveryKeyEnv)),
-		KMSKeyARN:               *kmsKeyARN,
-		KMSRegion:               *kmsRegion,
-		KMSEndpoint:             *kmsEndpoint,
-	}
+	cfg.Stores[*name] = buildProfileStoreFromFlags(storeFlags)
 
 	if err := cloudstic.SaveProfilesFile(*profilesFile, cfg); err != nil {
 		return r.fail("Failed to save profiles: %v", err)
@@ -425,11 +353,7 @@ func (r *runner) runStoreVerify() int {
 		if !r.canPrompt() {
 			return r.fail("usage: cloudstic store verify [-profiles-file <path>] <name>")
 		}
-		names := make([]string, 0, len(cfg.Stores))
-		for n := range cfg.Stores {
-			names = append(names, n)
-		}
-		sort.Strings(names)
+		names := sortedKeys(cfg.Stores)
 		picked, pickErr := r.promptSelect("Select store", names)
 		if pickErr != nil {
 			return r.fail("Failed to select store: %v", pickErr)

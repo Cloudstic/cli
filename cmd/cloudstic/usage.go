@@ -26,6 +26,7 @@ func printUsage() {
 		{"store new", "Create or update a store entry in profiles.yaml"},
 		{"store list", "List configured stores"},
 		{"store show", "Show one store and its configuration"},
+		{"store verify", "Verify one store's credentials and connectivity"},
 		{"profile new", "Create or update a backup profile in profiles.yaml"},
 		{"profile list", "List stores, auth entries, and backup profiles"},
 		{"profile show", "Show one profile and resolved store/auth references"},
@@ -158,6 +159,11 @@ func printUsage() {
 	t.Note("  Show one store and its configuration.")
 	t.Blank()
 
+	t.Command("store verify", "<name>")
+	t.Flags([][2]string{{"-profiles-file <path>", ui.Env("Path to profiles YAML file", "CLOUDSTIC_PROFILES_FILE")}})
+	t.Note("  Resolve store credentials and verify connectivity.")
+	t.Blank()
+
 	t.Command("store new", "")
 	t.Flags([][2]string{
 		{"-name <name>", "Store reference name"},
@@ -167,13 +173,20 @@ func printUsage() {
 		{"-s3-endpoint <url>", "S3-compatible endpoint URL"},
 		{"-s3-access-key <key>", "S3 static access key"},
 		{"-s3-secret-key <key>", "S3 static secret key"},
+		{"-s3-access-key-secret <ref>", "Secret reference for S3 access key (env://, keychain://, wincred://, secret-service://)"},
+		{"-s3-secret-key-secret <ref>", "Secret reference for S3 secret key (env://, keychain://, wincred://, secret-service://)"},
 		{"-s3-access-key-env <var>", "Env var name for S3 access key"},
 		{"-s3-secret-key-env <var>", "Env var name for S3 secret key"},
 		{"-s3-profile-env <var>", "Env var name for AWS profile"},
 		{"-store-sftp-password <pass>", "SFTP password"},
 		{"-store-sftp-key <path>", "Path to SFTP private key"},
+		{"-store-sftp-password-secret <ref>", "Secret reference for SFTP password (env://, keychain://, wincred://, secret-service://)"},
+		{"-store-sftp-key-secret <ref>", "Secret reference for SFTP key path (env://, keychain://, wincred://, secret-service://)"},
 		{"-store-sftp-password-env <var>", "Env var name for SFTP password"},
 		{"-store-sftp-key-env <var>", "Env var name for SFTP key path"},
+		{"-password-secret <ref>", "Secret reference for repository password (env://, keychain://, wincred://, secret-service://)"},
+		{"-encryption-key-secret <ref>", "Secret reference for platform key (env://, keychain://, wincred://, secret-service://)"},
+		{"-recovery-key-secret <ref>", "Secret reference for recovery key mnemonic (env://, keychain://, wincred://, secret-service://)"},
 		{"-password-env <var>", "Env var name for repository password"},
 		{"-encryption-key-env <var>", "Env var name for platform key (hex)"},
 		{"-recovery-key-env <var>", "Env var name for recovery key mnemonic"},
@@ -183,7 +196,8 @@ func printUsage() {
 		{"-profiles-file <path>", ui.Env("Path to profiles YAML file", "CLOUDSTIC_PROFILES_FILE")},
 	})
 	t.Note("  Create or update a store entry in profiles.yaml.",
-		"  Encryption credentials use env var indirection: -password-env, -encryption-key-env.",
+		"  Prefer secret refs: -password-secret / -encryption-key-secret / -recovery-key-secret.",
+		"  Legacy -*-env flags are still supported and auto-converted to env:// refs on write.",
 		"  KMS settings are stored directly (ARN is not a secret).",
 	)
 	t.Blank()

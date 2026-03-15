@@ -1,17 +1,21 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 
 	"github.com/moby/term"
+	xterm "golang.org/x/term"
 )
 
 func (r *runner) canPrompt() bool {
-	return !r.noPrompt && term.IsTerminal(os.Stdin.Fd()) && term.IsTerminal(os.Stdout.Fd())
+	stdin := r.stdin
+	if stdin == nil {
+		stdin = os.Stdin
+	}
+	return !r.noPrompt && term.IsTerminal(stdin.Fd()) && term.IsTerminal(os.Stdout.Fd())
 }
 
 func (r *runner) promptLine(label, defaultValue string) (string, error) {
@@ -20,8 +24,7 @@ func (r *runner) promptLine(label, defaultValue string) (string, error) {
 	} else {
 		_, _ = fmt.Fprintf(r.errOut, "%s: ", label)
 	}
-	reader := bufio.NewReader(os.Stdin)
-	line, err := reader.ReadString('\n')
+	line, err := r.lineReader().ReadString('\n')
 	if err != nil {
 		return "", err
 	}
@@ -67,4 +70,18 @@ func (r *runner) promptSelect(label string, options []string) (string, error) {
 		}
 		return options[n-1], nil
 	}
+}
+
+func (r *runner) promptSecret(label string) (string, error) {
+	_, _ = fmt.Fprintf(r.errOut, "%s: ", label)
+	stdin := r.stdin
+	if stdin == nil {
+		stdin = os.Stdin
+	}
+	b, err := xterm.ReadPassword(int(stdin.Fd()))
+	_, _ = fmt.Fprintln(r.errOut)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(b)), nil
 }

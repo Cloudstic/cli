@@ -424,6 +424,13 @@ cloudstic profile new \
   -name work-drive \
   -source "gdrive-changes:/Team Folder" \
   -auth-ref google-work
+
+# Create a profile and define store encryption with secret refs
+cloudstic profile new \
+  -name photos \
+  -source local:~/Pictures \
+  -store-ref home-s3 \
+  -store s3:my-bucket/cloudstic
 ```
 
 **Important:** `profile new` requires explicit `-name` and `-source`.
@@ -440,6 +447,9 @@ Use `--no-prompt` to disable all interactive prompts. Missing required fields wi
 Use `-store-ref` by itself to reference an existing store entry.
 Add `-store` with `-store-ref` to create or update that store entry in the same
 command.
+
+When `profile new` creates a new store in interactive mode, it reuses the same
+encryption setup flow as `store new` (including secret reference prompts).
 
 Use `-auth-ref` to reference reusable cloud OAuth settings under top-level
 `auth:` in `profiles.yaml`.
@@ -481,6 +491,18 @@ Show details for a named store.
 cloudstic store show prod-s3
 ```
 
+#### store verify
+
+Resolve credentials for one named store and verify connectivity/unlock behavior.
+
+```bash
+cloudstic store verify prod-s3
+```
+
+`store verify` is a configuration/access check (credentials, backend connectivity,
+and encrypted repo unlock). It is different from `cloudstic check`, which verifies
+repository data integrity.
+
 #### store new
 
 Create or update a named store entry in `profiles.yaml`. Stores define storage backend, connection credentials, and encryption settings.
@@ -497,14 +519,39 @@ Store names must start with a letter or digit and contain only letters, digits, 
 In interactive mode, `store new` prompts for:
 
 - Missing required fields (name, URI)
+- For existing stores (when no override flags are passed):
+  - `Store URI` with current value prefilled
+  - `Keep current encryption settings? [Y/n]`
 - Encryption configuration (if no encryption flags provided):
-  1. Password — saves env var name (default: `CLOUDSTIC_PASSWORD`) as `password_env`
-  2. Platform key — saves env var name (default: `CLOUDSTIC_ENCRYPTION_KEY`) as `encryption_key_env`
+  1. Password — saves a secret reference (default: `env://CLOUDSTIC_PASSWORD`)
+  2. Platform key — saves a secret reference (default: `env://CLOUDSTIC_ENCRYPTION_KEY`)
   3. AWS KMS key — saves ARN and region
   4. No encryption
 - Store initialization (if the store is accessible but not yet initialized)
 
-Encryption settings use **env var indirection** — only the environment variable name is stored in `profiles.yaml`, never the secret itself.
+Prefer `*_secret` fields and secret refs in `profiles.yaml`. Supported schemes:
+
+- `env://VAR_NAME`
+- `keychain://service/account` (macOS)
+- `wincred://target` (Windows)
+- `secret-service://collection/item` (Linux)
+
+Legacy `*_env` fields are still read for backward compatibility, but new writes
+should use `*_secret`.
+
+Examples:
+
+```yaml
+stores:
+  prod:
+    uri: s3:my-bucket/cloudstic
+    s3_access_key_secret: env://AWS_ACCESS_KEY_ID
+    s3_secret_key_secret: keychain://cloudstic/prod/s3-secret-key
+    password_secret: keychain://cloudstic/prod/repo-password
+```
+
+If native secret backends are unavailable (for example headless sessions without
+desktop keyring/keychain access), use `env://...` references.
 
 Use `--no-prompt` to disable all interactive prompts (for scripts/CI).
 

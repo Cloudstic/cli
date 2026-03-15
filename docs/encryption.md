@@ -258,6 +258,37 @@ by both the CLI tool and the web application. Only key management differs:
 | Key management   | Platform-managed, stored in DB + B2    | User-managed password or platform key|
 | Key derivation   | Platform key wraps master key          | Argon2id(password) wraps master key  |
 | Key storage      | `encryption_key_slots` table + B2      | `keys/<type>-<label>` in B2          |
+
+## Profile Credential References
+
+Repository encryption key slots and profile credentials are separate concerns:
+
+- **Repository key slots** (`keys/...`) protect the repository master key and
+  control data-at-rest encryption/decryption.
+- **Profile credential references** (`*_secret` fields in `profiles.yaml`) are
+  runtime pointers to connection and unlock secrets used by CLI commands.
+
+`profiles.yaml` should store secret references, not secret values. Supported
+reference schemes:
+
+- `env://VAR_NAME`
+- `keychain://service/account` (macOS)
+- `wincred://target` (Windows)
+- `secret-service://collection/item` (Linux)
+
+Examples:
+
+```yaml
+stores:
+  prod:
+    uri: s3:my-bucket/cloudstic
+    s3_access_key_secret: env://AWS_ACCESS_KEY_ID
+    s3_secret_key_secret: keychain://cloudstic/prod/s3-secret-key
+    password_secret: keychain://cloudstic/prod/repo-password
+```
+
+Legacy `*_env` fields remain supported for backward compatibility, but new
+config should use `*_secret`.
 | User experience  | Transparent, no password needed        | Credential per operation             |
 | Key loss risk    | None (platform always has recovery)    | Recovery key mitigates password loss |
 

@@ -40,6 +40,9 @@ go install github.com/cloudstic/cli/cmd/cloudstic@latest  # with Go
 
 # Curl installer (macOS / Linux)
 curl -fsSL https://raw.githubusercontent.com/Cloudstic/cli/main/scripts/install.sh | sh
+
+# Install with shell completion
+curl -fsSL https://raw.githubusercontent.com/Cloudstic/cli/main/scripts/install.sh | sh -s -- --with-completion
 ```
 
 Or download a binary from [Releases](https://github.com/cloudstic/cli/releases). See the [User Guide](docs/user-guide.md#installation) for all options.

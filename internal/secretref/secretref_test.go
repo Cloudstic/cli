@@ -75,7 +75,7 @@ func TestResolver_Errors(t *testing.T) {
 		kind ErrorKind
 	}{
 		{name: "invalid syntax", ref: "bad-ref", kind: KindInvalidRef},
-		{name: "unsupported scheme", ref: "keychain://service/account", kind: KindBackendUnavailable},
+		{name: "unsupported scheme", ref: "wincred://service/account", kind: KindBackendUnavailable},
 		{name: "not found", ref: "env://MISSING", kind: KindNotFound},
 		{name: "invalid env name", ref: "env://bad-name", kind: KindInvalidRef},
 	}

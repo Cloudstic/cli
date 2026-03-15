@@ -101,7 +101,10 @@ func NewResolver(backends map[string]Backend) *Resolver {
 
 // NewDefaultResolver builds the baseline resolver with env:// support.
 func NewDefaultResolver() *Resolver {
-	return NewResolver(map[string]Backend{"env": NewEnvBackend(nil)})
+	return NewResolver(map[string]Backend{
+		"env":      NewEnvBackend(nil),
+		"keychain": NewKeychainBackend(),
+	})
 }
 
 // Resolve parses and resolves a secret reference.

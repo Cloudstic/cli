@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,8 @@ type runner struct {
 	errOut   io.Writer
 	client   cloudsticClient
 	noPrompt bool
+	stdin    *os.File
+	lineIn   *bufio.Reader
 }
 
 func newRunner() *runner {
@@ -18,7 +21,18 @@ func newRunner() *runner {
 		out:      os.Stdout,
 		errOut:   os.Stderr,
 		noPrompt: hasGlobalFlag("no-prompt"),
+		stdin:    os.Stdin,
 	}
+}
+
+func (r *runner) lineReader() *bufio.Reader {
+	if r.stdin == nil {
+		r.stdin = os.Stdin
+	}
+	if r.lineIn == nil {
+		r.lineIn = bufio.NewReader(r.stdin)
+	}
+	return r.lineIn
 }
 
 // hasGlobalFlag checks whether a boolean flag appears anywhere in os.Args.

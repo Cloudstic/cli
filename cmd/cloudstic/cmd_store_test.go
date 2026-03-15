@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	cloudstic "github.com/cloudstic/cli"
+	"github.com/cloudstic/cli/pkg/keychain"
 )
 
 func TestRunStoreNewAndListAndShow(t *testing.T) {
@@ -79,6 +83,57 @@ func TestRunStoreNew_RequiresNameAndURI(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "-uri is required") {
 		t.Fatalf("unexpected error: %s", errOut.String())
+	}
+}
+
+func TestRunStoreNew_ExistingStorePrefillsUnsetValues(t *testing.T) {
+	tmpDir := t.TempDir()
+	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
+
+	cfg := &cloudstic.ProfilesConfig{
+		Version: 1,
+		Stores: map[string]cloudstic.ProfileStore{
+			"prod": {
+				URI:            "s3:bucket/backups",
+				S3Region:       "us-east-1",
+				S3Profile:      "old-profile",
+				PasswordSecret: "env://OLD_PASSWORD",
+			},
+		},
+	}
+	if err := cloudstic.SaveProfilesFile(profilesPath, cfg); err != nil {
+		t.Fatalf("SaveProfilesFile: %v", err)
+	}
+
+	os.Args = []string{
+		"cloudstic", "store", "new",
+		"-profiles-file", profilesPath,
+		"-name", "prod",
+		"-s3-profile", "new-profile",
+	}
+	var out strings.Builder
+	var errOut strings.Builder
+	r := &runner{out: &out, errOut: &errOut}
+	if code := r.runStore(); code != 0 {
+		t.Fatalf("store new failed: %s", errOut.String())
+	}
+
+	updated, err := cloudstic.LoadProfilesFile(profilesPath)
+	if err != nil {
+		t.Fatalf("LoadProfilesFile: %v", err)
+	}
+	s := updated.Stores["prod"]
+	if s.URI != "s3:bucket/backups" {
+		t.Fatalf("uri=%q", s.URI)
+	}
+	if s.S3Region != "us-east-1" {
+		t.Fatalf("s3 region=%q", s.S3Region)
+	}
+	if s.S3Profile != "new-profile" {
+		t.Fatalf("s3 profile=%q", s.S3Profile)
+	}
+	if s.PasswordSecret != "env://OLD_PASSWORD" {
+		t.Fatalf("password secret=%q", s.PasswordSecret)
 	}
 }
 
@@ -250,10 +305,88 @@ func TestCheckOrInitStore_AlreadyInitialized(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	r.checkOrInitStore(cfg, "test", profilesPath)
+	if err := r.checkOrInitStore(cfg, "test", profilesPath, false, true, true); err != nil {
+		t.Fatalf("checkOrInitStore: %v", err)
+	}
 
 	if !strings.Contains(out.String(), "already initialized") {
 		t.Fatalf("expected 'already initialized' in output, got:\n%s", out.String())
+	}
+}
+
+func TestCheckOrInitStore_InitializedEncrypted_ValidCredentials(t *testing.T) {
+	tmpDir := t.TempDir()
+	storePath := filepath.Join(tmpDir, "store")
+
+	s := cloudstic.ProfileStore{URI: "local:" + storePath}
+	g, err := globalFlagsFromProfileStore(s)
+	if err != nil {
+		t.Fatalf("globalFlagsFromProfileStore: %v", err)
+	}
+	raw, err := g.initObjectStore()
+	if err != nil {
+		t.Fatalf("initObjectStore: %v", err)
+	}
+	_, err = cloudstic.InitRepo(t.Context(), raw, cloudstic.WithInitCredentials(keychain.Chain{keychain.WithPassword("correct-password")}))
+	if err != nil {
+		t.Fatalf("InitRepo: %v", err)
+	}
+
+	t.Setenv("VERIFY_STORE_PASSWORD", "correct-password")
+	cfg := &cloudstic.ProfilesConfig{Version: 1, Stores: map[string]cloudstic.ProfileStore{
+		"test": {
+			URI:            s.URI,
+			PasswordSecret: "env://VERIFY_STORE_PASSWORD",
+		},
+	}}
+
+	var out strings.Builder
+	var errOut strings.Builder
+	r := &runner{out: &out, errOut: &errOut}
+	if err := r.checkOrInitStore(cfg, "test", "profiles.yaml", false, true, true); err != nil {
+		t.Fatalf("checkOrInitStore: %v", err)
+	}
+	if !strings.Contains(out.String(), "Repository is encrypted; verifying configured credentials") {
+		t.Fatalf("missing verification message in output: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "Encryption credentials are valid") {
+		t.Fatalf("missing success message in output: %s", out.String())
+	}
+}
+
+func TestCheckOrInitStore_InitializedEncrypted_InvalidCredentials(t *testing.T) {
+	tmpDir := t.TempDir()
+	storePath := filepath.Join(tmpDir, "store")
+
+	s := cloudstic.ProfileStore{URI: "local:" + storePath}
+	g, err := globalFlagsFromProfileStore(s)
+	if err != nil {
+		t.Fatalf("globalFlagsFromProfileStore: %v", err)
+	}
+	raw, err := g.initObjectStore()
+	if err != nil {
+		t.Fatalf("initObjectStore: %v", err)
+	}
+	_, err = cloudstic.InitRepo(t.Context(), raw, cloudstic.WithInitCredentials(keychain.Chain{keychain.WithPassword("correct-password")}))
+	if err != nil {
+		t.Fatalf("InitRepo: %v", err)
+	}
+
+	t.Setenv("VERIFY_STORE_PASSWORD_BAD", "wrong-password")
+	cfg := &cloudstic.ProfilesConfig{Version: 1, Stores: map[string]cloudstic.ProfileStore{
+		"test": {
+			URI:            s.URI,
+			PasswordSecret: "env://VERIFY_STORE_PASSWORD_BAD",
+		},
+	}}
+
+	r := &runner{out: &strings.Builder{}, errOut: &strings.Builder{}}
+	err = r.checkOrInitStore(cfg, "test", "profiles.yaml", false, true, true)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "configured encryption credentials are invalid") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -557,6 +690,506 @@ func TestRunStoreNew_WithAllS3Options(t *testing.T) {
 			t.Fatalf("expected %q in YAML:\n%s", want, yaml)
 		}
 	}
+}
+
+func TestRunStoreNew_WithSecretRefFlags(t *testing.T) {
+	tmpDir := t.TempDir()
+	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
+
+	os.Args = []string{
+		"cloudstic", "store", "new",
+		"-profiles-file", profilesPath,
+		"-name", "secrets-store",
+		"-uri", "s3:bucket",
+		"-s3-access-key-secret", "env://AWS_ACCESS_KEY_ID",
+		"-s3-secret-key-secret", "keychain://cloudstic/prod/s3-secret",
+		"-password-secret", "keychain://cloudstic/prod/password",
+		"-encryption-key-secret", "wincred://cloudstic/prod/encryption-key",
+		"-recovery-key-secret", "secret-service://cloudstic/prod/recovery-key",
+		"-store-sftp-password-secret", "env://STORE_SFTP_PASSWORD",
+		"-store-sftp-key-secret", "env://STORE_SFTP_KEY",
+	}
+	var out strings.Builder
+	var errOut strings.Builder
+	r := &runner{out: &out, errOut: &errOut}
+	if code := r.runStore(); code != 0 {
+		t.Fatalf("store new failed: %s", errOut.String())
+	}
+
+	raw, err := os.ReadFile(profilesPath)
+	if err != nil {
+		t.Fatalf("read profiles: %v", err)
+	}
+	yaml := string(raw)
+	for _, want := range []string{
+		"s3_access_key_secret: env://AWS_ACCESS_KEY_ID",
+		"s3_secret_key_secret: keychain://cloudstic/prod/s3-secret",
+		"password_secret: keychain://cloudstic/prod/password",
+		"encryption_key_secret: wincred://cloudstic/prod/encryption-key",
+		"recovery_key_secret: secret-service://cloudstic/prod/recovery-key",
+		"store_sftp_password_secret: env://STORE_SFTP_PASSWORD",
+		"store_sftp_key_secret: env://STORE_SFTP_KEY",
+	} {
+		if !strings.Contains(yaml, want) {
+			t.Fatalf("expected %q in YAML:\n%s", want, yaml)
+		}
+	}
+}
+
+func TestPromptSecretReferenceWithFns_DarwinKeychain(t *testing.T) {
+	gotRef, err := promptSecretReferenceWithFns(
+		"darwin",
+		"prod-store",
+		"repository password",
+		"CLOUDSTIC_PASSWORD",
+		"password",
+		func(_ string, _ []string) (string, error) { return "macOS Keychain (keychain://)", nil },
+		func(label, def string) (string, error) { return def, nil },
+		func(_ string) (string, error) { return "super-secret", nil },
+		func(string) (string, bool) { return "", false },
+		func(context.Context, string, string) (bool, error) { return false, nil },
+		func(_ context.Context, service, account, value string) error {
+			if service != "cloudstic/store/prod-store" {
+				t.Fatalf("service=%q", service)
+			}
+			if account != "password" {
+				t.Fatalf("account=%q", account)
+			}
+			if value != "super-secret" {
+				t.Fatalf("value=%q", value)
+			}
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("promptSecretReferenceWithFns: %v", err)
+	}
+	if gotRef != "keychain://cloudstic/store/prod-store/password" {
+		t.Fatalf("ref=%q", gotRef)
+	}
+}
+
+func TestPromptSecretReferenceWithFns_EnvFallback(t *testing.T) {
+	gotRef, err := promptSecretReferenceWithFns(
+		"darwin",
+		"prod-store",
+		"repository password",
+		"CLOUDSTIC_PASSWORD",
+		"password",
+		func(_ string, _ []string) (string, error) { return "Environment variable (env://)", nil },
+		func(label, def string) (string, error) {
+			if label != "Env var name" {
+				t.Fatalf("unexpected label: %s", label)
+			}
+			return def, nil
+		},
+		func(_ string) (string, error) {
+			t.Fatal("promptSecret should not be called")
+			return "", nil
+		},
+		func(string) (string, bool) { return "", true },
+		func(context.Context, string, string) (bool, error) {
+			t.Fatal("nativeSecretExists should not be called")
+			return false, nil
+		},
+		func(context.Context, string, string, string) error {
+			t.Fatal("writeNativeSecret should not be called")
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("promptSecretReferenceWithFns: %v", err)
+	}
+	if gotRef != "env://CLOUDSTIC_PASSWORD" {
+		t.Fatalf("ref=%q", gotRef)
+	}
+}
+
+func TestPromptSecretReferenceWithFns_KeychainWriteError(t *testing.T) {
+	_, err := promptSecretReferenceWithFns(
+		"darwin",
+		"prod-store",
+		"repository password",
+		"CLOUDSTIC_PASSWORD",
+		"password",
+		func(_ string, _ []string) (string, error) { return "macOS Keychain (keychain://)", nil },
+		func(_ string, def string) (string, error) { return def, nil },
+		func(_ string) (string, error) { return "secret", nil },
+		func(string) (string, bool) { return "", false },
+		func(context.Context, string, string) (bool, error) { return false, nil },
+		func(context.Context, string, string, string) error { return errors.New("write failed") },
+	)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "write failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPromptSecretReferenceWithFns_EmptySecret(t *testing.T) {
+	_, err := promptSecretReferenceWithFns(
+		"darwin",
+		"prod-store",
+		"repository password",
+		"CLOUDSTIC_PASSWORD",
+		"password",
+		func(_ string, _ []string) (string, error) { return "macOS Keychain (keychain://)", nil },
+		func(_ string, def string) (string, error) { return def, nil },
+		func(_ string) (string, error) { return "", nil },
+		func(string) (string, bool) { return "", false },
+		func(context.Context, string, string) (bool, error) { return false, nil },
+		func(context.Context, string, string, string) error { return nil },
+	)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "cannot be empty") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPromptSecretReferenceWithFns_DarwinKeychainAdoptsExisting(t *testing.T) {
+	gotRef, err := promptSecretReferenceWithFns(
+		"darwin",
+		"prod-store",
+		"repository password",
+		"CLOUDSTIC_PASSWORD",
+		"password",
+		func(_ string, _ []string) (string, error) { return "macOS Keychain (keychain://)", nil },
+		func(_ string, def string) (string, error) { return def, nil },
+		func(_ string) (string, error) {
+			t.Fatal("promptSecret should not be called when key exists")
+			return "", nil
+		},
+		func(string) (string, bool) { return "", false },
+		func(_ context.Context, service, account string) (bool, error) {
+			if service != "cloudstic/store/prod-store" {
+				t.Fatalf("service=%q", service)
+			}
+			if account != "password" {
+				t.Fatalf("account=%q", account)
+			}
+			return true, nil
+		},
+		func(context.Context, string, string, string) error {
+			t.Fatal("writeNativeSecret should not be called when key exists")
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("promptSecretReferenceWithFns: %v", err)
+	}
+	if gotRef != "keychain://cloudstic/store/prod-store/password" {
+		t.Fatalf("ref=%q", gotRef)
+	}
+}
+
+func TestPromptSecretReferenceWithFns_DarwinEnvUnsetSwitchesToKeychain(t *testing.T) {
+	selectCall := 0
+	gotRef, err := promptSecretReferenceWithFns(
+		"darwin",
+		"prod-store",
+		"repository password",
+		"CLOUDSTIC_PASSWORD",
+		"password",
+		func(_ string, _ []string) (string, error) {
+			selectCall++
+			if selectCall == 1 {
+				return "Environment variable (env://)", nil
+			}
+			return "Store in macOS Keychain instead (keychain://)", nil
+		},
+		func(label, def string) (string, error) {
+			if label != "Env var name" {
+				t.Fatalf("unexpected prompt line label: %s", label)
+			}
+			return "UNSET_PASSWORD", nil
+		},
+		func(_ string) (string, error) { return "secret-value", nil },
+		func(string) (string, bool) { return "", false },
+		func(context.Context, string, string) (bool, error) { return false, nil },
+		func(context.Context, string, string, string) error { return nil },
+	)
+	if err != nil {
+		t.Fatalf("promptSecretReferenceWithFns: %v", err)
+	}
+	if gotRef != "keychain://cloudstic/store/prod-store/password" {
+		t.Fatalf("ref=%q", gotRef)
+	}
+}
+
+func TestCheckOrInitStore_MissingSecretAllowed(t *testing.T) {
+	cfg := &cloudstic.ProfilesConfig{Version: 1, Stores: map[string]cloudstic.ProfileStore{
+		"test": {
+			URI:            "local:/tmp/store",
+			PasswordSecret: "env://MISSING_STORE_PASSWORD",
+		},
+	}}
+	var out strings.Builder
+	var errOut strings.Builder
+	r := &runner{out: &out, errOut: &errOut}
+
+	if err := r.checkOrInitStore(cfg, "test", "profiles.yaml", true, true, true); err != nil {
+		t.Fatalf("checkOrInitStore: %v", err)
+	}
+	if !strings.Contains(errOut.String(), "cloudstic store verify test") {
+		t.Fatalf("expected follow-up hint in stderr, got: %s", errOut.String())
+	}
+}
+
+func TestCheckOrInitStore_MissingSecretAllowedSilent(t *testing.T) {
+	cfg := &cloudstic.ProfilesConfig{Version: 1, Stores: map[string]cloudstic.ProfileStore{
+		"test": {
+			URI:            "local:/tmp/store",
+			PasswordSecret: "env://MISSING_STORE_PASSWORD",
+		},
+	}}
+	var out strings.Builder
+	var errOut strings.Builder
+	r := &runner{out: &out, errOut: &errOut}
+
+	if err := r.checkOrInitStore(cfg, "test", "profiles.yaml", true, false, true); err != nil {
+		t.Fatalf("checkOrInitStore: %v", err)
+	}
+	if errOut.String() != "" {
+		t.Fatalf("expected silent skip for missing secrets, got: %s", errOut.String())
+	}
+}
+
+func TestRunStoreVerify_MissingSecretFails(t *testing.T) {
+	tmpDir := t.TempDir()
+	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
+	cfg := &cloudstic.ProfilesConfig{Version: 1, Stores: map[string]cloudstic.ProfileStore{
+		"test": {
+			URI:            "local:/tmp/store",
+			PasswordSecret: "env://MISSING_VERIFY_PASSWORD",
+		},
+	}}
+	if err := cloudstic.SaveProfilesFile(profilesPath, cfg); err != nil {
+		t.Fatalf("SaveProfilesFile: %v", err)
+	}
+
+	os.Args = []string{"cloudstic", "store", "verify", "-profiles-file", profilesPath, "test"}
+	var out strings.Builder
+	var errOut strings.Builder
+	r := &runner{out: &out, errOut: &errOut}
+	if code := r.runStore(); code == 0 {
+		t.Fatal("expected non-zero exit code")
+	}
+	if !strings.Contains(errOut.String(), "could not resolve store credentials") {
+		t.Fatalf("unexpected stderr: %s", errOut.String())
+	}
+}
+
+func TestStoreHasExplicitEncryption(t *testing.T) {
+	if storeHasExplicitEncryption(cloudstic.ProfileStore{}) {
+		t.Fatal("expected false for empty store")
+	}
+	if !storeHasExplicitEncryption(cloudstic.ProfileStore{PasswordSecret: "env://CLOUDSTIC_PASSWORD"}) {
+		t.Fatal("expected true when password secret is set")
+	}
+}
+
+func TestHasStoreNewOverrideFlags(t *testing.T) {
+	if hasStoreNewOverrideFlags(map[string]bool{"name": true}) {
+		t.Fatal("name-only should not count as override")
+	}
+	if hasStoreNewOverrideFlags(map[string]bool{"profiles-file": true}) {
+		t.Fatal("profiles-file-only should not count as override")
+	}
+	if hasStoreNewOverrideFlags(map[string]bool{"name": true, "profiles-file": true}) {
+		t.Fatal("identity-only flags should not count as override")
+	}
+	if !hasStoreNewOverrideFlags(map[string]bool{"name": true, "uri": true}) {
+		t.Fatal("uri should count as override")
+	}
+}
+
+func TestExistingStoreInteractivePlan(t *testing.T) {
+	tests := []struct {
+		name          string
+		canPrompt     bool
+		hasOverrides  bool
+		hasEncryption bool
+		wantURI       bool
+		wantAsk       bool
+	}{
+		{name: "no prompt", canPrompt: false, hasOverrides: false, hasEncryption: true, wantURI: false, wantAsk: false},
+		{name: "has overrides", canPrompt: true, hasOverrides: true, hasEncryption: true, wantURI: false, wantAsk: false},
+		{name: "interactive no encryption", canPrompt: true, hasOverrides: false, hasEncryption: false, wantURI: true, wantAsk: false},
+		{name: "interactive with encryption", canPrompt: true, hasOverrides: false, hasEncryption: true, wantURI: true, wantAsk: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotURI, gotAsk := existingStoreInteractivePlan(tc.canPrompt, tc.hasOverrides, tc.hasEncryption)
+			if gotURI != tc.wantURI || gotAsk != tc.wantAsk {
+				t.Fatalf("got (uri=%v, ask=%v), want (uri=%v, ask=%v)", gotURI, gotAsk, tc.wantURI, tc.wantAsk)
+			}
+		})
+	}
+}
+
+func TestConfigureStoreEncryptionSelection_Password(t *testing.T) {
+	var out strings.Builder
+	s, err := configureStoreEncryptionSelection(
+		cloudstic.ProfileStore{},
+		"prod",
+		"Password (recommended for interactive use)",
+		func(string, string, string, string) (string, error) { return "env://MY_BACKUP_PASSWORD", nil },
+		func(string, string) (string, error) { return "", nil },
+		&out,
+	)
+	if err != nil {
+		t.Fatalf("configureStoreEncryptionSelection: %v", err)
+	}
+	if s.PasswordSecret != "env://MY_BACKUP_PASSWORD" {
+		t.Fatalf("password secret=%q", s.PasswordSecret)
+	}
+	if !strings.Contains(out.String(), "Encryption: password via env://MY_BACKUP_PASSWORD") {
+		t.Fatalf("unexpected output: %s", out.String())
+	}
+}
+
+func TestConfigureStoreEncryptionSelection_KMS(t *testing.T) {
+	var out strings.Builder
+	s, err := configureStoreEncryptionSelection(
+		cloudstic.ProfileStore{},
+		"prod",
+		"AWS KMS key (enterprise)",
+		func(string, string, string, string) (string, error) { return "", nil },
+		func(label, def string) (string, error) {
+			switch label {
+			case "KMS key ARN":
+				return "arn:aws:kms:us-east-1:123:key/abc", nil
+			case "KMS region":
+				return "us-east-1", nil
+			default:
+				return def, nil
+			}
+		},
+		&out,
+	)
+	if err != nil {
+		t.Fatalf("configureStoreEncryptionSelection: %v", err)
+	}
+	if s.KMSKeyARN == "" || s.KMSRegion != "us-east-1" {
+		t.Fatalf("unexpected kms values: arn=%q region=%q", s.KMSKeyARN, s.KMSRegion)
+	}
+}
+
+func TestConfigureStoreEncryptionSelection_NoEncryption(t *testing.T) {
+	var out strings.Builder
+	_, err := configureStoreEncryptionSelection(
+		cloudstic.ProfileStore{},
+		"prod",
+		"No encryption (not recommended)",
+		func(string, string, string, string) (string, error) { return "", nil },
+		func(string, string) (string, error) { return "", nil },
+		&out,
+	)
+	if err != nil {
+		t.Fatalf("configureStoreEncryptionSelection: %v", err)
+	}
+	if !strings.Contains(out.String(), "Encryption: none") {
+		t.Fatalf("unexpected output: %s", out.String())
+	}
+}
+
+func TestConfigureStoreEncryptionSelection_KMSError(t *testing.T) {
+	_, err := configureStoreEncryptionSelection(
+		cloudstic.ProfileStore{},
+		"prod",
+		"AWS KMS key (enterprise)",
+		func(string, string, string, string) (string, error) { return "", nil },
+		func(label, def string) (string, error) {
+			if label == "KMS key ARN" {
+				return "", nil
+			}
+			return def, nil
+		},
+		&strings.Builder{},
+	)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "KMS key ARN is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPromptSecretReference_EnvInteractive(t *testing.T) {
+	t.Setenv("MY_ENV", "set-for-test")
+	if runtime.GOOS == "darwin" {
+		setInteractiveStdinLines(t, "1", "MY_ENV")
+	} else {
+		setInteractiveStdinLines(t, "MY_ENV")
+	}
+	var out strings.Builder
+	var errOut strings.Builder
+	r := &runner{out: &out, errOut: &errOut}
+
+	got, err := r.promptSecretReference("prod", "repository password", "CLOUDSTIC_PASSWORD", "password")
+	if err != nil {
+		t.Fatalf("promptSecretReference: %v", err)
+	}
+	if got != "env://MY_ENV" {
+		t.Fatalf("ref=%q want env://MY_ENV", got)
+	}
+}
+
+func TestPromptEncryptionConfig_PasswordViaEnvRef(t *testing.T) {
+	t.Setenv("MY_BACKUP_PASSWORD", "set-for-test")
+	tmp := t.TempDir()
+	profilesPath := filepath.Join(tmp, "profiles.yaml")
+	cfg := &cloudstic.ProfilesConfig{
+		Version: 1,
+		Stores: map[string]cloudstic.ProfileStore{
+			"prod": {URI: "local:/tmp/store"},
+		},
+	}
+
+	if runtime.GOOS == "darwin" {
+		setInteractiveStdinLines(t, "1", "1", "MY_BACKUP_PASSWORD")
+	} else {
+		setInteractiveStdinLines(t, "1", "MY_BACKUP_PASSWORD")
+	}
+	var out strings.Builder
+	var errOut strings.Builder
+	r := &runner{out: &out, errOut: &errOut}
+
+	r.promptEncryptionConfig(cfg, "prod", profilesPath)
+
+	s := cfg.Stores["prod"]
+	if s.PasswordSecret != "env://MY_BACKUP_PASSWORD" {
+		t.Fatalf("password secret=%q", s.PasswordSecret)
+	}
+	raw, err := os.ReadFile(profilesPath)
+	if err != nil {
+		t.Fatalf("read profiles file: %v", err)
+	}
+	if !strings.Contains(string(raw), "password_secret: env://MY_BACKUP_PASSWORD") {
+		t.Fatalf("expected saved password_secret in YAML:\n%s", string(raw))
+	}
+}
+
+func setInteractiveStdinLines(t *testing.T, lines ...string) {
+	t.Helper()
+	orig := os.Stdin
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdin = r
+	for _, line := range lines {
+		_, _ = w.WriteString(line + "\n")
+	}
+	_ = w.Close()
+	t.Cleanup(func() {
+		os.Stdin = orig
+		_ = r.Close()
+	})
 }
 
 func TestValidRefName(t *testing.T) {

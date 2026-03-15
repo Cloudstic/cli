@@ -170,17 +170,19 @@ _cloudstic() {
                     *) store_sub="${words[j]}"; break ;;
                 esac
             done
-            if [[ -z "$store_sub" ]]; then
-                COMPREPLY=($(compgen -W "list show new" -- "$cur"))
-                return
-            fi
-            case "$store_sub" in
-                list)
-                    cmd_flags="-profiles-file" ;;
-                show)
-                    cmd_flags="-profiles-file" ;;
-                new)
-                    cmd_flags="-profiles-file -name -uri -s3-region -s3-profile -s3-endpoint -s3-access-key -s3-secret-key -s3-access-key-env -s3-secret-key-env -s3-profile-env -store-sftp-password -store-sftp-key -store-sftp-password-env -store-sftp-key-env -password-env -encryption-key-env -recovery-key-env -kms-key-arn -kms-region -kms-endpoint" ;;
+		if [[ -z "$store_sub" ]]; then
+			COMPREPLY=($(compgen -W "list show new verify" -- "$cur"))
+			return
+		fi
+		case "$store_sub" in
+			list)
+				cmd_flags="-profiles-file" ;;
+			show)
+				cmd_flags="-profiles-file" ;;
+			verify)
+				cmd_flags="-profiles-file" ;;
+			new)
+				cmd_flags="-profiles-file -name -uri -s3-region -s3-profile -s3-endpoint -s3-access-key -s3-secret-key -s3-access-key-secret -s3-secret-key-secret -s3-access-key-env -s3-secret-key-env -s3-profile-env -store-sftp-password -store-sftp-key -store-sftp-password-secret -store-sftp-key-secret -store-sftp-password-env -store-sftp-key-env -password-secret -encryption-key-secret -recovery-key-secret -password-env -encryption-key-env -recovery-key-env -kms-key-arn -kms-region -kms-endpoint" ;;
                 *)
                     cmd_flags="" ;;
             esac
@@ -419,11 +421,12 @@ _cloudstic() {
             ;;
         store)
             local -a store_commands
-            store_commands=(
-                'list:List configured stores'
-                'show:Show one store and its configuration'
-                'new:Create or update a store entry'
-            )
+			store_commands=(
+				'list:List configured stores'
+				'show:Show one store and its configuration'
+				'new:Create or update a store entry'
+				'verify:Verify store credentials and connectivity'
+			)
             local store_sub
             local -i si=$((i+1))
             while (( si < CURRENT )); do
@@ -437,14 +440,17 @@ _cloudstic() {
                 _describe -t store-commands 'store subcommand' store_commands
                 return
             fi
-            case "$store_sub" in
-                list)
-                    _arguments '-profiles-file[Path to profiles YAML file]:path:_files'
-                    ;;
-                show)
-                    _arguments '-profiles-file[Path to profiles YAML file]:path:_files' ':store name:'
-                    ;;
-                new)
+			case "$store_sub" in
+				list)
+					_arguments '-profiles-file[Path to profiles YAML file]:path:_files'
+					;;
+				show)
+					_arguments '-profiles-file[Path to profiles YAML file]:path:_files' ':store name:'
+					;;
+				verify)
+					_arguments '-profiles-file[Path to profiles YAML file]:path:_files' ':store name:'
+					;;
+				new)
                     _arguments \
                         '-profiles-file[Path to profiles YAML file]:path:_files' \
                         '-name[Store reference name]:name:' \
@@ -454,13 +460,20 @@ _cloudstic() {
                         '-s3-endpoint[S3-compatible endpoint URL]:url:' \
                         '-s3-access-key[S3 static access key]:key:' \
                         '-s3-secret-key[S3 static secret key]:key:' \
+                        '-s3-access-key-secret[Secret ref for S3 access key]:ref:' \
+                        '-s3-secret-key-secret[Secret ref for S3 secret key]:ref:' \
                         '-s3-access-key-env[Env var for S3 access key]:var:' \
                         '-s3-secret-key-env[Env var for S3 secret key]:var:' \
                         '-s3-profile-env[Env var for AWS profile]:var:' \
                         '-store-sftp-password[SFTP password]:password:' \
                         '-store-sftp-key[SFTP private key path]:path:_files' \
+                        '-store-sftp-password-secret[Secret ref for SFTP password]:ref:' \
+                        '-store-sftp-key-secret[Secret ref for SFTP key path]:ref:' \
                         '-store-sftp-password-env[Env var for SFTP password]:var:' \
                         '-store-sftp-key-env[Env var for SFTP key path]:var:' \
+                        '-password-secret[Secret ref for repository password]:ref:' \
+                        '-encryption-key-secret[Secret ref for platform key]:ref:' \
+                        '-recovery-key-secret[Secret ref for recovery key mnemonic]:ref:' \
                         '-password-env[Env var for repository password]:var:' \
                         '-encryption-key-env[Env var for platform key]:var:' \
                         '-recovery-key-env[Env var for recovery key mnemonic]:var:' \

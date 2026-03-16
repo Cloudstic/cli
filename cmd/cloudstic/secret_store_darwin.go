@@ -5,7 +5,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 )
@@ -27,9 +29,20 @@ func saveSecretToNativeStore(ctx context.Context, service, account, value string
 }
 
 func nativeSecretExists(ctx context.Context, service, account string) (bool, error) {
-	cmd := execCommandContext(ctx, "security", "find-generic-password", "-s", service, "-a", account, "-w")
+	cmd := execCommandContext(ctx, "security", "find-generic-password", "-s", service, "-a", account)
+	cmd.Stdout = io.Discard
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return false, nil
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 44 {
+			return false, nil
+		}
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return false, fmt.Errorf("check secret in macOS keychain failed: %s", msg)
 	}
 	return true, nil
 }

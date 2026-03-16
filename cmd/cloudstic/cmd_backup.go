@@ -58,7 +58,7 @@ func parseBackupArgs() *backupArgs {
 	onedriveClientID := fs.String("onedrive-client-id", envDefault("ONEDRIVE_CLIENT_ID", ""), "OneDrive OAuth client ID")
 	onedriveTokenFile := fs.String("onedrive-token-file", envDefault("ONEDRIVE_TOKEN_FILE", ""), "Path to OneDrive OAuth token file")
 	skipMode := fs.Bool("skip-mode", false, "Skip POSIX mode, uid, gid, btime, and flags collection")
-	skipFlags := fs.Bool("skip-flags", false, "Skip file flags ioctl (Linux only; no effect on macOS)")
+	skipFlags := fs.Bool("skip-flags", false, "Skip file flags collection")
 	skipXattrs := fs.Bool("skip-xattrs", false, "Skip extended attribute collection")
 	xattrNamespaces := fs.String("xattr-namespaces", "", "Restrict xattr collection to these prefixes (comma-separated, e.g. \"user.,com.apple.\")")
 	fs.Var(&a.tags, "tag", "Tag to apply to the snapshot (can be specified multiple times)")
@@ -625,11 +625,10 @@ func initSource(ctx context.Context, sourceURI string, skipNativeFiles bool, vol
 			opts = append(opts, source.WithSkipXattrs())
 		}
 		if xattrNamespaces != "" {
-			prefixes := strings.Split(xattrNamespaces, ",")
-			for i := range prefixes {
-				prefixes[i] = strings.TrimSpace(prefixes[i])
+			prefixes := parseXattrNamespacePrefixes(xattrNamespaces)
+			if len(prefixes) > 0 {
+				opts = append(opts, source.WithXattrNamespaces(prefixes))
 			}
-			opts = append(opts, source.WithXattrNamespaces(prefixes))
 		}
 		return source.NewLocalSource(uri.path, opts...), nil
 	case "sftp":
@@ -695,6 +694,19 @@ func initSource(ctx context.Context, sourceURI string, skipNativeFiles bool, vol
 	default:
 		return nil, fmt.Errorf("unsupported source: %s", uri.scheme)
 	}
+}
+
+func parseXattrNamespacePrefixes(raw string) []string {
+	parts := strings.Split(raw, ",")
+	prefixes := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		prefixes = append(prefixes, p)
+	}
+	return prefixes
 }
 
 // resolveTokenPath returns the token file path to use. If explicit is non-empty

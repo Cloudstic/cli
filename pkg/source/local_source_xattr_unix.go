@@ -35,13 +35,13 @@ func readExtendedMeta(path string, meta *core.FileMeta, skipMode, skipFlags, ski
 // listXattrs retrieves all extended attributes for path, optionally filtered
 // by namespace prefixes. Returns nil if there are no attributes or on error.
 func listXattrs(path string, namespaces []string) map[string][]byte {
-	sz, err := unix.Listxattr(path, nil)
+	sz, err := unix.Llistxattr(path, nil)
 	if err != nil || sz <= 0 {
 		return nil
 	}
 
 	buf := make([]byte, sz)
-	sz, err = unix.Listxattr(path, buf)
+	sz, err = unix.Llistxattr(path, buf)
 	if err != nil || sz <= 0 {
 		return nil
 	}
@@ -72,7 +72,7 @@ func listXattrs(path string, namespaces []string) map[string][]byte {
 
 // getXattr retrieves a single extended attribute value.
 func getXattr(path, name string) ([]byte, error) {
-	sz, err := unix.Getxattr(path, name, nil)
+	sz, err := unix.Lgetxattr(path, name, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +80,7 @@ func getXattr(path, name string) ([]byte, error) {
 		return []byte{}, nil
 	}
 	buf := make([]byte, sz)
-	sz, err = unix.Getxattr(path, name, buf)
+	sz, err = unix.Lgetxattr(path, name, buf)
 	if err != nil {
 		return nil, err
 	}

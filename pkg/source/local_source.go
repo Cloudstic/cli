@@ -96,8 +96,7 @@ func WithSkipMode() LocalOption {
 	return func(o *localOptions) { o.skipMode = true }
 }
 
-// WithSkipFlags disables the FS_IOC_GETFLAGS ioctl on Linux. On macOS,
-// flags come free from stat and this option has no effect.
+// WithSkipFlags disables file flags collection.
 func WithSkipFlags() LocalOption {
 	return func(o *localOptions) { o.skipFlags = true }
 }

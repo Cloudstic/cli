@@ -323,7 +323,7 @@ _cloudstic() {
                 '*-tag[Tag for the snapshot]:tag:' \
                 '-dry-run[Scan without writing]' \
                 '-skip-mode[Skip POSIX mode/uid/gid/btime/flags]' \
-                '-skip-flags[Skip file flags ioctl (Linux only)]' \
+                '-skip-flags[Skip file flags collection]' \
                 '-skip-xattrs[Skip extended attribute collection]' \
                 '-xattr-namespaces[Restrict xattr collection to prefixes]:prefixes:'
             ;;
@@ -657,7 +657,7 @@ complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l onedrive-token-
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l tag -x -d 'Tag for the snapshot'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l dry-run -d 'Scan without writing'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-mode -d 'Skip POSIX mode/uid/gid/btime/flags'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-flags -d 'Skip file flags ioctl (Linux only)'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-flags -d 'Skip file flags collection'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-xattrs -d 'Skip extended attribute collection'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l xattr-namespaces -x -d 'Restrict xattr collection to prefixes'
 

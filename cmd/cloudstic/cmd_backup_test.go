@@ -89,6 +89,19 @@ func TestInitSource_UnsupportedType(t *testing.T) {
 	}
 }
 
+func TestParseXattrNamespacePrefixes(t *testing.T) {
+	got := parseXattrNamespacePrefixes("user., com.apple., ,security.,")
+	want := []string{"user.", "com.apple.", "security."}
+	if len(got) != len(want) {
+		t.Fatalf("len=%d want=%d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got[%d]=%q want=%q", i, got[i], want[i])
+		}
+	}
+}
+
 func TestPrintUsage_Smoke(t *testing.T) {
 	// Verify printUsage doesn't panic.
 	printUsage()

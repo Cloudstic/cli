@@ -81,6 +81,7 @@ func TestResolveRestoreFormat(t *testing.T) {
 		{name: "explicit zip", format: "zip", output: "ignored", want: "zip"},
 		{name: "explicit dir", format: "dir", output: "ignored", want: "dir"},
 		{name: "invalid explicit", format: "tar", output: "out.tar", wantError: true},
+		{name: "empty output", format: "", output: "   ", wantError: true},
 		{name: "auto zip", format: "", output: "out.zip", want: "zip"},
 		{name: "auto zip uppercase", format: "", output: "OUT.ZIP", want: "zip"},
 		{name: "auto dir", format: "", output: "./restored", want: "dir"},

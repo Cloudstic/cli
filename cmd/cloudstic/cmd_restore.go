@@ -125,6 +125,10 @@ func (r *runner) printRestoreSummary(result *engine.RestoreResult, output string
 }
 
 func resolveRestoreFormat(explicitFormat, output string) (string, error) {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return "", fmt.Errorf("-output cannot be empty")
+	}
 	if explicitFormat != "" {
 		switch explicitFormat {
 		case "zip", "dir":

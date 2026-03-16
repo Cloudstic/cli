@@ -292,6 +292,45 @@ func TestRestoreManager_RunToDir_DryRun_NoWrites(t *testing.T) {
 	}
 }
 
+func TestRestoreManager_Run_NilWriter(t *testing.T) {
+	dest := setupBackupForRestore(t)
+	rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())
+
+	if _, err := rsMgr.Run(context.Background(), nil, ""); err == nil {
+		t.Fatal("expected error for nil writer")
+	}
+}
+
+func TestFSRestoreWriter_RejectsSymlinkedPathComponent(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+
+	if err := os.MkdirAll(filepath.Join(root, "subdir"), 0o755); err != nil {
+		t.Fatalf("mkdir subdir: %v", err)
+	}
+	linkPath := filepath.Join(root, "subdir", "link")
+	if err := os.Symlink(outside, linkPath); err != nil {
+		t.Skipf("symlink not supported in test environment: %v", err)
+	}
+
+	writer, err := NewFSRestoreWriter(root)
+	if err != nil {
+		t.Fatalf("NewFSRestoreWriter: %v", err)
+	}
+
+	err = writer.WriteFile("subdir/link/escaped.txt", core.FileMeta{}, func(w io.Writer) error {
+		_, writeErr := w.Write([]byte("data"))
+		return writeErr
+	})
+	if err == nil {
+		t.Fatal("expected symlink path to be rejected")
+	}
+
+	if _, statErr := os.Stat(filepath.Join(outside, "escaped.txt")); statErr == nil {
+		t.Fatal("file unexpectedly written outside restore root via symlink")
+	}
+}
+
 func TestSecureRestorePath(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "root")
 

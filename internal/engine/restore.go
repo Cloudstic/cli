@@ -35,7 +35,7 @@ type restorePlan struct {
 	root        string
 }
 
-// WithRestoreDryRun resolves the snapshot and reports what would be restored without writing the archive.
+// WithRestoreDryRun resolves the snapshot and reports what would be restored without writing output.
 func WithRestoreDryRun() RestoreOption {
 	return func(cfg *restoreConfig) { cfg.dryRun = true }
 }
@@ -71,7 +71,7 @@ type RestoreWriter interface {
 	Close() error
 }
 
-// RestoreManager recreates a snapshot's file tree as a ZIP archive.
+// RestoreManager recreates a snapshot's file tree using a RestoreWriter output format.
 type RestoreManager struct {
 	store     store.ObjectStore
 	tree      *hamt.Tree
@@ -103,6 +103,9 @@ func (rm *RestoreManager) Run(ctx context.Context, writer RestoreWriter, snapsho
 
 	if plan.cfg.dryRun {
 		return rm.dryRunRestore(plan.sorted, plan.byID, plan.snapshotRef, plan.root), nil
+	}
+	if writer == nil {
+		return nil, fmt.Errorf("restore writer is required")
 	}
 	return rm.runWithWriter(ctx, plan, writer)
 }
@@ -257,6 +260,9 @@ func (w *fsRestoreWriter) MkdirAll(relPath string, meta core.FileMeta) error {
 	if err != nil {
 		return err
 	}
+	if err := ensureNoSymlinkComponents(w.root, fullPath); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(fullPath, 0o755); err != nil {
 		return err
 	}
@@ -270,6 +276,9 @@ func (w *fsRestoreWriter) MkdirAll(relPath string, meta core.FileMeta) error {
 func (w *fsRestoreWriter) WriteFile(relPath string, meta core.FileMeta, writeContent func(io.Writer) error) error {
 	fullPath, err := secureRestorePath(w.root, relPath)
 	if err != nil {
+		return err
+	}
+	if err := ensureNoSymlinkComponents(w.root, fullPath); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
@@ -302,6 +311,53 @@ func (w *fsRestoreWriter) WriteFile(relPath string, meta core.FileMeta, writeCon
 func (w *fsRestoreWriter) BytesWritten() int64 { return w.bytes }
 
 func (w *fsRestoreWriter) Close() error { return nil }
+
+func ensureNoSymlinkComponents(root, target string) error {
+	rootClean := filepath.Clean(root)
+	targetClean := filepath.Clean(target)
+
+	if err := checkSymlinkPath(rootClean); err != nil {
+		return err
+	}
+
+	if targetClean == rootClean {
+		return nil
+	}
+
+	rel, err := filepath.Rel(rootClean, targetClean)
+	if err != nil {
+		return err
+	}
+	if rel == "." {
+		return nil
+	}
+
+	cur := rootClean
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		cur = filepath.Join(cur, part)
+		if err := checkSymlinkPath(cur); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkSymlinkPath(p string) error {
+	st, err := os.Lstat(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if st.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to restore through symlink path: %s", p)
+	}
+	return nil
+}
 
 func (rm *RestoreManager) dryRunRestore(sorted []core.FileMeta, byID map[string]core.FileMeta, snapshotRef, root string) *RestoreResult {
 	result := &RestoreResult{

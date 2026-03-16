@@ -21,7 +21,7 @@ func TestPrintRestoreSummary_Normal(t *testing.T) {
 	}, "/tmp/restore.zip")
 
 	got := out.String()
-	for _, want := range []string{"Restore complete.", "abc123", "42", "7", "2.0 MiB", "/tmp/restore.zip"} {
+	for _, want := range []string{"Restore complete.", "abc123", "42", "7", "2.0 MiB", "Output:", "/tmp/restore.zip"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("expected %q in output, got:\n%s", want, got)
 		}
@@ -65,7 +65,43 @@ func TestPrintRestoreSummary_DryRun(t *testing.T) {
 	if !strings.Contains(got, "Estimated size") {
 		t.Errorf("expected 'Estimated size', got:\n%s", got)
 	}
-	if strings.Contains(got, "Archive:") {
-		t.Errorf("dry run should not show archive path, got:\n%s", got)
+	if strings.Contains(got, "Output:") {
+		t.Errorf("dry run should not show output path, got:\n%s", got)
+	}
+}
+
+func TestResolveRestoreFormat(t *testing.T) {
+	tests := []struct {
+		name      string
+		format    string
+		output    string
+		want      string
+		wantError bool
+	}{
+		{name: "explicit zip", format: "zip", output: "ignored", want: "zip"},
+		{name: "explicit dir", format: "dir", output: "ignored", want: "dir"},
+		{name: "invalid explicit", format: "tar", output: "out.tar", wantError: true},
+		{name: "empty output", format: "", output: "   ", wantError: true},
+		{name: "auto zip", format: "", output: "out.zip", want: "zip"},
+		{name: "auto zip uppercase", format: "", output: "OUT.ZIP", want: "zip"},
+		{name: "auto dir", format: "", output: "./restored", want: "dir"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveRestoreFormat(tc.format, tc.output)
+			if tc.wantError {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveRestoreFormat: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("format=%q want=%q", got, tc.want)
+			}
+		})
 	}
 }

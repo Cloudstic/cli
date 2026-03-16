@@ -43,6 +43,10 @@ func (s *stubClient) Restore(_ context.Context, _ io.Writer, _ string, _ ...clou
 	return s.restoreResult, s.restoreErr
 }
 
+func (s *stubClient) RestoreToDir(_ context.Context, _, _ string, _ ...cloudstic.RestoreOption) (*cloudstic.RestoreResult, error) {
+	return s.restoreResult, s.restoreErr
+}
+
 func (s *stubClient) List(_ context.Context, _ ...cloudstic.ListOption) (*cloudstic.ListResult, error) {
 	return s.listResult, s.listErr
 }

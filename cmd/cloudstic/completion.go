@@ -78,7 +78,7 @@ _cloudstic() {
         backup)
             cmd_flags="-source -profile -all-profiles -auth-ref -profiles-file -skip-native-files -google-credentials -google-token-file -onedrive-client-id -onedrive-token-file -tag -dry-run" ;;
         restore)
-            cmd_flags="-output -dry-run" ;;
+            cmd_flags="-output -format -path -dry-run" ;;
         prune)
             cmd_flags="-dry-run" ;;
         forget)
@@ -488,8 +488,10 @@ _cloudstic() {
             ;;
         restore)
             _arguments $global_flags \
-                '-output[Output ZIP file path]:path:_files' \
-                '-dry-run[Show what would be restored]' \
+                '-output[Output path for zip or dir restore]:path:_files' \
+                '-format[Restore format]:format:(zip dir)' \
+                '-path[Restore only the given file or subtree]:path:' \
+                '-dry-run[Show what would be restored without writing output]' \
                 ':snapshot ID:'
             ;;
         list)

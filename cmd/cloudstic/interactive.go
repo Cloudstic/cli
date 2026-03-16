@@ -83,5 +83,5 @@ func (r *runner) promptSecret(label string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(string(b)), nil
+	return strings.TrimRight(string(b), "\r\n"), nil
 }

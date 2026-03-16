@@ -99,7 +99,7 @@ func NewResolver(backends map[string]Backend) *Resolver {
 	return r
 }
 
-// NewDefaultResolver builds the baseline resolver with env:// support.
+// NewDefaultResolver builds the baseline resolver with env:// and keychain:// support.
 func NewDefaultResolver() *Resolver {
 	return NewResolver(map[string]Backend{
 		"env":      NewEnvBackend(nil),

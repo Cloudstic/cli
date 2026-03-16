@@ -29,7 +29,7 @@ func TestSaveSecretToNativeStore_Success(t *testing.T) {
 	if gotName != "security" {
 		t.Fatalf("command name=%q want security", gotName)
 	}
-	wantArgs := []string{"add-generic-password", "-U", "-s", "cloudstic/store/prod", "-a", "password", "-w", "super-secret"}
+	wantArgs := []string{"add-generic-password", "-U", "-s", "cloudstic/store/prod", "-a", "password", "-w"}
 	if !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Fatalf("command args=%v want=%v", gotArgs, wantArgs)
 	}
@@ -77,7 +77,7 @@ func TestNativeSecretExists_Success(t *testing.T) {
 	if gotName != "security" {
 		t.Fatalf("command name=%q want security", gotName)
 	}
-	wantArgs := []string{"find-generic-password", "-s", "cloudstic/store/prod", "-a", "password", "-w"}
+	wantArgs := []string{"find-generic-password", "-s", "cloudstic/store/prod", "-a", "password"}
 	if !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Fatalf("command args=%v want=%v", gotArgs, wantArgs)
 	}
@@ -88,7 +88,7 @@ func TestNativeSecretExists_NotFound(t *testing.T) {
 	defer func() { execCommandContext = orig }()
 
 	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		return exec.CommandContext(ctx, "sh", "-c", "exit 1")
+		return exec.CommandContext(ctx, "sh", "-c", "exit 44")
 	}
 
 	exists, err := nativeSecretExists(context.Background(), "svc", "acct")
@@ -97,5 +97,25 @@ func TestNativeSecretExists_NotFound(t *testing.T) {
 	}
 	if exists {
 		t.Fatal("expected exists=false")
+	}
+}
+
+func TestNativeSecretExists_OtherError(t *testing.T) {
+	orig := execCommandContext
+	defer func() { execCommandContext = orig }()
+
+	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "sh", "-c", "echo boom 1>&2; exit 2")
+	}
+
+	exists, err := nativeSecretExists(context.Background(), "svc", "acct")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if exists {
+		t.Fatal("expected exists=false")
+	}
+	if !strings.Contains(err.Error(), "check secret in macOS keychain failed") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

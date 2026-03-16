@@ -273,8 +273,9 @@ reference schemes:
 
 - `env://VAR_NAME`
 - `keychain://service/account` (macOS)
-- `wincred://target` (Windows)
-- `secret-service://collection/item` (Linux)
+
+`wincred://...` (Windows) and `secret-service://...` (Linux) are planned but not
+yet available in the default CLI resolver.
 
 Examples:
 

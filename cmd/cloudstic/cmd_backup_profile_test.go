@@ -272,15 +272,30 @@ func TestApplyProfileAuthToBackupArgs_CLIFlagsPreserved(t *testing.T) {
 func TestCloneGlobalFlags_Independence(t *testing.T) {
 	orig := newTestGlobalFlags()
 	*orig.store = "original-store"
+	*orig.profile = "orig-profile"
+	*orig.profilesFile = "/tmp/orig-profiles.yaml"
+	*orig.s3Profile = "orig-s3-profile"
 
 	clone := cloneGlobalFlags(orig)
 	*clone.store = "modified-store"
+	*clone.profile = "clone-profile"
+	*clone.profilesFile = "/tmp/clone-profiles.yaml"
+	*clone.s3Profile = "clone-s3-profile"
 
 	if *orig.store != "original-store" {
 		t.Fatalf("original store=%q want original-store", *orig.store)
 	}
 	if *clone.store != "modified-store" {
 		t.Fatalf("clone store=%q want modified-store", *clone.store)
+	}
+	if *orig.profile != "orig-profile" {
+		t.Fatalf("original profile=%q want orig-profile", *orig.profile)
+	}
+	if *orig.profilesFile != "/tmp/orig-profiles.yaml" {
+		t.Fatalf("original profilesFile=%q want /tmp/orig-profiles.yaml", *orig.profilesFile)
+	}
+	if *orig.s3Profile != "orig-s3-profile" {
+		t.Fatalf("original s3Profile=%q want orig-s3-profile", *orig.s3Profile)
 	}
 }
 

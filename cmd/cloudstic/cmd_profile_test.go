@@ -320,7 +320,7 @@ func TestRunProfileNew_CloudSourceRequiresAuthRef(t *testing.T) {
 		"-profiles-file", profilesPath,
 		"-name", "drive-backup",
 		"-source", "gdrive:/",
-		"-store-ref", "s", "-store", "s3://bucket",
+		"-store-ref", "s", "-store", "s3:bucket",
 	}
 	var out strings.Builder
 	var errOut strings.Builder
@@ -342,7 +342,7 @@ func TestRunProfileNew_RejectsUnknownAuthRef(t *testing.T) {
 		"-profiles-file", profilesPath,
 		"-name", "work-drive",
 		"-source", "gdrive-changes:/Team",
-		"-store-ref", "s", "-store", "s3://bucket",
+		"-store-ref", "s", "-store", "s3:bucket",
 		"-auth-ref", "google-work",
 	}
 	var out strings.Builder
@@ -601,6 +601,28 @@ func TestRunProfileNew_InvalidSource(t *testing.T) {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "Invalid source") {
+		t.Fatalf("unexpected error output: %s", errOut.String())
+	}
+}
+
+func TestRunProfileNew_InvalidStoreURI(t *testing.T) {
+	tmpDir := t.TempDir()
+	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
+	os.Args = []string{
+		"cloudstic", "profile", "new",
+		"-profiles-file", profilesPath,
+		"-name", "bad-store",
+		"-source", "local:/data",
+		"-store-ref", "s", "-store", "s3://bucket",
+	}
+	var out strings.Builder
+	var errOut strings.Builder
+	r := &runner{out: &out, errOut: &errOut}
+
+	if code := r.runProfile(); code == 0 {
+		t.Fatal("expected non-zero exit code")
+	}
+	if !strings.Contains(errOut.String(), "Invalid store URI") {
 		t.Fatalf("unexpected error output: %s", errOut.String())
 	}
 }

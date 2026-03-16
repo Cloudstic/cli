@@ -99,8 +99,8 @@ func TestOneDriveFilterChangesByRootPath(t *testing.T) {
 
 	filtered := s.filterChangesByRootPath(changes)
 
-	if len(filtered) != 4 {
-		t.Fatalf("expected 4 filtered changes, got %d", len(filtered))
+	if len(filtered) != 3 {
+		t.Fatalf("expected 3 filtered changes, got %d", len(filtered))
 	}
 
 	if filtered[0].Meta.Paths[0] != "file1.txt" {
@@ -109,11 +109,8 @@ func TestOneDriveFilterChangesByRootPath(t *testing.T) {
 	if filtered[1].Meta.Paths[0] != "sub/file2.txt" {
 		t.Errorf("expected stripped path sub/file2.txt, got %s", filtered[1].Meta.Paths[0])
 	}
-	if filtered[2].Meta.Paths[0] != "my" {
-		t.Errorf("expected stripped path 'my', got %s", filtered[2].Meta.Paths[0])
-	}
-	if filtered[3].Type != ChangeDelete {
-		t.Errorf("expected delete change, got %v", filtered[3].Type)
+	if filtered[2].Type != ChangeDelete {
+		t.Errorf("expected delete change, got %v", filtered[2].Type)
 	}
 
 	// Test with rootPath = ""
@@ -123,5 +120,33 @@ func TestOneDriveFilterChangesByRootPath(t *testing.T) {
 	filtered2 := s2.filterChangesByRootPath(changes)
 	if len(filtered2) != len(changes) {
 		t.Errorf("expected %d changes with empty rootPath, got %d", len(changes), len(filtered2))
+	}
+}
+
+func TestNormalizeOneDriveRootPath(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"", "/"},
+		{"/", "/"},
+		{"docs", "/docs"},
+		{"/docs/", "/docs"},
+		{"  /Team Files/  ", "/Team Files"},
+	}
+
+	for _, tc := range tests {
+		if got := normalizeOneDriveRootPath(tc.in); got != tc.want {
+			t.Errorf("normalizeOneDriveRootPath(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestOneDriveGetRootURL_EncodesPath(t *testing.T) {
+	s := &OneDriveSource{rootPath: "/Team Files/R?D"}
+	got := s.getRootURL()
+	want := "https://graph.microsoft.com/v1.0/me/drive/root:/Team%20Files/R%3FD"
+	if got != want {
+		t.Errorf("getRootURL() = %q, want %q", got, want)
 	}
 }

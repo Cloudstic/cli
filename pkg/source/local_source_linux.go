@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -32,6 +33,8 @@ func detectVolumeIdentity(path string) (uuid, label, mountPoint string) {
 // deviceForPath finds the mount device and mount point for a given filesystem
 // path by parsing /proc/mounts and matching on device ID (stat.Dev).
 func deviceForPath(path string) (device, mountPoint string, err error) {
+	path = filepath.Clean(path)
+
 	var st syscall.Stat_t
 	if err := syscall.Stat(path, &st); err != nil {
 		return "", "", err
@@ -54,10 +57,10 @@ func deviceForPath(path string) (device, mountPoint string, err error) {
 		if len(fields) < 2 {
 			continue
 		}
-		mnt := fields[1]
+		mnt := unescapeMountField(fields[1])
 
-		// Check if this mount point is a prefix of our path
-		if !strings.HasPrefix(path, mnt) {
+		// Check if this mount point is a path prefix with a segment boundary.
+		if !hasPathPrefix(path, mnt) {
 			continue
 		}
 		// Use the longest matching mount point (most specific)
@@ -70,8 +73,51 @@ func deviceForPath(path string) (device, mountPoint string, err error) {
 			}
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		return "", "", err
+	}
 
 	return bestDevice, bestMount, nil
+}
+
+func hasPathPrefix(path, prefix string) bool {
+	if prefix == "/" {
+		return strings.HasPrefix(path, "/")
+	}
+	if path == prefix {
+		return true
+	}
+	return strings.HasPrefix(path, prefix+"/")
+}
+
+func unescapeMountField(s string) string {
+	if !strings.Contains(s, "\\") {
+		return s
+	}
+
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\\' || i+3 >= len(s) {
+			out = append(out, s[i])
+			continue
+		}
+		if !isOctalDigit(s[i+1]) || !isOctalDigit(s[i+2]) || !isOctalDigit(s[i+3]) {
+			out = append(out, s[i])
+			continue
+		}
+		v, err := strconv.ParseUint(s[i+1:i+4], 8, 8)
+		if err != nil {
+			out = append(out, s[i])
+			continue
+		}
+		out = append(out, byte(v))
+		i += 3
+	}
+	return string(out)
+}
+
+func isOctalDigit(b byte) bool {
+	return b >= '0' && b <= '7'
 }
 
 // findUUIDForDevice scans /dev/disk/by-uuid/ for a symlink pointing to the
@@ -89,7 +135,7 @@ func findUUIDForDevice(device string) string {
 			continue
 		}
 		if filepath.Base(target) == deviceBase {
-			return e.Name()
+			return strings.ToUpper(e.Name())
 		}
 	}
 	return ""

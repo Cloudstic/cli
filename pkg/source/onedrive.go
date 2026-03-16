@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cloudstic/cli/internal/core"
@@ -104,10 +106,7 @@ func NewOneDriveSource(ctx context.Context, opts ...OneDriveOption) (*OneDriveSo
 
 	client := conf.Client(ctx, token)
 
-	rootPath := cfg.rootPath
-	if rootPath == "" {
-		rootPath = "/"
-	}
+	rootPath := normalizeOneDriveRootPath(cfg.rootPath)
 	src := &OneDriveSource{
 		client:    client,
 		driveName: cfg.driveName,
@@ -131,20 +130,21 @@ func (s *OneDriveSource) resolveDriveName(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
-	resp, err := s.client.Do(req)
+	respByID, err := s.client.Do(req)
 	if err == nil {
-		defer func() { _ = resp.Body.Close() }()
-		if resp.StatusCode == http.StatusOK {
+		if respByID.StatusCode == http.StatusOK {
 			var drive struct {
 				ID   string `json:"id"`
 				Name string `json:"name"`
 			}
-			if err := json.NewDecoder(resp.Body).Decode(&drive); err == nil {
+			if decodeErr := json.NewDecoder(respByID.Body).Decode(&drive); decodeErr == nil {
+				_ = respByID.Body.Close()
 				s.driveID = drive.ID
 				s.driveName = drive.Name
 				return nil
 			}
 		}
+		_ = respByID.Body.Close()
 	}
 
 	// Fetch all drives and find by name
@@ -152,7 +152,7 @@ func (s *OneDriveSource) resolveDriveName(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
-	resp, err = s.client.Do(req)
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("list drives: %w", err)
 	}
@@ -385,10 +385,39 @@ func (s *OneDriveSource) getRootURL() string {
 	if s.driveID != "" {
 		base = fmt.Sprintf("https://graph.microsoft.com/v1.0/drives/%s/root", s.driveID)
 	}
-	if s.rootPath != "" && s.rootPath != "/" {
-		return fmt.Sprintf("%s:%s", base, s.rootPath)
+	encodedRootPath := encodeOneDriveRootPath(s.rootPath)
+	if encodedRootPath != "" {
+		return fmt.Sprintf("%s:/%s", base, encodedRootPath)
 	}
 	return base
+}
+
+func normalizeOneDriveRootPath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" || trimmed == "/" {
+		return "/"
+	}
+
+	if !strings.HasPrefix(trimmed, "/") {
+		trimmed = "/" + trimmed
+	}
+	trimmed = strings.TrimRight(trimmed, "/")
+	if trimmed == "" {
+		return "/"
+	}
+	return trimmed
+}
+
+func encodeOneDriveRootPath(path string) string {
+	normalized := normalizeOneDriveRootPath(path)
+	if normalized == "/" {
+		return ""
+	}
+	parts := strings.Split(strings.TrimPrefix(normalized, "/"), "/")
+	for i, p := range parts {
+		parts[i] = url.PathEscape(p)
+	}
+	return strings.Join(parts, "/")
 }
 
 func (s *OneDriveSource) Walk(ctx context.Context, callback func(core.FileMeta) error) error {

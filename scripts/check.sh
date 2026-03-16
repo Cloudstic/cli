@@ -13,7 +13,7 @@ echo "==> Running golangci-lint..."
 golangci-lint run ./...
 
 echo "==> Running markdownlint..."
-npx markdownlint-cli2 "**/*.md" 2>/dev/null
+npx markdownlint-cli2 "**/*.md"
 
 echo "==> Running go test..."
 go test -v -race -coverprofile=coverage.out -count=1 ./...

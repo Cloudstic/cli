@@ -34,8 +34,8 @@ func TestDetectVolumeIdentity_TempDir(t *testing.T) {
 }
 
 func TestDetectVolumeIdentity_ReturnsUppercaseUUID(t *testing.T) {
-	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
-		t.Skip("UUID detection only implemented on darwin and linux")
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+		t.Skip("UUID detection only implemented on darwin, linux, and windows")
 	}
 
 	tmpDir, err := os.MkdirTemp("", "cloudstic-case-test-*")

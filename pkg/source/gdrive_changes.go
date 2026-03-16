@@ -321,7 +321,7 @@ func (s *GDriveChangeSource) shouldExcludeChange(fc FileChange, excludedIDs map[
 }
 
 func (s *GDriveChangeSource) changeToFileChange(ch *drive.Change) FileChange {
-	if ch.Removed || (ch.File != nil && ch.File.Trashed) {
+	if ch.Removed || ch.File == nil || ch.File.Trashed {
 		return FileChange{
 			Type: ChangeDelete,
 			Meta: core.FileMeta{FileID: ch.FileId},

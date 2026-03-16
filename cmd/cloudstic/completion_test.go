@@ -31,7 +31,6 @@ func TestCompletionBash(t *testing.T) {
 		"-profiles-file",
 		"-profile", "-all-profiles",
 		"-auth-ref",
-		"-auth-ref",
 		// Value completions
 		"local: s3: b2: sftp://",
 		"gdrive", "onedrive",

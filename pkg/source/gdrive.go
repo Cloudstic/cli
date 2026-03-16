@@ -592,7 +592,11 @@ func (s *GDriveSource) visitEntryWithPath(f *drive.File, pathMap map[string]stri
 	p := meta.Name
 	if len(f.Parents) > 0 {
 		if parentPath, ok := pathMap[f.Parents[0]]; ok {
-			p = parentPath + "/" + meta.Name
+			if parentPath == "" {
+				p = meta.Name
+			} else {
+				p = parentPath + "/" + meta.Name
+			}
 		}
 	}
 	meta.Paths = []string{p}

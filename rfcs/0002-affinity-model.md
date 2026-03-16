@@ -2,7 +2,7 @@
 
 * **Status:** Implemented
 * **Date:** 2026-03-07
-* **Related:** [RFC 0001](file:///Users/loichermann/workspace/cloudstic-cli/rfcs/0001-hamt-evolution.md)
+* **Related:** [RFC 0001](./0001-hamt-evolution.md)
 
 ## Abstract
 
@@ -39,16 +39,16 @@ The current trie has these constants:
 Bias the HAMT key so that files sharing a parent directory group into a common trie subtree:
 
 ```
-AffinityKey(parentID, fileID) = SHA256(parentID)[:4] + SHA256(fileID)[:28]
+AffinityKey(parentID, fileID) = SHA256(parentID)[:4] + SHA256(fileID)[4:]
 ```
 
 Where:
 
 * `[:N]` denotes the first `N` hex characters of the SHA-256 hex string.
 * `SHA256(parentID)[:4]` = **16 bits** (2 bytes) of parent-derived entropy.
-* `SHA256(fileID)[:28]` = **112 bits** (14 bytes) of file-local entropy.
+* `SHA256(fileID)[4:]` = **240 bits** (30 bytes) of file-local entropy.
 
-Full key length remains 32 hex characters, identical to the current `computePathKey` output length — so the rest of the routing machinery (`indexForLevel`, `insertAt`, `lookupAt`, etc.) is unchanged.
+Full key length remains 64 hex characters, identical to the current `computePathKey` output length, so the rest of the routing machinery (`indexForLevel`, `insertAt`, `lookupAt`, etc.) is unchanged.
 
 ### Locality Guarantee
 
@@ -61,7 +61,7 @@ In concrete terms: **a backup of a directory with `N` files now writes to a sing
 
 ### What "ParentID" Means
 
-In `core.FileMeta`, `Parents` is `[]string` of `"filemeta/<sha256>"` **object references**, not the raw source identifiers. For the Affinity Key, `parentID` should be the **raw source-level parent identifier** — e.g., the Google Drive folder ID stored in `FileMeta.FileID` of the parent — to maintain stable keys across snapshots. Using the content-addressed ref would cause every metadata change to a parent folder to re-key all its children.
+In `core.FileMeta`, `Parents` is `[]string` of raw source identifiers (for example, Google Drive folder IDs or normalized local parent paths), not `filemeta/<sha256>` object references. For the affinity key, `parentID` is this raw source-level parent identifier so keys remain stable across snapshots.
 
 For sources (like local filesystems) where files can have multiple parents, use the **primary parent** (index 0 of the parent list, or the closest filesystem ancestor) for the key construction.
 
@@ -100,17 +100,7 @@ Note that `LeafEntry.Key` continues to store the **raw `fileID`** — it is the 
 
 ### 2. Snapshot Format Version
 
-Tag new snapshots with a format version to prevent cross-version mutations:
-
-```go
-// core.Snapshot gains a HAMTVersion field
-type Snapshot struct {
-    // ...
-    HAMTVersion int `json:"hamt_version,omitempty"` // 1 = legacy, 2 = affinity keys
-}
-```
-
-Clients reading a `hamt_version: 2` snapshot must use `AffinityKey` for all trie operations. Older clients without this field default to version 1 (current behavior).
+No separate snapshot version field was required for this rollout. Compatibility is handled at the HAMT leaf-entry level: `LeafEntry.PathKey` stores the routing key used by newer writers, while legacy entries without `PathKey` are still handled by fallback logic during reads/diff/walk.
 
 ## 4. Trade-offs and Constraints
 
@@ -133,9 +123,9 @@ Current `Lookup(root, key)` only needs `fileID`. With the affinity model, a look
 
 ## 5. Backward Compatibility
 
-**Breaking.** This change alters the path of every key in the trie. Existing repositories must be either:
+Implemented as a rolling-compatible change:
 
-1. **Migrated:** Perform a one-time full walk of the snapshot, re-emit every `(fileID, parentID, value)` triple via `Insert` into a new tree, and replace the root reference.
-2. **Versioned:** New snapshots created after a configured cutoff use `HAMTv2`; old snapshots remain readable and writable using the legacy key scheme.
+1. New writes use affinity routing (`AffinityKey(parentID, fileID)`) and store `PathKey` in leaf entries.
+2. Older trees remain readable because legacy entries without `PathKey` fall back to `computePathKey(fileID)` in read/diff paths.
 
-The versioned approach (option 2) is strongly recommended for production. The `HAMTVersion` field on `Snapshot` provides the discriminator. A migration CLI subcommand (`cloudstic migrate-hamt`) can optionally backfill older snapshots.
+This avoids a repository-wide migration step and does not require a dedicated `Snapshot` format field.

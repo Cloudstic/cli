@@ -8,6 +8,7 @@ import (
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
 	"github.com/cloudstic/cli/internal/ui"
+	"github.com/cloudstic/cli/pkg/source"
 	"github.com/cloudstic/cli/pkg/store"
 )
 
@@ -226,5 +227,76 @@ func TestDetectChange_NativeFileCarriesForwardMetadata(t *testing.T) {
 	}
 	if ref2 != ref {
 		t.Errorf("Expected same ref (metadata carried forward), got %q vs %q", ref2, ref)
+	}
+}
+
+type mockIncrementalSource struct {
+	*MockSource
+	startToken string
+	changes    []source.FileChange
+	newToken   string
+}
+
+func (s *mockIncrementalSource) GetStartPageToken() (string, error) {
+	return s.startToken, nil
+}
+
+func (s *mockIncrementalSource) WalkChanges(_ context.Context, _ string, callback func(source.FileChange) error) (string, error) {
+	for _, ch := range s.changes {
+		if err := callback(ch); err != nil {
+			return "", err
+		}
+	}
+	return s.newToken, nil
+}
+
+func TestScanIncremental_DeleteWithoutParentUsesExistingMetadataParent(t *testing.T) {
+	ctx := context.Background()
+	base := NewMockSource()
+	base.Files["FOLDER_1"] = MockFile{Meta: core.FileMeta{FileID: "FOLDER_1", Name: "folder", Type: core.FileTypeFolder}}
+	base.Files["FILE_1"] = MockFile{
+		Meta: core.FileMeta{
+			FileID:  "FILE_1",
+			Name:    "a.txt",
+			Type:    core.FileTypeFile,
+			Parents: []string{"FOLDER_1"},
+			Size:    3,
+		},
+		Content: []byte("abc"),
+	}
+
+	inc := &mockIncrementalSource{
+		MockSource: base,
+		startToken: "tok-1",
+		newToken:   "tok-2",
+	}
+
+	dest := NewMockStore()
+	mgr := NewBackupManager(inc, dest, ui.NewNoOpReporter(), nil)
+	_, err := mgr.Run(ctx)
+	if err != nil {
+		t.Fatalf("first backup failed: %v", err)
+	}
+
+	deleteOnly := []source.FileChange{{
+		Type: source.ChangeDelete,
+		Meta: core.FileMeta{FileID: "FILE_1", Type: core.FileTypeFile},
+	}}
+	inc.changes = deleteOnly
+	delete(base.Files, "FILE_1")
+
+	mgr2 := NewBackupManager(inc, dest, ui.NewNoOpReporter(), nil)
+	second, err := mgr2.Run(ctx)
+	if err != nil {
+		t.Fatalf("second backup failed: %v", err)
+	}
+
+	tree := hamt.NewTree(store.NewCompressedStore(dest))
+	ref, err := tree.Lookup(second.Root, "FOLDER_1", "FILE_1")
+	if err != nil {
+		t.Fatalf("lookup failed: %v", err)
+	}
+	if ref != "" {
+		t.Fatalf("expected FILE_1 to be deleted, got ref %q", ref)
 	}
 }

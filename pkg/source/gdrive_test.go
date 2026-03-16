@@ -345,6 +345,38 @@ func TestVisitEntryWithPath_PathComputation(t *testing.T) {
 	}
 }
 
+func TestVisitEntryWithPath_RootRelativePath_NoLeadingSlash(t *testing.T) {
+	s := &GDriveSource{
+		exclude:   NewExcludeMatcher(nil),
+		mimeTypes: make(map[string]string),
+	}
+
+	var got string
+	callback := func(meta core.FileMeta) error {
+		if len(meta.Paths) > 0 {
+			got = meta.Paths[0]
+		}
+		return nil
+	}
+
+	pathMap := map[string]string{"rootFolderID": ""}
+	excludedPaths := make(map[string]bool)
+
+	err := s.visitEntryWithPath(&drive.File{
+		Id:       "file1",
+		Name:     "child.txt",
+		MimeType: "text/plain",
+		Parents:  []string{"rootFolderID"},
+	}, pathMap, excludedPaths, callback)
+	if err != nil {
+		t.Fatalf("visitEntryWithPath: %v", err)
+	}
+
+	if got != "child.txt" {
+		t.Fatalf("path = %q, want %q", got, "child.txt")
+	}
+}
+
 func TestChangeToFileChange_RecordsMimeType(t *testing.T) {
 	s := &GDriveChangeSource{
 		GDriveSource: GDriveSource{
@@ -416,6 +448,28 @@ func TestChangeToFileChange_DeletedFile(t *testing.T) {
 	fc := s.changeToFileChange(&drive.Change{
 		FileId:  "file1",
 		Removed: true,
+	})
+
+	if fc.Type != ChangeDelete {
+		t.Errorf("Type = %v, want ChangeDelete", fc.Type)
+	}
+	if fc.Meta.FileID != "file1" {
+		t.Errorf("FileID = %q, want %q", fc.Meta.FileID, "file1")
+	}
+}
+
+func TestChangeToFileChange_NilFilePayload(t *testing.T) {
+	s := &GDriveChangeSource{
+		GDriveSource: GDriveSource{
+			exclude:   NewExcludeMatcher(nil),
+			mimeTypes: make(map[string]string),
+		},
+	}
+
+	fc := s.changeToFileChange(&drive.Change{
+		FileId:  "file1",
+		Removed: false,
+		File:    nil,
 	})
 
 	if fc.Type != ChangeDelete {

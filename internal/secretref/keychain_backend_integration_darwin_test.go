@@ -4,9 +4,11 @@ package secretref
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -22,6 +24,10 @@ func TestKeychainBackend_Integration(t *testing.T) {
 
 	add := exec.Command("security", "add-generic-password", "-U", "-s", service, "-a", account, "-w", secret)
 	if out, err := add.CombinedOutput(); err != nil {
+		msg := strings.ToLower(strings.TrimSpace(string(out)))
+		if strings.Contains(msg, "user interaction is not allowed") || strings.Contains(msg, "interaction not allowed") || strings.Contains(msg, "not allowed") {
+			t.Skipf("keychain unavailable in this session: %s", strings.TrimSpace(string(out)))
+		}
 		t.Fatalf("add-generic-password failed: %v\n%s", err, out)
 	}
 	t.Cleanup(func() {
@@ -36,6 +42,10 @@ func TestKeychainBackend_Integration(t *testing.T) {
 		Path:   service + "/" + account,
 	})
 	if err != nil {
+		var refErr *Error
+		if errors.As(err, &refErr) && refErr.Kind == KindBackendUnavailable {
+			t.Skipf("keychain backend unavailable: %v", err)
+		}
 		t.Fatalf("Resolve: %v", err)
 	}
 	if got != secret {

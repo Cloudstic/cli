@@ -29,7 +29,7 @@ func TestSaveSecretToNativeStore_Success(t *testing.T) {
 	if gotName != "security" {
 		t.Fatalf("command name=%q want security", gotName)
 	}
-	wantArgs := []string{"add-generic-password", "-U", "-s", "cloudstic/store/prod", "-a", "password", "-w", "super-secret"}
+	wantArgs := []string{"add-generic-password", "-U", "-s", "cloudstic/store/prod", "-a", "password", "-w"}
 	if !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Fatalf("command args=%v want=%v", gotArgs, wantArgs)
 	}

@@ -33,5 +33,5 @@ func defaultKeychainLookup(ctx context.Context, service, account string) (string
 		}
 		return "", fmt.Errorf("security find-generic-password failed: %s", msg)
 	}
-	return strings.TrimSpace(string(out)), nil
+	return strings.TrimRight(string(out), "\r\n"), nil
 }

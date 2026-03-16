@@ -15,7 +15,8 @@ import (
 var execCommandContext = exec.CommandContext
 
 func saveSecretToNativeStore(ctx context.Context, service, account, value string) error {
-	cmd := execCommandContext(ctx, "security", "add-generic-password", "-U", "-s", service, "-a", account, "-w", value)
+	cmd := execCommandContext(ctx, "security", "add-generic-password", "-U", "-s", service, "-a", account, "-w")
+	cmd.Stdin = strings.NewReader(value + "\n" + value + "\n")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

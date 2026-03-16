@@ -116,9 +116,13 @@ curl -fsSL https://raw.githubusercontent.com/Cloudstic/cli/main/scripts/install.
 
 # Install completion for a specific shell
 curl -fsSL https://raw.githubusercontent.com/Cloudstic/cli/main/scripts/install.sh | sh -s -- --with-completion --shell zsh
+
+# Skip checksum verification (not recommended)
+curl -fsSL https://raw.githubusercontent.com/Cloudstic/cli/main/scripts/install.sh | sh -s -- --no-verify
 ```
 
-The installer verifies release checksums by default.
+The installer verifies release checksums by default. `--no-verify` is available
+for constrained/debug environments but is not recommended.
 Completion files are written to user directories (for example `~/.zfunc` for zsh,
 `~/.config/fish/completions` for fish, and `~/.local/share/bash-completion/completions` for bash).
 
@@ -126,9 +130,16 @@ Completion files are written to user directories (for example `~/.zfunc` for zsh
 
 Download the latest release for your platform from the [GitHub Releases](https://github.com/cloudstic/cli/releases) page. Binaries are available for macOS (Intel & Apple Silicon), Linux (amd64 & arm64), and Windows.
 
+> Prefer the curl installer above when possible; it verifies checksums automatically.
+
 ```bash
 # Example: macOS Apple Silicon
-curl -L https://github.com/cloudstic/cli/releases/latest/download/cloudstic_$(curl -s https://api.github.com/repos/cloudstic/cli/releases/latest | grep tag_name | cut -d '"' -f 4 | sed 's/^v//')_darwin_arm64.tar.gz | tar xz
+VERSION=$(curl -fsSL https://api.github.com/repos/cloudstic/cli/releases/latest | awk -F '"' '/tag_name/{gsub(/^v/,"",$4); print $4; exit}')
+ASSET="cloudstic_${VERSION}_darwin_arm64.tar.gz"
+curl -fsSL "https://github.com/cloudstic/cli/releases/latest/download/${ASSET}" -o "${ASSET}"
+curl -fsSL https://github.com/cloudstic/cli/releases/latest/download/checksums.txt -o checksums.txt
+grep " ${ASSET}$" checksums.txt | shasum -a 256 -c -
+tar -xzf "${ASSET}"
 mv cloudstic /usr/local/bin/
 ```
 

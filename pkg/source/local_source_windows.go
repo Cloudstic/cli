@@ -29,14 +29,15 @@ type partitionInfoGPT struct {
 // partitionInformationEx mirrors the Windows PARTITION_INFORMATION_EX struct.
 // The union at the end is defined as the GPT variant (the larger of the two).
 type partitionInformationEx struct {
-	PartitionStyle   uint32
-	_                uint32 // padding for int64 alignment
-	StartingOffset   int64
-	PartitionLength  int64
-	PartitionNumber  uint32
-	RewritePartition byte
-	_                [3]byte // padding to align union
-	GPT              partitionInfoGPT
+	PartitionStyle     uint32
+	_                  uint32 // padding for int64 alignment
+	StartingOffset     int64
+	PartitionLength    int64
+	PartitionNumber    uint32
+	RewritePartition   byte
+	IsServicePartition byte
+	_                  [2]byte // padding to align union
+	GPT                partitionInfoGPT
 }
 
 func detectVolumeIdentity(path string) (uuid, label, mountPoint string) {
@@ -78,8 +79,14 @@ func getVolumeLabel(mountPoint string) string {
 // getPartitionUUID returns the GPT partition UUID via DeviceIoControl.
 // Returns empty for MBR partitions or on error.
 func getPartitionUUID(mountPoint string) string {
-	// Open the volume: "C:\" → "\\.\C:" (strip trailing backslash).
-	volumePath := `\\.\` + strings.TrimRight(mountPoint, `\`)
+	volumeName, err := getVolumeNameForMountPoint(mountPoint)
+	if err != nil || volumeName == "" {
+		return ""
+	}
+
+	// Open the volume GUID path (e.g. "\\?\Volume{GUID}\") so mounted-folder
+	// volumes work correctly too.
+	volumePath := `\\.\` + strings.TrimPrefix(strings.TrimRight(volumeName, `\`), `\\?\`)
 	pathUTF16, err := windows.UTF16PtrFromString(volumePath)
 	if err != nil {
 		return ""
@@ -118,6 +125,18 @@ func getPartitionUUID(mountPoint string) string {
 	}
 
 	return strings.ToUpper(formatGUID(info.GPT.PartitionId))
+}
+
+func getVolumeNameForMountPoint(mountPoint string) (string, error) {
+	mountUTF16, err := windows.UTF16PtrFromString(mountPoint)
+	if err != nil {
+		return "", err
+	}
+	var volumeName [windows.MAX_PATH + 1]uint16
+	if err := windows.GetVolumeNameForVolumeMountPoint(mountUTF16, &volumeName[0], uint32(len(volumeName))); err != nil {
+		return "", err
+	}
+	return windows.UTF16ToString(volumeName[:]), nil
 }
 
 // formatGUID formats a Windows GUID as a standard UUID string.

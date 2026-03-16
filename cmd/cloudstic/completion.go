@@ -53,9 +53,9 @@ _cloudstic() {
             -*)
                 # skip flags and their values
                 case "${words[i]}" in
-                    -store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-store-sftp-password|-store-sftp-key|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-all-profiles|-auth-ref|-google-credentials|-google-token-file|-onedrive-client-id|-onedrive-token-file|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account|-json)
-                        ((i++)) ;;
-                esac
+					-store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-store-sftp-password|-store-sftp-key|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-auth-ref|-google-credentials|-google-token-file|-onedrive-client-id|-onedrive-token-file|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account|-json)
+						((i++)) ;;
+				esac
                 ;;
             *)
                 cmd="${words[i]}"
@@ -281,9 +281,9 @@ _cloudstic() {
             -*)
                 # Skip flags with values
                 case "${words[i]}" in
-                    -store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-store-sftp-password|-store-sftp-key|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-all-profiles|-auth-ref|-google-credentials|-google-token-file|-onedrive-client-id|-onedrive-token-file|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account)
-                        (( i++ )) ;;
-                esac
+					-store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-store-sftp-password|-store-sftp-key|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-auth-ref|-google-credentials|-google-token-file|-onedrive-client-id|-onedrive-token-file|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account)
+						(( i++ )) ;;
+				esac
                 ;;
             *)
                 cmd="${words[i]}"

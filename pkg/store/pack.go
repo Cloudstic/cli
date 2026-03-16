@@ -327,6 +327,7 @@ func (s *PackStore) Flush(ctx context.Context) error {
 		}
 		s.mu.Lock()
 		s.catalogDirty = false
+		totalEntries := len(s.catalog)
 		nodeCount := 0
 		for k := range s.catalog {
 			if strings.HasPrefix(k, "node/") {
@@ -334,7 +335,7 @@ func (s *PackStore) Flush(ctx context.Context) error {
 			}
 		}
 		s.mu.Unlock()
-		debugf("pack: catalog flushed — %d total entries, %d node/* entries", len(s.catalog), nodeCount)
+		debugf("pack: catalog flushed — %d total entries, %d node/* entries", totalEntries, nodeCount)
 	}
 
 	return nil

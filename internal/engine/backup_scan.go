@@ -119,7 +119,14 @@ func (bm *BackupManager) scanIncremental(ctx context.Context, oldRoot string, in
 		switch fc.Type {
 		case source.ChangeDelete:
 			bm.recordRemoved(fc.Meta.Type)
-			s.root, err = bm.tree.Delete(s.root, primaryParentID(&fc.Meta), fc.Meta.FileID)
+			deleteParentID := primaryParentID(&fc.Meta)
+			if deleteParentID == "" {
+				deleteParentID, err = bm.lookupDeleteParentID(s.root, fc.Meta.FileID)
+				if err != nil {
+					return err
+				}
+			}
+			s.root, err = bm.tree.Delete(s.root, deleteParentID, fc.Meta.FileID)
 			if err != nil {
 				return fmt.Errorf("hamt delete %s: %w", fc.Meta.FileID, err)
 			}
@@ -136,6 +143,26 @@ func (bm *BackupManager) scanIncremental(ctx context.Context, oldRoot string, in
 
 	phase.Done()
 	return s.root, s.pending, s.totalBytes, newToken, nil
+}
+
+func (bm *BackupManager) lookupDeleteParentID(root, fileID string) (string, error) {
+	if root == "" {
+		return "", nil
+	}
+
+	ref, err := bm.tree.LookupByFileID(root, fileID)
+	if err != nil {
+		return "", fmt.Errorf("lookup old file for delete %s: %w", fileID, err)
+	}
+	if ref == "" {
+		return "", nil
+	}
+
+	oldMeta, err := bm.loadMeta(ref)
+	if err != nil {
+		return "", fmt.Errorf("load old file metadata for delete %s: %w", fileID, err)
+	}
+	return primaryParentID(oldMeta), nil
 }
 
 // detectChange compares meta against the previous snapshot. It returns whether

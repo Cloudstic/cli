@@ -395,8 +395,11 @@ func cloneGlobalFlags(src *globalFlags) *globalFlags {
 	clone := *src
 
 	store := *src.store
+	profile := *src.profile
+	profilesFile := *src.profilesFile
 	s3Endpoint := *src.s3Endpoint
 	s3Region := *src.s3Region
+	s3Profile := *src.s3Profile
 	s3AccessKey := *src.s3AccessKey
 	s3SecretKey := *src.s3SecretKey
 	sourceSFTPPassword := *src.sourceSFTPPassword
@@ -416,8 +419,11 @@ func cloneGlobalFlags(src *globalFlags) *globalFlags {
 	debug := *src.debug
 
 	clone.store = &store
+	clone.profile = &profile
+	clone.profilesFile = &profilesFile
 	clone.s3Endpoint = &s3Endpoint
 	clone.s3Region = &s3Region
+	clone.s3Profile = &s3Profile
 	clone.s3AccessKey = &s3AccessKey
 	clone.s3SecretKey = &s3SecretKey
 	clone.sourceSFTPPassword = &sourceSFTPPassword

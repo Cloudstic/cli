@@ -186,7 +186,8 @@ func getVolumeLabel(path string) string {
 	}
 
 	// Parse attrreference: offset from start of attrreference field, then length
-	if buf[0] < 12 {
+	attrLen := *(*uint32)(unsafe.Pointer(&buf[0]))
+	if attrLen < 12 {
 		return ""
 	}
 	off := *(*int32)(unsafe.Pointer(&buf[4]))

@@ -356,6 +356,9 @@ func (r *runner) runProfileNew() int {
 	createdStore := false
 
 	if a.store != "" {
+		if _, err := parseStoreURI(a.store); err != nil {
+			return r.fail("Invalid store URI: %v", err)
+		}
 		cfg.Stores[a.storeRef] = cloudstic.ProfileStore{URI: a.store}
 		createdStore = true
 	} else if a.storeRef != "" {
@@ -479,12 +482,15 @@ func (r *runner) promptStoreSelection(cfg *cloudstic.ProfilesConfig) (string, bo
 	if refName == "" {
 		return "", false, r.fail("Store reference name is required")
 	}
-	uri, err := r.promptLine("Store URI (e.g. s3://bucket/path, local:/path, sftp://host/path)", "")
+	uri, err := r.promptLine("Store URI (e.g. s3:bucket/path, local:/path, sftp://host/path)", "")
 	if err != nil {
 		return "", false, r.fail("Failed to read store URI: %v", err)
 	}
 	if uri == "" {
 		return "", false, r.fail("Store URI is required")
+	}
+	if _, err := parseStoreURI(uri); err != nil {
+		return "", false, r.fail("Invalid store URI: %v", err)
 	}
 	cfg.Stores[refName] = cloudstic.ProfileStore{URI: uri}
 	return refName, true, 0

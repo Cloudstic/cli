@@ -37,7 +37,7 @@ func (s *OneDriveChangeSource) Info() core.SourceInfo {
 // requesting a "latest" delta token. The returned string is a full deltaLink URL.
 func (s *OneDriveChangeSource) GetStartPageToken() (string, error) {
 	url := s.getRootURL()
-	if s.rootPath != "" && s.rootPath != "/" {
+	if normalizeOneDriveRootPath(s.rootPath) != "/" {
 		url += ":/delta?token=latest"
 	} else {
 		url += "/delta?token=latest"
@@ -113,25 +113,23 @@ func (s *OneDriveChangeSource) WalkChanges(ctx context.Context, token string, ca
 }
 
 func (s *OneDriveChangeSource) filterChangesByRootPath(changes []FileChange) []FileChange {
-	if s.rootPath == "" || s.rootPath == "/" {
+	normalizedRoot := normalizeOneDriveRootPath(s.rootPath)
+	if normalizedRoot == "/" {
 		return changes
 	}
 	var valid []FileChange
-	trimmedRoot := strings.TrimPrefix(s.rootPath, "/")
+	trimmedRoot := strings.TrimPrefix(normalizedRoot, "/")
 	for _, fc := range changes {
 		if len(fc.Meta.Paths) > 0 {
 			p := fc.Meta.Paths[0]
-			if !strings.HasPrefix(p, trimmedRoot+"/") && p != trimmedRoot {
+			if p == trimmedRoot {
+				continue // Skip root folder itself; emit descendants only.
+			}
+			if !strings.HasPrefix(p, trimmedRoot+"/") {
 				continue // Outside of root path
 			}
 			// Adjust path relative to root
-			stripped := strings.TrimPrefix(p, trimmedRoot+"/")
-			stripped = strings.TrimPrefix(stripped, trimmedRoot)
-			if stripped == "" {
-				fc.Meta.Paths = []string{fc.Meta.Name}
-			} else {
-				fc.Meta.Paths = []string{stripped}
-			}
+			fc.Meta.Paths = []string{strings.TrimPrefix(p, trimmedRoot+"/")}
 		} else if fc.Type == ChangeUpsert {
 			continue
 		}

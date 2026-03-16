@@ -61,6 +61,14 @@ echo "Building cloudstic binary..."
 go build -o /tmp/cloudstic ./cmd/cloudstic
 export CLOUDSTIC_BIN="/tmp/cloudstic"
 
+# Ensure benchmark runs are not affected by operator shell defaults.
+# In particular, a pre-set CLOUDSTIC_KMS_KEY_ARN would make `cloudstic init`
+# try AWS KMS even for local/local runs.
+unset CLOUDSTIC_KMS_KEY_ARN CLOUDSTIC_KMS_REGION CLOUDSTIC_KMS_ENDPOINT
+unset CLOUDSTIC_PROFILE CLOUDSTIC_PROFILES_FILE
+unset CLOUDSTIC_STORE CLOUDSTIC_S3_ENDPOINT CLOUDSTIC_S3_REGION CLOUDSTIC_S3_PROFILE
+unset CLOUDSTIC_S3_ACCESS_KEY CLOUDSTIC_S3_SECRET_KEY
+
 # Create temp dirs
 DATA_TEMPLATE=$(mktemp -d -t benchmark-template-XXXXXX)
 DATA_DIR=$(mktemp -d -t benchmark-data-XXXXXX)
@@ -289,12 +297,14 @@ print_repo_size() {
     printf "| %-30s | %12s | %13s | %12s |\n" "Final Repo Size" "$size" "-" "-"
 }
 
-PASSWORD="benchmark-password-123"
-export CLOUDSTIC_ENCRYPTION_PASSWORD="$PASSWORD"
-export RESTIC_PASSWORD="$PASSWORD"
-export BORG_PASSPHRASE="$PASSWORD"
-export DUPLICACY_PASSWORD="$PASSWORD"
-export DUPLICACY_DEFAULT_PASSWORD="$PASSWORD"
+# Repository password used by all tools during benchmarks.
+# Override with: BENCH_REPO_PASSWORD='your-password' ./scripts/benchmark/run.sh ...
+REPO_PASSWORD=${BENCH_REPO_PASSWORD:-benchmark-password-123}
+export CLOUDSTIC_PASSWORD="$REPO_PASSWORD"
+export RESTIC_PASSWORD="$REPO_PASSWORD"
+export BORG_PASSPHRASE="$REPO_PASSWORD"
+export DUPLICACY_PASSWORD="$REPO_PASSWORD"
+export DUPLICACY_DEFAULT_PASSWORD="$REPO_PASSWORD"
 
 # ---------------------------------------------------------------------------
 # Cloudstic
@@ -310,7 +320,7 @@ benchmark_cloudstic() {
     if [ "$STORE" == "s3" ]; then
         BENCH_REPO_DIR=""
         BENCH_S3_PREFIX="s3://$S3_BUCKET/cloudstic/"
-        store_flags="-store s3:$S3_BUCKET/cloudstic/ -encryption-password $PASSWORD"
+        store_flags="-store s3:$S3_BUCKET/cloudstic/ -password $REPO_PASSWORD"
         $CLOUDSTIC_BIN init $store_flags >/dev/null || true
     else
         BENCH_REPO_DIR="$repo"

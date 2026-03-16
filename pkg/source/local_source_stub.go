@@ -3,8 +3,8 @@
 package source
 
 // detectVolumeIdentity is a stub for platforms where volume UUID detection
-// is not yet implemented (Windows, plan9, etc.). It returns empty strings,
-// causing the engine to fall back to legacy account+path matching.
+// is not yet implemented. It returns empty strings, causing the engine to
+// fall back to legacy account+path matching.
 func detectVolumeIdentity(_ string) (uuid, label, mountPoint string) {
 	return "", "", ""
 }

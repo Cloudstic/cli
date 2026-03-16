@@ -164,6 +164,14 @@ func printUsage() {
 	t.Note("  Resolve store credentials and verify connectivity.")
 	t.Blank()
 
+	t.Command("store init", "<name>")
+	t.Flags([][2]string{
+		{"-profiles-file <path>", ui.Env("Path to profiles YAML file", "CLOUDSTIC_PROFILES_FILE")},
+		{"-yes", "Initialize without confirmation prompt"},
+	})
+	t.Note("  Initialize a configured store by reference from profiles.yaml.")
+	t.Blank()
+
 	t.Command("store new", "")
 	t.Flags([][2]string{
 		{"-name <name>", "Store reference name"},

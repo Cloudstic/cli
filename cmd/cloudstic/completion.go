@@ -171,7 +171,7 @@ _cloudstic() {
                 esac
             done
 		if [[ -z "$store_sub" ]]; then
-			COMPREPLY=($(compgen -W "list show new verify" -- "$cur"))
+			COMPREPLY=($(compgen -W "list show new verify init" -- "$cur"))
 			return
 		fi
 		case "$store_sub" in
@@ -181,6 +181,8 @@ _cloudstic() {
 				cmd_flags="-profiles-file" ;;
 			verify)
 				cmd_flags="-profiles-file" ;;
+			init)
+				cmd_flags="-profiles-file -yes" ;;
 			new)
 				cmd_flags="-profiles-file -name -uri -s3-region -s3-profile -s3-endpoint -s3-access-key -s3-secret-key -s3-access-key-secret -s3-secret-key-secret -s3-access-key-env -s3-secret-key-env -s3-profile-env -store-sftp-password -store-sftp-key -store-sftp-password-secret -store-sftp-key-secret -store-sftp-password-env -store-sftp-key-env -password-secret -encryption-key-secret -recovery-key-secret -password-env -encryption-key-env -recovery-key-env -kms-key-arn -kms-region -kms-endpoint" ;;
                 *)
@@ -426,6 +428,7 @@ _cloudstic() {
 				'show:Show one store and its configuration'
 				'new:Create or update a store entry'
 				'verify:Verify store credentials and connectivity'
+				'init:Initialize a store by reference'
 			)
             local store_sub
             local -i si=$((i+1))
@@ -449,6 +452,9 @@ _cloudstic() {
 					;;
 				verify)
 					_arguments '-profiles-file[Path to profiles YAML file]:path:_files' ':store name:'
+					;;
+				init)
+					_arguments '-profiles-file[Path to profiles YAML file]:path:_files' '-yes[Initialize without confirmation prompt]' ':store name:'
 					;;
 				new)
                     _arguments \
@@ -668,6 +674,19 @@ complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_s
 complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l google-token-file -r -F -d 'Google OAuth token file'
 complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l onedrive-client-id -x -d 'OneDrive OAuth client ID'
 complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l onedrive-token-file -r -F -d 'OneDrive OAuth token file'
+
+# store subcommands
+complete -c cloudstic -n '__fish_seen_subcommand_from store; and not __fish_seen_subcommand_from list show new verify init' -a list -d 'List configured stores'
+complete -c cloudstic -n '__fish_seen_subcommand_from store; and not __fish_seen_subcommand_from list show new verify init' -a show -d 'Show one store and its configuration'
+complete -c cloudstic -n '__fish_seen_subcommand_from store; and not __fish_seen_subcommand_from list show new verify init' -a new -d 'Create or update a store entry'
+complete -c cloudstic -n '__fish_seen_subcommand_from store; and not __fish_seen_subcommand_from list show new verify init' -a verify -d 'Verify store credentials and connectivity'
+complete -c cloudstic -n '__fish_seen_subcommand_from store; and not __fish_seen_subcommand_from list show new verify init' -a init -d 'Initialize a store by reference'
+complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from list' -l profiles-file -r -F -d 'Path to profiles YAML file'
+complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from show' -l profiles-file -r -F -d 'Path to profiles YAML file'
+complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from new' -l profiles-file -r -F -d 'Path to profiles YAML file'
+complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from verify' -l profiles-file -r -F -d 'Path to profiles YAML file'
+complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from init' -l profiles-file -r -F -d 'Path to profiles YAML file'
+complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from init' -l yes -d 'Initialize without confirmation prompt'
 
 # auth subcommands
 complete -c cloudstic -n '__fish_seen_subcommand_from auth; and not __fish_seen_subcommand_from list show new login' -a list -d 'List auth entries from profiles.yaml'

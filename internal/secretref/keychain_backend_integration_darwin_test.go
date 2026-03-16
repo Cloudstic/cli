@@ -6,11 +6,11 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/keybase/go-keychain"
 )
 
 func TestKeychainBackend_Integration(t *testing.T) {
@@ -22,17 +22,28 @@ func TestKeychainBackend_Integration(t *testing.T) {
 	account := "cloudstic-test-account"
 	secret := "cloudstic-test-secret"
 
-	add := exec.Command("security", "add-generic-password", "-U", "-s", service, "-a", account, "-w", secret)
-	if out, err := add.CombinedOutput(); err != nil {
-		msg := strings.ToLower(strings.TrimSpace(string(out)))
-		if strings.Contains(msg, "user interaction is not allowed") || strings.Contains(msg, "interaction not allowed") || strings.Contains(msg, "not allowed") {
-			t.Skipf("keychain unavailable in this session: %s", strings.TrimSpace(string(out)))
+	item := keychain.NewGenericPassword(service, account, "", []byte(secret), "")
+	item.SetAccessible(keychain.AccessibleWhenUnlockedThisDeviceOnly)
+	if err := keychain.AddItem(item); err != nil {
+		if err == keychain.ErrorInteractionNotAllowed || err == keychain.ErrorNotAvailable || err == keychain.ErrorNoSuchKeychain {
+			t.Skipf("keychain unavailable in this session: %v", err)
 		}
-		t.Fatalf("add-generic-password failed: %v\n%s", err, out)
+		if err == keychain.ErrorDuplicateItem {
+			query := keychain.NewItem()
+			query.SetSecClass(keychain.SecClassGenericPassword)
+			query.SetService(service)
+			query.SetAccount(account)
+			update := keychain.NewItem()
+			update.SetData([]byte(secret))
+			if updateErr := keychain.UpdateItem(query, update); updateErr != nil {
+				t.Fatalf("update duplicate keychain item: %v", updateErr)
+			}
+		} else {
+			t.Fatalf("add keychain item failed: %v", err)
+		}
 	}
 	t.Cleanup(func() {
-		del := exec.Command("security", "delete-generic-password", "-s", service, "-a", account)
-		_, _ = del.CombinedOutput()
+		_ = keychain.DeleteGenericPasswordItem(service, account)
 	})
 
 	b := NewKeychainBackend()

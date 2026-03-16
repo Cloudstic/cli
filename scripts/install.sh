@@ -124,6 +124,11 @@ parse_args() {
   done
 }
 
+print_install_dir_hint() {
+  echo "Try running with sudo or choose a user-writable directory:" >&2
+  echo "  sh -s -- --install-dir \"$HOME/.local/bin\"" >&2
+}
+
 detect_default_shell() {
   if [ -n "${SHELL:-}" ]; then
     shell_name="$(basename "$SHELL")"
@@ -203,7 +208,10 @@ install_binary() {
   if [ "$VERSION" = "latest" ]; then
     tag="latest"
   else
-    tag="$VERSION"
+    case "$VERSION" in
+      v*) tag="$VERSION" ;;
+      *) tag="v$VERSION" ;;
+    esac
   fi
 
   if [ "$tag" = "latest" ]; then
@@ -253,14 +261,25 @@ install_binary() {
     exit 1
   fi
 
-  mkdir -p "$INSTALL_DIR"
+  if ! mkdir -p "$INSTALL_DIR" 2>/dev/null; then
+    echo "Error: cannot create install directory: $INSTALL_DIR" >&2
+    print_install_dir_hint
+    exit 1
+  fi
+
   target="$INSTALL_DIR/$BIN_NAME"
-  if cp "$tmpdir/$BIN_NAME" "$target" 2>/dev/null; then
-    chmod +x "$target"
+  cp_err_file="$tmpdir/cp.err"
+  if cp "$tmpdir/$BIN_NAME" "$target" 2>"$cp_err_file"; then
+    chmod_err_file="$tmpdir/chmod.err"
+    if ! chmod +x "$target" 2>"$chmod_err_file"; then
+      echo "Error: failed to set executable bit on $target" >&2
+      cat "$chmod_err_file" >&2
+      exit 1
+    fi
   else
-    echo "Permission denied writing to $INSTALL_DIR." >&2
-    echo "Try running with sudo or choose a user-writable directory:" >&2
-    echo "  sh -s -- --install-dir \"$HOME/.local/bin\"" >&2
+    echo "Error: failed to install $BIN_NAME to $target" >&2
+    cat "$cp_err_file" >&2
+    print_install_dir_hint
     exit 1
   fi
 
@@ -275,6 +294,7 @@ install_binary() {
 main() {
   need_cmd curl
   need_cmd tar
+  need_cmd awk
   parse_args "$@"
   os="$(detect_os)"
   arch="$(detect_arch)"

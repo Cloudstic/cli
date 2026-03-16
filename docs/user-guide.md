@@ -537,6 +537,20 @@ cloudstic store verify prod-s3
 and encrypted repo unlock). It is different from `cloudstic check`, which verifies
 repository data integrity.
 
+#### store init
+
+Initialize a configured store by reference from `profiles.yaml`.
+
+```bash
+cloudstic store init prod-s3
+
+# Non-interactive (skip confirmation prompt)
+cloudstic store init -yes prod-s3
+```
+
+Use this when a store was created/configured earlier but repository
+initialization was skipped or failed.
+
 #### store new
 
 Create or update a named store entry in `profiles.yaml`. Stores define storage backend, connection credentials, and encryption settings.

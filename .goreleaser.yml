@@ -3,7 +3,8 @@ version: 2
 project_name: cloudstic
 
 builds:
-  - main: ./cmd/cloudstic
+  - id: cloudstic-cross
+    main: ./cmd/cloudstic
     binary: cloudstic
     env:
       - CGO_ENABLED=0
@@ -17,8 +18,25 @@ builds:
       - -X github.com/cloudstic/cli/pkg/source.defaultOneDriveClientID={{ .Env.ONEDRIVE_CLIENT_ID }}
     goos:
       - linux
-      - darwin
       - windows
+    goarch:
+      - amd64
+      - arm64
+  - id: cloudstic-darwin
+    main: ./cmd/cloudstic
+    binary: cloudstic
+    env:
+      - CGO_ENABLED=1
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.ShortCommit}}
+      - -X main.date={{.Date}}
+      - -X github.com/cloudstic/cli/pkg/source.defaultGoogleClientID={{ .Env.GOOGLE_CLIENT_ID }}
+      - -X github.com/cloudstic/cli/pkg/source.defaultGoogleClientSecret={{ .Env.GOOGLE_CLIENT_SECRET }}
+      - -X github.com/cloudstic/cli/pkg/source.defaultOneDriveClientID={{ .Env.ONEDRIVE_CLIENT_ID }}
+    goos:
+      - darwin
     goarch:
       - amd64
       - arm64

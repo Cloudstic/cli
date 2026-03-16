@@ -4,43 +4,49 @@ package main
 
 import (
 	"context"
-	"os/exec"
-	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/keybase/go-keychain"
 )
 
 func TestSaveSecretToNativeStore_Success(t *testing.T) {
-	orig := execCommandContext
-	defer func() { execCommandContext = orig }()
+	origAdd := keychainAddItem
+	origUpdate := keychainUpdateItem
+	defer func() {
+		keychainAddItem = origAdd
+		keychainUpdateItem = origUpdate
+	}()
 
-	var gotName string
-	var gotArgs []string
-	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		gotName = name
-		gotArgs = append([]string{}, args...)
-		return exec.CommandContext(ctx, "sh", "-c", "exit 0")
+	addCalled := false
+	updateCalled := false
+	keychainAddItem = func(item keychain.Item) error {
+		addCalled = true
+		return nil
+	}
+	keychainUpdateItem = func(_, _ keychain.Item) error {
+		updateCalled = true
+		return nil
 	}
 
 	err := saveSecretToNativeStore(context.Background(), "cloudstic/store/prod", "password", "super-secret")
 	if err != nil {
 		t.Fatalf("saveSecretToNativeStore: %v", err)
 	}
-	if gotName != "security" {
-		t.Fatalf("command name=%q want security", gotName)
+	if !addCalled {
+		t.Fatal("expected add to be called")
 	}
-	wantArgs := []string{"add-generic-password", "-U", "-s", "cloudstic/store/prod", "-a", "password", "-w"}
-	if !reflect.DeepEqual(gotArgs, wantArgs) {
-		t.Fatalf("command args=%v want=%v", gotArgs, wantArgs)
+	if updateCalled {
+		t.Fatal("did not expect update path on successful add")
 	}
 }
 
 func TestSaveSecretToNativeStore_Failure(t *testing.T) {
-	orig := execCommandContext
-	defer func() { execCommandContext = orig }()
+	origAdd := keychainAddItem
+	defer func() { keychainAddItem = origAdd }()
 
-	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		return exec.CommandContext(ctx, "sh", "-c", "echo keychain failed 1>&2; exit 1")
+	keychainAddItem = func(keychain.Item) error {
+		return keychain.ErrorNotAvailable
 	}
 
 	err := saveSecretToNativeStore(context.Background(), "svc", "acct", "secret")
@@ -50,21 +56,46 @@ func TestSaveSecretToNativeStore_Failure(t *testing.T) {
 	if !strings.Contains(err.Error(), "save secret in macOS keychain failed") {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "keychain failed") {
-		t.Fatalf("expected stderr in error: %v", err)
+	if !strings.Contains(err.Error(), "-25291") {
+		t.Fatalf("expected keychain status code in output: %v", err)
+	}
+}
+
+func TestSaveSecretToNativeStore_DuplicateUpdates(t *testing.T) {
+	origAdd := keychainAddItem
+	origUpdate := keychainUpdateItem
+	defer func() {
+		keychainAddItem = origAdd
+		keychainUpdateItem = origUpdate
+	}()
+
+	keychainAddItem = func(keychain.Item) error {
+		return keychain.ErrorDuplicateItem
+	}
+
+	updated := false
+	keychainUpdateItem = func(_, _ keychain.Item) error {
+		updated = true
+		return nil
+	}
+
+	if err := saveSecretToNativeStore(context.Background(), "svc", "acct", "new-secret"); err != nil {
+		t.Fatalf("saveSecretToNativeStore: %v", err)
+	}
+	if !updated {
+		t.Fatal("expected duplicate path to call update")
 	}
 }
 
 func TestNativeSecretExists_Success(t *testing.T) {
-	orig := execCommandContext
-	defer func() { execCommandContext = orig }()
+	origGet := keychainGetGenericPassword
+	defer func() { keychainGetGenericPassword = origGet }()
 
-	var gotName string
-	var gotArgs []string
-	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		gotName = name
-		gotArgs = append([]string{}, args...)
-		return exec.CommandContext(ctx, "sh", "-c", "exit 0")
+	keychainGetGenericPassword = func(service, account, label, accessGroup string) ([]byte, error) {
+		if service != "cloudstic/store/prod" || account != "password" || label != "" || accessGroup != "" {
+			return nil, keychain.ErrorParam
+		}
+		return []byte("secret"), nil
 	}
 
 	exists, err := nativeSecretExists(context.Background(), "cloudstic/store/prod", "password")
@@ -74,21 +105,14 @@ func TestNativeSecretExists_Success(t *testing.T) {
 	if !exists {
 		t.Fatal("expected exists=true")
 	}
-	if gotName != "security" {
-		t.Fatalf("command name=%q want security", gotName)
-	}
-	wantArgs := []string{"find-generic-password", "-s", "cloudstic/store/prod", "-a", "password"}
-	if !reflect.DeepEqual(gotArgs, wantArgs) {
-		t.Fatalf("command args=%v want=%v", gotArgs, wantArgs)
-	}
 }
 
 func TestNativeSecretExists_NotFound(t *testing.T) {
-	orig := execCommandContext
-	defer func() { execCommandContext = orig }()
+	origGet := keychainGetGenericPassword
+	defer func() { keychainGetGenericPassword = origGet }()
 
-	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		return exec.CommandContext(ctx, "sh", "-c", "exit 44")
+	keychainGetGenericPassword = func(service, account, label, accessGroup string) ([]byte, error) {
+		return nil, keychain.ErrorItemNotFound
 	}
 
 	exists, err := nativeSecretExists(context.Background(), "svc", "acct")
@@ -100,12 +124,29 @@ func TestNativeSecretExists_NotFound(t *testing.T) {
 	}
 }
 
-func TestNativeSecretExists_OtherError(t *testing.T) {
-	orig := execCommandContext
-	defer func() { execCommandContext = orig }()
+func TestNativeSecretExists_NotFoundNilData(t *testing.T) {
+	origGet := keychainGetGenericPassword
+	defer func() { keychainGetGenericPassword = origGet }()
 
-	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		return exec.CommandContext(ctx, "sh", "-c", "echo boom 1>&2; exit 2")
+	keychainGetGenericPassword = func(service, account, label, accessGroup string) ([]byte, error) {
+		return nil, nil
+	}
+
+	exists, err := nativeSecretExists(context.Background(), "svc", "acct")
+	if err != nil {
+		t.Fatalf("nativeSecretExists: %v", err)
+	}
+	if exists {
+		t.Fatal("expected exists=false for nil data result")
+	}
+}
+
+func TestNativeSecretExists_OtherError(t *testing.T) {
+	origGet := keychainGetGenericPassword
+	defer func() { keychainGetGenericPassword = origGet }()
+
+	keychainGetGenericPassword = func(service, account, label, accessGroup string) ([]byte, error) {
+		return nil, keychain.ErrorNotAvailable
 	}
 
 	exists, err := nativeSecretExists(context.Background(), "svc", "acct")

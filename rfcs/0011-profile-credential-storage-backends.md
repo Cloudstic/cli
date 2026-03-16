@@ -1,6 +1,6 @@
 # RFC 0011: Profile Credential Storage Backends
 
-- **Status:** Draft
+- **Status:** In Progress
 - **Date:** 2026-03-15
 - **Affects:** `internal/engine/profiles`, `cmd/cloudstic/{backup,store,profile,auth}`, docs
 
@@ -20,6 +20,15 @@ new `*_secret` reference model that can resolve secrets from:
 
 The primary objective is to improve secret-at-rest protection for interactive
 users while preserving automation and headless workflows.
+
+This RFC improves operational security and ergonomics, but it does not claim
+protection against a fully compromised local user session.
+
+Current implementation status (as of this RFC revision):
+
+- `env://` is implemented.
+- `keychain://` on macOS is implemented.
+- `wincred://` and `secret-service://` are planned but not yet implemented.
 
 ## Context
 
@@ -43,6 +52,8 @@ This is a good baseline, but gaps remain:
 - Keep current env-var-based workflows working unchanged.
 - Fail safely in headless/missing-native-backend environments.
 - Ensure CLI output never prints resolved secret values.
+- Make backend guarantees explicit so docs do not overstate app-only or
+  hardware-bound protection.
 
 ## Non-goals
 
@@ -50,6 +61,9 @@ This is a good baseline, but gaps remain:
 - No mandatory migration of existing `profiles.yaml` files.
 - No full redesign of repository key slot encryption (`pkg/keychain`).
 - No immediate migration of OAuth token JSON blobs to native stores.
+- No promise that retrievable local secrets remain safe if an attacker controls
+  the user's session.
+- No Secure Enclave non-exportable-key design in this RFC (potential follow-up).
 
 ## Proposal
 
@@ -146,6 +160,22 @@ Rationale:
 - `store new` interactive mode may offer to save secrets to native backends and
   write the resulting `*_secret` reference.
 
+### 6. Threat model and limits
+
+This RFC targets protection against accidental disclosure and weak secret
+handling patterns (for example plaintext in config files, ad-hoc shell scripts,
+or overuse of long-lived environment variables).
+
+Out of scope for this RFC:
+
+- A fully compromised local machine or user session.
+- Guarantees that a retrievable secret can only ever be used by one app
+  regardless of runtime compromise.
+
+If the process can retrieve plaintext, a sufficiently privileged local attacker
+can generally coerce or inspect that process. Native stores still improve
+default posture, but they are not equivalent to non-exportable hardware keys.
+
 Potential follow-up commands (not required in initial implementation):
 
 - `cloudstic secret set`
@@ -160,6 +190,20 @@ Potential follow-up commands (not required in initial implementation):
 - Expected strong interactive UX and secure at-rest storage.
 - If Keychain is unavailable/locked in non-interactive contexts, return a clear
   error and suggest `env://` fallback.
+
+Current model in this RFC is retrievable secrets (`keychain://service/account`).
+It does not imply Secure Enclave non-exportable keys, and does not assume
+app-scoped ACL enforcement for the Cloudstic CLI process.
+
+Implementation note:
+
+- The macOS backend uses native Security framework calls via
+  `github.com/keybase/go-keychain` (not shelling out to the `security` CLI).
+- Stored items use `AccessibleWhenUnlockedThisDeviceOnly` in current
+  implementation.
+
+Terminology note: on macOS, "hardware-backed" typically refers to Secure
+Enclave integration, not TPM in the Windows/Linux sense.
 
 ### Windows
 
@@ -199,6 +243,15 @@ password_secret: keychain://cloudstic/store/prod/repo-password
 - Error messages should name fields and references, but not secret content.
 - Native backend implementations should avoid caching plaintext in long-lived
   global state.
+- Documentation must not overclaim backend properties (for example, "app-only"
+  or "hardware-bound") unless those properties are explicitly implemented.
+
+Capability framing for this RFC:
+
+- `env://` and `keychain://` currently represent retrievable-secret flows.
+- Secure Enclave non-exportable key operations are a possible future extension,
+  likely via a separate key-operation reference model rather than plaintext
+  `Resolve(...)`.
 
 ## Testing strategy
 
@@ -211,10 +264,12 @@ password_secret: keychain://cloudstic/store/prod/repo-password
 
 ## Rollout plan
 
-1. Add schema fields and resolver abstraction with `env://` support.
-2. Wire resolver into backup/store profile resolution paths.
+1. Add schema fields and resolver abstraction with `env://` support. (done)
+2. Wire resolver into backup/store profile resolution paths. (done)
 3. Add native providers incrementally per OS.
-4. Update docs and examples to prefer `*_secret` references.
+   - macOS `keychain://` done
+   - Windows/Linux pending
+4. Update docs and examples to prefer `*_secret` references. (in progress)
 5. Consider deprecation warnings for `*_env` in a later RFC after adoption data.
 
 ## Open questions
@@ -224,3 +279,5 @@ password_secret: keychain://cloudstic/store/prod/repo-password
   normalized under `native://` with OS-specific dispatch?
 - Should OAuth token files get a separate `token_secret` model later, or remain
   file-based with stronger path management?
+- Should a follow-up RFC define a non-exportable key model (for example
+  signing/unwrapping) distinct from plaintext secret references?

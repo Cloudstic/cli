@@ -21,7 +21,7 @@ func (r *runner) runStore() int {
 	if len(os.Args) < 3 {
 		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic store <subcommand> [options]")
 		_, _ = fmt.Fprintln(r.errOut, "")
-		_, _ = fmt.Fprintln(r.errOut, "Available subcommands: list, show, new, verify")
+		_, _ = fmt.Fprintln(r.errOut, "Available subcommands: list, show, new, verify, init")
 		return 1
 	}
 
@@ -34,6 +34,8 @@ func (r *runner) runStore() int {
 		return r.runStoreNew()
 	case "verify":
 		return r.runStoreVerify()
+	case "init":
+		return r.runStoreInit()
 	default:
 		return r.fail("Unknown store subcommand: %s", os.Args[2])
 	}
@@ -315,7 +317,11 @@ func (r *runner) runStoreNew() int {
 		if forcePromptEncryption || !storeHasExplicitEncryption(s) {
 			r.promptEncryptionConfig(cfg, *name, *profilesFile)
 		}
-		if err := r.checkOrInitStore(cfg, *name, *profilesFile, true, !existedBefore, true); err != nil {
+		if err := r.checkOrInitStore(cfg, *name, *profilesFile, checkOrInitOptions{
+			allowMissingSecrets:  true,
+			warnOnMissingSecrets: !existedBefore,
+			offerInit:            true,
+		}); err != nil {
 			_, _ = fmt.Fprintf(r.errOut, "%v\n", err)
 		}
 	}
@@ -364,18 +370,74 @@ func (r *runner) runStoreVerify() int {
 	if _, ok := cfg.Stores[name]; !ok {
 		return r.fail("Unknown store %q", name)
 	}
-	if err := r.checkOrInitStore(cfg, name, *profilesFile, false, true, false); err != nil {
+	if err := r.checkOrInitStore(cfg, name, *profilesFile, checkOrInitOptions{
+		warnOnMissingSecrets: true,
+	}); err != nil {
 		return r.fail("%v", err)
 	}
 	return 0
 }
 
-func (r *runner) checkOrInitStore(cfg *cloudstic.ProfilesConfig, storeName, profilesFile string, allowMissingSecrets, warnOnMissingSecrets, offerInit bool) error {
+func (r *runner) runStoreInit() int {
+	fs := flag.NewFlagSet("store init", flag.ExitOnError)
+	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
+	yes := fs.Bool("yes", false, "Initialize without confirmation prompt")
+	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
+	if fs.NArg() > 1 {
+		return r.fail("usage: cloudstic store init [-profiles-file <path>] [-yes] <name>")
+	}
+
+	name := ""
+	if fs.NArg() == 1 {
+		name = fs.Arg(0)
+	}
+
+	cfg, err := cloudstic.LoadProfilesFile(*profilesFile)
+	if err != nil {
+		return r.fail("Failed to load profiles: %v", err)
+	}
+	if len(cfg.Stores) == 0 {
+		return r.fail("No stores configured")
+	}
+
+	if name == "" {
+		if !r.canPrompt() {
+			return r.fail("usage: cloudstic store init [-profiles-file <path>] [-yes] <name>")
+		}
+		names := sortedKeys(cfg.Stores)
+		picked, pickErr := r.promptSelect("Select store", names)
+		if pickErr != nil {
+			return r.fail("Failed to select store: %v", pickErr)
+		}
+		name = picked
+	}
+
+	if _, ok := cfg.Stores[name]; !ok {
+		return r.fail("Unknown store %q", name)
+	}
+	if err := r.checkOrInitStore(cfg, name, *profilesFile, checkOrInitOptions{
+		warnOnMissingSecrets: true,
+		offerInit:            true,
+		assumeYes:            *yes,
+	}); err != nil {
+		return r.fail("%v", err)
+	}
+	return 0
+}
+
+type checkOrInitOptions struct {
+	allowMissingSecrets  bool
+	warnOnMissingSecrets bool
+	offerInit            bool
+	assumeYes            bool
+}
+
+func (r *runner) checkOrInitStore(cfg *cloudstic.ProfilesConfig, storeName, profilesFile string, opts checkOrInitOptions) error {
 	s := cfg.Stores[storeName]
 	g, err := globalFlagsFromProfileStore(s)
 	if err != nil {
-		if allowMissingSecrets && isSecretNotFoundError(err) {
-			if warnOnMissingSecrets {
+		if opts.allowMissingSecrets && isSecretNotFoundError(err) {
+			if opts.warnOnMissingSecrets {
 				_, _ = fmt.Fprintf(r.errOut, "Store credentials are configured but not currently available: %v\n", err)
 				_, _ = fmt.Fprintf(r.errOut, "Set required secrets and run: cloudstic store verify %s\n", storeName)
 			}
@@ -409,12 +471,14 @@ func (r *runner) checkOrInitStore(cfg *cloudstic.ProfilesConfig, storeName, prof
 	}
 
 	_, _ = fmt.Fprintln(r.out, "Store is accessible but not yet initialized.")
-	if !offerInit {
+	if !opts.offerInit {
 		return nil
 	}
-	yes, promptErr := r.promptConfirm("Initialize it now?", true)
-	if promptErr != nil || !yes {
-		return nil
+	if !opts.assumeYes {
+		yes, promptErr := r.promptConfirm("Initialize it now?", true)
+		if promptErr != nil || !yes {
+			return nil
+		}
 	}
 
 	// Check if the store has encryption config.

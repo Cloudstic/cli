@@ -3,35 +3,31 @@
 package secretref
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"fmt"
-	"os/exec"
 	"strings"
+
+	"github.com/keybase/go-keychain"
 )
 
+var keychainGetGenericPasswordDarwin = keychain.GetGenericPassword
+
 func defaultKeychainLookup(ctx context.Context, service, account string) (string, error) {
-	cmd := exec.CommandContext(ctx, "security", "find-generic-password", "-s", service, "-a", account, "-w")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+	_ = ctx
+
+	out, err := keychainGetGenericPasswordDarwin(service, account, "", "")
 	if err != nil {
-		if errors.Is(err, exec.ErrNotFound) {
-			return "", fmt.Errorf("%w: macOS security tool not found", errKeychainUnavailable)
-		}
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = strings.TrimSpace(err.Error())
-		}
-		lower := strings.ToLower(msg)
-		if strings.Contains(lower, "could not be found") || strings.Contains(lower, "item not found") {
+		switch err {
+		case keychain.ErrorItemNotFound:
 			return "", errKeychainNotFound
-		}
-		if strings.Contains(lower, "user interaction is not allowed") || strings.Contains(lower, "interaction not allowed") {
+		case keychain.ErrorInteractionNotAllowed, keychain.ErrorNotAvailable, keychain.ErrorNoSuchKeychain:
 			return "", fmt.Errorf("%w: keychain locked or unavailable in this session", errKeychainUnavailable)
+		default:
+			return "", fmt.Errorf("keychain lookup failed: %w", err)
 		}
-		return "", fmt.Errorf("security find-generic-password failed: %s", msg)
+	}
+	if out == nil {
+		return "", errKeychainNotFound
 	}
 	return strings.TrimRight(string(out), "\r\n"), nil
 }

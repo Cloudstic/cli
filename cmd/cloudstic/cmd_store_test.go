@@ -305,7 +305,7 @@ func TestCheckOrInitStore_AlreadyInitialized(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if err := r.checkOrInitStore(cfg, "test", profilesPath, false, true, true); err != nil {
+	if err := r.checkOrInitStore(cfg, "test", profilesPath, checkOrInitOptions{warnOnMissingSecrets: true, offerInit: true}); err != nil {
 		t.Fatalf("checkOrInitStore: %v", err)
 	}
 
@@ -343,7 +343,7 @@ func TestCheckOrInitStore_InitializedEncrypted_ValidCredentials(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if err := r.checkOrInitStore(cfg, "test", "profiles.yaml", false, true, true); err != nil {
+	if err := r.checkOrInitStore(cfg, "test", "profiles.yaml", checkOrInitOptions{warnOnMissingSecrets: true, offerInit: true}); err != nil {
 		t.Fatalf("checkOrInitStore: %v", err)
 	}
 	if !strings.Contains(out.String(), "Repository is encrypted; verifying configured credentials") {
@@ -381,7 +381,7 @@ func TestCheckOrInitStore_InitializedEncrypted_InvalidCredentials(t *testing.T) 
 	}}
 
 	r := &runner{out: &strings.Builder{}, errOut: &strings.Builder{}}
-	err = r.checkOrInitStore(cfg, "test", "profiles.yaml", false, true, true)
+	err = r.checkOrInitStore(cfg, "test", "profiles.yaml", checkOrInitOptions{warnOnMissingSecrets: true, offerInit: true})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -930,7 +930,7 @@ func TestCheckOrInitStore_MissingSecretAllowed(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if err := r.checkOrInitStore(cfg, "test", "profiles.yaml", true, true, true); err != nil {
+	if err := r.checkOrInitStore(cfg, "test", "profiles.yaml", checkOrInitOptions{allowMissingSecrets: true, warnOnMissingSecrets: true, offerInit: true}); err != nil {
 		t.Fatalf("checkOrInitStore: %v", err)
 	}
 	if !strings.Contains(errOut.String(), "cloudstic store verify test") {
@@ -949,7 +949,7 @@ func TestCheckOrInitStore_MissingSecretAllowedSilent(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if err := r.checkOrInitStore(cfg, "test", "profiles.yaml", true, false, true); err != nil {
+	if err := r.checkOrInitStore(cfg, "test", "profiles.yaml", checkOrInitOptions{allowMissingSecrets: true, offerInit: true}); err != nil {
 		t.Fatalf("checkOrInitStore: %v", err)
 	}
 	if errOut.String() != "" {

@@ -385,6 +385,13 @@ func (r *runner) runProfileNew() int {
 		if !storeHasExplicitEncryption(s) {
 			r.promptEncryptionConfig(cfg, a.storeRef, a.profilesFile)
 		}
+		if err := r.checkOrInitStore(cfg, a.storeRef, a.profilesFile, checkOrInitOptions{
+			allowMissingSecrets:  true,
+			warnOnMissingSecrets: true,
+			offerInit:            true,
+		}); err != nil {
+			_, _ = fmt.Fprintf(r.errOut, "%v\n", err)
+		}
 	}
 
 	requiredProvider := profileProviderFromSource(a.source)

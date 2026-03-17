@@ -23,9 +23,34 @@ jobs:
           go-version-file: go.mod
       - run: go test -race -count=1 ./...
 
+  verify-platform-build-paths:
+    name: Verify platform build paths (${{ matrix.name }})
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+            run: go test ./internal/secretref ./cmd/cloudstic
+          - name: Windows
+            os: windows-latest
+            run: go test ./internal/secretref ./cmd/cloudstic
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Run platform-specific verification
+        run: ${{ matrix.run }}
+
   release:
     name: Release
-    needs: test
+    needs:
+      - test
+      - verify-platform-build-paths
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,8 +59,6 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Verify macOS build paths
-        run: go test ./internal/secretref ./cmd/cloudstic
       - name: Install Syft
         uses: anchore/sbom-action/download-syft@v0
       - uses: goreleaser/goreleaser-action@v6

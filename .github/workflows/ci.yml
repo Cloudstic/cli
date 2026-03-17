@@ -85,6 +85,28 @@ jobs:
           slug: Cloudstic/cli
           files: unit.out,e2e_coverage.out
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  verify-platform-build-paths:
+    name: Verify platform build paths (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+            run: go test ./internal/secretref ./cmd/cloudstic
+          - name: Windows
+            os: windows-latest
+            run: go test ./internal/secretref ./cmd/cloudstic
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Run platform-specific verification
+        run: ${{ matrix.run }}
+
   build:
     name: Build
     runs-on: ubuntu-latest

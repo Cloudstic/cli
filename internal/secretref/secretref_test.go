@@ -16,6 +16,7 @@ func TestParse(t *testing.T) {
 	}{
 		{name: "env", in: "env://CLOUDSTIC_PASSWORD", scheme: "env", path: "CLOUDSTIC_PASSWORD"},
 		{name: "mixed case scheme", in: "KeyChain://service/account", scheme: "keychain", path: "service/account"},
+		{name: "wincred", in: "WinCred://cloudstic/store/prod/password", scheme: "wincred", path: "cloudstic/store/prod/password"},
 		{name: "empty", in: "", wantErr: true},
 		{name: "missing separator", in: "env:CLOUDSTIC_PASSWORD", wantErr: true},
 		{name: "empty path", in: "env://", wantErr: true},

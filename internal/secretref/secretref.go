@@ -104,6 +104,7 @@ func NewDefaultResolver() *Resolver {
 	return NewResolver(map[string]Backend{
 		"env":      NewEnvBackend(nil),
 		"keychain": NewKeychainBackend(),
+		"wincred":  NewWincredBackend(),
 	})
 }
 

@@ -4,6 +4,7 @@ package secretref
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -11,6 +12,8 @@ import (
 )
 
 var keychainGetGenericPasswordDarwin = keychain.GetGenericPassword
+var keychainAddItemDarwin = keychain.AddItem
+var keychainUpdateItemDarwin = keychain.UpdateItem
 
 func defaultKeychainLookup(ctx context.Context, service, account string) (string, error) {
 	_ = ctx
@@ -30,4 +33,54 @@ func defaultKeychainLookup(ctx context.Context, service, account string) (string
 		return "", errKeychainNotFound
 	}
 	return strings.TrimRight(string(out), "\r\n"), nil
+}
+
+func defaultKeychainExists(ctx context.Context, service, account string) (bool, error) {
+	_, err := defaultKeychainLookup(ctx, service, account)
+	if err != nil {
+		switch {
+		case errors.Is(err, errKeychainNotFound):
+			return false, nil
+		default:
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+func defaultKeychainStore(_ context.Context, service, account, value string) error {
+	item := keychain.NewItem()
+	item.SetSecClass(keychain.SecClassGenericPassword)
+	item.SetService(service)
+	item.SetAccount(account)
+	item.SetAccessible(keychain.AccessibleWhenUnlockedThisDeviceOnly)
+	item.SetData([]byte(value))
+
+	if err := keychainAddItemDarwin(item); err != nil {
+		if err == keychain.ErrorDuplicateItem {
+			query := keychain.NewItem()
+			query.SetSecClass(keychain.SecClassGenericPassword)
+			query.SetService(service)
+			query.SetAccount(account)
+
+			update := keychain.NewItem()
+			update.SetData([]byte(value))
+
+			if updateErr := keychainUpdateItemDarwin(query, update); updateErr != nil {
+				return mapKeychainStoreError(updateErr)
+			}
+			return nil
+		}
+		return mapKeychainStoreError(err)
+	}
+	return nil
+}
+
+func mapKeychainStoreError(err error) error {
+	switch err {
+	case keychain.ErrorInteractionNotAllowed, keychain.ErrorNotAvailable, keychain.ErrorNoSuchKeychain:
+		return fmt.Errorf("%w: keychain locked or unavailable in this session", errKeychainUnavailable)
+	default:
+		return fmt.Errorf("keychain write failed: %w", err)
+	}
 }

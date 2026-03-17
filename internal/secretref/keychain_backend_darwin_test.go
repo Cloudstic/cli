@@ -37,3 +37,45 @@ func TestDefaultKeychainLookup_MapsInteractionNotAllowed(t *testing.T) {
 		t.Fatalf("expected errKeychainUnavailable, got %v", err)
 	}
 }
+
+func TestDefaultKeychainStore_DuplicateUpdates(t *testing.T) {
+	origAdd := keychainAddItemDarwin
+	origUpdate := keychainUpdateItemDarwin
+	defer func() {
+		keychainAddItemDarwin = origAdd
+		keychainUpdateItemDarwin = origUpdate
+	}()
+
+	keychainAddItemDarwin = func(keychain.Item) error {
+		return keychain.ErrorDuplicateItem
+	}
+	updated := false
+	keychainUpdateItemDarwin = func(_, _ keychain.Item) error {
+		updated = true
+		return nil
+	}
+
+	if err := defaultKeychainStore(context.Background(), "svc", "acct", "secret"); err != nil {
+		t.Fatalf("defaultKeychainStore: %v", err)
+	}
+	if !updated {
+		t.Fatal("expected update on duplicate item")
+	}
+}
+
+func TestDefaultKeychainExists_NotFound(t *testing.T) {
+	orig := keychainGetGenericPasswordDarwin
+	defer func() { keychainGetGenericPasswordDarwin = orig }()
+
+	keychainGetGenericPasswordDarwin = func(service, account, label, accessGroup string) ([]byte, error) {
+		return nil, keychain.ErrorItemNotFound
+	}
+
+	exists, err := defaultKeychainExists(context.Background(), "svc", "acct")
+	if err != nil {
+		t.Fatalf("defaultKeychainExists: %v", err)
+	}
+	if exists {
+		t.Fatal("expected exists=false")
+	}
+}

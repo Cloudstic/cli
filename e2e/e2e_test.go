@@ -197,6 +197,7 @@ func TestCLI_EndToEnd_Matrix(t *testing.T) {
 				// 5. Incremental State
 				src.WriteFile(t, "file2.txt", "new file")
 				src.WriteFile(t, "secret.txt", "updated classified data")
+				xattrName, hasXattrValidation := maybeSetTestXattr(t, src, "secret.txt", "classified-xattr")
 
 				// 6. Backup 2 (with tags)
 				backup2Args := append([]string{"backup"}, append(srcArgs, baseEncArgs...)...)
@@ -271,6 +272,9 @@ func TestCLI_EndToEnd_Matrix(t *testing.T) {
 					if got := string(b); got != tc.content {
 						t.Errorf("Direct restore content mismatch for %s: got %q, want %q", tc.path, got, tc.content)
 					}
+				}
+				if hasXattrValidation {
+					assertXattrValue(t, filepath.Join(dirOut, "secret.txt"), xattrName, "classified-xattr")
 				}
 
 				// 8a. Partial Restore — single file

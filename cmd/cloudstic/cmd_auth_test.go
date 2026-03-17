@@ -31,7 +31,7 @@ func TestRunAuthNewAndListAndShow(t *testing.T) {
 	if code := r.runAuth(); code != 0 {
 		t.Fatalf("auth list failed: %s", errOut.String())
 	}
-	if !strings.Contains(out.String(), "1 auth entries") || !strings.Contains(out.String(), "google-work") {
+	if !strings.Contains(out.String(), "Auth") || !strings.Contains(out.String(), "google-work") || !strings.Contains(out.String(), "PROVIDER") {
 		t.Fatalf("unexpected auth list output:\n%s", out.String())
 	}
 
@@ -41,7 +41,7 @@ func TestRunAuthNewAndListAndShow(t *testing.T) {
 	if code := r.runAuth(); code != 0 {
 		t.Fatalf("auth show failed: %s", errOut.String())
 	}
-	if !strings.Contains(out.String(), "provider: google") || !strings.Contains(out.String(), "google_token_file: /tmp/google-work.json") {
+	if !strings.Contains(out.String(), "Auth google-work") || !strings.Contains(out.String(), "Provider Details") || !strings.Contains(out.String(), "/tmp/google-work.json") {
 		t.Fatalf("unexpected auth show output:\n%s", out.String())
 	}
 }
@@ -99,7 +99,7 @@ func TestRunAuthNew_OneDriveProvider(t *testing.T) {
 		t.Fatalf("auth show failed: %s", errOut.String())
 	}
 	got := out.String()
-	for _, want := range []string{"provider: onedrive", "onedrive_token_file: /tmp/od-personal.json", "onedrive_client_id: my-client-id-123"} {
+	for _, want := range []string{"Auth od-personal", "Provider Details", "/tmp/od-personal.json", "my-client-id-123"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in show output:\n%s", want, got)
 		}

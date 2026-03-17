@@ -48,23 +48,7 @@ func (r *runner) runAuthList() int {
 		return r.fail("Failed to load profiles: %v", err)
 	}
 
-	names := sortedKeys(cfg.Auth)
-
-	_, _ = fmt.Fprintf(r.out, "%d auth entries\n", len(names))
-	for _, name := range names {
-		auth := cfg.Auth[name]
-		_, _ = fmt.Fprintf(r.out, "- %s", name)
-		if auth.Provider != "" {
-			_, _ = fmt.Fprintf(r.out, "  provider=%s", auth.Provider)
-		}
-		if auth.Provider == "google" && auth.GoogleTokenFile != "" {
-			_, _ = fmt.Fprintf(r.out, "  token=%s", auth.GoogleTokenFile)
-		}
-		if auth.Provider == "onedrive" && auth.OneDriveTokenFile != "" {
-			_, _ = fmt.Fprintf(r.out, "  token=%s", auth.OneDriveTokenFile)
-		}
-		_, _ = fmt.Fprintln(r.out)
-	}
+	r.renderAuthList(cfg)
 	return 0
 }
 
@@ -100,21 +84,7 @@ func (r *runner) runAuthShow() int {
 	if !ok {
 		return r.fail("Unknown auth %q", name)
 	}
-
-	_, _ = fmt.Fprintf(r.out, "auth: %s\n", name)
-	_, _ = fmt.Fprintf(r.out, "  provider: %s\n", auth.Provider)
-	if auth.GoogleCreds != "" {
-		_, _ = fmt.Fprintf(r.out, "  google_credentials: %s\n", auth.GoogleCreds)
-	}
-	if auth.GoogleTokenFile != "" {
-		_, _ = fmt.Fprintf(r.out, "  google_token_file: %s\n", auth.GoogleTokenFile)
-	}
-	if auth.OneDriveClientID != "" {
-		_, _ = fmt.Fprintf(r.out, "  onedrive_client_id: %s\n", auth.OneDriveClientID)
-	}
-	if auth.OneDriveTokenFile != "" {
-		_, _ = fmt.Fprintf(r.out, "  onedrive_token_file: %s\n", auth.OneDriveTokenFile)
-	}
+	r.renderAuthShow(cfg, name, auth)
 	return 0
 }
 

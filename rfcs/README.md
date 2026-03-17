@@ -15,3 +15,4 @@
 - [RFC 0013: Daemon Mode and Profile Scheduling](0013-daemon-mode-and-profile-scheduling.md)
 - [RFC 0014: Workstation Onboarding and Profile Scaffolding](0014-workstation-onboarding-and-profile-scaffolding.md)
 - [RFC 0015: FileMeta Path Normalization](0015-filemeta-path-normalization.md)
+- [RFC 0016: Secure Auth Material Storage](0016-secure-auth-material-storage.md)

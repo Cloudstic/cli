@@ -151,3 +151,7 @@ func (s *portableDriveSource) WriteFile(t *testing.T, relPath, content string) {
 		}
 	}
 }
+
+func (s *portableDriveSource) HostPath(relPath string) string {
+	return filepath.Join(s.mountPoint, relPath)
+}

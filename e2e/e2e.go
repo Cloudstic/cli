@@ -37,6 +37,10 @@ type TestSource interface {
 	WriteFile(t *testing.T, relPath, content string)
 }
 
+type hostPathSource interface {
+	HostPath(relPath string) string
+}
+
 // TestStore encapsulates the content-addressable storage backend.
 type TestStore interface {
 	Name() string

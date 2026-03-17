@@ -30,6 +30,10 @@ func (s *localSource) WriteFile(t *testing.T, relPath, content string) {
 	}
 }
 
+func (s *localSource) HostPath(relPath string) string {
+	return filepath.Join(s.dir, relPath)
+}
+
 type localStore struct {
 	dir string
 }

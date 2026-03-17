@@ -266,6 +266,9 @@ func (w *fsRestoreWriter) MkdirAll(relPath string, meta core.FileMeta) error {
 	if err := os.MkdirAll(fullPath, 0o755); err != nil {
 		return err
 	}
+	if err := applyRestoreXattrs(fullPath, meta); err != nil {
+		return err
+	}
 	if meta.Mtime > 0 {
 		mt := time.Unix(meta.Mtime, 0)
 		_ = os.Chtimes(fullPath, mt, mt)
@@ -301,6 +304,9 @@ func (w *fsRestoreWriter) WriteFile(relPath string, meta core.FileMeta, writeCon
 	}
 
 	w.bytes += cw.count
+	if err := applyRestoreXattrs(fullPath, meta); err != nil {
+		return err
+	}
 	if meta.Mtime > 0 {
 		mt := time.Unix(meta.Mtime, 0)
 		_ = os.Chtimes(fullPath, mt, mt)

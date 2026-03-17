@@ -25,6 +25,7 @@ type writableBackendStub struct {
 func (b writableBackendStub) Resolve(context.Context, secretref.Ref) (string, error) { return "", nil }
 func (b writableBackendStub) Scheme() string                                         { return b.scheme }
 func (b writableBackendStub) DisplayName() string                                    { return b.displayName }
+func (b writableBackendStub) WriteSupported() bool                                   { return true }
 func (b writableBackendStub) DefaultRef(string, string) string                       { return b.defaultRef }
 func (b writableBackendStub) Exists(ctx context.Context, ref secretref.Ref) (bool, error) {
 	if b.exists == nil {

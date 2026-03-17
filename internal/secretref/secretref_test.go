@@ -129,6 +129,7 @@ type testWritableBackend struct {
 func (b *testWritableBackend) Resolve(context.Context, Ref) (string, error) { return "", nil }
 func (b *testWritableBackend) Scheme() string                               { return b.scheme }
 func (b *testWritableBackend) DisplayName() string                          { return b.displayName }
+func (b *testWritableBackend) WriteSupported() bool                         { return true }
 func (b *testWritableBackend) DefaultRef(string, string) string             { return b.defaultRef }
 func (b *testWritableBackend) Exists(_ context.Context, ref Ref) (bool, error) {
 	return b.stored[ref.Raw], nil

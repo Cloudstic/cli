@@ -92,6 +92,7 @@ type WritableBackend interface {
 	Backend
 	Scheme() string
 	DisplayName() string
+	WriteSupported() bool
 	DefaultRef(storeName, account string) string
 	Exists(ctx context.Context, ref Ref) (bool, error)
 	Store(ctx context.Context, ref Ref, value string) error
@@ -179,7 +180,9 @@ func (r *Resolver) WritableBackends() []WritableBackend {
 	backends := make([]WritableBackend, 0, len(r.backends))
 	for _, backend := range r.backends {
 		if writable, ok := backend.(WritableBackend); ok {
-			backends = append(backends, writable)
+			if writable.WriteSupported() {
+				backends = append(backends, writable)
+			}
 		}
 	}
 	slices.SortFunc(backends, func(a, b WritableBackend) int {

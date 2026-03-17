@@ -92,6 +92,8 @@ func (b *KeychainBackend) Scheme() string { return "keychain" }
 
 func (b *KeychainBackend) DisplayName() string { return "macOS Keychain" }
 
+func (b *KeychainBackend) WriteSupported() bool { return defaultKeychainWriteSupported() }
+
 func (b *KeychainBackend) DefaultRef(storeName, account string) string {
 	service := "cloudstic/store/" + storeName
 	return "keychain://" + service + "/" + account

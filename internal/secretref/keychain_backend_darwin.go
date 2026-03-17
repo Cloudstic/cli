@@ -15,6 +15,8 @@ var keychainGetGenericPasswordDarwin = keychain.GetGenericPassword
 var keychainAddItemDarwin = keychain.AddItem
 var keychainUpdateItemDarwin = keychain.UpdateItem
 
+func defaultKeychainWriteSupported() bool { return true }
+
 func defaultKeychainLookup(ctx context.Context, service, account string) (string, error) {
 	_ = ctx
 

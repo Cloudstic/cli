@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"runtime"
 	"strings"
 
 	cloudstic "github.com/cloudstic/cli"
@@ -510,7 +509,6 @@ func configureStoreEncryptionSelection(
 
 func (r *runner) promptSecretReference(storeName, secretLabel, defaultEnvName, defaultAccount string) (string, error) {
 	return promptSecretReferenceWithFns(
-		runtime.GOOS,
 		storeName,
 		secretLabel,
 		defaultEnvName,
@@ -519,29 +517,27 @@ func (r *runner) promptSecretReference(storeName, secretLabel, defaultEnvName, d
 		r.promptLine,
 		r.promptSecret,
 		os.LookupEnv,
-		nativeSecretExists,
-		saveSecretToNativeStore,
+		profileSecretResolver,
 	)
 }
 
 func promptSecretReferenceWithFns(
-	goos, storeName, secretLabel, defaultEnvName, defaultAccount string,
+	storeName, secretLabel, defaultEnvName, defaultAccount string,
 	promptSelect func(string, []string) (string, error),
 	promptLine func(string, string) (string, error),
 	promptSecret func(string) (string, error),
 	lookupEnv func(string) (string, bool),
-	nativeSecretExists func(context.Context, string, string) (bool, error),
-	writeNativeSecret func(context.Context, string, string, string) error,
+	resolver *secretref.Resolver,
 ) (string, error) {
-	keychainRef := func() (string, error) {
-		service := "cloudstic/store/" + storeName
-		account := defaultAccount
-		exists, err := nativeSecretExists(context.Background(), service, account)
+	writableBackends := resolver.WritableBackends()
+	nativeRef := func(backend secretref.WritableBackend) (string, error) {
+		ref := backend.DefaultRef(storeName, defaultAccount)
+		exists, err := resolver.Exists(context.Background(), ref)
 		if err != nil {
 			return "", err
 		}
 		if exists {
-			return "keychain://" + service + "/" + account, nil
+			return ref, nil
 		}
 		secretValue, err := promptSecret("Secret value")
 		if err != nil {
@@ -550,22 +546,29 @@ func promptSecretReferenceWithFns(
 		if secretValue == "" {
 			return "", fmt.Errorf("secret value cannot be empty")
 		}
-		if err := writeNativeSecret(context.Background(), service, account, secretValue); err != nil {
+		if err := resolver.Store(context.Background(), ref, secretValue); err != nil {
 			return "", err
 		}
-		return "keychain://" + service + "/" + account, nil
+		return ref, nil
 	}
 
-	if goos == "darwin" {
+	if len(writableBackends) > 0 {
+		options := []string{"Environment variable (env://)"}
+		backendByOption := map[string]secretref.WritableBackend{}
+		for _, backend := range writableBackends {
+			option := fmt.Sprintf("%s (%s://)", backend.DisplayName(), backend.Scheme())
+			options = append(options, option)
+			backendByOption[option] = backend
+		}
 		picked, err := promptSelect(
 			fmt.Sprintf("Where should %s be stored?", secretLabel),
-			[]string{"Environment variable (env://)", "macOS Keychain (keychain://)"},
+			options,
 		)
 		if err != nil {
 			return "", err
 		}
-		if strings.HasPrefix(picked, "macOS Keychain") {
-			return keychainRef()
+		if backend, ok := backendByOption[picked]; ok {
+			return nativeRef(backend)
 		}
 	}
 
@@ -573,16 +576,23 @@ func promptSecretReferenceWithFns(
 	if err != nil {
 		return "", err
 	}
-	if _, ok := lookupEnv(envName); !ok && goos == "darwin" {
+	if _, ok := lookupEnv(envName); !ok && len(writableBackends) > 0 {
+		options := []string{"Keep environment variable reference (env://)"}
+		backendByOption := map[string]secretref.WritableBackend{}
+		for _, backend := range writableBackends {
+			option := fmt.Sprintf("Store in %s instead (%s://)", backend.DisplayName(), backend.Scheme())
+			options = append(options, option)
+			backendByOption[option] = backend
+		}
 		picked, err := promptSelect(
 			fmt.Sprintf("Environment variable %q is not set in this shell", envName),
-			[]string{"Keep environment variable reference (env://)", "Store in macOS Keychain instead (keychain://)"},
+			options,
 		)
 		if err != nil {
 			return "", err
 		}
-		if strings.HasPrefix(picked, "Store in macOS Keychain") {
-			return keychainRef()
+		if backend, ok := backendByOption[picked]; ok {
+			return nativeRef(backend)
 		}
 	}
 	return envRef(envName), nil

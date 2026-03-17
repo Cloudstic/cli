@@ -3,6 +3,7 @@ package secretref
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -97,4 +98,49 @@ func TestResolver_Errors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestResolver_WritableBackendsAndStore(t *testing.T) {
+	b := &testWritableBackend{scheme: "native", displayName: "Native", defaultRef: "native://cloudstic/store/prod/password"}
+	resolver := NewResolver(map[string]Backend{"native": b})
+
+	backends := resolver.WritableBackends()
+	if len(backends) != 1 || backends[0].Scheme() != "native" {
+		t.Fatalf("WritableBackends() = %#v", backends)
+	}
+	if err := resolver.Store(context.Background(), "native://cloudstic/store/prod/password", "secret"); err != nil {
+		t.Fatalf("Store: %v", err)
+	}
+	if !b.stored["native://cloudstic/store/prod/password"] {
+		t.Fatal("expected backend store to be called")
+	}
+	if exists, err := resolver.Exists(context.Background(), "native://cloudstic/store/prod/password"); err != nil || !exists {
+		t.Fatalf("Exists() = %v, %v", exists, err)
+	}
+}
+
+type testWritableBackend struct {
+	scheme      string
+	displayName string
+	defaultRef  string
+	stored      map[string]bool
+}
+
+func (b *testWritableBackend) Resolve(context.Context, Ref) (string, error) { return "", nil }
+func (b *testWritableBackend) Scheme() string                               { return b.scheme }
+func (b *testWritableBackend) DisplayName() string                          { return b.displayName }
+func (b *testWritableBackend) WriteSupported() bool                         { return true }
+func (b *testWritableBackend) DefaultRef(string, string) string             { return b.defaultRef }
+func (b *testWritableBackend) Exists(_ context.Context, ref Ref) (bool, error) {
+	return b.stored[ref.Raw], nil
+}
+func (b *testWritableBackend) Store(_ context.Context, ref Ref, value string) error {
+	if value == "" {
+		return fmt.Errorf("empty")
+	}
+	if b.stored == nil {
+		b.stored = map[string]bool{}
+	}
+	b.stored[ref.Raw] = true
+	return nil
 }

@@ -13,22 +13,40 @@ var (
 )
 
 type keychainLookupFunc func(ctx context.Context, service, account string) (string, error)
+type keychainExistsFunc func(ctx context.Context, service, account string) (bool, error)
+type keychainStoreFunc func(ctx context.Context, service, account, value string) error
 
 // KeychainBackend resolves keychain://service/account references.
 type KeychainBackend struct {
 	lookup keychainLookupFunc
+	exists keychainExistsFunc
+	store  keychainStoreFunc
 }
 
 // NewKeychainBackend creates a keychain backend for the current platform.
 func NewKeychainBackend() *KeychainBackend {
-	return &KeychainBackend{lookup: defaultKeychainLookup}
+	return &KeychainBackend{
+		lookup: defaultKeychainLookup,
+		exists: defaultKeychainExists,
+		store:  defaultKeychainStore,
+	}
 }
 
-func newKeychainBackendWithLookup(lookup keychainLookupFunc) *KeychainBackend {
+func newKeychainBackendWithFns(lookup keychainLookupFunc, exists keychainExistsFunc, store keychainStoreFunc) *KeychainBackend {
 	if lookup == nil {
 		lookup = defaultKeychainLookup
 	}
-	return &KeychainBackend{lookup: lookup}
+	if exists == nil {
+		exists = defaultKeychainExists
+	}
+	if store == nil {
+		store = defaultKeychainStore
+	}
+	return &KeychainBackend{lookup: lookup, exists: exists, store: store}
+}
+
+func newKeychainBackendWithLookup(lookup keychainLookupFunc) *KeychainBackend {
+	return newKeychainBackendWithFns(lookup, nil, nil)
 }
 
 func parseKeychainPath(path string) (service string, account string, err error) {
@@ -68,4 +86,50 @@ func (b *KeychainBackend) Resolve(ctx context.Context, ref Ref) (string, error) 
 	}
 
 	return value, nil
+}
+
+func (b *KeychainBackend) Scheme() string { return "keychain" }
+
+func (b *KeychainBackend) DisplayName() string { return "macOS Keychain" }
+
+func (b *KeychainBackend) WriteSupported() bool { return defaultKeychainWriteSupported() }
+
+func (b *KeychainBackend) DefaultRef(storeName, account string) string {
+	service := "cloudstic/store/" + storeName
+	return "keychain://" + service + "/" + account
+}
+
+func (b *KeychainBackend) Exists(ctx context.Context, ref Ref) (bool, error) {
+	service, account, err := parseKeychainPath(ref.Path)
+	if err != nil {
+		return false, errorf(KindInvalidRef, ref.Raw, err.Error(), nil)
+	}
+
+	exists, err := b.exists(ctx, service, account)
+	if err != nil {
+		switch {
+		case errors.Is(err, errKeychainUnavailable):
+			return false, errorf(KindBackendUnavailable, ref.Raw, err.Error(), err)
+		default:
+			return false, errorf(KindBackendUnavailable, ref.Raw, err.Error(), err)
+		}
+	}
+	return exists, nil
+}
+
+func (b *KeychainBackend) Store(ctx context.Context, ref Ref, value string) error {
+	service, account, err := parseKeychainPath(ref.Path)
+	if err != nil {
+		return errorf(KindInvalidRef, ref.Raw, err.Error(), nil)
+	}
+
+	if err := b.store(ctx, service, account, value); err != nil {
+		switch {
+		case errors.Is(err, errKeychainUnavailable):
+			return errorf(KindBackendUnavailable, ref.Raw, err.Error(), err)
+		default:
+			return errorf(KindBackendUnavailable, ref.Raw, err.Error(), err)
+		}
+	}
+	return nil
 }

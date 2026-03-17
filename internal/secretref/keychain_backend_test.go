@@ -105,3 +105,46 @@ func TestKeychainBackend_ResolveErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestKeychainBackend_DefaultRef(t *testing.T) {
+	b := NewKeychainBackend()
+	if got := b.DefaultRef("prod", "password"); got != "keychain://cloudstic/store/prod/password" {
+		t.Fatalf("DefaultRef() = %q", got)
+	}
+}
+
+func TestKeychainBackend_Exists(t *testing.T) {
+	b := newKeychainBackendWithFns(
+		func(context.Context, string, string) (string, error) { return "", nil },
+		func(_ context.Context, service, account string) (bool, error) {
+			if service != "cloudstic/store/prod" || account != "password" {
+				t.Fatalf("unexpected args %q/%q", service, account)
+			}
+			return true, nil
+		},
+		nil,
+	)
+	exists, err := b.Exists(context.Background(), Ref{Raw: "keychain://cloudstic/store/prod/password", Scheme: "keychain", Path: "cloudstic/store/prod/password"})
+	if err != nil {
+		t.Fatalf("Exists: %v", err)
+	}
+	if !exists {
+		t.Fatal("expected exists=true")
+	}
+}
+
+func TestKeychainBackend_Store(t *testing.T) {
+	b := newKeychainBackendWithFns(
+		func(context.Context, string, string) (string, error) { return "", nil },
+		nil,
+		func(_ context.Context, service, account, value string) error {
+			if service != "cloudstic/store/prod" || account != "password" || value != "secret" {
+				t.Fatalf("unexpected args %q/%q/%q", service, account, value)
+			}
+			return nil
+		},
+	)
+	if err := b.Store(context.Background(), Ref{Raw: "keychain://cloudstic/store/prod/password", Scheme: "keychain", Path: "cloudstic/store/prod/password"}, "secret"); err != nil {
+		t.Fatalf("Store: %v", err)
+	}
+}

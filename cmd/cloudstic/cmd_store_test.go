@@ -10,8 +10,35 @@ import (
 	"testing"
 
 	cloudstic "github.com/cloudstic/cli"
+	"github.com/cloudstic/cli/internal/secretref"
 	"github.com/cloudstic/cli/pkg/keychain"
 )
+
+type writableBackendStub struct {
+	scheme      string
+	displayName string
+	defaultRef  string
+	exists      func(context.Context, secretref.Ref) (bool, error)
+	store       func(context.Context, secretref.Ref, string) error
+}
+
+func (b writableBackendStub) Resolve(context.Context, secretref.Ref) (string, error) { return "", nil }
+func (b writableBackendStub) Scheme() string                                         { return b.scheme }
+func (b writableBackendStub) DisplayName() string                                    { return b.displayName }
+func (b writableBackendStub) WriteSupported() bool                                   { return true }
+func (b writableBackendStub) DefaultRef(string, string) string                       { return b.defaultRef }
+func (b writableBackendStub) Exists(ctx context.Context, ref secretref.Ref) (bool, error) {
+	if b.exists == nil {
+		return false, nil
+	}
+	return b.exists(ctx, ref)
+}
+func (b writableBackendStub) Store(ctx context.Context, ref secretref.Ref, value string) error {
+	if b.store == nil {
+		return nil
+	}
+	return b.store(ctx, ref, value)
+}
 
 func TestRunStoreNewAndListAndShow(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -753,8 +780,25 @@ func TestRunStoreNew_WithSecretRefFlags(t *testing.T) {
 }
 
 func TestPromptSecretReferenceWithFns_DarwinKeychain(t *testing.T) {
+	resolver := secretref.NewResolver(map[string]secretref.Backend{
+		"keychain": writableBackendStub{
+			scheme:      "keychain",
+			displayName: "macOS Keychain",
+			defaultRef:  "keychain://cloudstic/store/prod-store/password",
+			exists:      func(context.Context, secretref.Ref) (bool, error) { return false, nil },
+			store: func(_ context.Context, ref secretref.Ref, value string) error {
+				if ref.Raw != "keychain://cloudstic/store/prod-store/password" {
+					t.Fatalf("ref=%q", ref.Raw)
+				}
+				if value != "super-secret" {
+					t.Fatalf("value=%q", value)
+				}
+				return nil
+			},
+		},
+	})
+
 	gotRef, err := promptSecretReferenceWithFns(
-		"darwin",
 		"prod-store",
 		"repository password",
 		"CLOUDSTIC_PASSWORD",
@@ -763,19 +807,7 @@ func TestPromptSecretReferenceWithFns_DarwinKeychain(t *testing.T) {
 		func(label, def string) (string, error) { return def, nil },
 		func(_ string) (string, error) { return "super-secret", nil },
 		func(string) (string, bool) { return "", false },
-		func(context.Context, string, string) (bool, error) { return false, nil },
-		func(_ context.Context, service, account, value string) error {
-			if service != "cloudstic/store/prod-store" {
-				t.Fatalf("service=%q", service)
-			}
-			if account != "password" {
-				t.Fatalf("account=%q", account)
-			}
-			if value != "super-secret" {
-				t.Fatalf("value=%q", value)
-			}
-			return nil
-		},
+		resolver,
 	)
 	if err != nil {
 		t.Fatalf("promptSecretReferenceWithFns: %v", err)
@@ -786,8 +818,8 @@ func TestPromptSecretReferenceWithFns_DarwinKeychain(t *testing.T) {
 }
 
 func TestPromptSecretReferenceWithFns_EnvFallback(t *testing.T) {
+	resolver := secretref.NewResolver(nil)
 	gotRef, err := promptSecretReferenceWithFns(
-		"darwin",
 		"prod-store",
 		"repository password",
 		"CLOUDSTIC_PASSWORD",
@@ -804,14 +836,7 @@ func TestPromptSecretReferenceWithFns_EnvFallback(t *testing.T) {
 			return "", nil
 		},
 		func(string) (string, bool) { return "", true },
-		func(context.Context, string, string) (bool, error) {
-			t.Fatal("nativeSecretExists should not be called")
-			return false, nil
-		},
-		func(context.Context, string, string, string) error {
-			t.Fatal("writeNativeSecret should not be called")
-			return nil
-		},
+		resolver,
 	)
 	if err != nil {
 		t.Fatalf("promptSecretReferenceWithFns: %v", err)
@@ -822,8 +847,16 @@ func TestPromptSecretReferenceWithFns_EnvFallback(t *testing.T) {
 }
 
 func TestPromptSecretReferenceWithFns_KeychainWriteError(t *testing.T) {
+	resolver := secretref.NewResolver(map[string]secretref.Backend{
+		"keychain": writableBackendStub{
+			scheme:      "keychain",
+			displayName: "macOS Keychain",
+			defaultRef:  "keychain://cloudstic/store/prod-store/password",
+			exists:      func(context.Context, secretref.Ref) (bool, error) { return false, nil },
+			store:       func(context.Context, secretref.Ref, string) error { return errors.New("write failed") },
+		},
+	})
 	_, err := promptSecretReferenceWithFns(
-		"darwin",
 		"prod-store",
 		"repository password",
 		"CLOUDSTIC_PASSWORD",
@@ -832,8 +865,7 @@ func TestPromptSecretReferenceWithFns_KeychainWriteError(t *testing.T) {
 		func(_ string, def string) (string, error) { return def, nil },
 		func(_ string) (string, error) { return "secret", nil },
 		func(string) (string, bool) { return "", false },
-		func(context.Context, string, string) (bool, error) { return false, nil },
-		func(context.Context, string, string, string) error { return errors.New("write failed") },
+		resolver,
 	)
 	if err == nil {
 		t.Fatal("expected error")
@@ -844,8 +876,10 @@ func TestPromptSecretReferenceWithFns_KeychainWriteError(t *testing.T) {
 }
 
 func TestPromptSecretReferenceWithFns_EmptySecret(t *testing.T) {
+	resolver := secretref.NewResolver(map[string]secretref.Backend{
+		"keychain": writableBackendStub{scheme: "keychain", displayName: "macOS Keychain", defaultRef: "keychain://cloudstic/store/prod-store/password"},
+	})
 	_, err := promptSecretReferenceWithFns(
-		"darwin",
 		"prod-store",
 		"repository password",
 		"CLOUDSTIC_PASSWORD",
@@ -854,8 +888,7 @@ func TestPromptSecretReferenceWithFns_EmptySecret(t *testing.T) {
 		func(_ string, def string) (string, error) { return def, nil },
 		func(_ string) (string, error) { return "", nil },
 		func(string) (string, bool) { return "", false },
-		func(context.Context, string, string) (bool, error) { return false, nil },
-		func(context.Context, string, string, string) error { return nil },
+		resolver,
 	)
 	if err == nil {
 		t.Fatal("expected error")
@@ -866,8 +899,24 @@ func TestPromptSecretReferenceWithFns_EmptySecret(t *testing.T) {
 }
 
 func TestPromptSecretReferenceWithFns_DarwinKeychainAdoptsExisting(t *testing.T) {
+	resolver := secretref.NewResolver(map[string]secretref.Backend{
+		"keychain": writableBackendStub{
+			scheme:      "keychain",
+			displayName: "macOS Keychain",
+			defaultRef:  "keychain://cloudstic/store/prod-store/password",
+			exists: func(_ context.Context, ref secretref.Ref) (bool, error) {
+				if ref.Raw != "keychain://cloudstic/store/prod-store/password" {
+					t.Fatalf("ref=%q", ref.Raw)
+				}
+				return true, nil
+			},
+			store: func(context.Context, secretref.Ref, string) error {
+				t.Fatal("store should not be called when secret exists")
+				return nil
+			},
+		},
+	})
 	gotRef, err := promptSecretReferenceWithFns(
-		"darwin",
 		"prod-store",
 		"repository password",
 		"CLOUDSTIC_PASSWORD",
@@ -879,19 +928,7 @@ func TestPromptSecretReferenceWithFns_DarwinKeychainAdoptsExisting(t *testing.T)
 			return "", nil
 		},
 		func(string) (string, bool) { return "", false },
-		func(_ context.Context, service, account string) (bool, error) {
-			if service != "cloudstic/store/prod-store" {
-				t.Fatalf("service=%q", service)
-			}
-			if account != "password" {
-				t.Fatalf("account=%q", account)
-			}
-			return true, nil
-		},
-		func(context.Context, string, string, string) error {
-			t.Fatal("writeNativeSecret should not be called when key exists")
-			return nil
-		},
+		resolver,
 	)
 	if err != nil {
 		t.Fatalf("promptSecretReferenceWithFns: %v", err)
@@ -903,8 +940,16 @@ func TestPromptSecretReferenceWithFns_DarwinKeychainAdoptsExisting(t *testing.T)
 
 func TestPromptSecretReferenceWithFns_DarwinEnvUnsetSwitchesToKeychain(t *testing.T) {
 	selectCall := 0
+	resolver := secretref.NewResolver(map[string]secretref.Backend{
+		"keychain": writableBackendStub{
+			scheme:      "keychain",
+			displayName: "macOS Keychain",
+			defaultRef:  "keychain://cloudstic/store/prod-store/password",
+			exists:      func(context.Context, secretref.Ref) (bool, error) { return false, nil },
+			store:       func(context.Context, secretref.Ref, string) error { return nil },
+		},
+	})
 	gotRef, err := promptSecretReferenceWithFns(
-		"darwin",
 		"prod-store",
 		"repository password",
 		"CLOUDSTIC_PASSWORD",
@@ -924,8 +969,7 @@ func TestPromptSecretReferenceWithFns_DarwinEnvUnsetSwitchesToKeychain(t *testin
 		},
 		func(_ string) (string, error) { return "secret-value", nil },
 		func(string) (string, bool) { return "", false },
-		func(context.Context, string, string) (bool, error) { return false, nil },
-		func(context.Context, string, string, string) error { return nil },
+		resolver,
 	)
 	if err != nil {
 		t.Fatalf("promptSecretReferenceWithFns: %v", err)

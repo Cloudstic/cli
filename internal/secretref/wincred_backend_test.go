@@ -105,3 +105,46 @@ func TestWincredBackendResolveErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestWincredBackend_DefaultRef(t *testing.T) {
+	b := NewWincredBackend()
+	if got := b.DefaultRef("prod", "password"); got != "wincred://cloudstic/store/prod/password" {
+		t.Fatalf("DefaultRef() = %q", got)
+	}
+}
+
+func TestWincredBackend_Exists(t *testing.T) {
+	b := newWincredBackendWithFns(
+		func(context.Context, string) (string, error) { return "", nil },
+		func(_ context.Context, target string) (bool, error) {
+			if target != "cloudstic/store/prod/password" {
+				t.Fatalf("unexpected target %q", target)
+			}
+			return true, nil
+		},
+		nil,
+	)
+	exists, err := b.Exists(context.Background(), Ref{Raw: "wincred://cloudstic/store/prod/password", Scheme: "wincred", Path: "cloudstic/store/prod/password"})
+	if err != nil {
+		t.Fatalf("Exists: %v", err)
+	}
+	if !exists {
+		t.Fatal("expected exists=true")
+	}
+}
+
+func TestWincredBackend_Store(t *testing.T) {
+	b := newWincredBackendWithFns(
+		func(context.Context, string) (string, error) { return "", nil },
+		nil,
+		func(_ context.Context, target, value string) error {
+			if target != "cloudstic/store/prod/password" || value != "secret" {
+				t.Fatalf("unexpected args %q/%q", target, value)
+			}
+			return nil
+		},
+	)
+	if err := b.Store(context.Background(), Ref{Raw: "wincred://cloudstic/store/prod/password", Scheme: "wincred", Path: "cloudstic/store/prod/password"}, "secret"); err != nil {
+		t.Fatalf("Store: %v", err)
+	}
+}

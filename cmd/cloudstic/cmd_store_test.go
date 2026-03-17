@@ -43,7 +43,7 @@ func TestRunStoreNewAndListAndShow(t *testing.T) {
 	if code := r.runStore(); code != 0 {
 		t.Fatalf("store list failed: %s", errOut.String())
 	}
-	if !strings.Contains(out.String(), "1 stores") || !strings.Contains(out.String(), "prod-s3") {
+	if !strings.Contains(out.String(), "Stores") || !strings.Contains(out.String(), "prod-s3") || !strings.Contains(out.String(), "AUTH") {
 		t.Fatalf("unexpected store list output:\n%s", out.String())
 	}
 
@@ -55,16 +55,16 @@ func TestRunStoreNewAndListAndShow(t *testing.T) {
 		t.Fatalf("store show failed: %s", errOut.String())
 	}
 	got := out.String()
-	if !strings.Contains(got, "store: prod-s3") {
+	if !strings.Contains(got, "Store prod-s3") {
 		t.Fatalf("expected store name in show output:\n%s", got)
 	}
-	if !strings.Contains(got, "uri: s3:my-bucket/backups") {
+	if !strings.Contains(got, "s3:my-bucket/backups") {
 		t.Fatalf("expected URI in show output:\n%s", got)
 	}
-	if !strings.Contains(got, "s3_region: eu-west-1") {
+	if !strings.Contains(got, "Connection") || !strings.Contains(got, "eu-west-1") {
 		t.Fatalf("expected region in show output:\n%s", got)
 	}
-	if !strings.Contains(got, "s3_profile: prod") {
+	if !strings.Contains(got, "prod") || !strings.Contains(got, "Used By") {
 		t.Fatalf("expected profile in show output:\n%s", got)
 	}
 }
@@ -207,7 +207,7 @@ profiles:
 		t.Fatalf("store show failed: %s", errOut.String())
 	}
 	got := out.String()
-	if !strings.Contains(got, "used_by:") || !strings.Contains(got, "docs") || !strings.Contains(got, "photos") {
+	if !strings.Contains(got, "Used By") || !strings.Contains(got, "docs") || !strings.Contains(got, "photos") {
 		t.Fatalf("expected used_by with both profiles:\n%s", got)
 	}
 }
@@ -251,9 +251,12 @@ func TestRunStoreNew_WithEncryption(t *testing.T) {
 	}
 	got := out.String()
 	for _, want := range []string{
-		"password_secret: env://MY_BACKUP_PASSWORD",
-		"kms_key_arn: arn:aws:kms:us-east-1:123456:key/abcd",
-		"kms_region: us-east-1",
+		"Password Secret",
+		"env://MY_BACKUP_PASSWORD",
+		"KMS Key ARN",
+		"arn:aws:kms:us-east-1:123456:key/abcd",
+		"KMS Region",
+		"us-east-1",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in show output:\n%s", want, got)
@@ -534,12 +537,18 @@ stores:
 	}
 	got := out.String()
 	for _, want := range []string{
-		"password_env (deprecated): MY_PW",
-		"encryption_key_env (deprecated): MY_EK",
-		"recovery_key_env (deprecated): MY_RK",
-		"kms_key_arn: arn:aws:kms:us-east-1:111:key/xyz",
-		"kms_region: us-west-2",
-		"kms_endpoint: https://kms.custom.endpoint",
+		"Password Env (deprecated)",
+		"MY_PW",
+		"Encryption Key Env (deprecated)",
+		"MY_EK",
+		"Recovery Key Env (deprecated)",
+		"MY_RK",
+		"KMS Key ARN",
+		"arn:aws:kms:us-east-1:111:key/xyz",
+		"KMS Region",
+		"us-west-2",
+		"KMS Endpoint",
+		"https://kms.custom.endpoint",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in show output:\n%s", want, got)
@@ -570,8 +579,10 @@ stores:
 	}
 	got := out.String()
 	for _, want := range []string{
-		"store_sftp_password_env (deprecated): SFTP_PW_ENV",
-		"store_sftp_key_env (deprecated): SFTP_KEY_ENV",
+		"SFTP Password Env (deprecated)",
+		"SFTP_PW_ENV",
+		"SFTP Key Env (deprecated)",
+		"SFTP_KEY_ENV",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in show output:\n%s", want, got)
@@ -603,9 +614,12 @@ stores:
 	}
 	got := out.String()
 	for _, want := range []string{
-		"s3_access_key_env (deprecated): AK_ENV",
-		"s3_secret_key_env (deprecated): SK_ENV",
-		"s3_profile_env: PROF_ENV",
+		"S3 Access Key Env (deprecated)",
+		"AK_ENV",
+		"S3 Secret Key Env (deprecated)",
+		"SK_ENV",
+		"S3 Profile Env",
+		"PROF_ENV",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in show output:\n%s", want, got)
@@ -641,8 +655,10 @@ func TestRunStoreNew_WithSFTPOptions(t *testing.T) {
 	}
 	got := out.String()
 	for _, want := range []string{
-		"store_sftp_password_secret: env://SFTP_PW",
-		"store_sftp_key_secret: env://SFTP_KEY",
+		"SFTP Password Secret",
+		"env://SFTP_PW",
+		"SFTP Key Secret",
+		"env://SFTP_KEY",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in show output:\n%s", want, got)
@@ -1232,8 +1248,8 @@ stores:
 		t.Fatalf("store list failed: %s", errOut.String())
 	}
 	got := out.String()
-	if !strings.Contains(got, "3 stores") {
-		t.Fatalf("expected '3 stores' in output:\n%s", got)
+	if !strings.Contains(got, "Stores") || !strings.Contains(got, "alpha") || !strings.Contains(got, "beta") || !strings.Contains(got, "gamma") {
+		t.Fatalf("expected table output with all stores:\n%s", got)
 	}
 	for _, name := range []string{"alpha", "beta", "gamma"} {
 		if !strings.Contains(got, name) {

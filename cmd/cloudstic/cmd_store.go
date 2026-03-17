@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"runtime"
-	"sort"
 	"strings"
 
 	cloudstic "github.com/cloudstic/cli"
@@ -54,17 +53,7 @@ func (r *runner) runStoreList() int {
 		return r.fail("Failed to load profiles: %v", err)
 	}
 
-	names := sortedKeys(cfg.Stores)
-
-	_, _ = fmt.Fprintf(r.out, "%d stores\n", len(names))
-	for _, name := range names {
-		s := cfg.Stores[name]
-		_, _ = fmt.Fprintf(r.out, "- %s", name)
-		if s.URI != "" {
-			_, _ = fmt.Fprintf(r.out, "  uri=%s", s.URI)
-		}
-		_, _ = fmt.Fprintln(r.out)
-	}
+	r.renderStoreList(cfg)
 	return 0
 }
 
@@ -101,85 +90,7 @@ func (r *runner) runStoreShow() int {
 	if !ok {
 		return r.fail("Unknown store %q", name)
 	}
-
-	_, _ = fmt.Fprintf(r.out, "store: %s\n", name)
-	_, _ = fmt.Fprintf(r.out, "  uri: %s\n", s.URI)
-	_, _ = fmt.Fprintf(r.out, "  auth_mode: %s\n", profileStoreAuthMode(s))
-	if s.S3Region != "" {
-		_, _ = fmt.Fprintf(r.out, "  s3_region: %s\n", s.S3Region)
-	}
-	if s.S3Profile != "" {
-		_, _ = fmt.Fprintf(r.out, "  s3_profile: %s\n", s.S3Profile)
-	}
-	if s.S3Endpoint != "" {
-		_, _ = fmt.Fprintf(r.out, "  s3_endpoint: %s\n", s.S3Endpoint)
-	}
-	if s.S3AccessKeyEnv != "" {
-		_, _ = fmt.Fprintf(r.out, "  s3_access_key_env (deprecated): %s\n", s.S3AccessKeyEnv)
-	}
-	if s.S3AccessKeySecret != "" {
-		_, _ = fmt.Fprintf(r.out, "  s3_access_key_secret: %s\n", s.S3AccessKeySecret)
-	}
-	if s.S3SecretKeyEnv != "" {
-		_, _ = fmt.Fprintf(r.out, "  s3_secret_key_env (deprecated): %s\n", s.S3SecretKeyEnv)
-	}
-	if s.S3SecretKeySecret != "" {
-		_, _ = fmt.Fprintf(r.out, "  s3_secret_key_secret: %s\n", s.S3SecretKeySecret)
-	}
-	if s.S3ProfileEnv != "" {
-		_, _ = fmt.Fprintf(r.out, "  s3_profile_env: %s\n", s.S3ProfileEnv)
-	}
-	if s.StoreSFTPPasswordEnv != "" {
-		_, _ = fmt.Fprintf(r.out, "  store_sftp_password_env (deprecated): %s\n", s.StoreSFTPPasswordEnv)
-	}
-	if s.StoreSFTPPasswordSecret != "" {
-		_, _ = fmt.Fprintf(r.out, "  store_sftp_password_secret: %s\n", s.StoreSFTPPasswordSecret)
-	}
-	if s.StoreSFTPKeyEnv != "" {
-		_, _ = fmt.Fprintf(r.out, "  store_sftp_key_env (deprecated): %s\n", s.StoreSFTPKeyEnv)
-	}
-	if s.StoreSFTPKeySecret != "" {
-		_, _ = fmt.Fprintf(r.out, "  store_sftp_key_secret: %s\n", s.StoreSFTPKeySecret)
-	}
-	if s.PasswordEnv != "" {
-		_, _ = fmt.Fprintf(r.out, "  password_env (deprecated): %s\n", s.PasswordEnv)
-	}
-	if s.PasswordSecret != "" {
-		_, _ = fmt.Fprintf(r.out, "  password_secret: %s\n", s.PasswordSecret)
-	}
-	if s.EncryptionKeyEnv != "" {
-		_, _ = fmt.Fprintf(r.out, "  encryption_key_env (deprecated): %s\n", s.EncryptionKeyEnv)
-	}
-	if s.EncryptionKeySecret != "" {
-		_, _ = fmt.Fprintf(r.out, "  encryption_key_secret: %s\n", s.EncryptionKeySecret)
-	}
-	if s.RecoveryKeyEnv != "" {
-		_, _ = fmt.Fprintf(r.out, "  recovery_key_env (deprecated): %s\n", s.RecoveryKeyEnv)
-	}
-	if s.RecoveryKeySecret != "" {
-		_, _ = fmt.Fprintf(r.out, "  recovery_key_secret: %s\n", s.RecoveryKeySecret)
-	}
-	if s.KMSKeyARN != "" {
-		_, _ = fmt.Fprintf(r.out, "  kms_key_arn: %s\n", s.KMSKeyARN)
-	}
-	if s.KMSRegion != "" {
-		_, _ = fmt.Fprintf(r.out, "  kms_region: %s\n", s.KMSRegion)
-	}
-	if s.KMSEndpoint != "" {
-		_, _ = fmt.Fprintf(r.out, "  kms_endpoint: %s\n", s.KMSEndpoint)
-	}
-
-	// Show which profiles reference this store.
-	var refs []string
-	for pName, p := range cfg.Profiles {
-		if p.Store == name {
-			refs = append(refs, pName)
-		}
-	}
-	if len(refs) > 0 {
-		sort.Strings(refs)
-		_, _ = fmt.Fprintf(r.out, "  used_by: %v\n", refs)
-	}
+	r.renderStoreShow(cfg, name, s)
 	return 0
 }
 

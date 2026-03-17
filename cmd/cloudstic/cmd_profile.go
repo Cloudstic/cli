@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/paths"
@@ -91,52 +90,7 @@ func (r *runner) runProfileShow() int {
 	if !ok {
 		return r.fail("Unknown profile %q", a.name)
 	}
-
-	_, _ = fmt.Fprintf(r.out, "profile: %s\n", a.name)
-	_, _ = fmt.Fprintf(r.out, "  source: %s\n", p.Source)
-	if p.Store != "" {
-		_, _ = fmt.Fprintf(r.out, "  store_ref: %s\n", p.Store)
-		if s, ok := cfg.Stores[p.Store]; ok {
-			_, _ = fmt.Fprintf(r.out, "  store_uri: %s\n", s.URI)
-			if uri, parseErr := parseStoreURI(s.URI); parseErr == nil && uri.scheme == "s3" {
-				if s.S3Region != "" {
-					_, _ = fmt.Fprintf(r.out, "  store_s3_region: %s\n", s.S3Region)
-				}
-				if s.S3Profile != "" {
-					_, _ = fmt.Fprintf(r.out, "  store_s3_profile: %s\n", s.S3Profile)
-				}
-				if s.S3Endpoint != "" {
-					_, _ = fmt.Fprintf(r.out, "  store_s3_endpoint: %s\n", s.S3Endpoint)
-				}
-			}
-			_, _ = fmt.Fprintf(r.out, "  store_auth_mode: %s\n", profileStoreAuthMode(s))
-		} else {
-			_, _ = fmt.Fprintf(r.out, "  store_uri: <missing ref>\n")
-		}
-	}
-	if p.AuthRef != "" {
-		_, _ = fmt.Fprintf(r.out, "  auth_ref: %s\n", p.AuthRef)
-		if auth, ok := cfg.Auth[p.AuthRef]; ok {
-			_, _ = fmt.Fprintf(r.out, "  auth_provider: %s\n", auth.Provider)
-			if auth.GoogleTokenFile != "" {
-				_, _ = fmt.Fprintf(r.out, "  google_token_file: %s\n", auth.GoogleTokenFile)
-			}
-			if auth.OneDriveTokenFile != "" {
-				_, _ = fmt.Fprintf(r.out, "  onedrive_token_file: %s\n", auth.OneDriveTokenFile)
-			}
-		} else {
-			_, _ = fmt.Fprintf(r.out, "  auth_provider: <missing ref>\n")
-		}
-	}
-	if len(p.Tags) > 0 {
-		_, _ = fmt.Fprintf(r.out, "  tags: %s\n", strings.Join(p.Tags, ", "))
-	}
-	if len(p.Excludes) > 0 {
-		_, _ = fmt.Fprintf(r.out, "  excludes: %s\n", strings.Join(p.Excludes, ", "))
-	}
-	if p.ExcludeFile != "" {
-		_, _ = fmt.Fprintf(r.out, "  exclude_file: %s\n", p.ExcludeFile)
-	}
+	r.renderProfileShow(cfg, a.name, p)
 	return 0
 }
 
@@ -180,55 +134,11 @@ func (r *runner) runProfileList() int {
 		return r.fail("Failed to load profiles: %v", err)
 	}
 
-	storeNames := sortedKeys(cfg.Stores)
-
-	_, _ = fmt.Fprintf(r.out, "%d stores\n", len(storeNames))
-	for _, name := range storeNames {
-		s := cfg.Stores[name]
-		_, _ = fmt.Fprintf(r.out, "- %s", name)
-		if s.URI != "" {
-			_, _ = fmt.Fprintf(r.out, "  uri=%s", s.URI)
-		}
-		_, _ = fmt.Fprintln(r.out)
-	}
+	r.renderStoreList(cfg)
 	_, _ = fmt.Fprintln(r.out)
-
-	authNames := sortedKeys(cfg.Auth)
-
-	_, _ = fmt.Fprintf(r.out, "%d auth entries\n", len(authNames))
-	for _, name := range authNames {
-		a := cfg.Auth[name]
-		_, _ = fmt.Fprintf(r.out, "- %s", name)
-		if a.Provider != "" {
-			_, _ = fmt.Fprintf(r.out, "  provider=%s", a.Provider)
-		}
-		if a.Provider == "google" && a.GoogleTokenFile != "" {
-			_, _ = fmt.Fprintf(r.out, "  token=%s", a.GoogleTokenFile)
-		}
-		if a.Provider == "onedrive" && a.OneDriveTokenFile != "" {
-			_, _ = fmt.Fprintf(r.out, "  token=%s", a.OneDriveTokenFile)
-		}
-		_, _ = fmt.Fprintln(r.out)
-	}
+	r.renderAuthList(cfg)
 	_, _ = fmt.Fprintln(r.out)
-
-	names := sortedKeys(cfg.Profiles)
-
-	_, _ = fmt.Fprintf(r.out, "%d profiles\n", len(names))
-	for _, name := range names {
-		p := cfg.Profiles[name]
-		_, _ = fmt.Fprintf(r.out, "- %s", name)
-		if p.Source != "" {
-			_, _ = fmt.Fprintf(r.out, "  source=%s", p.Source)
-		}
-		if p.Store != "" {
-			_, _ = fmt.Fprintf(r.out, "  store=%s", p.Store)
-		}
-		if p.AuthRef != "" {
-			_, _ = fmt.Fprintf(r.out, "  auth=%s", p.AuthRef)
-		}
-		_, _ = fmt.Fprintln(r.out)
-	}
+	r.renderProfileList(cfg)
 
 	return 0
 }

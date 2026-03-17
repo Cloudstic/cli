@@ -45,29 +45,10 @@ profiles:
 	}
 
 	got := out.String()
-	if !strings.Contains(got, "1 stores") {
-		t.Fatalf("expected store count, got:\n%s", got)
-	}
-	if !strings.Contains(got, "- home-s3  uri=s3:my-bucket/cloudstic") {
-		t.Fatalf("expected home-s3 store line, got:\n%s", got)
-	}
-	if !strings.Contains(got, "1 auth entries") {
-		t.Fatalf("expected auth count, got:\n%s", got)
-	}
-	if !strings.Contains(got, "- google-work  provider=google  token=/tmp/google-work.json") {
-		t.Fatalf("expected google-work auth line, got:\n%s", got)
-	}
-	if !strings.Contains(got, "2 profiles") {
-		t.Fatalf("expected profile count, got:\n%s", got)
-	}
-	if !strings.Contains(got, "- photos  source=local:/Volumes/Photos  store=home-s3") {
-		t.Fatalf("expected photos profile line, got:\n%s", got)
-	}
-	if !strings.Contains(got, "- work-drive  source=gdrive-changes://Company Data/Engineering  store=home-s3") {
-		t.Fatalf("expected work-drive profile line, got:\n%s", got)
-	}
-	if !strings.Contains(got, "auth=google-work") {
-		t.Fatalf("expected auth reference in profile line, got:\n%s", got)
+	for _, want := range []string{"Stores", "Auth", "Profiles", "home-s3", "google-work", "photos", "work-drive"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in output:\n%s", want, got)
+		}
 	}
 }
 
@@ -103,10 +84,10 @@ profiles:
 		t.Fatalf("runProfile() code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()
-	if !strings.Contains(got, "profile: work-drive") || !strings.Contains(got, "store_uri: s3:my-bucket/cloudstic") || !strings.Contains(got, "auth_provider: google") {
+	if !strings.Contains(got, "Profile work-drive") || !strings.Contains(got, "Resolved References") || !strings.Contains(got, "s3:my-bucket/cloudstic") || !strings.Contains(got, "google") {
 		t.Fatalf("unexpected show output:\n%s", got)
 	}
-	if !strings.Contains(got, "store_s3_profile: prod") || !strings.Contains(got, "store_auth_mode: aws-shared-profile") {
+	if !strings.Contains(got, "Options") || !strings.Contains(got, "aws-shared-profile") || !strings.Contains(got, "prod") {
 		t.Fatalf("expected store auth details in show output:\n%s", got)
 	}
 }
@@ -458,10 +439,10 @@ profiles:
 		t.Fatalf("runProfile() code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()
-	if !strings.Contains(got, "auth_provider: onedrive") {
-		t.Fatalf("expected auth_provider: onedrive in output:\n%s", got)
+	if !strings.Contains(got, "Auth Provider") || !strings.Contains(got, "onedrive") {
+		t.Fatalf("expected auth provider details in output:\n%s", got)
 	}
-	if !strings.Contains(got, "onedrive_token_file: /tmp/od-token.json") {
+	if !strings.Contains(got, "/tmp/od-token.json") {
 		t.Fatalf("expected onedrive_token_file in output:\n%s", got)
 	}
 }
@@ -489,8 +470,8 @@ profiles:
 		t.Fatalf("runProfile() code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()
-	if !strings.Contains(got, "store_uri: <missing ref>") {
-		t.Fatalf("expected '<missing ref>' for store_uri in output:\n%s", got)
+	if !strings.Contains(got, "Store URI") || !strings.Contains(got, "<missing>") {
+		t.Fatalf("expected missing store marker in output:\n%s", got)
 	}
 }
 
@@ -521,8 +502,8 @@ profiles:
 		t.Fatalf("runProfile() code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()
-	if !strings.Contains(got, "auth_provider: <missing ref>") {
-		t.Fatalf("expected '<missing ref>' for auth_provider in output:\n%s", got)
+	if !strings.Contains(got, "Auth Provider") || !strings.Contains(got, "<missing>") {
+		t.Fatalf("expected missing auth marker in output:\n%s", got)
 	}
 }
 
@@ -657,10 +638,10 @@ profiles:
 		t.Fatalf("runProfile() code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()
-	if !strings.Contains(got, "provider=onedrive") {
-		t.Fatalf("expected provider=onedrive in list output:\n%s", got)
+	if !strings.Contains(got, "onedrive") {
+		t.Fatalf("expected onedrive provider in list output:\n%s", got)
 	}
-	if !strings.Contains(got, "token=/home/user/.config/od-token.json") {
+	if !strings.Contains(got, "/home/user/.config/od-token.json") {
 		t.Fatalf("expected onedrive token path in list output:\n%s", got)
 	}
 }
@@ -699,13 +680,13 @@ profiles:
 		t.Fatalf("runProfile() code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()
-	if !strings.Contains(got, "tags: daily, critical") {
+	if !strings.Contains(got, "Tags") || !strings.Contains(got, "daily, critical") {
 		t.Fatalf("expected tags in output:\n%s", got)
 	}
-	if !strings.Contains(got, "excludes: *.log, *.tmp") {
+	if !strings.Contains(got, "Exclude Patterns") || !strings.Contains(got, "*.log") || !strings.Contains(got, "*.tmp") {
 		t.Fatalf("expected excludes in output:\n%s", got)
 	}
-	if !strings.Contains(got, "exclude_file: /etc/my-excludes.txt") {
+	if !strings.Contains(got, "/etc/my-excludes.txt") {
 		t.Fatalf("expected exclude_file in output:\n%s", got)
 	}
 }

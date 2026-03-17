@@ -39,7 +39,7 @@ func defaultSecretServiceLookup(_ context.Context, collection, item string) (str
 	if err != nil {
 		return "", fmt.Errorf("%w: cannot connect to the session bus; ensure a desktop keyring/DBus session is available or use env://... as a fallback", errSecretServiceUnavailable)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	service := conn.Object(secretServiceName, secretServicePath)
 	collectionPath, err := lookupSecretServiceCollection(conn, service, collection)

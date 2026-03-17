@@ -102,9 +102,10 @@ func NewResolver(backends map[string]Backend) *Resolver {
 // NewDefaultResolver builds the baseline resolver with env:// and keychain:// support.
 func NewDefaultResolver() *Resolver {
 	return NewResolver(map[string]Backend{
-		"env":      NewEnvBackend(nil),
-		"keychain": NewKeychainBackend(),
-		"wincred":  NewWincredBackend(),
+		"env":            NewEnvBackend(nil),
+		"keychain":       NewKeychainBackend(),
+		"wincred":        NewWincredBackend(),
+		"secret-service": NewSecretServiceBackend(),
 	})
 }
 

@@ -12,10 +12,13 @@ import (
 
 var setRestoreXattr = unix.Setxattr
 
-func applyRestoreXattrs(path string, meta core.FileMeta) error {
+func applyRestoreXattrs(path string, meta core.FileMeta, warn func(string, ...interface{})) error {
 	for name, value := range meta.Xattrs {
 		if err := setRestoreXattr(path, name, value, 0); err != nil {
 			if isRestoreXattrBestEffortError(err) {
+				if warn != nil {
+					warn("could not set xattr %q on %s: %v", name, path, err)
+				}
 				continue
 			}
 			return fmt.Errorf("set xattr %q on %s: %w", name, path, err)

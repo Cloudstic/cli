@@ -60,6 +60,7 @@ type RestoreResult struct {
 	DirsWritten  int
 	BytesWritten int64
 	Errors       int
+	Warnings     int
 	DryRun       bool
 }
 
@@ -113,11 +114,21 @@ func (rm *RestoreManager) Run(ctx context.Context, writer RestoreWriter, snapsho
 func (rm *RestoreManager) runWithWriter(ctx context.Context, plan restorePlan, writer RestoreWriter) (*RestoreResult, error) {
 	result := &RestoreResult{SnapshotRef: plan.snapshotRef, Root: plan.root}
 	phase := rm.reporter.StartPhase("Restoring", int64(len(plan.sorted)), false)
+	if setter, ok := writer.(restoreWarningSetter); ok {
+		setter.SetWarningFunc(func(msg string) {
+			result.Warnings++
+			phase.Log("Warning: " + msg)
+		})
+	}
 	for _, meta := range plan.sorted {
 		rel := buildRestorePath(meta, plan.byID)
 
 		if meta.Type == core.FileTypeFolder {
 			if err := writer.MkdirAll(rel, meta); err != nil {
+				if err == errRestoreSkipped {
+					phase.Increment(1)
+					continue
+				}
 				phase.Log(fmt.Sprintf("Failed: %s: %v", rel, err))
 				result.Errors++
 				phase.Increment(1)
@@ -139,6 +150,10 @@ func (rm *RestoreManager) runWithWriter(ctx context.Context, plan restorePlan, w
 		if err := writer.WriteFile(rel, meta, func(out io.Writer) error {
 			return rm.writeFileContent(ctx, out, meta)
 		}); err != nil {
+			if err == errRestoreSkipped {
+				phase.Increment(1)
+				continue
+			}
 			phase.Log(fmt.Sprintf("Failed: %s: %v", rel, err))
 			result.Errors++
 			phase.Increment(1)
@@ -247,12 +262,36 @@ func (w *zipRestoreWriter) Close() error {
 }
 
 type fsRestoreWriter struct {
-	root  string
-	bytes int64
+	root         string
+	bytes        int64
+	warn         func(string)
+	deferredDirs []deferredRestoreEntry
+	deferredFlag []deferredRestoreEntry
 }
+
+type deferredRestoreEntry struct {
+	path string
+	meta core.FileMeta
+}
+
+type restoreWarningSetter interface {
+	SetWarningFunc(func(string))
+}
+
+var errRestoreSkipped = fmt.Errorf("restore entry skipped")
 
 func NewFSRestoreWriter(root string) (RestoreWriter, error) {
 	return &fsRestoreWriter{root: root}, nil
+}
+
+func (w *fsRestoreWriter) SetWarningFunc(fn func(string)) {
+	w.warn = fn
+}
+
+func (w *fsRestoreWriter) warnf(format string, args ...interface{}) {
+	if w.warn != nil {
+		w.warn(fmt.Sprintf(format, args...))
+	}
 }
 
 func (w *fsRestoreWriter) MkdirAll(relPath string, meta core.FileMeta) error {
@@ -263,15 +302,21 @@ func (w *fsRestoreWriter) MkdirAll(relPath string, meta core.FileMeta) error {
 	if err := ensureNoSymlinkComponents(w.root, fullPath); err != nil {
 		return err
 	}
+	st, err := os.Lstat(fullPath)
+	if err == nil {
+		if !st.IsDir() {
+			w.warnf("skipped existing non-directory: %s", relPath)
+			return errRestoreSkipped
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	if err := os.MkdirAll(fullPath, 0o755); err != nil {
 		return err
 	}
-	if err := applyRestoreXattrs(fullPath, meta); err != nil {
-		return err
-	}
-	if meta.Mtime > 0 {
-		mt := time.Unix(meta.Mtime, 0)
-		_ = os.Chtimes(fullPath, mt, mt)
+	w.deferredDirs = append(w.deferredDirs, deferredRestoreEntry{path: fullPath, meta: meta})
+	if meta.Flags != 0 {
+		w.deferredFlag = append(w.deferredFlag, deferredRestoreEntry{path: fullPath, meta: meta})
 	}
 	return nil
 }
@@ -285,6 +330,16 @@ func (w *fsRestoreWriter) WriteFile(relPath string, meta core.FileMeta, writeCon
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		return err
+	}
+	if st, err := os.Lstat(fullPath); err == nil {
+		if st.IsDir() {
+			w.warnf("skipped existing directory collision: %s", relPath)
+			return errRestoreSkipped
+		}
+		w.warnf("skipped existing file: %s", relPath)
+		return errRestoreSkipped
+	} else if !os.IsNotExist(err) {
 		return err
 	}
 
@@ -304,19 +359,32 @@ func (w *fsRestoreWriter) WriteFile(relPath string, meta core.FileMeta, writeCon
 	}
 
 	w.bytes += cw.count
-	if err := applyRestoreXattrs(fullPath, meta); err != nil {
+	if err := applyRestoreFileMetadata(fullPath, meta, w.warnf); err != nil {
 		return err
 	}
-	if meta.Mtime > 0 {
-		mt := time.Unix(meta.Mtime, 0)
-		_ = os.Chtimes(fullPath, mt, mt)
+	if meta.Flags != 0 {
+		w.deferredFlag = append(w.deferredFlag, deferredRestoreEntry{path: fullPath, meta: meta})
 	}
 	return nil
 }
 
 func (w *fsRestoreWriter) BytesWritten() int64 { return w.bytes }
 
-func (w *fsRestoreWriter) Close() error { return nil }
+func (w *fsRestoreWriter) Close() error {
+	for i := len(w.deferredDirs) - 1; i >= 0; i-- {
+		entry := w.deferredDirs[i]
+		if err := applyRestoreDirMetadata(entry.path, entry.meta, w.warnf); err != nil {
+			return err
+		}
+	}
+	for i := len(w.deferredFlag) - 1; i >= 0; i-- {
+		entry := w.deferredFlag[i]
+		if err := applyRestoreFlags(entry.path, entry.meta, w.warnf); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func ensureNoSymlinkComponents(root, target string) error {
 	rootClean := filepath.Clean(root)

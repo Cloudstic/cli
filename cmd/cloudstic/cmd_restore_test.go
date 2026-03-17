@@ -46,6 +46,23 @@ func TestPrintRestoreSummary_WithErrors(t *testing.T) {
 	}
 }
 
+func TestPrintRestoreSummary_WithWarnings(t *testing.T) {
+	var out strings.Builder
+	r := &runner{out: &out, errOut: &strings.Builder{}}
+
+	r.printRestoreSummary(&cloudstic.RestoreResult{
+		SnapshotRef:  "warn",
+		FilesWritten: 1,
+		DirsWritten:  1,
+		BytesWritten: 64,
+		Warnings:     2,
+	}, "out")
+
+	if !strings.Contains(out.String(), "Warnings: 2") {
+		t.Fatalf("expected warnings in output, got:\n%s", out.String())
+	}
+}
+
 func TestPrintRestoreSummary_DryRun(t *testing.T) {
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}}

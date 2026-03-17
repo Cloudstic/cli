@@ -33,7 +33,7 @@ func TestApplyRestoreXattrs_SetsAllXattrs(t *testing.T) {
 	err := applyRestoreXattrs("/tmp/file", core.FileMeta{Xattrs: map[string][]byte{
 		"user.a": []byte("one"),
 		"user.b": []byte("two"),
-	}})
+	}}, nil)
 	if err != nil {
 		t.Fatalf("applyRestoreXattrs: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestApplyRestoreXattrs_IgnoresBestEffortErrors(t *testing.T) {
 		return unix.EPERM
 	}
 
-	err := applyRestoreXattrs("/tmp/file", core.FileMeta{Xattrs: map[string][]byte{"user.a": []byte("one")}})
+	err := applyRestoreXattrs("/tmp/file", core.FileMeta{Xattrs: map[string][]byte{"user.a": []byte("one")}}, nil)
 	if err != nil {
 		t.Fatalf("applyRestoreXattrs: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestApplyRestoreXattrs_ReturnsUnexpectedErrors(t *testing.T) {
 		return errors.New("boom")
 	}
 
-	err := applyRestoreXattrs("/tmp/file", core.FileMeta{Xattrs: map[string][]byte{"user.a": []byte("one")}})
+	err := applyRestoreXattrs("/tmp/file", core.FileMeta{Xattrs: map[string][]byte{"user.a": []byte("one")}}, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}

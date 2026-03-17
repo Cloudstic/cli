@@ -117,6 +117,9 @@ func (r *runner) printRestoreSummary(result *engine.RestoreResult, output string
 	}
 	_, _ = fmt.Fprintf(r.out, "\nRestore complete. Snapshot: %s\n", result.SnapshotRef)
 	_, _ = fmt.Fprintf(r.out, "  Files: %d, Dirs: %d", result.FilesWritten, result.DirsWritten)
+	if result.Warnings > 0 {
+		_, _ = fmt.Fprintf(r.out, ", Warnings: %d", result.Warnings)
+	}
 	if result.Errors > 0 {
 		_, _ = fmt.Fprintf(r.out, ", Errors: %d", result.Errors)
 	}

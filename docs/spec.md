@@ -160,7 +160,13 @@ All objects are stored under a flat key namespace of the form `<type>/<hash>`.
   "size": 21733,
   "mtime": 1710000000,
   "owner": "user@example.com",
-  "extra": { "mimeType": "application/pdf" }
+  "extra": { "mimeType": "application/pdf" },
+  "mode": 33261,
+  "uid": 501,
+  "gid": 20,
+  "btime": 1710000000,
+  "flags": 0,
+  "xattrs": { "user.tag": "cHJvamVjdA==" }
 }
 ```
 
@@ -173,6 +179,12 @@ All objects are stored under a flat key namespace of the form `<type>/<hash>`.
 | `content_ref`  | Opaque content reference used as `content/<content_ref>` key; HMAC of `content_hash` for encrypted repos, plain `content_hash` for unencrypted repos |
 | `paths`        | Reserved for future use (multi-path support)                        |
 | `extra`        | Source-specific metadata (e.g. MIME type)                           |
+| `mode`         | POSIX file mode bits (e.g. `0755` = `493`). Omitted if zero.       |
+| `uid`          | Numeric owner user ID. Omitted if zero.                             |
+| `gid`          | Numeric owner group ID. Omitted if zero.                            |
+| `btime`        | File creation (birth) time as Unix epoch seconds. Omitted if zero.  |
+| `flags`        | OS-specific file flags (macOS `UF_*`/`SF_*`, Linux `FS_*_FL`). Omitted if zero. |
+| `xattrs`       | Extended attributes as `name → base64(value)` map. Omitted if empty.|
 
 * `fileId` is **the HAMT key**.
 * Folders have an empty `content_hash`, `content_ref`, and `size` of 0.
@@ -225,7 +237,8 @@ Object key: `node/<sha256-of-serialized-json>`
   "source": {
     "type": "gdrive",
     "account": "user@gmail.com",
-    "path": "my-drive://"
+    "path": "my-drive://",
+    "fs_type": "google-drive"
   },
   "meta": {
     "generator": "cloudstic-cli"
@@ -239,7 +252,7 @@ Object key: `node/<sha256-of-serialized-json>`
 | Field          | Description                                                          |
 |----------------|----------------------------------------------------------------------|
 | `seq`          | Monotonically increasing sequence number                             |
-| `source`       | Origin of the backup (type, account, path) — used for retention grouping |
+| `source`       | Origin of the backup (type, account, path, fs_type) — used for retention grouping |
 | `meta`         | Free-form key-value metadata (generator, etc.)                       |
 | `tags`         | User-defined labels for retention policies                           |
 | `change_token` | Opaque token for incremental sources (omitted when not applicable)   |

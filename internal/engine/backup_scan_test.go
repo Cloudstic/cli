@@ -300,3 +300,95 @@ func TestScanIncremental_DeleteWithoutParentUsesExistingMetadataParent(t *testin
 		t.Fatalf("expected FILE_1 to be deleted, got ref %q", ref)
 	}
 }
+
+func TestMetadataEqual_ExtendedFields(t *testing.T) {
+	base := core.FileMeta{
+		Name:  "test.txt",
+		Size:  100,
+		Mtime: 1000,
+		Type:  core.FileTypeFile,
+		Mode:  0755,
+		Uid:   501,
+		Gid:   20,
+		Btime: 900,
+		Flags: 0x10,
+		Xattrs: map[string][]byte{
+			"user.tag": []byte("v1"),
+		},
+	}
+
+	t.Run("identical", func(t *testing.T) {
+		b := base
+		b.Xattrs = map[string][]byte{"user.tag": []byte("v1")}
+		if !metadataEqual(base, b) {
+			t.Error("expected equal")
+		}
+	})
+
+	tests := []struct {
+		name   string
+		modify func(m *core.FileMeta)
+	}{
+		{"mode", func(m *core.FileMeta) { m.Mode = 0644 }},
+		{"uid", func(m *core.FileMeta) { m.Uid = 0 }},
+		{"gid", func(m *core.FileMeta) { m.Gid = 100 }},
+		{"btime", func(m *core.FileMeta) { m.Btime = 800 }},
+		{"flags", func(m *core.FileMeta) { m.Flags = 0 }},
+		{"xattrs_value", func(m *core.FileMeta) { m.Xattrs = map[string][]byte{"user.tag": []byte("v2")} }},
+		{"xattrs_extra_key", func(m *core.FileMeta) {
+			m.Xattrs = map[string][]byte{"user.tag": []byte("v1"), "user.other": []byte("x")}
+		}},
+		{"xattrs_missing", func(m *core.FileMeta) { m.Xattrs = nil }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := base
+			b.Xattrs = map[string][]byte{"user.tag": []byte("v1")}
+			tt.modify(&b)
+			if metadataEqual(base, b) {
+				t.Errorf("expected not equal after modifying %s", tt.name)
+			}
+		})
+	}
+}
+
+func TestXattrsEqual(t *testing.T) {
+	t.Run("both_nil", func(t *testing.T) {
+		if !xattrsEqual(nil, nil) {
+			t.Error("expected equal")
+		}
+	})
+	t.Run("one_nil", func(t *testing.T) {
+		if xattrsEqual(nil, map[string][]byte{"k": {}}) {
+			t.Error("expected not equal")
+		}
+	})
+	t.Run("empty_maps", func(t *testing.T) {
+		if !xattrsEqual(map[string][]byte{}, map[string][]byte{}) {
+			t.Error("expected equal")
+		}
+	})
+}
+
+func TestBytesEqual(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b []byte
+		want bool
+	}{
+		{"both nil", nil, nil, true},
+		{"both empty", []byte{}, []byte{}, true},
+		{"equal", []byte{1, 2, 3}, []byte{1, 2, 3}, true},
+		{"different length", []byte{1, 2}, []byte{1, 2, 3}, false},
+		{"different content", []byte{1, 2, 3}, []byte{1, 2, 4}, false},
+		{"one nil", nil, []byte{1}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := bytesEqual(tt.a, tt.b); got != tt.want {
+				t.Errorf("bytesEqual(%v, %v) = %v, want %v", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}

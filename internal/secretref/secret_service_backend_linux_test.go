@@ -30,3 +30,17 @@ func TestDefaultSecretServiceLookupMissingSessionBus(t *testing.T) {
 		t.Fatalf("expected errSecretServiceUnavailable, got %v", err)
 	}
 }
+
+func TestDefaultSecretServiceExistsNotFound(t *testing.T) {
+	orig := secretServiceSessionBus
+	defer func() { secretServiceSessionBus = orig }()
+
+	secretServiceSessionBus = func() (secretServiceDBusConn, error) {
+		return nil, errors.New("dbus session unavailable")
+	}
+
+	_, err := defaultSecretServiceExists(context.Background(), "cloudstic", "prod/password")
+	if !errors.Is(err, errSecretServiceUnavailable) {
+		t.Fatalf("expected errSecretServiceUnavailable, got %v", err)
+	}
+}

@@ -13,23 +13,41 @@ var (
 )
 
 type secretServiceLookupFunc func(ctx context.Context, collection, item string) (string, error)
+type secretServiceExistsFunc func(ctx context.Context, collection, item string) (bool, error)
+type secretServiceStoreFunc func(ctx context.Context, collection, item, value string) error
 
 // SecretServiceBackend resolves secret-service://collection/item references.
 type SecretServiceBackend struct {
 	lookup secretServiceLookupFunc
+	exists secretServiceExistsFunc
+	store  secretServiceStoreFunc
 }
 
 // NewSecretServiceBackend creates a Secret Service backend for the current
 // platform.
 func NewSecretServiceBackend() *SecretServiceBackend {
-	return &SecretServiceBackend{lookup: defaultSecretServiceLookup}
+	return &SecretServiceBackend{
+		lookup: defaultSecretServiceLookup,
+		exists: defaultSecretServiceExists,
+		store:  defaultSecretServiceStore,
+	}
 }
 
-func newSecretServiceBackendWithLookup(lookup secretServiceLookupFunc) *SecretServiceBackend {
+func newSecretServiceBackendWithFns(lookup secretServiceLookupFunc, exists secretServiceExistsFunc, store secretServiceStoreFunc) *SecretServiceBackend {
 	if lookup == nil {
 		lookup = defaultSecretServiceLookup
 	}
-	return &SecretServiceBackend{lookup: lookup}
+	if exists == nil {
+		exists = defaultSecretServiceExists
+	}
+	if store == nil {
+		store = defaultSecretServiceStore
+	}
+	return &SecretServiceBackend{lookup: lookup, exists: exists, store: store}
+}
+
+func newSecretServiceBackendWithLookup(lookup secretServiceLookupFunc) *SecretServiceBackend {
+	return newSecretServiceBackendWithFns(lookup, nil, nil)
 }
 
 func parseSecretServicePath(path string) (collection string, item string, err error) {
@@ -64,4 +82,39 @@ func (b *SecretServiceBackend) Resolve(ctx context.Context, ref Ref) (string, er
 	}
 
 	return value, nil
+}
+
+func (b *SecretServiceBackend) Scheme() string { return "secret-service" }
+
+func (b *SecretServiceBackend) DisplayName() string { return "Secret Service" }
+
+func (b *SecretServiceBackend) WriteSupported() bool { return defaultSecretServiceWriteSupported() }
+
+func (b *SecretServiceBackend) DefaultRef(storeName, account string) string {
+	return "secret-service://cloudstic/" + storeName + "/" + account
+}
+
+func (b *SecretServiceBackend) Exists(ctx context.Context, ref Ref) (bool, error) {
+	collection, item, err := parseSecretServicePath(ref.Path)
+	if err != nil {
+		return false, errorf(KindInvalidRef, ref.Raw, err.Error(), nil)
+	}
+
+	exists, err := b.exists(ctx, collection, item)
+	if err != nil {
+		return false, errorf(KindBackendUnavailable, ref.Raw, err.Error(), err)
+	}
+	return exists, nil
+}
+
+func (b *SecretServiceBackend) Store(ctx context.Context, ref Ref, value string) error {
+	collection, item, err := parseSecretServicePath(ref.Path)
+	if err != nil {
+		return errorf(KindInvalidRef, ref.Raw, err.Error(), nil)
+	}
+
+	if err := b.store(ctx, collection, item, value); err != nil {
+		return errorf(KindBackendUnavailable, ref.Raw, err.Error(), err)
+	}
+	return nil
 }

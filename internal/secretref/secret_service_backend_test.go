@@ -91,3 +91,46 @@ func TestSecretServiceBackendResolveErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestSecretServiceBackend_DefaultRef(t *testing.T) {
+	b := NewSecretServiceBackend()
+	if got := b.DefaultRef("prod", "password"); got != "secret-service://cloudstic/prod/password" {
+		t.Fatalf("DefaultRef() = %q", got)
+	}
+}
+
+func TestSecretServiceBackend_Exists(t *testing.T) {
+	b := newSecretServiceBackendWithFns(
+		func(context.Context, string, string) (string, error) { return "", nil },
+		func(_ context.Context, collection, item string) (bool, error) {
+			if collection != "cloudstic" || item != "prod/password" {
+				t.Fatalf("unexpected args %q/%q", collection, item)
+			}
+			return true, nil
+		},
+		nil,
+	)
+	exists, err := b.Exists(context.Background(), Ref{Raw: "secret-service://cloudstic/prod/password", Scheme: "secret-service", Path: "cloudstic/prod/password"})
+	if err != nil {
+		t.Fatalf("Exists: %v", err)
+	}
+	if !exists {
+		t.Fatal("expected exists=true")
+	}
+}
+
+func TestSecretServiceBackend_Store(t *testing.T) {
+	b := newSecretServiceBackendWithFns(
+		func(context.Context, string, string) (string, error) { return "", nil },
+		nil,
+		func(_ context.Context, collection, item, value string) error {
+			if collection != "cloudstic" || item != "prod/password" || value != "secret" {
+				t.Fatalf("unexpected args %q/%q/%q", collection, item, value)
+			}
+			return nil
+		},
+	)
+	if err := b.Store(context.Background(), Ref{Raw: "secret-service://cloudstic/prod/password", Scheme: "secret-service", Path: "cloudstic/prod/password"}, "secret"); err != nil {
+		t.Fatalf("Store: %v", err)
+	}
+}

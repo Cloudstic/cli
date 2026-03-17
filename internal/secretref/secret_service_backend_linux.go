@@ -34,6 +34,8 @@ var secretServiceSessionBus = func() (secretServiceDBusConn, error) {
 	return dbus.SessionBus()
 }
 
+func defaultSecretServiceWriteSupported() bool { return true }
+
 func defaultSecretServiceLookup(_ context.Context, collection, item string) (string, error) {
 	conn, err := secretServiceSessionBus()
 	if err != nil {
@@ -62,6 +64,59 @@ func defaultSecretServiceLookup(_ context.Context, collection, item string) (str
 		return "", mapSecretServiceCallError(err, "read secret from Secret Service")
 	}
 	return string(secret.Value), nil
+}
+
+func defaultSecretServiceExists(ctx context.Context, collection, item string) (bool, error) {
+	_, err := defaultSecretServiceLookup(ctx, collection, item)
+	if err != nil {
+		switch err {
+		case errSecretServiceNotFound:
+			return false, nil
+		default:
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+func defaultSecretServiceStore(_ context.Context, collection, item, value string) error {
+	conn, err := secretServiceSessionBus()
+	if err != nil {
+		return fmt.Errorf("%w: cannot connect to the session bus; ensure a desktop keyring/DBus session is available or use env://... as a fallback", errSecretServiceUnavailable)
+	}
+	defer func() { _ = conn.Close() }()
+
+	service := conn.Object(secretServiceName, secretServicePath)
+	collectionPath, err := lookupSecretServiceCollection(conn, service, collection)
+	if err != nil {
+		return err
+	}
+
+	var ignored dbus.Variant
+	var session dbus.ObjectPath
+	if err := service.Call(secretServiceInterface+".OpenSession", 0, "plain", dbus.MakeVariant("")).Store(&ignored, &session); err != nil {
+		return mapSecretServiceCallError(err, "open Secret Service session")
+	}
+
+	properties := map[string]dbus.Variant{
+		itemInterface + ".Label":      dbus.MakeVariant(item),
+		itemInterface + ".Attributes": dbus.MakeVariant(map[string]string{"cloudstic_ref": collection + "/" + item}),
+	}
+	secret := secretServiceSecret{
+		Session:     session,
+		Parameters:  nil,
+		Value:       []byte(value),
+		ContentType: "text/plain; charset=utf-8",
+	}
+	var itemPath dbus.ObjectPath
+	var prompt dbus.ObjectPath
+	if err := conn.Object(secretServiceName, collectionPath).Call(collectionInterface+".CreateItem", 0, properties, secret, true).Store(&itemPath, &prompt); err != nil {
+		return mapSecretServiceCallError(err, "write secret to Secret Service")
+	}
+	if prompt != "" && prompt != "/" {
+		return fmt.Errorf("%w: Secret Service write requires user interaction in this session; use env://... as a fallback", errSecretServiceUnavailable)
+	}
+	return nil
 }
 
 func lookupSecretServiceCollection(conn secretServiceDBusConn, service dbus.BusObject, want string) (dbus.ObjectPath, error) {

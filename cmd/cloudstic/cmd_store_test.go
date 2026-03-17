@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -1181,7 +1180,7 @@ func TestConfigureStoreEncryptionSelection_KMSError(t *testing.T) {
 
 func TestPromptSecretReference_EnvInteractive(t *testing.T) {
 	t.Setenv("MY_ENV", "set-for-test")
-	if runtime.GOOS == "darwin" {
+	if len(profileSecretResolver.WritableBackends()) > 0 {
 		setInteractiveStdinLines(t, "1", "MY_ENV")
 	} else {
 		setInteractiveStdinLines(t, "MY_ENV")
@@ -1210,7 +1209,7 @@ func TestPromptEncryptionConfig_PasswordViaEnvRef(t *testing.T) {
 		},
 	}
 
-	if runtime.GOOS == "darwin" {
+	if len(profileSecretResolver.WritableBackends()) > 0 {
 		setInteractiveStdinLines(t, "1", "1", "MY_BACKUP_PASSWORD")
 	} else {
 		setInteractiveStdinLines(t, "1", "MY_BACKUP_PASSWORD")

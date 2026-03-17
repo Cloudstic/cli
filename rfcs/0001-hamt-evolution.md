@@ -41,6 +41,8 @@ Bias the HAMT key to group siblings together by incorporating the parent's ident
 
 Strip the `Paths` field and only store the `Filename` and list of `ParentID`s.
 
+Follow-up design and rollout details are specified in [RFC 0015](./0015-filemeta-path-normalization.md).
+
 * **Recovery:** Reconstruct paths dynamically by walking the `Parents` chain.
 * **Compatibility:**
   * **Backup:** Filtering happens source-side using ephemeral paths; `FileMeta.Paths` is not used.

@@ -95,13 +95,13 @@ func (r *runner) runProfileShow() int {
 }
 
 func profileStoreAuthMode(s cloudstic.ProfileStore) string {
-	if s.S3AccessKey != "" || s.S3SecretKey != "" || s.S3AccessKeyEnv != "" || s.S3SecretKeyEnv != "" || s.S3AccessKeySecret != "" || s.S3SecretKeySecret != "" {
+	if s.S3AccessKey != "" || s.S3SecretKey != "" || s.S3AccessKeySecret != "" || s.S3SecretKeySecret != "" {
 		return "static-keys"
 	}
-	if s.S3Profile != "" || s.S3ProfileEnv != "" {
+	if s.S3Profile != "" {
 		return "aws-shared-profile"
 	}
-	if s.StoreSFTPPassword != "" || s.StoreSFTPKey != "" || s.StoreSFTPPasswordEnv != "" || s.StoreSFTPKeyEnv != "" || s.StoreSFTPPasswordSecret != "" || s.StoreSFTPKeySecret != "" {
+	if s.StoreSFTPPassword != "" || s.StoreSFTPKey != "" || s.StoreSFTPPasswordSecret != "" || s.StoreSFTPKeySecret != "" {
 		return "sftp"
 	}
 	return "default-chain"

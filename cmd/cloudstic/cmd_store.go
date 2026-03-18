@@ -105,21 +105,13 @@ func (r *runner) runStoreNew() int {
 	s3SecretKey := fs.String("s3-secret-key", "", "S3 static secret key")
 	s3AccessKeySecret := fs.String("s3-access-key-secret", "", "Secret reference for S3 access key (e.g. env://..., keychain://...)")
 	s3SecretKeySecret := fs.String("s3-secret-key-secret", "", "Secret reference for S3 secret key (e.g. env://..., keychain://...)")
-	s3AccessKeyEnv := fs.String("s3-access-key-env", "", "Env var name for S3 access key")
-	s3SecretKeyEnv := fs.String("s3-secret-key-env", "", "Env var name for S3 secret key")
-	s3ProfileEnv := fs.String("s3-profile-env", "", "Env var name for AWS profile")
 	sftpPassword := fs.String("store-sftp-password", "", "SFTP password")
 	sftpKey := fs.String("store-sftp-key", "", "Path to SFTP private key")
 	sftpPasswordSecret := fs.String("store-sftp-password-secret", "", "Secret reference for SFTP password (e.g. env://..., keychain://...)")
 	sftpKeySecret := fs.String("store-sftp-key-secret", "", "Secret reference for SFTP key path (e.g. env://..., keychain://...)")
-	sftpPasswordEnv := fs.String("store-sftp-password-env", "", "Env var name for SFTP password")
-	sftpKeyEnv := fs.String("store-sftp-key-env", "", "Env var name for SFTP key path")
 	passwordSecret := fs.String("password-secret", "", "Secret reference for repository password (e.g. env://..., keychain://...)")
 	encryptionKeySecret := fs.String("encryption-key-secret", "", "Secret reference for platform key (e.g. env://..., keychain://...)")
 	recoveryKeySecret := fs.String("recovery-key-secret", "", "Secret reference for recovery key mnemonic (e.g. env://..., keychain://...)")
-	passwordEnv := fs.String("password-env", "", "Env var name for repository password")
-	encryptionKeyEnv := fs.String("encryption-key-env", "", "Env var name for platform key (hex)")
-	recoveryKeyEnv := fs.String("recovery-key-env", "", "Env var name for recovery key mnemonic")
 	kmsKeyARN := fs.String("kms-key-arn", "", "AWS KMS key ARN")
 	kmsRegion := fs.String("kms-region", "", "AWS KMS region")
 	kmsEndpoint := fs.String("kms-endpoint", "", "Custom AWS KMS endpoint URL")
@@ -136,21 +128,13 @@ func (r *runner) runStoreNew() int {
 		s3SecretKey:         s3SecretKey,
 		s3AccessKeySecret:   s3AccessKeySecret,
 		s3SecretKeySecret:   s3SecretKeySecret,
-		s3AccessKeyEnv:      s3AccessKeyEnv,
-		s3SecretKeyEnv:      s3SecretKeyEnv,
-		s3ProfileEnv:        s3ProfileEnv,
 		sftpPassword:        sftpPassword,
 		sftpKey:             sftpKey,
 		sftpPasswordSecret:  sftpPasswordSecret,
 		sftpKeySecret:       sftpKeySecret,
-		sftpPasswordEnv:     sftpPasswordEnv,
-		sftpKeyEnv:          sftpKeyEnv,
 		passwordSecret:      passwordSecret,
 		encryptionKeySecret: encryptionKeySecret,
 		recoveryKeySecret:   recoveryKeySecret,
-		passwordEnv:         passwordEnv,
-		encryptionKeyEnv:    encryptionKeyEnv,
-		recoveryKeyEnv:      recoveryKeyEnv,
 		kmsKeyARN:           kmsKeyARN,
 		kmsRegion:           kmsRegion,
 		kmsEndpoint:         kmsEndpoint,
@@ -477,7 +461,6 @@ func configureStoreEncryptionSelection(
 		if err != nil {
 			return s, fmt.Errorf("failed to configure password secret: %w", err)
 		}
-		s.PasswordEnv = ""
 		s.PasswordSecret = secretRef
 		_, _ = fmt.Fprintf(out, "Encryption: password via %s\n", secretRef)
 	case "Platform key (recommended for automation/CI)":
@@ -485,7 +468,6 @@ func configureStoreEncryptionSelection(
 		if err != nil {
 			return s, fmt.Errorf("failed to configure platform key secret: %w", err)
 		}
-		s.EncryptionKeyEnv = ""
 		s.EncryptionKeySecret = secretRef
 		_, _ = fmt.Fprintf(out, "Encryption: platform key via %s\n", secretRef)
 	case "AWS KMS key (enterprise)":
@@ -654,42 +636,42 @@ func globalFlagsFromProfileStore(s cloudstic.ProfileStore) (*globalFlags, error)
 		s3Region = "us-east-1"
 	}
 	g.s3Region = &s3Region
-	s3Profile, err := resolveProfileStoreValue("s3_profile", s.S3Profile, "", s.S3ProfileEnv)
+	s3Profile, err := resolveProfileStoreValue("s3_profile", s.S3Profile, "")
 	if err != nil {
 		return nil, err
 	}
 	g.s3Profile = &s3Profile
-	s3AccessKey, err := resolveProfileStoreValue("s3_access_key", s.S3AccessKey, s.S3AccessKeySecret, s.S3AccessKeyEnv)
+	s3AccessKey, err := resolveProfileStoreValue("s3_access_key", s.S3AccessKey, s.S3AccessKeySecret)
 	if err != nil {
 		return nil, err
 	}
 	g.s3AccessKey = &s3AccessKey
-	s3SecretKey, err := resolveProfileStoreValue("s3_secret_key", s.S3SecretKey, s.S3SecretKeySecret, s.S3SecretKeyEnv)
+	s3SecretKey, err := resolveProfileStoreValue("s3_secret_key", s.S3SecretKey, s.S3SecretKeySecret)
 	if err != nil {
 		return nil, err
 	}
 	g.s3SecretKey = &s3SecretKey
-	storeSFTPPassword, err := resolveProfileStoreValue("store_sftp_password", s.StoreSFTPPassword, s.StoreSFTPPasswordSecret, s.StoreSFTPPasswordEnv)
+	storeSFTPPassword, err := resolveProfileStoreValue("store_sftp_password", s.StoreSFTPPassword, s.StoreSFTPPasswordSecret)
 	if err != nil {
 		return nil, err
 	}
 	g.storeSFTPPassword = &storeSFTPPassword
-	storeSFTPKey, err := resolveProfileStoreValue("store_sftp_key", s.StoreSFTPKey, s.StoreSFTPKeySecret, s.StoreSFTPKeyEnv)
+	storeSFTPKey, err := resolveProfileStoreValue("store_sftp_key", s.StoreSFTPKey, s.StoreSFTPKeySecret)
 	if err != nil {
 		return nil, err
 	}
 	g.storeSFTPKey = &storeSFTPKey
-	password, err := resolveProfileStoreValue("password", "", s.PasswordSecret, s.PasswordEnv)
+	password, err := resolveProfileStoreValue("password", "", s.PasswordSecret)
 	if err != nil {
 		return nil, err
 	}
 	g.password = &password
-	encryptionKey, err := resolveProfileStoreValue("encryption_key", "", s.EncryptionKeySecret, s.EncryptionKeyEnv)
+	encryptionKey, err := resolveProfileStoreValue("encryption_key", "", s.EncryptionKeySecret)
 	if err != nil {
 		return nil, err
 	}
 	g.encryptionKey = &encryptionKey
-	recoveryKey, err := resolveProfileStoreValue("recovery_key", "", s.RecoveryKeySecret, s.RecoveryKeyEnv)
+	recoveryKey, err := resolveProfileStoreValue("recovery_key", "", s.RecoveryKeySecret)
 	if err != nil {
 		return nil, err
 	}
@@ -725,19 +707,7 @@ func envRef(name string) string {
 	return "env://" + name
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		v = strings.TrimSpace(v)
-		if v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
 func storeHasExplicitEncryption(s cloudstic.ProfileStore) bool {
-	return s.PasswordEnv != "" || s.EncryptionKeyEnv != "" ||
-		s.RecoveryKeyEnv != "" || s.PasswordSecret != "" ||
-		s.EncryptionKeySecret != "" || s.RecoveryKeySecret != "" ||
+	return s.PasswordSecret != "" || s.EncryptionKeySecret != "" || s.RecoveryKeySecret != "" ||
 		s.KMSKeyARN != ""
 }

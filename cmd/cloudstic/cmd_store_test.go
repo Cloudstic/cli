@@ -257,7 +257,7 @@ func TestRunStoreNew_WithEncryption(t *testing.T) {
 		"-profiles-file", profilesPath,
 		"-name", "encrypted-s3",
 		"-uri", "s3:secure-bucket/backups",
-		"-password-env", "MY_BACKUP_PASSWORD",
+		"-password-secret", "env://MY_BACKUP_PASSWORD",
 		"-kms-key-arn", "arn:aws:kms:us-east-1:123456:key/abcd",
 		"-kms-region", "us-east-1",
 	}
@@ -425,12 +425,12 @@ func TestGlobalFlagsFromProfileStore_ResolvesEnvVars(t *testing.T) {
 	t.Setenv("TEST_PW", "s3cret")
 
 	s := cloudstic.ProfileStore{
-		URI:            "s3:bucket/prefix",
-		S3Region:       "eu-west-1",
-		S3AccessKeyEnv: "TEST_AK",
-		S3SecretKeyEnv: "TEST_SK",
-		PasswordEnv:    "TEST_PW",
-		KMSKeyARN:      "arn:aws:kms:us-east-1:123:key/abc",
+		URI:               "s3:bucket/prefix",
+		S3Region:          "eu-west-1",
+		S3AccessKeySecret: "env://TEST_AK",
+		S3SecretKeySecret: "env://TEST_SK",
+		PasswordSecret:    "env://TEST_PW",
+		KMSKeyARN:         "arn:aws:kms:us-east-1:123:key/abc",
 	}
 
 	g, err := globalFlagsFromProfileStore(s)
@@ -457,13 +457,11 @@ func TestGlobalFlagsFromProfileStore_ResolvesEnvVars(t *testing.T) {
 	}
 }
 
-func TestGlobalFlagsFromProfileStore_SecretPrecedenceOverLegacyEnv(t *testing.T) {
-	t.Setenv("LEGACY_AK", "legacy-ak")
+func TestGlobalFlagsFromProfileStore_ResolvesSecretRef(t *testing.T) {
 	t.Setenv("SECRET_AK", "secret-ak")
 
 	s := cloudstic.ProfileStore{
 		URI:               "s3:bucket/prefix",
-		S3AccessKeyEnv:    "LEGACY_AK",
 		S3AccessKeySecret: "env://SECRET_AK",
 	}
 
@@ -543,9 +541,9 @@ func TestRunStoreShow_WithEncryption(t *testing.T) {
 stores:
   enc-store:
     uri: s3:enc-bucket/path
-    password_env: MY_PW
-    encryption_key_env: MY_EK
-    recovery_key_env: MY_RK
+    password_secret: env://MY_PW
+    encryption_key_secret: env://MY_EK
+    recovery_key_secret: env://MY_RK
     kms_key_arn: arn:aws:kms:us-east-1:111:key/xyz
     kms_region: us-west-2
     kms_endpoint: https://kms.custom.endpoint
@@ -563,12 +561,12 @@ stores:
 	}
 	got := out.String()
 	for _, want := range []string{
-		"Password Env (deprecated)",
-		"MY_PW",
-		"Encryption Key Env (deprecated)",
-		"MY_EK",
-		"Recovery Key Env (deprecated)",
-		"MY_RK",
+		"Password Secret",
+		"env://MY_PW",
+		"Encryption Key Secret",
+		"env://MY_EK",
+		"Recovery Key Secret",
+		"env://MY_RK",
 		"KMS Key ARN",
 		"arn:aws:kms:us-east-1:111:key/xyz",
 		"KMS Region",
@@ -589,8 +587,8 @@ func TestRunStoreShow_WithSFTP(t *testing.T) {
 stores:
   sftp-store:
     uri: sftp://user@host/path
-    store_sftp_password_env: SFTP_PW_ENV
-    store_sftp_key_env: SFTP_KEY_ENV
+    store_sftp_password_secret: env://SFTP_PW_ENV
+    store_sftp_key_secret: env://SFTP_KEY_ENV
 `
 	if err := os.WriteFile(profilesPath, []byte(content), 0600); err != nil {
 		t.Fatalf("write profiles: %v", err)
@@ -605,10 +603,10 @@ stores:
 	}
 	got := out.String()
 	for _, want := range []string{
-		"SFTP Password Env (deprecated)",
-		"SFTP_PW_ENV",
-		"SFTP Key Env (deprecated)",
-		"SFTP_KEY_ENV",
+		"SFTP Password Secret",
+		"env://SFTP_PW_ENV",
+		"SFTP Key Secret",
+		"env://SFTP_KEY_ENV",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in show output:\n%s", want, got)
@@ -616,16 +614,16 @@ stores:
 	}
 }
 
-func TestRunStoreShow_WithS3Env(t *testing.T) {
+func TestRunStoreShow_WithS3Secrets(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
 	content := `version: 1
 stores:
   s3env-store:
     uri: s3:env-bucket/path
-    s3_access_key_env: AK_ENV
-    s3_secret_key_env: SK_ENV
-    s3_profile_env: PROF_ENV
+    s3_access_key_secret: env://AK_ENV
+    s3_secret_key_secret: env://SK_ENV
+    s3_profile: profile-name
 `
 	if err := os.WriteFile(profilesPath, []byte(content), 0600); err != nil {
 		t.Fatalf("write profiles: %v", err)
@@ -640,12 +638,12 @@ stores:
 	}
 	got := out.String()
 	for _, want := range []string{
-		"S3 Access Key Env (deprecated)",
-		"AK_ENV",
-		"S3 Secret Key Env (deprecated)",
-		"SK_ENV",
-		"S3 Profile Env",
-		"PROF_ENV",
+		"S3 Access Key Secret",
+		"env://AK_ENV",
+		"S3 Secret Key Secret",
+		"env://SK_ENV",
+		"S3 Profile",
+		"profile-name",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in show output:\n%s", want, got)
@@ -662,8 +660,8 @@ func TestRunStoreNew_WithSFTPOptions(t *testing.T) {
 		"-profiles-file", profilesPath,
 		"-name", "sftp-new",
 		"-uri", "sftp://user@host/path",
-		"-store-sftp-password-env", "SFTP_PW",
-		"-store-sftp-key-env", "SFTP_KEY",
+		"-store-sftp-password-secret", "env://SFTP_PW",
+		"-store-sftp-key-secret", "env://SFTP_KEY",
 	}
 	var out strings.Builder
 	var errOut strings.Builder
@@ -704,9 +702,8 @@ func TestRunStoreNew_WithAllS3Options(t *testing.T) {
 		"-s3-region", "eu-west-1",
 		"-s3-endpoint", "https://custom.endpoint",
 		"-s3-profile", "prod",
-		"-s3-access-key-env", "AK",
-		"-s3-secret-key-env", "SK",
-		"-s3-profile-env", "PROFILE",
+		"-s3-access-key-secret", "env://AK",
+		"-s3-secret-key-secret", "env://SK",
 	}
 	var out strings.Builder
 	var errOut strings.Builder
@@ -726,7 +723,6 @@ func TestRunStoreNew_WithAllS3Options(t *testing.T) {
 		"s3_profile: prod",
 		"s3_access_key_secret: env://AK",
 		"s3_secret_key_secret: env://SK",
-		"s3_profile_env: PROFILE",
 	} {
 		if !strings.Contains(yaml, want) {
 			t.Fatalf("expected %q in YAML:\n%s", want, yaml)

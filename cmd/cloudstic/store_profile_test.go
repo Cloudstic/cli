@@ -55,13 +55,13 @@ func TestApplyProfileStoreOverrides_EncryptionFields(t *testing.T) {
 		Version: 1,
 		Stores: map[string]cloudstic.ProfileStore{
 			"enc": {
-				URI:              "s3:bucket/enc",
-				PasswordEnv:      "TEST_BACKUP_PASSWORD",
-				EncryptionKeyEnv: "TEST_ENC_KEY",
-				RecoveryKeyEnv:   "TEST_RECOVERY_KEY",
-				KMSKeyARN:        "arn:aws:kms:us-east-1:123456:key/abcd",
-				KMSRegion:        "us-east-1",
-				KMSEndpoint:      "https://kms.example.com",
+				URI:                 "s3:bucket/enc",
+				PasswordSecret:      "env://TEST_BACKUP_PASSWORD",
+				EncryptionKeySecret: "env://TEST_ENC_KEY",
+				RecoveryKeySecret:   "env://TEST_RECOVERY_KEY",
+				KMSKeyARN:           "arn:aws:kms:us-east-1:123456:key/abcd",
+				KMSRegion:           "us-east-1",
+				KMSEndpoint:         "https://kms.example.com",
 			},
 		},
 		Profiles: map[string]cloudstic.BackupProfile{

@@ -368,13 +368,9 @@ func TestProfileStoreAuthMode(t *testing.T) {
 		want string
 	}{
 		{"s3_access_key", cloudstic.ProfileStore{S3AccessKey: "x"}, "static-keys"},
-		{"s3_access_key_env", cloudstic.ProfileStore{S3AccessKeyEnv: "x"}, "static-keys"},
 		{"s3_profile", cloudstic.ProfileStore{S3Profile: "x"}, "aws-shared-profile"},
-		{"s3_profile_env", cloudstic.ProfileStore{S3ProfileEnv: "x"}, "aws-shared-profile"},
 		{"sftp_password", cloudstic.ProfileStore{StoreSFTPPassword: "x"}, "sftp"},
 		{"sftp_key", cloudstic.ProfileStore{StoreSFTPKey: "x"}, "sftp"},
-		{"sftp_password_env", cloudstic.ProfileStore{StoreSFTPPasswordEnv: "x"}, "sftp"},
-		{"sftp_key_env", cloudstic.ProfileStore{StoreSFTPKeyEnv: "x"}, "sftp"},
 		{"empty", cloudstic.ProfileStore{}, "default-chain"},
 	}
 	for _, tt := range tests {

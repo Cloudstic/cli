@@ -19,11 +19,10 @@ func TestMergeProfileBackupArgs_AppliesProfileAndStore(t *testing.T) {
 	cfg := &cloudstic.ProfilesConfig{
 		Stores: map[string]cloudstic.ProfileStore{
 			"s": {
-				URI:             "s3:bucket/prefix",
-				S3Region:        "eu-west-1",
-				S3AccessKey:     "AKIA",
-				S3SecretKey:     "SECRET",
-				StoreSFTPKeyEnv: "DOES_NOT_EXIST",
+				URI:         "s3:bucket/prefix",
+				S3Region:    "eu-west-1",
+				S3AccessKey: "AKIA",
+				S3SecretKey: "SECRET",
 			},
 		},
 	}
@@ -307,20 +306,20 @@ func TestApplyProfileStoreToGlobalFlags_AllFields(t *testing.T) {
 	g := newTestGlobalFlags()
 	flagsSet := map[string]bool{}
 	s := cloudstic.ProfileStore{
-		URI:               "s3:my-bucket/prefix",
-		S3Region:          "us-east-1",
-		S3Endpoint:        "https://s3.example.com",
-		S3Profile:         "prod",
-		S3AccessKey:       "AKIATEST",
-		S3SecretKey:       "SECRETTEST",
-		StoreSFTPPassword: "sftp-pw",
-		StoreSFTPKey:      "/tmp/sftp.key",
-		PasswordEnv:       "TEST_PASSWORD",
-		EncryptionKeyEnv:  "TEST_ENC_KEY",
-		RecoveryKeyEnv:    "TEST_REC_KEY",
-		KMSKeyARN:         "arn:aws:kms:us-east-1:123:key/abc",
-		KMSRegion:         "us-east-1",
-		KMSEndpoint:       "https://kms.example.com",
+		URI:                 "s3:my-bucket/prefix",
+		S3Region:            "us-east-1",
+		S3Endpoint:          "https://s3.example.com",
+		S3Profile:           "prod",
+		S3AccessKey:         "AKIATEST",
+		S3SecretKey:         "SECRETTEST",
+		StoreSFTPPassword:   "sftp-pw",
+		StoreSFTPKey:        "/tmp/sftp.key",
+		PasswordSecret:      "env://TEST_PASSWORD",
+		EncryptionKeySecret: "env://TEST_ENC_KEY",
+		RecoveryKeySecret:   "env://TEST_REC_KEY",
+		KMSKeyARN:           "arn:aws:kms:us-east-1:123:key/abc",
+		KMSRegion:           "us-east-1",
+		KMSEndpoint:         "https://kms.example.com",
 	}
 
 	if err := applyProfileStoreToGlobalFlags(g, s, flagsSet); err != nil {
@@ -386,15 +385,13 @@ func TestApplyProfileStoreToGlobalFlags_CLIFlagOverrides(t *testing.T) {
 	}
 }
 
-func TestApplyProfileStoreToGlobalFlags_SecretPrecedenceOverLegacyEnv(t *testing.T) {
-	t.Setenv("LEGACY_PW", "legacy")
+func TestApplyProfileStoreToGlobalFlags_SecretRef(t *testing.T) {
 	t.Setenv("SECRET_PW", "from-secret-ref")
 
 	g := newTestGlobalFlags()
 	flagsSet := map[string]bool{}
 	s := cloudstic.ProfileStore{
 		PasswordSecret: "env://SECRET_PW",
-		PasswordEnv:    "LEGACY_PW",
 	}
 
 	if err := applyProfileStoreToGlobalFlags(g, s, flagsSet); err != nil {

@@ -338,20 +338,12 @@ func secretDisplayRows(s cloudstic.ProfileStore) []table.Row {
 		rows = append(rows, table.Row{label, value})
 	}
 	appendRow("S3 Access Key Secret", s.S3AccessKeySecret, false)
-	appendRow("S3 Access Key Env", s.S3AccessKeyEnv, true)
 	appendRow("S3 Secret Key Secret", s.S3SecretKeySecret, false)
-	appendRow("S3 Secret Key Env", s.S3SecretKeyEnv, true)
-	appendRow("S3 Profile Env", s.S3ProfileEnv, false)
 	appendRow("SFTP Password Secret", s.StoreSFTPPasswordSecret, false)
-	appendRow("SFTP Password Env", s.StoreSFTPPasswordEnv, true)
 	appendRow("SFTP Key Secret", s.StoreSFTPKeySecret, false)
-	appendRow("SFTP Key Env", s.StoreSFTPKeyEnv, true)
 	appendRow("Password Secret", s.PasswordSecret, false)
-	appendRow("Password Env", s.PasswordEnv, true)
 	appendRow("Encryption Key Secret", s.EncryptionKeySecret, false)
-	appendRow("Encryption Key Env", s.EncryptionKeyEnv, true)
 	appendRow("Recovery Key Secret", s.RecoveryKeySecret, false)
-	appendRow("Recovery Key Env", s.RecoveryKeyEnv, true)
 	return rows
 }
 

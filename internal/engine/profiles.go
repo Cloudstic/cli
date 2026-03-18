@@ -19,31 +19,16 @@ type ProfilesConfig struct {
 
 // ProfileStore defines reusable backend settings.
 type ProfileStore struct {
-	URI         string `yaml:"uri"`
-	S3Endpoint  string `yaml:"s3_endpoint,omitempty"`
-	S3Region    string `yaml:"s3_region,omitempty"`
-	S3Profile   string `yaml:"s3_profile,omitempty"`
-	S3AccessKey string `yaml:"s3_access_key,omitempty"`
-	S3SecretKey string `yaml:"s3_secret_key,omitempty"`
-	// Legacy field: use S3AccessKeySecret (e.g. env://AWS_ACCESS_KEY_ID).
-	S3AccessKeyEnv string `yaml:"s3_access_key_env,omitempty"`
-	// Legacy field: use S3SecretKeySecret (e.g. env://AWS_SECRET_ACCESS_KEY).
-	S3SecretKeyEnv    string `yaml:"s3_secret_key_env,omitempty"`
-	S3ProfileEnv      string `yaml:"s3_profile_env,omitempty"`
+	URI               string `yaml:"uri"`
+	S3Endpoint        string `yaml:"s3_endpoint,omitempty"`
+	S3Region          string `yaml:"s3_region,omitempty"`
+	S3Profile         string `yaml:"s3_profile,omitempty"`
+	S3AccessKey       string `yaml:"s3_access_key,omitempty"`
+	S3SecretKey       string `yaml:"s3_secret_key,omitempty"`
 	StoreSFTPPassword string `yaml:"store_sftp_password,omitempty"`
 	StoreSFTPKey      string `yaml:"store_sftp_key,omitempty"`
-	// Legacy field: use StoreSFTPPasswordSecret (e.g. env://CLOUDSTIC_STORE_SFTP_PASSWORD).
-	StoreSFTPPasswordEnv string `yaml:"store_sftp_password_env,omitempty"`
-	// Legacy field: use StoreSFTPKeySecret (e.g. env://CLOUDSTIC_STORE_SFTP_KEY).
-	StoreSFTPKeyEnv string `yaml:"store_sftp_key_env,omitempty"`
 
 	// Encryption: env var indirection for secrets, direct values for non-secrets.
-	// Legacy field: use PasswordSecret (e.g. env://CLOUDSTIC_PASSWORD).
-	PasswordEnv string `yaml:"password_env,omitempty"`
-	// Legacy field: use EncryptionKeySecret (e.g. env://CLOUDSTIC_ENCRYPTION_KEY).
-	EncryptionKeyEnv string `yaml:"encryption_key_env,omitempty"`
-	// Legacy field: use RecoveryKeySecret (e.g. env://CLOUDSTIC_RECOVERY_KEY).
-	RecoveryKeyEnv          string `yaml:"recovery_key_env,omitempty"`
 	PasswordSecret          string `yaml:"password_secret,omitempty"`
 	EncryptionKeySecret     string `yaml:"encryption_key_secret,omitempty"`
 	RecoveryKeySecret       string `yaml:"recovery_key_secret,omitempty"`

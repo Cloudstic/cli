@@ -3,14 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/cloudstic/cli/internal/secretref"
 )
 
 var profileSecretResolver = secretref.NewDefaultResolver()
 
-func resolveProfileStoreValue(fieldName, direct, secretRef, envName string) (string, error) {
+func resolveProfileStoreValue(fieldName, direct, secretRef string) (string, error) {
 	if direct != "" {
 		return direct, nil
 	}
@@ -20,9 +19,6 @@ func resolveProfileStoreValue(fieldName, direct, secretRef, envName string) (str
 			return "", fmt.Errorf("resolve profile store field %q from %q: %w", fieldName, secretRef, err)
 		}
 		return v, nil
-	}
-	if envName != "" {
-		return os.Getenv(envName), nil
 	}
 	return "", nil
 }

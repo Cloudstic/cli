@@ -588,8 +588,7 @@ Prefer `*_secret` fields and secret refs in `profiles.yaml`. Supported schemes:
 - `wincred://target` (Windows)
 - `secret-service://collection/item` (Linux)
 
-Legacy `*_env` fields are still read for backward compatibility, but new writes
-should use `*_secret`.
+Use `*_secret` fields for all secret-backed profile settings.
 
 Examples:
 

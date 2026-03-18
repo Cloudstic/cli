@@ -288,8 +288,7 @@ stores:
     password_secret: keychain://cloudstic/prod/repo-password
 ```
 
-Legacy `*_env` fields remain supported for backward compatibility, but new
-config should use `*_secret`.
+Use `*_secret` fields for all secret-backed configuration.
 | User experience  | Transparent, no password needed        | Credential per operation             |
 | Key loss risk    | None (platform always has recovery)    | Recovery key mitigates password loss |
 

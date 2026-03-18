@@ -483,56 +483,56 @@ func applyProfileStoreToGlobalFlags(g *globalFlags, s cloudstic.ProfileStore, fl
 		*g.s3Region = s.S3Region
 	}
 	if !flagsSet["s3-profile"] {
-		v, err := resolveProfileStoreValue("s3_profile", s.S3Profile, "", s.S3ProfileEnv)
+		v, err := resolveProfileStoreValue("s3_profile", s.S3Profile, "")
 		if err != nil {
 			return err
 		}
 		*g.s3Profile = v
 	}
 	if !flagsSet["s3-access-key"] {
-		v, err := resolveProfileStoreValue("s3_access_key", s.S3AccessKey, s.S3AccessKeySecret, s.S3AccessKeyEnv)
+		v, err := resolveProfileStoreValue("s3_access_key", s.S3AccessKey, s.S3AccessKeySecret)
 		if err != nil {
 			return err
 		}
 		*g.s3AccessKey = v
 	}
 	if !flagsSet["s3-secret-key"] {
-		v, err := resolveProfileStoreValue("s3_secret_key", s.S3SecretKey, s.S3SecretKeySecret, s.S3SecretKeyEnv)
+		v, err := resolveProfileStoreValue("s3_secret_key", s.S3SecretKey, s.S3SecretKeySecret)
 		if err != nil {
 			return err
 		}
 		*g.s3SecretKey = v
 	}
 	if !flagsSet["store-sftp-password"] {
-		v, err := resolveProfileStoreValue("store_sftp_password", s.StoreSFTPPassword, s.StoreSFTPPasswordSecret, s.StoreSFTPPasswordEnv)
+		v, err := resolveProfileStoreValue("store_sftp_password", s.StoreSFTPPassword, s.StoreSFTPPasswordSecret)
 		if err != nil {
 			return err
 		}
 		*g.storeSFTPPassword = v
 	}
 	if !flagsSet["store-sftp-key"] {
-		v, err := resolveProfileStoreValue("store_sftp_key", s.StoreSFTPKey, s.StoreSFTPKeySecret, s.StoreSFTPKeyEnv)
+		v, err := resolveProfileStoreValue("store_sftp_key", s.StoreSFTPKey, s.StoreSFTPKeySecret)
 		if err != nil {
 			return err
 		}
 		*g.storeSFTPKey = v
 	}
 	if !flagsSet["password"] {
-		v, err := resolveProfileStoreValue("password", "", s.PasswordSecret, s.PasswordEnv)
+		v, err := resolveProfileStoreValue("password", "", s.PasswordSecret)
 		if err != nil {
 			return err
 		}
 		*g.password = v
 	}
 	if !flagsSet["encryption-key"] {
-		v, err := resolveProfileStoreValue("encryption_key", "", s.EncryptionKeySecret, s.EncryptionKeyEnv)
+		v, err := resolveProfileStoreValue("encryption_key", "", s.EncryptionKeySecret)
 		if err != nil {
 			return err
 		}
 		*g.encryptionKey = v
 	}
 	if !flagsSet["recovery-key"] {
-		v, err := resolveProfileStoreValue("recovery_key", "", s.RecoveryKeySecret, s.RecoveryKeyEnv)
+		v, err := resolveProfileStoreValue("recovery_key", "", s.RecoveryKeySecret)
 		if err != nil {
 			return err
 		}

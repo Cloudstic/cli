@@ -605,7 +605,7 @@ func TestCLI_EndToEnd_Profiles_LocalStore(t *testing.T) {
 		"-profiles-file", profilesPath,
 		"-name", "main",
 		"-uri", "local:"+storeDir,
-		"-password-env", passwordEnv,
+		"-password-secret", "env://"+passwordEnv,
 	)
 
 	raw, err := os.ReadFile(profilesPath)

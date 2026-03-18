@@ -184,7 +184,7 @@ _cloudstic() {
 			init)
 				cmd_flags="-profiles-file -yes" ;;
 			new)
-				cmd_flags="-profiles-file -name -uri -s3-region -s3-profile -s3-endpoint -s3-access-key -s3-secret-key -s3-access-key-secret -s3-secret-key-secret -s3-access-key-env -s3-secret-key-env -s3-profile-env -store-sftp-password -store-sftp-key -store-sftp-password-secret -store-sftp-key-secret -store-sftp-password-env -store-sftp-key-env -password-secret -encryption-key-secret -recovery-key-secret -password-env -encryption-key-env -recovery-key-env -kms-key-arn -kms-region -kms-endpoint" ;;
+				cmd_flags="-profiles-file -name -uri -s3-region -s3-profile -s3-endpoint -s3-access-key -s3-secret-key -s3-access-key-secret -s3-secret-key-secret -store-sftp-password -store-sftp-key -store-sftp-password-secret -store-sftp-key-secret -password-secret -encryption-key-secret -recovery-key-secret -kms-key-arn -kms-region -kms-endpoint" ;;
                 *)
                     cmd_flags="" ;;
             esac
@@ -472,21 +472,13 @@ _cloudstic() {
                         '-s3-secret-key[S3 static secret key]:key:' \
                         '-s3-access-key-secret[Secret ref for S3 access key]:ref:' \
                         '-s3-secret-key-secret[Secret ref for S3 secret key]:ref:' \
-                        '-s3-access-key-env[Env var for S3 access key]:var:' \
-                        '-s3-secret-key-env[Env var for S3 secret key]:var:' \
-                        '-s3-profile-env[Env var for AWS profile]:var:' \
                         '-store-sftp-password[SFTP password]:password:' \
                         '-store-sftp-key[SFTP private key path]:path:_files' \
                         '-store-sftp-password-secret[Secret ref for SFTP password]:ref:' \
                         '-store-sftp-key-secret[Secret ref for SFTP key path]:ref:' \
-                        '-store-sftp-password-env[Env var for SFTP password]:var:' \
-                        '-store-sftp-key-env[Env var for SFTP key path]:var:' \
                         '-password-secret[Secret ref for repository password]:ref:' \
                         '-encryption-key-secret[Secret ref for platform key]:ref:' \
                         '-recovery-key-secret[Secret ref for recovery key mnemonic]:ref:' \
-                        '-password-env[Env var for repository password]:var:' \
-                        '-encryption-key-env[Env var for platform key]:var:' \
-                        '-recovery-key-env[Env var for recovery key mnemonic]:var:' \
                         '-kms-key-arn[AWS KMS key ARN]:arn:' \
                         '-kms-region[AWS KMS region]:region:' \
                         '-kms-endpoint[Custom KMS endpoint URL]:url:'

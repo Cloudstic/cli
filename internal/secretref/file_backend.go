@@ -16,7 +16,7 @@ func NewFileBackend() *FileBackend {
 }
 
 func (b *FileBackend) Resolve(_ context.Context, ref Ref) (string, error) {
-	data, err := b.LoadBlob(nil, ref)
+	data, err := b.LoadBlob(context.TODO(), ref)
 	if err != nil {
 		return "", err
 	}

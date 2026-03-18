@@ -13,15 +13,12 @@ import (
 	"time"
 
 	"github.com/cloudstic/cli/internal/core"
-	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/internal/retry"
 	"github.com/cloudstic/cli/internal/secretref"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/microsoft"
 )
-
-var onedriveLog = logger.New("onedrive", logger.ColorCyan)
 
 // oneDriveOptions holds configuration for a OneDrive source.
 type oneDriveOptions struct {

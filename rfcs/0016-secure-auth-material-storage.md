@@ -80,6 +80,7 @@ type WritableBlobBackend interface {
 ```
 
 Rationale:
+
 - OAuth tokens are structured JSON blobs.
 - Unifying under `internal/secretref` allows reusing the same URI schemes
   (`keychain://`, `file://`) for both static strings and mutable blobs.
@@ -117,6 +118,7 @@ Cloudstic will support an encrypted local fallback (`config-token://`) for
 environments without native keychains.
 
 **Key Derivation Strategy:**
+
 1. If a native store is available, a "Master Key" is generated and stored
    securely (e.g., in macOS Keychain).
 2. If no native store exists, the key is derived from a combination of:
@@ -132,6 +134,7 @@ created with `0600` permissions, and their containing directories with `0700`.
 ### 5. Atomic Updates and Concurrency
 
 To prevent corruption during OAuth token refreshes:
+
 - `SaveBlob` implementations MUST be atomic.
 - For `file://` and `config-token://`, this requires writing to a `.tmp` file
   on the same filesystem and using `os.Rename`.
@@ -145,6 +148,7 @@ Google Drive and OneDrive source setup will be refactored to use the
 `secretref.Resolver` for both reading and updating tokens.
 
 New flow:
+
 - `source.New(...)` receives a `secretref.Resolver` and the `token_ref`.
 - The source loads the initial token bytes.
 - When the token is refreshed, the source calls `resolver.SaveBlob(ref, data)`.

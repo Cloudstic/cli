@@ -89,6 +89,7 @@ type Backend interface {
 // BlobBackend extends a backend to support binary data retrieval.
 type BlobBackend interface {
 	Backend
+	Scheme() string
 	LoadBlob(ctx context.Context, ref Ref) ([]byte, error)
 }
 

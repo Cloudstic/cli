@@ -51,6 +51,32 @@ func (b *FileBackend) DeleteBlob(_ context.Context, ref Ref) error {
 	return nil
 }
 
+func (b *FileBackend) Scheme() string { return "file" }
+
+func (b *FileBackend) DisplayName() string { return "Local file" }
+
+func (b *FileBackend) WriteSupported() bool { return true }
+
+func (b *FileBackend) DefaultRef(name, account string) string {
+	_ = account
+	return "file:///tmp/cloudstic-secret-" + name
+}
+
+func (b *FileBackend) Exists(_ context.Context, ref Ref) (bool, error) {
+	_, err := os.Stat(filepath.Clean(ref.Path))
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+func (b *FileBackend) Store(ctx context.Context, ref Ref, value string) error {
+	return b.SaveBlob(ctx, ref, []byte(value))
+}
+
 // ConfigTokenBackend handles config-token://<provider>/<name> references.
 // It stores tokens in the app's managed config directory.
 type ConfigTokenBackend struct{}
@@ -93,7 +119,7 @@ func (b *ConfigTokenBackend) SaveBlob(_ context.Context, ref Ref, data []byte) e
 	return nil
 }
 
-func (b *ConfigTokenBackend) DeleteBlob(_ context.Context, ref Ref) error {
+func (b *ConfigTokenBackend) DeleteBlob(ctx context.Context, ref Ref) error {
 	path, err := b.resolvePath(ref)
 	if err != nil {
 		return err
@@ -103,6 +129,40 @@ func (b *ConfigTokenBackend) DeleteBlob(_ context.Context, ref Ref) error {
 	}
 	return nil
 }
+
+func (b *ConfigTokenBackend) Scheme() string { return "config-token" }
+
+func (b *ConfigTokenBackend) DisplayName() string { return "App-managed token (encrypted fallback)" }
+
+func (b *ConfigTokenBackend) WriteSupported() bool { return true }
+
+func (b *ConfigTokenBackend) DefaultRef(name, account string) string {
+	provider := account
+	if provider == "" {
+		provider = "google"
+	}
+	return "config-token://" + provider + "/" + name
+}
+
+func (b *ConfigTokenBackend) Exists(ctx context.Context, ref Ref) (bool, error) {
+	path, err := b.resolvePath(ref)
+	if err != nil {
+		return false, err
+	}
+	_, err = os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+func (b *ConfigTokenBackend) Store(ctx context.Context, ref Ref, value string) error {
+	return b.SaveBlob(ctx, ref, []byte(value))
+}
+
 
 func (b *ConfigTokenBackend) resolvePath(ref Ref) (string, error) {
 	// Expected path format: <provider>/<name>

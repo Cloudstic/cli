@@ -226,10 +226,10 @@ func TestBackupManager_Run(t *testing.T) {
 	}
 }
 
-// TestFindPreviousSnapshot_VolumeUUID verifies that findPreviousSnapshot
-// uses VolumeUUID for matching when present, enabling cross-machine
+// TestFindPreviousSnapshot_Identity verifies that findPreviousSnapshot
+// uses Identity for matching when present, enabling cross-machine
 // incremental backup for portable drives.
-func TestFindPreviousSnapshot_VolumeUUID(t *testing.T) {
+func TestFindPreviousSnapshot_Identity(t *testing.T) {
 	s := NewMockStore()
 
 	// Create snapshots from two different machines backing up the same drive.
@@ -238,10 +238,11 @@ func TestFindPreviousSnapshot_VolumeUUID(t *testing.T) {
 		Created: "2026-03-01T10:00:00Z",
 		Root:    "node/mac",
 		Source: &core.SourceInfo{
-			Type:       "local",
-			Account:    "mac-studio.local",
-			Path:       ".",
-			VolumeUUID: "A1B2C3D4-1234-5678-ABCD-EF0123456789",
+			Type:     "local",
+			Account:  "mac-studio.local",
+			Path:     ".",
+			Identity: "A1B2C3D4-1234-5678-ABCD-EF0123456789",
+			PathID:   ".",
 		},
 	}
 	linuxSnap := &core.Snapshot{
@@ -249,10 +250,11 @@ func TestFindPreviousSnapshot_VolumeUUID(t *testing.T) {
 		Created: "2026-03-02T10:00:00Z",
 		Root:    "node/linux",
 		Source: &core.SourceInfo{
-			Type:       "local",
-			Account:    "linux-workstation",
-			Path:       ".",
-			VolumeUUID: "A1B2C3D4-1234-5678-ABCD-EF0123456789",
+			Type:     "local",
+			Account:  "linux-workstation",
+			Path:     ".",
+			Identity: "A1B2C3D4-1234-5678-ABCD-EF0123456789",
+			PathID:   ".",
 		},
 	}
 
@@ -268,16 +270,17 @@ func TestFindPreviousSnapshot_VolumeUUID(t *testing.T) {
 	src := NewMockSource()
 	bm := NewBackupManager(src, s, ui.NewNoOpReporter(), nil)
 
-	// Search from the Mac with same UUID and same volume-relative path.
+	// Search from the Mac with same identity and same selected-root path.
 	info := core.SourceInfo{
-		Type:       "local",
-		Account:    "mac-studio.local",
-		Path:       ".",
-		VolumeUUID: "A1B2C3D4-1234-5678-ABCD-EF0123456789",
+		Type:     "local",
+		Account:  "mac-studio.local",
+		Path:     ".",
+		Identity: "A1B2C3D4-1234-5678-ABCD-EF0123456789",
+		PathID:   ".",
 	}
 	prev := bm.findPreviousSnapshot(info)
 	if prev == nil {
-		t.Fatal("expected to find previous snapshot via UUID match")
+		t.Fatal("expected to find previous snapshot via identity match")
 	}
 	// Should return the most recent (Linux) snapshot since catalog is newest-first.
 	if prev.Root != "node/linux" {
@@ -286,7 +289,7 @@ func TestFindPreviousSnapshot_VolumeUUID(t *testing.T) {
 }
 
 // TestFindPreviousSnapshot_LegacyFallback verifies that snapshots without
-// VolumeUUID are still found by the traditional account+path match.
+// Identity are still found by the traditional account+path match.
 func TestFindPreviousSnapshot_LegacyFallback(t *testing.T) {
 	s := NewMockStore()
 
@@ -324,10 +327,10 @@ func TestFindPreviousSnapshot_LegacyFallback(t *testing.T) {
 	}
 }
 
-// TestFindPreviousSnapshot_UUIDPreferredOverLegacy verifies that the UUID
+// TestFindPreviousSnapshot_IdentityPreferredOverLegacy verifies that Identity
 // match takes precedence when both UUID and account+path could match
 // different snapshots.
-func TestFindPreviousSnapshot_UUIDPreferredOverLegacy(t *testing.T) {
+func TestFindPreviousSnapshot_IdentityPreferredOverLegacy(t *testing.T) {
 	s := NewMockStore()
 
 	// Old snapshot from same machine, same path, no UUID.
@@ -341,16 +344,17 @@ func TestFindPreviousSnapshot_UUIDPreferredOverLegacy(t *testing.T) {
 			Path:    "/Volumes/MyDrive",
 		},
 	}
-	// Newer snapshot from different machine with UUID (volume-relative path).
+	// Newer snapshot from different machine with identity (portable path).
 	newSnap := &core.Snapshot{
 		Seq:     2,
 		Created: "2026-03-02T10:00:00Z",
 		Root:    "node/new",
 		Source: &core.SourceInfo{
-			Type:       "local",
-			Account:    "linux-workstation",
-			Path:       ".",
-			VolumeUUID: "UUID-1234",
+			Type:     "local",
+			Account:  "linux-workstation",
+			Path:     ".",
+			Identity: "UUID-1234",
+			PathID:   ".",
 		},
 	}
 
@@ -365,25 +369,26 @@ func TestFindPreviousSnapshot_UUIDPreferredOverLegacy(t *testing.T) {
 	src := NewMockSource()
 	bm := NewBackupManager(src, s, ui.NewNoOpReporter(), nil)
 
-	// Search with UUID — should find the UUID-matched snapshot first.
+	// Search with identity — should find the identity-matched snapshot first.
 	info := core.SourceInfo{
-		Type:       "local",
-		Account:    "mac-studio.local",
-		Path:       ".",
-		VolumeUUID: "UUID-1234",
+		Type:     "local",
+		Account:  "mac-studio.local",
+		Path:     ".",
+		Identity: "UUID-1234",
+		PathID:   ".",
 	}
 	prev := bm.findPreviousSnapshot(info)
 	if prev == nil {
 		t.Fatal("expected to find previous snapshot")
 	}
 	if prev.Root != "node/new" {
-		t.Errorf("expected UUID-matched snapshot (node/new), got root=%s", prev.Root)
+		t.Errorf("expected identity-matched snapshot (node/new), got root=%s", prev.Root)
 	}
 }
 
-// TestFindPreviousSnapshot_UUIDDifferentSubdirs verifies that backups of
+// TestFindPreviousSnapshot_IdentityDifferentSubdirs verifies that backups of
 // different sub-directories on the same drive do not match each other.
-func TestFindPreviousSnapshot_UUIDDifferentSubdirs(t *testing.T) {
+func TestFindPreviousSnapshot_IdentityDifferentSubdirs(t *testing.T) {
 	s := NewMockStore()
 
 	photosSnap := &core.Snapshot{
@@ -391,10 +396,11 @@ func TestFindPreviousSnapshot_UUIDDifferentSubdirs(t *testing.T) {
 		Created: "2026-03-01T10:00:00Z",
 		Root:    "node/photos",
 		Source: &core.SourceInfo{
-			Type:       "local",
-			Account:    "mac-studio.local",
-			Path:       "Photos",
-			VolumeUUID: "UUID-SAME-DRIVE",
+			Type:     "local",
+			Account:  "mac-studio.local",
+			Path:     "Photos",
+			Identity: "UUID-SAME-DRIVE",
+			PathID:   "Photos",
 		},
 	}
 
@@ -408,10 +414,11 @@ func TestFindPreviousSnapshot_UUIDDifferentSubdirs(t *testing.T) {
 
 	// Search for Documents on the same drive — should NOT match Photos.
 	info := core.SourceInfo{
-		Type:       "local",
-		Account:    "mac-studio.local",
-		Path:       "Documents",
-		VolumeUUID: "UUID-SAME-DRIVE",
+		Type:     "local",
+		Account:  "mac-studio.local",
+		Path:     "Documents",
+		Identity: "UUID-SAME-DRIVE",
+		PathID:   "Documents",
 	}
 	prev := bm.findPreviousSnapshot(info)
 	if prev != nil {

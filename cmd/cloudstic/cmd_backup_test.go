@@ -55,8 +55,8 @@ func TestInitSource_Local_VolumeUUID(t *testing.T) {
 		t.Fatalf("initSource failed: %v", err)
 	}
 	info := src.Info()
-	if info.VolumeUUID != "test-uuid-123" {
-		t.Errorf("expected VolumeUUID 'test-uuid-123', got %q", info.VolumeUUID)
+	if info.Identity != "test-uuid-123" {
+		t.Errorf("expected Identity 'test-uuid-123', got %q", info.Identity)
 	}
 }
 

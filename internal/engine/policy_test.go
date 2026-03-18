@@ -159,23 +159,23 @@ func TestMatchesFilter(t *testing.T) {
 	}
 }
 
-// TestMatchesFilter_VolumeUUID verifies that filtering by -account accepts
-// VolumeUUID as an alternative to the hostname, so that portable-drive
+// TestMatchesFilter_Identity verifies that filtering by -account accepts
+// Identity as an alternative to the hostname, so that portable-drive
 // snapshots can be targeted by their stable UUID.
-func TestMatchesFilter_VolumeUUID(t *testing.T) {
+func TestMatchesFilter_Identity(t *testing.T) {
 	const uuid = "A1B2C3D4-1234-5678-ABCD-EF0123456789"
 
 	portable := &core.SourceInfo{
-		Type:       "local",
-		Account:    "macbook-pro", // hostname on machine A
-		Path:       "Documents",
-		VolumeUUID: uuid,
+		Type:     "local",
+		Account:  "macbook-pro", // hostname on machine A
+		Path:     "Documents",
+		Identity: uuid,
 	}
 	snap := core.Snapshot{Source: portable}
 
-	// Filtering by VolumeUUID should match.
+	// Filtering by Identity should match.
 	if !matchesFilter(&snap, snapshotFilter{account: uuid}) {
-		t.Error("should match when account filter equals VolumeUUID")
+		t.Error("should match when account filter equals Identity")
 	}
 	// Filtering by hostname still works.
 	if !matchesFilter(&snap, snapshotFilter{account: "macbook-pro"}) {
@@ -187,26 +187,29 @@ func TestMatchesFilter_VolumeUUID(t *testing.T) {
 	}
 }
 
-// TestGroupSnapshots_VolumeUUID verifies that snapshots from different
-// machines but the same VolumeUUID are grouped together.
-func TestGroupSnapshots_VolumeUUID(t *testing.T) {
+// TestGroupSnapshots_Identity verifies that snapshots from different machines
+// but the same Identity are grouped together.
+func TestGroupSnapshots_Identity(t *testing.T) {
 	macSource := &core.SourceInfo{
-		Type:       "local",
-		Account:    "mac-studio.local",
-		Path:       ".",
-		VolumeUUID: "UUID-SHARED",
+		Type:     "local",
+		Account:  "mac-studio.local",
+		Path:     ".",
+		Identity: "UUID-SHARED",
+		PathID:   ".",
 	}
 	linuxSource := &core.SourceInfo{
-		Type:       "local",
-		Account:    "linux-workstation",
-		Path:       ".",
-		VolumeUUID: "UUID-SHARED",
+		Type:     "local",
+		Account:  "linux-workstation",
+		Path:     ".",
+		Identity: "UUID-SHARED",
+		PathID:   ".",
 	}
 	otherSource := &core.SourceInfo{
-		Type:       "local",
-		Account:    "mac-studio.local",
-		Path:       ".",
-		VolumeUUID: "UUID-OTHER",
+		Type:     "local",
+		Account:  "mac-studio.local",
+		Path:     ".",
+		Identity: "UUID-OTHER",
+		PathID:   ".",
 	}
 
 	entries := []SnapshotEntry{
@@ -217,8 +220,8 @@ func TestGroupSnapshots_VolumeUUID(t *testing.T) {
 
 	groups := groupSnapshots(entries, defaultGroupFields())
 
-	// macSource and linuxSource should be in the same group (same UUID + path).
-	// otherSource should be separate (different UUID).
+	// macSource and linuxSource should be in the same group (same Identity + path).
+	// otherSource should be separate (different Identity).
 	if len(groups) != 2 {
 		t.Errorf("expected 2 groups (same UUID grouped together), got %d", len(groups))
 		for k, v := range groups {
@@ -226,7 +229,7 @@ func TestGroupSnapshots_VolumeUUID(t *testing.T) {
 		}
 	}
 
-	// Find the group with 2 entries (the shared UUID group).
+	// Find the group with 2 entries (the shared Identity group).
 	found := false
 	for _, v := range groups {
 		if len(v) == 2 {
@@ -234,24 +237,26 @@ func TestGroupSnapshots_VolumeUUID(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("expected one group with 2 entries (same VolumeUUID)")
+		t.Error("expected one group with 2 entries (same Identity)")
 	}
 }
 
-// TestGroupSnapshots_VolumeUUID_DifferentSubdirs verifies that backups of
+// TestGroupSnapshots_Identity_DifferentSubdirs verifies that backups of
 // different sub-directories on the same drive are grouped independently.
-func TestGroupSnapshots_VolumeUUID_DifferentSubdirs(t *testing.T) {
+func TestGroupSnapshots_Identity_DifferentSubdirs(t *testing.T) {
 	photosSource := &core.SourceInfo{
-		Type:       "local",
-		Account:    "mac-studio.local",
-		Path:       "Photos",
-		VolumeUUID: "UUID-SHARED",
+		Type:     "local",
+		Account:  "mac-studio.local",
+		Path:     "Photos",
+		Identity: "UUID-SHARED",
+		PathID:   "Photos",
 	}
 	docsSource := &core.SourceInfo{
-		Type:       "local",
-		Account:    "mac-studio.local",
-		Path:       "Documents",
-		VolumeUUID: "UUID-SHARED",
+		Type:     "local",
+		Account:  "mac-studio.local",
+		Path:     "Documents",
+		Identity: "UUID-SHARED",
+		PathID:   "Documents",
 	}
 
 	entries := []SnapshotEntry{
@@ -265,14 +270,15 @@ func TestGroupSnapshots_VolumeUUID_DifferentSubdirs(t *testing.T) {
 	}
 }
 
-// TestGroupSnapshots_MixedUUIDAndLegacy verifies that snapshots with
-// VolumeUUID group by UUID+path while those without group by account+path.
-func TestGroupSnapshots_MixedUUIDAndLegacy(t *testing.T) {
-	withUUID := &core.SourceInfo{
-		Type:       "local",
-		Account:    "mac-studio.local",
-		Path:       ".",
-		VolumeUUID: "UUID-1234",
+// TestGroupSnapshots_MixedIdentityAndLegacy verifies that snapshots with
+// Identity group by identity+path while those without group by account+path.
+func TestGroupSnapshots_MixedIdentityAndLegacy(t *testing.T) {
+	withIdentity := &core.SourceInfo{
+		Type:     "local",
+		Account:  "mac-studio.local",
+		Path:     ".",
+		Identity: "UUID-1234",
+		PathID:   ".",
 	}
 	withoutUUID := &core.SourceInfo{
 		Type:    "local",
@@ -281,12 +287,12 @@ func TestGroupSnapshots_MixedUUIDAndLegacy(t *testing.T) {
 	}
 
 	entries := []SnapshotEntry{
-		makeEntry("a", "2026-03-02T12:00:00Z", withUUID, nil),
+		makeEntry("a", "2026-03-02T12:00:00Z", withIdentity, nil),
 		makeEntry("b", "2026-03-01T12:00:00Z", withoutUUID, nil),
 	}
 
 	groups := groupSnapshots(entries, defaultGroupFields())
 	if len(groups) != 2 {
-		t.Errorf("expected 2 groups (UUID vs legacy), got %d", len(groups))
+		t.Errorf("expected 2 groups (identity vs legacy), got %d", len(groups))
 	}
 }

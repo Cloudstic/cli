@@ -84,10 +84,6 @@ type SourceInfo struct {
 	PathID    string `json:"path_id,omitempty"`    // stable selected-root identity within container
 	DriveName string `json:"drive_name,omitempty"` // human-readable container label (e.g. "My Drive")
 	FsType    string `json:"fs_type,omitempty"`    // source filesystem type (e.g. "apfs", "ext4", "sftp")
-
-	// Legacy fields (read-only compatibility path; slated for future removal).
-	VolumeUUID  string `json:"volume_uuid,omitempty"`
-	VolumeLabel string `json:"volume_label,omitempty"`
 }
 
 // Snapshot represents a backup checkpoint

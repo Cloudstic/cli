@@ -322,24 +322,7 @@ func (bm *BackupManager) findPreviousSnapshot(info core.SourceInfo) *core.Snapsh
 		}
 	}
 
-	// Pass 3: legacy UUID + path match.
-	if info.VolumeUUID != "" {
-		legacyPath := info.PathID
-		if legacyPath == "" {
-			legacyPath = info.Path
-		}
-		for _, e := range entries {
-			if e.Snap.Source != nil &&
-				e.Snap.Source.Type == info.Type &&
-				e.Snap.Source.VolumeUUID == info.VolumeUUID &&
-				(e.Snap.Source.Path == legacyPath || e.Snap.Source.Path == info.Path) {
-				snap := e.Snap
-				return &snap
-			}
-		}
-	}
-
-	// Pass 4: legacy match (type + account + path)
+	// Pass 3: legacy match (type + account + path)
 	for _, e := range entries {
 		if e.Snap.Source != nil &&
 			e.Snap.Source.Type == info.Type &&

@@ -137,8 +137,6 @@ func makeGroupKey(snap *core.Snapshot, gf groupFields) GroupKey {
 			switch {
 			case snap.Source.Identity != "":
 				k.Account = snap.Source.Identity
-			case snap.Source.VolumeUUID != "":
-				k.Account = snap.Source.VolumeUUID
 			default:
 				k.Account = snap.Source.Account
 			}
@@ -194,8 +192,7 @@ func matchesFilter(snap *core.Snapshot, f snapshotFilter) bool {
 		}
 		// Accept display account and identity fields for compatibility.
 		if snap.Source.Account != f.account &&
-			snap.Source.Identity != f.account &&
-			snap.Source.VolumeUUID != f.account {
+			snap.Source.Identity != f.account {
 			return false
 		}
 	}

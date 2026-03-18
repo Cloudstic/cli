@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/keybase/go-keychain"
 )
@@ -14,31 +13,32 @@ import (
 var keychainGetGenericPasswordDarwin = keychain.GetGenericPassword
 var keychainAddItemDarwin = keychain.AddItem
 var keychainUpdateItemDarwin = keychain.UpdateItem
+var keychainDeleteItemDarwin = keychain.DeleteItem
 
 func defaultKeychainWriteSupported() bool { return true }
 
-func defaultKeychainLookup(ctx context.Context, service, account string) (string, error) {
+func defaultKeychainLookupBlob(ctx context.Context, service, account string) ([]byte, error) {
 	_ = ctx
 
 	out, err := keychainGetGenericPasswordDarwin(service, account, "", "")
 	if err != nil {
 		switch err {
 		case keychain.ErrorItemNotFound:
-			return "", errKeychainNotFound
+			return nil, errKeychainNotFound
 		case keychain.ErrorInteractionNotAllowed, keychain.ErrorNotAvailable, keychain.ErrorNoSuchKeychain:
-			return "", fmt.Errorf("%w: keychain locked or unavailable in this session", errKeychainUnavailable)
+			return nil, fmt.Errorf("%w: keychain locked or unavailable in this session", errKeychainUnavailable)
 		default:
-			return "", fmt.Errorf("keychain lookup failed: %w", err)
+			return nil, fmt.Errorf("keychain lookup failed: %w", err)
 		}
 	}
 	if out == nil {
-		return "", errKeychainNotFound
+		return nil, errKeychainNotFound
 	}
-	return strings.TrimRight(string(out), "\r\n"), nil
+	return out, nil
 }
 
 func defaultKeychainExists(ctx context.Context, service, account string) (bool, error) {
-	_, err := defaultKeychainLookup(ctx, service, account)
+	_, err := defaultKeychainLookupBlob(ctx, service, account)
 	if err != nil {
 		switch {
 		case errors.Is(err, errKeychainNotFound):
@@ -50,13 +50,13 @@ func defaultKeychainExists(ctx context.Context, service, account string) (bool, 
 	return true, nil
 }
 
-func defaultKeychainStore(_ context.Context, service, account, value string) error {
+func defaultKeychainStoreBlob(_ context.Context, service, account string, value []byte) error {
 	item := keychain.NewItem()
 	item.SetSecClass(keychain.SecClassGenericPassword)
 	item.SetService(service)
 	item.SetAccount(account)
 	item.SetAccessible(keychain.AccessibleWhenUnlockedThisDeviceOnly)
-	item.SetData([]byte(value))
+	item.SetData(value)
 
 	if err := keychainAddItemDarwin(item); err != nil {
 		if err == keychain.ErrorDuplicateItem {
@@ -66,11 +66,26 @@ func defaultKeychainStore(_ context.Context, service, account, value string) err
 			query.SetAccount(account)
 
 			update := keychain.NewItem()
-			update.SetData([]byte(value))
+			update.SetData(value)
 
 			if updateErr := keychainUpdateItemDarwin(query, update); updateErr != nil {
 				return mapKeychainStoreError(updateErr)
 			}
+			return nil
+		}
+		return mapKeychainStoreError(err)
+	}
+	return nil
+}
+
+func defaultKeychainDelete(_ context.Context, service, account string) error {
+	query := keychain.NewItem()
+	query.SetSecClass(keychain.SecClassGenericPassword)
+	query.SetService(service)
+	query.SetAccount(account)
+
+	if err := keychainDeleteItemDarwin(query); err != nil {
+		if err == keychain.ErrorItemNotFound {
 			return nil
 		}
 		return mapKeychainStoreError(err)

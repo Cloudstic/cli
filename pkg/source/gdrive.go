@@ -7,12 +7,13 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/internal/paths"
 	"github.com/cloudstic/cli/internal/retry"
+	"github.com/cloudstic/cli/internal/secretref"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -24,8 +25,11 @@ import (
 // gDriveOptions holds configuration for a Google Drive source.
 type gDriveOptions struct {
 	httpClient      *http.Client
+	resolver        *secretref.Resolver
 	credsPath       string
+	credsRef        string
 	tokenPath       string
+	tokenRef        string
 	driveID         string
 	driveName       string
 	rootFolderID    string
@@ -45,6 +49,13 @@ func WithHTTPClient(client *http.Client) GDriveOption {
 	}
 }
 
+// WithResolver sets the secret resolver for ref-based auth.
+func WithResolver(r *secretref.Resolver) GDriveOption {
+	return func(o *gDriveOptions) {
+		o.resolver = r
+	}
+}
+
 // WithCredsPath sets the path to the credentials JSON file.
 // If empty, uses the built-in OAuth client.
 func WithCredsPath(path string) GDriveOption {
@@ -53,10 +64,24 @@ func WithCredsPath(path string) GDriveOption {
 	}
 }
 
+// WithCredsRef sets the secret reference to the credentials JSON.
+func WithCredsRef(ref string) GDriveOption {
+	return func(o *gDriveOptions) {
+		o.credsRef = ref
+	}
+}
+
 // WithTokenPath sets the path where the OAuth token is cached.
 func WithTokenPath(path string) GDriveOption {
 	return func(o *gDriveOptions) {
 		o.tokenPath = path
+	}
+}
+
+// WithTokenRef sets the secret reference where the OAuth token is cached.
+func WithTokenRef(ref string) GDriveOption {
+	return func(o *gDriveOptions) {
+		o.tokenRef = ref
 	}
 }
 
@@ -144,14 +169,23 @@ func NewGDriveSource(ctx context.Context, opts ...GDriveOption) (*GDriveSource, 
 		if err != nil {
 			return nil, fmt.Errorf("create drive client (custom http client): %w", err)
 		}
-	} else if cfg.credsPath != "" {
-		b, err := os.ReadFile(cfg.credsPath)
-		if err != nil {
-			return nil, fmt.Errorf("read credentials file: %w", err)
+	} else if cfg.credsRef != "" || cfg.credsPath != "" {
+		var b []byte
+		if cfg.credsRef != "" && cfg.resolver != nil {
+			b, err = cfg.resolver.LoadBlob(ctx, cfg.credsRef)
+			if err != nil {
+				return nil, fmt.Errorf("load credentials from ref %q: %w", cfg.credsRef, err)
+			}
+		} else if cfg.credsPath != "" {
+			b, err = os.ReadFile(cfg.credsPath)
+			if err != nil {
+				return nil, fmt.Errorf("read credentials file: %w", err)
+			}
 		}
+
 		config, err := google.ConfigFromJSON(b, drive.DriveReadonlyScope)
 		if err == nil {
-			client, err := oauthClient(config, cfg.tokenPath)
+			client, err := oauthClient(ctx, config, cfg.resolver, cfg.tokenRef, cfg.tokenPath)
 			if err != nil {
 				return nil, err
 			}
@@ -160,9 +194,14 @@ func NewGDriveSource(ctx context.Context, opts ...GDriveOption) (*GDriveSource, 
 				return nil, fmt.Errorf("create drive client (user auth): %w", err)
 			}
 		} else {
-			srv, err = drive.NewService(ctx, option.WithCredentialsFile(cfg.credsPath))
+			// Try service account if it wasn't a user config
+			if cfg.credsPath != "" {
+				srv, err = drive.NewService(ctx, option.WithCredentialsFile(cfg.credsPath))
+			} else {
+				srv, err = drive.NewService(ctx, option.WithCredentialsJSON(b))
+			}
 			if err != nil {
-				return nil, fmt.Errorf("create drive client: %w", err)
+				return nil, fmt.Errorf("create drive client (service account): %w", err)
 			}
 		}
 	} else {
@@ -172,7 +211,7 @@ func NewGDriveSource(ctx context.Context, opts ...GDriveOption) (*GDriveSource, 
 			Scopes:       []string{drive.DriveReadonlyScope},
 			Endpoint:     google.Endpoint,
 		}
-		client, err := oauthClient(config, cfg.tokenPath)
+		client, err := oauthClient(ctx, config, cfg.resolver, cfg.tokenRef, cfg.tokenPath)
 		if err != nil {
 			return nil, err
 		}
@@ -333,18 +372,54 @@ func (s *GDriveSource) resolvePathToFolderID(ctx context.Context, path string) (
 // OAuth helpers
 // ---------------------------------------------------------------------------
 
-func oauthClient(config *oauth2.Config, tokFile string) (*http.Client, error) {
-	tok, err := tokenFromFile(tokFile)
+func oauthClient(ctx context.Context, config *oauth2.Config, r *secretref.Resolver, tokRef, tokFile string) (*http.Client, error) {
+	var tok *oauth2.Token
+	var err error
+	if tokRef != "" && r == nil {
+		return nil, fmt.Errorf("token ref %q requires a resolver", tokRef)
+	}
+
+	if tokRef != "" {
+		tok, err = tokenFromRef(ctx, r, tokRef)
+	} else if tokFile != "" {
+		tok, err = tokenFromFile(tokFile)
+	} else {
+		err = fmt.Errorf("no token storage configured")
+	}
+
 	if err != nil {
 		tok, err = tokenFromWeb(config)
 		if err != nil {
 			return nil, err
 		}
-		if err := saveToken(tokFile, tok); err != nil {
-			return nil, err
+		if tokRef != "" {
+			if err := saveTokenRef(ctx, r, tokRef, tok); err != nil {
+				return nil, err
+			}
+		} else if tokFile != "" {
+			if err := saveToken(tokFile, tok); err != nil {
+				return nil, err
+			}
 		}
 	}
-	return config.Client(context.Background(), tok), nil
+
+	// Use a persistent token source so that refreshes are saved.
+	ts := oauth2.ReuseTokenSource(tok, config.TokenSource(ctx, tok))
+	pts := &persistentTokenSource{
+		ts:      ts,
+		lastTok: tok,
+		save: func(t *oauth2.Token) error {
+			if tokRef != "" {
+				return saveTokenRef(ctx, r, tokRef, t)
+			}
+			if tokFile != "" {
+				return saveToken(tokFile, t)
+			}
+			return nil
+		},
+	}
+
+	return oauth2.NewClient(ctx, pts), nil
 }
 
 func tokenFromWeb(config *oauth2.Config) (*oauth2.Token, error) {
@@ -362,16 +437,32 @@ func tokenFromFile(file string) (*oauth2.Token, error) {
 	return tok, err
 }
 
-func saveToken(path string, token *oauth2.Token) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return fmt.Errorf("create token directory: %w", err)
-	}
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+func tokenFromRef(ctx context.Context, r *secretref.Resolver, ref string) (*oauth2.Token, error) {
+	data, err := r.LoadBlob(ctx, ref)
 	if err != nil {
-		return fmt.Errorf("create token file: %w", err)
+		return nil, err
 	}
-	defer func() { _ = f.Close() }()
-	return json.NewEncoder(f).Encode(token)
+	tok := &oauth2.Token{}
+	if err := json.Unmarshal(data, tok); err != nil {
+		return nil, fmt.Errorf("decode token from ref: %w", err)
+	}
+	return tok, nil
+}
+
+func saveToken(path string, token *oauth2.Token) error {
+	data, err := json.Marshal(token)
+	if err != nil {
+		return err
+	}
+	return paths.SaveAtomic(path, data)
+}
+
+func saveTokenRef(ctx context.Context, r *secretref.Resolver, ref string, token *oauth2.Token) error {
+	data, err := json.Marshal(token)
+	if err != nil {
+		return err
+	}
+	return r.SaveBlob(ctx, ref, data)
 }
 
 // driveCallWithRetry wraps a Google API call with retry logic for transient errors.

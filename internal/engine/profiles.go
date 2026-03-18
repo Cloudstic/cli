@@ -52,9 +52,12 @@ type BackupProfile struct {
 	SkipNativeFiles   bool     `yaml:"skip_native_files,omitempty"`
 	VolumeUUID        string   `yaml:"volume_uuid,omitempty"`
 	GoogleCreds       string   `yaml:"google_credentials,omitempty"`
+	GoogleCredsRef    string   `yaml:"google_credentials_ref,omitempty"`
 	GoogleTokenFile   string   `yaml:"google_token_file,omitempty"`
+	GoogleTokenRef    string   `yaml:"google_token_ref,omitempty"`
 	OneDriveClientID  string   `yaml:"onedrive_client_id,omitempty"`
 	OneDriveTokenFile string   `yaml:"onedrive_token_file,omitempty"`
+	OneDriveTokenRef  string   `yaml:"onedrive_token_ref,omitempty"`
 	Enabled           *bool    `yaml:"enabled,omitempty"`
 }
 
@@ -62,9 +65,12 @@ type BackupProfile struct {
 type ProfileAuth struct {
 	Provider          string `yaml:"provider"` // google | onedrive
 	GoogleCreds       string `yaml:"google_credentials,omitempty"`
+	GoogleCredsRef    string `yaml:"google_credentials_ref,omitempty"`
 	GoogleTokenFile   string `yaml:"google_token_file,omitempty"`
+	GoogleTokenRef    string `yaml:"google_token_ref,omitempty"`
 	OneDriveClientID  string `yaml:"onedrive_client_id,omitempty"`
 	OneDriveTokenFile string `yaml:"onedrive_token_file,omitempty"`
+	OneDriveTokenRef  string `yaml:"onedrive_token_ref,omitempty"`
 }
 
 // IsEnabled reports whether the profile should be included in -all-profiles.
@@ -96,37 +102,59 @@ func normalizeProfilesConfig(cfg *ProfilesConfig) *ProfilesConfig {
 
 func validateProfilesConfig(cfg *ProfilesConfig) error {
 	for storeName, s := range cfg.Stores {
-		if err := validateSecretRef(storeName, "password_secret", s.PasswordSecret); err != nil {
+		if err := validateSecretRef("store", storeName, "password_secret", s.PasswordSecret); err != nil {
 			return err
 		}
-		if err := validateSecretRef(storeName, "encryption_key_secret", s.EncryptionKeySecret); err != nil {
+		if err := validateSecretRef("store", storeName, "encryption_key_secret", s.EncryptionKeySecret); err != nil {
 			return err
 		}
-		if err := validateSecretRef(storeName, "recovery_key_secret", s.RecoveryKeySecret); err != nil {
+		if err := validateSecretRef("store", storeName, "recovery_key_secret", s.RecoveryKeySecret); err != nil {
 			return err
 		}
-		if err := validateSecretRef(storeName, "s3_access_key_secret", s.S3AccessKeySecret); err != nil {
+		if err := validateSecretRef("store", storeName, "s3_access_key_secret", s.S3AccessKeySecret); err != nil {
 			return err
 		}
-		if err := validateSecretRef(storeName, "s3_secret_key_secret", s.S3SecretKeySecret); err != nil {
+		if err := validateSecretRef("store", storeName, "s3_secret_key_secret", s.S3SecretKeySecret); err != nil {
 			return err
 		}
-		if err := validateSecretRef(storeName, "store_sftp_password_secret", s.StoreSFTPPasswordSecret); err != nil {
+		if err := validateSecretRef("store", storeName, "store_sftp_password_secret", s.StoreSFTPPasswordSecret); err != nil {
 			return err
 		}
-		if err := validateSecretRef(storeName, "store_sftp_key_secret", s.StoreSFTPKeySecret); err != nil {
+		if err := validateSecretRef("store", storeName, "store_sftp_key_secret", s.StoreSFTPKeySecret); err != nil {
+			return err
+		}
+	}
+	for authName, a := range cfg.Auth {
+		if err := validateSecretRef("auth", authName, "google_credentials_ref", a.GoogleCredsRef); err != nil {
+			return err
+		}
+		if err := validateSecretRef("auth", authName, "google_token_ref", a.GoogleTokenRef); err != nil {
+			return err
+		}
+		if err := validateSecretRef("auth", authName, "onedrive_token_ref", a.OneDriveTokenRef); err != nil {
+			return err
+		}
+	}
+	for profileName, p := range cfg.Profiles {
+		if err := validateSecretRef("profile", profileName, "google_credentials_ref", p.GoogleCredsRef); err != nil {
+			return err
+		}
+		if err := validateSecretRef("profile", profileName, "google_token_ref", p.GoogleTokenRef); err != nil {
+			return err
+		}
+		if err := validateSecretRef("profile", profileName, "onedrive_token_ref", p.OneDriveTokenRef); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func validateSecretRef(storeName, fieldName, ref string) error {
+func validateSecretRef(entryType, entryName, fieldName, ref string) error {
 	if ref == "" {
 		return nil
 	}
 	if _, err := secretref.Parse(ref); err != nil {
-		return fmt.Errorf("store %q field %q: %w", storeName, fieldName, err)
+		return fmt.Errorf("%s %q field %q: %w", entryType, entryName, fieldName, err)
 	}
 	return nil
 }

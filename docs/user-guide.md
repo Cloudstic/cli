@@ -630,16 +630,53 @@ cloudstic auth new \
   -onedrive-token-file ~/.config/cloudstic/tokens/ms-personal.json
 ```
 
-If token file flags are omitted, Cloudstic derives a default token path from
-the auth name under `<config-dir>/tokens/`.
+If token storage flags are omitted, Cloudstic defaults to a managed encrypted
+reference under `config-token://<provider>/<auth-name>`.
 
 If required flags are omitted and you are in an interactive terminal,
 `auth new` prompts for missing values.
 
+#### Secret References and Secure Storage
+
+Cloudstic uses **Secret References** to avoid storing sensitive credentials
+like OAuth tokens or service account JSON in plaintext within your
+`profiles.yaml`.
+
+When creating an auth entry, you can specify a reference instead of a raw
+file path:
+
+```bash
+# Store Google token in macOS Keychain (secure)
+cloudstic auth new -name google-work -provider google \
+  -google-token-ref keychain://cloudstic/auth/google-work
+
+# Store Google token in an encrypted local file (managed by Cloudstic)
+cloudstic auth new -name google-work -provider google \
+  -google-token-ref config-token://google/google-work
+
+# Use a raw file (e.g. for Kubernetes mounted secrets)
+cloudstic auth new -name google-work -provider google \
+  -google-token-ref file:///etc/secrets/google-token.json
+```
+
+**Supported Schemes:**
+
+| Scheme | Description | Use Case |
+| :--- | :--- | :--- |
+| `keychain://` | macOS Keychain blob storage | Personal macOS workstations |
+| `wincred://` | Windows Credential Manager secret storage | Personal Windows workstations |
+| `secret-service://` | Linux Secret Service secret storage | Linux desktops with a keyring |
+| `config-token://` | Encrypted local file | Headless servers, Linux desktops |
+| `file://` | Raw local file | CI/CD, Kubernetes, Docker |
+
+For `config-token://`, Cloudstic automatically encrypts the token at rest
+using a key derived from your machine ID and user ID. See the
+[Encryption Design](./encryption.md#auth-material-encryption) for more details.
+
 #### auth login
 
-Trigger OAuth login for an auth entry and save token in its configured token
-file.
+Trigger OAuth login for an auth entry and save the token in its configured
+token storage.
 
 ```bash
 cloudstic auth login -name google-work

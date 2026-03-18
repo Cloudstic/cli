@@ -10,9 +10,11 @@ import (
 	"github.com/cloudstic/cli/internal/core"
 )
 
+var filepathAbs = filepath.Abs
+
 func (s *LocalSource) Info() core.SourceInfo {
 	hostname, _ := os.Hostname()
-	absPath, _ := filepath.Abs(s.rootPath)
+	absPath, _ := filepathAbs(s.rootPath)
 
 	// When volume UUID is present, store the path relative to the volume
 	// mount point instead of the absolute path. This makes the path
@@ -24,7 +26,17 @@ func (s *LocalSource) Info() core.SourceInfo {
 		realAbs, errA := filepath.EvalSymlinks(absPath)
 		realMount, errM := filepath.EvalSymlinks(s.volumeMountPoint)
 		if errA == nil && errM == nil {
-			if rel, err := filepath.Rel(realMount, realAbs); err == nil {
+			if pathWithinRoot(realMount, realAbs) {
+				if rel, err := filepath.Rel(realMount, realAbs); err == nil {
+					infoPath = filepath.ToSlash(rel)
+				}
+			} else if pathWithinRoot(s.volumeMountPoint, absPath) {
+				if rel, err := filepath.Rel(s.volumeMountPoint, absPath); err == nil {
+					infoPath = filepath.ToSlash(rel)
+				}
+			}
+		} else if pathWithinRoot(s.volumeMountPoint, absPath) {
+			if rel, err := filepath.Rel(s.volumeMountPoint, absPath); err == nil {
 				infoPath = filepath.ToSlash(rel)
 			}
 		}
@@ -60,6 +72,18 @@ func (s *LocalSource) Info() core.SourceInfo {
 			return hostname
 		}(),
 	}
+}
+
+func pathWithinRoot(root, target string) bool {
+	rootClean := filepath.Clean(root)
+	targetClean := filepath.Clean(target)
+	if rootClean == "." || rootClean == "" {
+		return false
+	}
+	if targetClean == rootClean {
+		return true
+	}
+	return strings.HasPrefix(targetClean, rootClean+string(filepath.Separator))
 }
 
 // localOptions holds configuration for a local filesystem source.

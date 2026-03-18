@@ -70,6 +70,25 @@ func TestApplyRestoreXattrs_ReturnsUnexpectedErrors(t *testing.T) {
 	}
 }
 
+func TestApplyRestoreXattrs_SkipsKnownNonRestorableXattrs(t *testing.T) {
+	orig := setRestoreXattr
+	defer func() { setRestoreXattr = orig }()
+
+	called := false
+	setRestoreXattr = func(path, name string, value []byte, flags int) error {
+		called = true
+		return nil
+	}
+
+	err := applyRestoreXattrs("/tmp/file", core.FileMeta{Xattrs: map[string][]byte{"com.apple.provenance": []byte("x")}}, nil)
+	if err != nil {
+		t.Fatalf("applyRestoreXattrs: %v", err)
+	}
+	if called {
+		t.Fatal("expected known non-restorable xattr to be skipped")
+	}
+}
+
 func TestRestoreManager_RunToDir_ReplaysXattrs(t *testing.T) {
 	orig := setRestoreXattr
 	defer func() { setRestoreXattr = orig }()

@@ -265,6 +265,7 @@ type fsRestoreWriter struct {
 	root         string
 	bytes        int64
 	warn         func(string)
+	warned       map[string]struct{}
 	deferredDirs []deferredRestoreEntry
 	deferredFlag []deferredRestoreEntry
 }
@@ -281,7 +282,7 @@ type restoreWarningSetter interface {
 var errRestoreSkipped = fmt.Errorf("restore entry skipped")
 
 func NewFSRestoreWriter(root string) (RestoreWriter, error) {
-	return &fsRestoreWriter{root: root}, nil
+	return &fsRestoreWriter{root: root, warned: map[string]struct{}{}}, nil
 }
 
 func (w *fsRestoreWriter) SetWarningFunc(fn func(string)) {
@@ -292,6 +293,19 @@ func (w *fsRestoreWriter) warnf(format string, args ...interface{}) {
 	if w.warn != nil {
 		w.warn(fmt.Sprintf(format, args...))
 	}
+}
+
+func (w *fsRestoreWriter) warnOncef(key, format string, args ...interface{}) {
+	if _, ok := w.warned[key]; ok {
+		return
+	}
+	w.warned[key] = struct{}{}
+	w.warnf(format, args...)
+}
+
+func (w *fsRestoreWriter) warnDedupf(format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	w.warnOncef(msg, "%s", msg)
 }
 
 func (w *fsRestoreWriter) MkdirAll(relPath string, meta core.FileMeta) error {
@@ -359,7 +373,7 @@ func (w *fsRestoreWriter) WriteFile(relPath string, meta core.FileMeta, writeCon
 	}
 
 	w.bytes += cw.count
-	if err := applyRestoreFileMetadata(fullPath, meta, w.warnf); err != nil {
+	if err := applyRestoreFileMetadata(fullPath, meta, w.warnDedupf); err != nil {
 		return err
 	}
 	if meta.Flags != 0 {
@@ -373,13 +387,13 @@ func (w *fsRestoreWriter) BytesWritten() int64 { return w.bytes }
 func (w *fsRestoreWriter) Close() error {
 	for i := len(w.deferredDirs) - 1; i >= 0; i-- {
 		entry := w.deferredDirs[i]
-		if err := applyRestoreDirMetadata(entry.path, entry.meta, w.warnf); err != nil {
+		if err := applyRestoreDirMetadata(entry.path, entry.meta, w.warnDedupf); err != nil {
 			return err
 		}
 	}
 	for i := len(w.deferredFlag) - 1; i >= 0; i-- {
 		entry := w.deferredFlag[i]
-		if err := applyRestoreFlags(entry.path, entry.meta, w.warnf); err != nil {
+		if err := applyRestoreFlags(entry.path, entry.meta, w.warnDedupf); err != nil {
 			return err
 		}
 	}

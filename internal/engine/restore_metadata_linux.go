@@ -22,7 +22,7 @@ func applyRestoreTimes(path string, meta core.FileMeta, warn func(string, ...int
 		}
 	}
 	if meta.Btime > 0 && warn != nil {
-		warn("birth time replay is not supported on Linux for %s", path)
+		warn("birth time replay is not supported on Linux")
 	}
 	return nil
 }

@@ -311,6 +311,23 @@ func TestRestoreManager_RunToDir_SkipsExistingFiles(t *testing.T) {
 	}
 }
 
+func TestFSRestoreWriter_WarnDedupf(t *testing.T) {
+	writer, err := NewFSRestoreWriter(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFSRestoreWriter failed: %v", err)
+	}
+	fw := writer.(*fsRestoreWriter)
+	var warnings []string
+	fw.SetWarningFunc(func(msg string) { warnings = append(warnings, msg) })
+
+	fw.warnDedupf("could not set xattr %q: %v", "com.apple.provenance", os.ErrPermission)
+	fw.warnDedupf("could not set xattr %q: %v", "com.apple.provenance", os.ErrPermission)
+
+	if len(warnings) != 1 {
+		t.Fatalf("warnings=%d want=1: %#v", len(warnings), warnings)
+	}
+}
+
 func TestRestoreManager_RunToDir_DryRun_NoWrites(t *testing.T) {
 	dest := setupBackupForRestore(t)
 	rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())

@@ -14,10 +14,13 @@ var setRestoreXattr = unix.Setxattr
 
 func applyRestoreXattrs(path string, meta core.FileMeta, warn func(string, ...interface{})) error {
 	for name, value := range meta.Xattrs {
+		if shouldSkipRestoredXattr(name) {
+			continue
+		}
 		if err := setRestoreXattr(path, name, value, 0); err != nil {
 			if isRestoreXattrBestEffortError(err) {
 				if warn != nil {
-					warn("could not set xattr %q on %s: %v", name, path, err)
+					warn("could not set xattr %q: %v", name, err)
 				}
 				continue
 			}
@@ -32,4 +35,13 @@ func isRestoreXattrBestEffortError(err error) bool {
 		errors.Is(err, unix.EOPNOTSUPP) ||
 		errors.Is(err, unix.EPERM) ||
 		errors.Is(err, unix.EACCES)
+}
+
+func shouldSkipRestoredXattr(name string) bool {
+	switch name {
+	case "com.apple.provenance":
+		return true
+	default:
+		return false
+	}
 }

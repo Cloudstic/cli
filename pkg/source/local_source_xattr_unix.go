@@ -54,6 +54,9 @@ func listXattrs(path string, namespaces []string) map[string][]byte {
 
 	xattrs := make(map[string][]byte, len(names))
 	for _, name := range names {
+		if shouldSkipCollectedXattr(name) {
+			continue
+		}
 		if len(namespaces) > 0 && !hasPrefix(name, namespaces) {
 			continue
 		}
@@ -113,4 +116,13 @@ func hasPrefix(name string, prefixes []string) bool {
 		}
 	}
 	return false
+}
+
+func shouldSkipCollectedXattr(name string) bool {
+	switch name {
+	case "com.apple.provenance":
+		return true
+	default:
+		return false
+	}
 }

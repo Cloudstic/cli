@@ -18,9 +18,6 @@ func applyRestoreTimes(path string, meta core.FileMeta, warn func(string, ...int
 			return fmt.Errorf("chtimes %s: %w", path, err)
 		}
 	}
-	if meta.Btime > 0 && warn != nil {
-		warn("birth time replay is not yet implemented on macOS for %s", path)
-	}
 	return nil
 }
 

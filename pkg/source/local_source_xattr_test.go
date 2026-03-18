@@ -238,6 +238,15 @@ func TestLocalSource_Walk_Xattr_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestShouldSkipCollectedXattr(t *testing.T) {
+	if !shouldSkipCollectedXattr("com.apple.provenance") {
+		t.Fatal("expected com.apple.provenance to be skipped")
+	}
+	if shouldSkipCollectedXattr("user.test.tag") {
+		t.Fatal("did not expect user xattr to be skipped")
+	}
+}
+
 func TestListXattrs_NoAttrs(t *testing.T) {
 	tmpDir := t.TempDir()
 	filePath := filepath.Join(tmpDir, "file.txt")

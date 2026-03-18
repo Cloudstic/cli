@@ -80,7 +80,7 @@ func TestInitManager_EncryptedWithPassword(t *testing.T) {
 	}
 
 	// Verify key slots were created.
-	slots, err := keychain.LoadKeySlots(s)
+	slots, err := keychain.LoadKeySlots(context.Background(), s)
 	if err != nil {
 		t.Fatalf("failed to load key slots: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestInitManager_EncryptedWithPlatformKey(t *testing.T) {
 		t.Error("expected encrypted repo")
 	}
 
-	slots, err := keychain.LoadKeySlots(s)
+	slots, err := keychain.LoadKeySlots(context.Background(), s)
 	if err != nil {
 		t.Fatalf("failed to load key slots: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestInitManager_AdoptsExistingSlots(t *testing.T) {
 	}
 	masterKey, _ := crypto.GenerateKey()
 	slot, _ := keychain.CreatePlatformSlot(masterKey, platformKey)
-	_ = keychain.WriteKeySlot(s, slot)
+	_ = keychain.WriteKeySlot(context.Background(), s, slot)
 
 	mgr := NewInitManager(s)
 	result, err := mgr.Run(context.Background(), WithInitCredentials(keychain.Chain{keychain.WithPlatformKey(platformKey)}))
@@ -177,7 +177,7 @@ func TestInitManager_AdoptExistingSlots_WrongCredential(t *testing.T) {
 	}
 	masterKey, _ := crypto.GenerateKey()
 	slot, _ := keychain.CreatePlatformSlot(masterKey, originalKey)
-	_ = keychain.WriteKeySlot(s, slot)
+	_ = keychain.WriteKeySlot(context.Background(), s, slot)
 
 	// Try to init with a different platform key.
 	wrongKey := make([]byte, 32)
@@ -220,7 +220,7 @@ func TestInitManager_WithRecoveryKey(t *testing.T) {
 	}
 
 	// Verify recovery slot was created.
-	slots, err := keychain.LoadKeySlots(s)
+	slots, err := keychain.LoadKeySlots(context.Background(), s)
 	if err != nil {
 		t.Fatalf("failed to load key slots: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestInitManager_EncryptedWithKMS(t *testing.T) {
 	}
 
 	// Verify kms-platform slot was created.
-	slots, err := keychain.LoadKeySlots(s)
+	slots, err := keychain.LoadKeySlots(context.Background(), s)
 	if err != nil {
 		t.Fatalf("failed to load key slots: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestInitManager_KMSWithPasswordSlots(t *testing.T) {
 		t.Error("expected encrypted repo")
 	}
 
-	slots, err := keychain.LoadKeySlots(s)
+	slots, err := keychain.LoadKeySlots(context.Background(), s)
 	if err != nil {
 		t.Fatalf("failed to load key slots: %v", err)
 	}
@@ -352,7 +352,7 @@ func TestInitManager_KMSWithRecovery(t *testing.T) {
 		t.Error("expected recovery key mnemonic")
 	}
 
-	slots, err := keychain.LoadKeySlots(s)
+	slots, err := keychain.LoadKeySlots(context.Background(), s)
 	if err != nil {
 		t.Fatalf("failed to load key slots: %v", err)
 	}
@@ -384,7 +384,7 @@ func TestInitManager_NoEncryptionOverridesCreds(t *testing.T) {
 	}
 
 	// No key slots should exist.
-	slots, err := keychain.LoadKeySlots(s)
+	slots, err := keychain.LoadKeySlots(context.Background(), s)
 	if err != nil {
 		t.Fatalf("failed to load key slots: %v", err)
 	}
@@ -401,7 +401,7 @@ func TestInitManager_AdoptAddsNewSlots(t *testing.T) {
 	password := "p1"
 	masterKey, _ := crypto.GenerateKey()
 	slot, _ := keychain.CreatePasswordSlot(masterKey, password)
-	_ = keychain.WriteKeySlot(s, slot)
+	_ = keychain.WriteKeySlot(context.Background(), s, slot)
 
 	// 2. Adopt with password AND a new platform key
 	platformKey := make([]byte, 32)
@@ -424,7 +424,7 @@ func TestInitManager_AdoptAddsNewSlots(t *testing.T) {
 	}
 
 	// 3. Verify both slots exist and work
-	slots, err := keychain.LoadKeySlots(s)
+	slots, err := keychain.LoadKeySlots(context.Background(), s)
 	if err != nil {
 		t.Fatalf("failed to load key slots: %v", err)
 	}

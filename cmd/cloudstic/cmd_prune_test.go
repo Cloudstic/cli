@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -20,7 +21,7 @@ func TestRunPrune_Normal(t *testing.T) {
 		},
 	}}
 
-	r.runPrune()
+	r.runPrune(context.Background())
 
 	got := out.String()
 	if !strings.Contains(got, "Prune complete.") {
@@ -48,7 +49,7 @@ func TestRunPrune_DryRun(t *testing.T) {
 		},
 	}}
 
-	r.runPrune()
+	r.runPrune(context.Background())
 
 	got := out.String()
 	if !strings.Contains(got, "Prune dry run complete.") {

@@ -88,7 +88,7 @@ func parseBackupArgs() *backupArgs {
 	return a
 }
 
-func (r *runner) runBackup() int {
+func (r *runner) runBackup(ctx context.Context) int {
 	a := parseBackupArgs()
 
 	if a.profile != "" && a.allProfiles {
@@ -147,7 +147,7 @@ func (r *runner) runSingleBackup(a *backupArgs) int {
 		return r.fail("Failed to init source: %v", err)
 	}
 
-	if err := r.openClient(a.g); err != nil {
+	if err := r.openClient(ctx, a.g); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 

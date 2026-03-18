@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -20,7 +21,7 @@ func TestRunCheck_Healthy(t *testing.T) {
 		},
 	}}
 
-	r.runCheck()
+	r.runCheck(context.Background())
 
 	got := errOut.String()
 	if !strings.Contains(got, "No errors found") {

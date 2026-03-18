@@ -15,7 +15,7 @@ import (
 	"github.com/cloudstic/cli/pkg/store"
 )
 
-func (r *runner) runStore() int {
+func (r *runner) runStore(ctx context.Context) int {
 	if len(os.Args) < 3 {
 		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic store <subcommand> [options]")
 		_, _ = fmt.Fprintln(r.errOut, "")
@@ -25,21 +25,21 @@ func (r *runner) runStore() int {
 
 	switch os.Args[2] {
 	case "list":
-		return r.runStoreList()
+		return r.runStoreList(ctx)
 	case "show":
-		return r.runStoreShow()
+		return r.runStoreShow(ctx)
 	case "new":
-		return r.runStoreNew()
+		return r.runStoreNew(ctx)
 	case "verify":
-		return r.runStoreVerify()
+		return r.runStoreVerify(ctx)
 	case "init":
-		return r.runStoreInit()
+		return r.runStoreInit(ctx)
 	default:
 		return r.fail("Unknown store subcommand: %s", os.Args[2])
 	}
 }
 
-func (r *runner) runStoreList() int {
+func (r *runner) runStoreList(ctx context.Context) int {
 	fs := flag.NewFlagSet("store list", flag.ExitOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
 	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
@@ -56,7 +56,7 @@ func (r *runner) runStoreList() int {
 	return 0
 }
 
-func (r *runner) runStoreShow() int {
+func (r *runner) runStoreShow(ctx context.Context) int {
 	fs := flag.NewFlagSet("store show", flag.ExitOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
 	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
@@ -78,7 +78,7 @@ func (r *runner) runStoreShow() int {
 			return r.fail("usage: cloudstic store show [-profiles-file <path>] <name>")
 		}
 		names := sortedKeys(cfg.Stores)
-		picked, pickErr := r.promptSelect("Select store", names)
+		picked, pickErr := r.promptSelect(ctx, "Select store", names)
 		if pickErr != nil {
 			return r.fail("Failed to select store: %v", pickErr)
 		}
@@ -93,7 +93,7 @@ func (r *runner) runStoreShow() int {
 	return 0
 }
 
-func (r *runner) runStoreNew() int {
+func (r *runner) runStoreNew(ctx context.Context) int {
 	fs := flag.NewFlagSet("store new", flag.ExitOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
 	name := fs.String("name", "", "Store reference name")
@@ -142,7 +142,7 @@ func (r *runner) runStoreNew() int {
 
 	if *name == "" {
 		if r.canPrompt() {
-			v, err := r.promptLine("Store reference name", "")
+			v, err := r.promptLine(ctx, "Store reference name", "")
 			if err != nil {
 				return r.fail("Failed to read store name: %v", err)
 			}
@@ -175,7 +175,7 @@ func (r *runner) runStoreNew() int {
 
 	if *uri == "" || forcePromptURI {
 		if r.canPrompt() {
-			v, err := r.promptLine("Store URI", *uri)
+			v, err := r.promptLine(ctx, "Store URI", *uri)
 			if err != nil {
 				return r.fail("Failed to read store URI: %v", err)
 			}
@@ -202,16 +202,16 @@ func (r *runner) runStoreNew() int {
 		// If no encryption flags were provided, prompt for encryption config.
 		s := cfg.Stores[*name]
 		if askKeepEncryption {
-			keepCurrent, confirmErr := r.promptConfirm("Keep current encryption settings?", true)
+			keepCurrent, confirmErr := r.promptConfirm(ctx, "Keep current encryption settings?", true)
 			if confirmErr != nil {
 				return r.fail("Failed to read encryption confirmation: %v", confirmErr)
 			}
 			forcePromptEncryption = !keepCurrent
 		}
 		if forcePromptEncryption || !storeHasExplicitEncryption(s) {
-			r.promptEncryptionConfig(cfg, *name, *profilesFile)
+			r.promptEncryptionConfig(ctx, cfg, *name, *profilesFile)
 		}
-		if err := r.checkOrInitStore(cfg, *name, *profilesFile, checkOrInitOptions{
+		if err := r.checkOrInitStore(ctx, cfg, *name, *profilesFile, checkOrInitOptions{
 			allowMissingSecrets:  true,
 			warnOnMissingSecrets: !existedBefore,
 			offerInit:            true,
@@ -228,7 +228,7 @@ func (r *runner) runStoreNew() int {
 // initialize it. Encryption config should already be saved in profiles.yaml
 // before calling this. Errors are printed but never cause a non-zero exit—
 // the store config has already been saved.
-func (r *runner) runStoreVerify() int {
+func (r *runner) runStoreVerify(ctx context.Context) int {
 	fs := flag.NewFlagSet("store verify", flag.ExitOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
 	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
@@ -254,7 +254,7 @@ func (r *runner) runStoreVerify() int {
 			return r.fail("usage: cloudstic store verify [-profiles-file <path>] <name>")
 		}
 		names := sortedKeys(cfg.Stores)
-		picked, pickErr := r.promptSelect("Select store", names)
+		picked, pickErr := r.promptSelect(ctx, "Select store", names)
 		if pickErr != nil {
 			return r.fail("Failed to select store: %v", pickErr)
 		}
@@ -264,7 +264,7 @@ func (r *runner) runStoreVerify() int {
 	if _, ok := cfg.Stores[name]; !ok {
 		return r.fail("Unknown store %q", name)
 	}
-	if err := r.checkOrInitStore(cfg, name, *profilesFile, checkOrInitOptions{
+	if err := r.checkOrInitStore(ctx, cfg, name, *profilesFile, checkOrInitOptions{
 		warnOnMissingSecrets: true,
 	}); err != nil {
 		return r.fail("%v", err)
@@ -272,7 +272,7 @@ func (r *runner) runStoreVerify() int {
 	return 0
 }
 
-func (r *runner) runStoreInit() int {
+func (r *runner) runStoreInit(ctx context.Context) int {
 	fs := flag.NewFlagSet("store init", flag.ExitOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
 	yes := fs.Bool("yes", false, "Initialize without confirmation prompt")
@@ -299,7 +299,7 @@ func (r *runner) runStoreInit() int {
 			return r.fail("usage: cloudstic store init [-profiles-file <path>] [-yes] <name>")
 		}
 		names := sortedKeys(cfg.Stores)
-		picked, pickErr := r.promptSelect("Select store", names)
+		picked, pickErr := r.promptSelect(ctx, "Select store", names)
 		if pickErr != nil {
 			return r.fail("Failed to select store: %v", pickErr)
 		}
@@ -309,7 +309,7 @@ func (r *runner) runStoreInit() int {
 	if _, ok := cfg.Stores[name]; !ok {
 		return r.fail("Unknown store %q", name)
 	}
-	if err := r.checkOrInitStore(cfg, name, *profilesFile, checkOrInitOptions{
+	if err := r.checkOrInitStore(ctx, cfg, name, *profilesFile, checkOrInitOptions{
 		warnOnMissingSecrets: true,
 		offerInit:            true,
 		assumeYes:            *yes,
@@ -326,7 +326,7 @@ type checkOrInitOptions struct {
 	assumeYes            bool
 }
 
-func (r *runner) checkOrInitStore(cfg *cloudstic.ProfilesConfig, storeName, profilesFile string, opts checkOrInitOptions) error {
+func (r *runner) checkOrInitStore(ctx context.Context, cfg *cloudstic.ProfilesConfig, storeName, profilesFile string, opts checkOrInitOptions) error {
 	s := cfg.Stores[storeName]
 	g, err := globalFlagsFromProfileStore(s)
 	if err != nil {
@@ -343,8 +343,6 @@ func (r *runner) checkOrInitStore(cfg *cloudstic.ProfilesConfig, storeName, prof
 	if err != nil {
 		return fmt.Errorf("could not connect to store: %w", err)
 	}
-
-	ctx := context.Background()
 
 	// Check if already initialized by looking for the config marker.
 	cfgData, err := raw.Get(ctx, "config")
@@ -369,7 +367,7 @@ func (r *runner) checkOrInitStore(cfg *cloudstic.ProfilesConfig, storeName, prof
 		return nil
 	}
 	if !opts.assumeYes {
-		yes, promptErr := r.promptConfirm("Initialize it now?", true)
+		yes, promptErr := r.promptConfirm(ctx, "Initialize it now?", true)
 		if promptErr != nil || !yes {
 			return nil
 		}
@@ -409,7 +407,7 @@ func (r *runner) checkOrInitStore(cfg *cloudstic.ProfilesConfig, storeName, prof
 // promptEncryptionConfig guides the user through encryption configuration
 // and saves the chosen settings to profiles.yaml. It does not build a keychain
 // or prompt for the actual password — that happens later during init.
-func (r *runner) promptEncryptionConfig(cfg *cloudstic.ProfilesConfig, storeName, profilesFile string) {
+func (r *runner) promptEncryptionConfig(ctx context.Context, cfg *cloudstic.ProfilesConfig, storeName, profilesFile string) {
 	_, _ = fmt.Fprintln(r.out)
 	_, _ = fmt.Fprintln(r.out, "No encryption is configured for this store.")
 
@@ -419,13 +417,14 @@ func (r *runner) promptEncryptionConfig(cfg *cloudstic.ProfilesConfig, storeName
 		"AWS KMS key (enterprise)",
 		"No encryption (not recommended)",
 	}
-	picked, err := r.promptSelect("Select encryption method", options)
+	picked, err := r.promptSelect(ctx, "Select encryption method", options)
 	if err != nil {
 		_, _ = fmt.Fprintf(r.errOut, "Failed to select encryption method: %v\n", err)
 		return
 	}
 
 	s, err := configureStoreEncryptionSelection(
+		ctx,
 		cfg.Stores[storeName],
 		storeName,
 		picked,
@@ -449,34 +448,35 @@ func (r *runner) promptEncryptionConfig(cfg *cloudstic.ProfilesConfig, storeName
 }
 
 func configureStoreEncryptionSelection(
+	ctx context.Context,
 	s cloudstic.ProfileStore,
 	storeName, picked string,
-	promptSecretRef func(string, string, string, string) (string, error),
-	promptLine func(string, string) (string, error),
+	promptSecretRef func(context.Context, string, string, string, string) (string, error),
+	promptLine func(context.Context, string, string) (string, error),
 	out io.Writer,
 ) (cloudstic.ProfileStore, error) {
 	switch picked {
 	case "Password (recommended for interactive use)":
-		secretRef, err := promptSecretRef(storeName, "repository password", "CLOUDSTIC_PASSWORD", "password")
+		secretRef, err := promptSecretRef(ctx, storeName, "repository password", "CLOUDSTIC_PASSWORD", "password")
 		if err != nil {
 			return s, fmt.Errorf("failed to configure password secret: %w", err)
 		}
 		s.PasswordSecret = secretRef
 		_, _ = fmt.Fprintf(out, "Encryption: password via %s\n", secretRef)
 	case "Platform key (recommended for automation/CI)":
-		secretRef, err := promptSecretRef(storeName, "platform key (64-char hex)", "CLOUDSTIC_ENCRYPTION_KEY", "encryption-key")
+		secretRef, err := promptSecretRef(ctx, storeName, "platform key (64-char hex)", "CLOUDSTIC_ENCRYPTION_KEY", "encryption-key")
 		if err != nil {
 			return s, fmt.Errorf("failed to configure platform key secret: %w", err)
 		}
 		s.EncryptionKeySecret = secretRef
 		_, _ = fmt.Fprintf(out, "Encryption: platform key via %s\n", secretRef)
 	case "AWS KMS key (enterprise)":
-		arn, err := promptLine("KMS key ARN", "")
+		arn, err := promptLine(ctx, "KMS key ARN", "")
 		if err != nil || arn == "" {
 			return s, fmt.Errorf("KMS key ARN is required")
 		}
 		s.KMSKeyARN = arn
-		region, _ := promptLine("KMS region", "us-east-1")
+		region, _ := promptLine(ctx, "KMS region", "us-east-1")
 		if region != "" {
 			s.KMSRegion = region
 		}
@@ -489,46 +489,48 @@ func configureStoreEncryptionSelection(
 	return s, nil
 }
 
-func (r *runner) promptSecretReference(storeName, secretLabel, defaultEnvName, defaultAccount string) (string, error) {
+func (r *runner) promptSecretReference(ctx context.Context, storeName, secretLabel, defaultEnvName, defaultAccount string) (string, error) {
 	return promptSecretReferenceWithFns(
+		ctx,
 		storeName,
 		secretLabel,
 		defaultEnvName,
 		defaultAccount,
-		r.promptSelect,
-		r.promptLine,
-		r.promptSecret,
+		func(_ context.Context, l string, o []string) (string, error) { return r.promptSelect(ctx, l, o) },
+		func(ctx context.Context, l, d string) (string, error) { return r.promptLine(ctx, l, d) },
+		func(_ context.Context, s string) (string, error) { return r.promptSecret(ctx, s) },
 		os.LookupEnv,
 		profileSecretResolver,
 	)
 }
 
 func promptSecretReferenceWithFns(
+	ctx context.Context,
 	storeName, secretLabel, defaultEnvName, defaultAccount string,
-	promptSelect func(string, []string) (string, error),
-	promptLine func(string, string) (string, error),
-	promptSecret func(string) (string, error),
+	promptSelect func(context.Context, string, []string) (string, error),
+	promptLine func(context.Context, string, string) (string, error),
+	promptSecret func(context.Context, string) (string, error),
 	lookupEnv func(string) (string, bool),
 	resolver *secretref.Resolver,
 ) (string, error) {
 	writableBackends := resolver.WritableBackends()
 	nativeRef := func(backend secretref.WritableBackend) (string, error) {
 		ref := backend.DefaultRef(storeName, defaultAccount)
-		exists, err := resolver.Exists(context.Background(), ref)
+		exists, err := resolver.Exists(ctx, ref)
 		if err != nil {
 			return "", err
 		}
 		if exists {
 			return ref, nil
 		}
-		secretValue, err := promptSecret("Secret value")
+		secretValue, err := promptSecret(ctx, "Secret value")
 		if err != nil {
 			return "", err
 		}
 		if secretValue == "" {
 			return "", fmt.Errorf("secret value cannot be empty")
 		}
-		if err := resolver.Store(context.Background(), ref, secretValue); err != nil {
+		if err := resolver.Store(ctx, ref, secretValue); err != nil {
 			return "", err
 		}
 		return ref, nil
@@ -543,6 +545,7 @@ func promptSecretReferenceWithFns(
 			backendByOption[option] = backend
 		}
 		picked, err := promptSelect(
+			ctx,
 			fmt.Sprintf("Where should %s be stored?", secretLabel),
 			options,
 		)
@@ -554,7 +557,7 @@ func promptSecretReferenceWithFns(
 		}
 	}
 
-	envName, err := promptLine("Env var name", defaultEnvName)
+	envName, err := promptLine(ctx, "Env var name", defaultEnvName)
 	if err != nil {
 		return "", err
 	}
@@ -567,6 +570,7 @@ func promptSecretReferenceWithFns(
 			backendByOption[option] = backend
 		}
 		picked, err := promptSelect(
+			ctx,
 			fmt.Sprintf("Environment variable %q is not set in this shell", envName),
 			options,
 		)
@@ -593,7 +597,7 @@ func verifyStoreEncryptionCredentials(ctx context.Context, g *globalFlags, raw s
 	if err != nil {
 		return fmt.Errorf("build keychain: %w", err)
 	}
-	_, err = cloudstic.NewClient(raw,
+	_, err = cloudstic.NewClient(ctx, raw,
 		cloudstic.WithKeychain(kc),
 		cloudstic.WithReporter(ui.NewNoOpReporter()),
 	)

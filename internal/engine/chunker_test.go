@@ -14,7 +14,7 @@ func TestChunker_ProcessStream(t *testing.T) {
 	data := "1234567890123456789012345"
 	reader := strings.NewReader(data)
 
-	refs, size, _, err := chunker.ProcessStream(reader, nil)
+	refs, size, _, err := chunker.ProcessStream(ctx, reader, nil)
 	if err != nil {
 		t.Fatalf("ProcessStream failed: %v", err)
 	}
@@ -35,13 +35,14 @@ func TestChunker_ProcessStream(t *testing.T) {
 }
 
 func TestChunker_Deduplication(t *testing.T) {
+	ctx := context.Background()
 	store := NewMockStore()
 	chunker := NewChunker(store, nil)
 
 	data := "1234567890"
 
-	refs1, _, _, _ := chunker.ProcessStream(strings.NewReader(data), nil)
-	refs2, _, _, _ := chunker.ProcessStream(strings.NewReader(data), nil)
+	refs1, _, _, _ := chunker.ProcessStream(ctx, strings.NewReader(data), nil)
+	refs2, _, _, _ := chunker.ProcessStream(ctx, strings.NewReader(data), nil)
 
 	if len(refs1) == 0 || len(refs2) == 0 {
 		t.Fatal("No chunks produced")
@@ -61,7 +62,7 @@ func TestChunker_CreateContentObject(t *testing.T) {
 	size := int64(100)
 	contentHash := "test-hash"
 
-	ref, err := chunker.CreateContentObject(chunks, size, contentHash)
+	ref, err := chunker.CreateContentObject(ctx, chunks, size, contentHash)
 	if err != nil {
 		t.Fatalf("CreateContentObject failed: %v", err)
 	}
@@ -86,7 +87,7 @@ func TestChunker_HMAC_CreateContentObject(t *testing.T) {
 	chunks := []string{"chunk/1", "chunk/2"}
 	contentHash := "plain-content-hash"
 
-	contentRef, err := chunker.CreateContentObject(chunks, 100, contentHash)
+	contentRef, err := chunker.CreateContentObject(ctx, chunks, 100, contentHash)
 	if err != nil {
 		t.Fatalf("CreateContentObject failed: %v", err)
 	}
@@ -114,6 +115,7 @@ func TestChunker_HMAC_CreateContentObject(t *testing.T) {
 
 // TestChunker_HMAC_ChunkRefsUseHMAC verifies HMAC key produces different chunk refs but identical content hash.
 func TestChunker_HMAC_ChunkRefsUseHMAC(t *testing.T) {
+	ctx := context.Background()
 	hmacKey := []byte("test-hmac-key-32-bytes-long!!!!!")
 
 	data := "deterministic test payload"
@@ -121,7 +123,7 @@ func TestChunker_HMAC_ChunkRefsUseHMAC(t *testing.T) {
 	// Without HMAC key
 	plainStore := NewMockStore()
 	plainChunker := NewChunker(plainStore, nil)
-	plainRefs, _, plainHash, err := plainChunker.ProcessStream(strings.NewReader(data), nil)
+	plainRefs, _, plainHash, err := plainChunker.ProcessStream(ctx, strings.NewReader(data), nil)
 	if err != nil {
 		t.Fatalf("plain ProcessStream failed: %v", err)
 	}
@@ -129,7 +131,7 @@ func TestChunker_HMAC_ChunkRefsUseHMAC(t *testing.T) {
 	// With HMAC key
 	hmacStore := NewMockStore()
 	hmacChunker := NewChunker(hmacStore, hmacKey)
-	hmacRefs, _, hmacHash, err := hmacChunker.ProcessStream(strings.NewReader(data), nil)
+	hmacRefs, _, hmacHash, err := hmacChunker.ProcessStream(ctx, strings.NewReader(data), nil)
 	if err != nil {
 		t.Fatalf("hmac ProcessStream failed: %v", err)
 	}
@@ -150,15 +152,16 @@ func TestChunker_HMAC_ChunkRefsUseHMAC(t *testing.T) {
 
 // TestChunker_HMAC_ContentHashStable verifies content hash is deterministic and independent of HMAC key.
 func TestChunker_HMAC_ContentHashStable(t *testing.T) {
+	ctx := context.Background()
 	hmacKey := []byte("test-hmac-key-32-bytes-long!!!!!")
 	data := "stable content hash test"
 
 	// Run ProcessStream twice with the same HMAC key
 	s1 := NewMockStore()
-	_, _, hash1, _ := NewChunker(s1, hmacKey).ProcessStream(strings.NewReader(data), nil)
+	_, _, hash1, _ := NewChunker(s1, hmacKey).ProcessStream(ctx, strings.NewReader(data), nil)
 
 	s2 := NewMockStore()
-	_, _, hash2, _ := NewChunker(s2, hmacKey).ProcessStream(strings.NewReader(data), nil)
+	_, _, hash2, _ := NewChunker(s2, hmacKey).ProcessStream(ctx, strings.NewReader(data), nil)
 
 	if hash1 != hash2 {
 		t.Errorf("content hash not stable across runs: %s vs %s", hash1, hash2)
@@ -166,7 +169,7 @@ func TestChunker_HMAC_ContentHashStable(t *testing.T) {
 
 	// Run without HMAC key — content hash must still match
 	s3 := NewMockStore()
-	_, _, hash3, _ := NewChunker(s3, nil).ProcessStream(strings.NewReader(data), nil)
+	_, _, hash3, _ := NewChunker(s3, nil).ProcessStream(ctx, strings.NewReader(data), nil)
 
 	if hash1 != hash3 {
 		t.Errorf("content hash must be identical with/without HMAC key: %s vs %s", hash1, hash3)
@@ -175,14 +178,15 @@ func TestChunker_HMAC_ContentHashStable(t *testing.T) {
 
 // TestChunker_HMAC_Deduplication verifies that dedup works correctly with an HMAC key.
 func TestChunker_HMAC_Deduplication(t *testing.T) {
+	ctx := context.Background()
 	hmacKey := []byte("test-hmac-key-32-bytes-long!!!!!")
 	store := NewMockStore()
 	chunker := NewChunker(store, hmacKey)
 
 	data := "dedup with hmac test"
 
-	refs1, _, _, _ := chunker.ProcessStream(strings.NewReader(data), nil)
-	refs2, _, _, _ := chunker.ProcessStream(strings.NewReader(data), nil)
+	refs1, _, _, _ := chunker.ProcessStream(ctx, strings.NewReader(data), nil)
+	refs2, _, _, _ := chunker.ProcessStream(ctx, strings.NewReader(data), nil)
 
 	if len(refs1) == 0 || len(refs2) == 0 {
 		t.Fatal("no chunks produced")

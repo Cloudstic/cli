@@ -110,7 +110,7 @@ func (m *InitManager) Run(ctx context.Context, opts ...InitOption) (*InitResult,
 // setupEncryption creates new key slots or adopts existing ones. Returns true
 // if existing slots were adopted.
 func (m *InitManager) setupEncryption(ctx context.Context, cfg initConfig) (adopted bool, err error) {
-	slots, err := keychain.LoadKeySlots(m.store)
+	slots, err := keychain.LoadKeySlots(ctx, m.store)
 	if err != nil {
 		return false, fmt.Errorf("load key slots: %w", err)
 	}
@@ -140,7 +140,7 @@ func (m *InitManager) setupEncryption(ctx context.Context, cfg initConfig) (adop
 		return false, fmt.Errorf("wrap master key: %w", err)
 	}
 	for _, slot := range newSlots {
-		if err := keychain.WriteKeySlot(m.store, slot); err != nil {
+		if err := keychain.WriteKeySlot(ctx, m.store, slot); err != nil {
 			return false, fmt.Errorf("write key slot: %w", err)
 		}
 	}
@@ -150,7 +150,7 @@ func (m *InitManager) setupEncryption(ctx context.Context, cfg initConfig) (adop
 
 // addRecoverySlot extracts the master key and creates a recovery slot.
 func (m *InitManager) addRecoverySlot(ctx context.Context, cfg initConfig) (string, error) {
-	slots, err := keychain.LoadKeySlots(m.store)
+	slots, err := keychain.LoadKeySlots(ctx, m.store)
 	if err != nil {
 		return "", fmt.Errorf("reload key slots: %w", err)
 	}
@@ -158,7 +158,7 @@ func (m *InitManager) addRecoverySlot(ctx context.Context, cfg initConfig) (stri
 	if err != nil {
 		return "", fmt.Errorf("extract master key for recovery slot: %w", err)
 	}
-	mnemonic, err := keychain.AddRecoverySlot(m.store, masterKey)
+	mnemonic, err := keychain.AddRecoverySlot(ctx, m.store, masterKey)
 	if err != nil {
 		return "", fmt.Errorf("create recovery key: %w", err)
 	}

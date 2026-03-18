@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -13,7 +14,7 @@ func TestRunBreakLock_NoLock(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &strings.Builder{}, errOut: &errOut, client: &stubClient{breakLockResult: nil}}
 
-	r.runBreakLock()
+	r.runBreakLock(context.Background())
 
 	if !strings.Contains(errOut.String(), "not locked") {
 		t.Errorf("expected 'not locked' message, got:\n%s", errOut.String())
@@ -35,7 +36,7 @@ func TestRunBreakLock_LocksRemoved(t *testing.T) {
 		},
 	}}
 
-	r.runBreakLock()
+	r.runBreakLock(context.Background())
 
 	got := errOut.String()
 	if !strings.Contains(got, "Locks removed") {

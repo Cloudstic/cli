@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -22,7 +23,7 @@ func TestRunList_Success(t *testing.T) {
 		},
 	}}
 
-	r.runList()
+	r.runList(context.Background())
 
 	got := out.String()
 	if !strings.Contains(got, "2 snapshots") {
@@ -37,7 +38,7 @@ func TestRunList_Empty(t *testing.T) {
 		listResult: &cloudstic.ListResult{Snapshots: nil},
 	}}
 
-	r.runList()
+	r.runList(context.Background())
 
 	if !strings.Contains(out.String(), "0 snapshots") {
 		t.Errorf("expected '0 snapshots', got: %s", out.String())
@@ -68,7 +69,7 @@ func TestRunList_Group(t *testing.T) {
 		},
 	}}
 
-	r.runList()
+	r.runList(context.Background())
 
 	got := out.String()
 	if !strings.Contains(got, "2 snapshots") {

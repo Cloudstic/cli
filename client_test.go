@@ -152,7 +152,7 @@ func TestChangePassword(t *testing.T) {
 		t.Fatalf("ChangePassword: %v", err)
 	}
 
-	slots, _ := keychain.LoadKeySlots(s)
+	slots, _ := keychain.LoadKeySlots(ctx, s)
 	if _, err := (keychain.Chain{keychain.WithPassword("old-pass")}).Resolve(ctx, slots); err == nil {
 		t.Error("old password should no longer work")
 	}
@@ -191,7 +191,7 @@ func TestAddRecoveryKey(t *testing.T) {
 		t.Error("expected non-empty mnemonic")
 	}
 
-	slots, _ := keychain.LoadKeySlots(s)
+	slots, _ := keychain.LoadKeySlots(ctx, s)
 	hasRecovery := false
 	for _, slot := range slots {
 		if slot.SlotType == "recovery" {
@@ -241,7 +241,7 @@ func TestClient_Cat_SingleObject(t *testing.T) {
 		t.Fatalf("Failed to put config: %v", err)
 	}
 
-	client, err := NewClient(base)
+	client, err := NewClient(context.Background(), base)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -289,7 +289,7 @@ func TestClient_Cat_MultipleObjects(t *testing.T) {
 		}
 	}
 
-	client, err := NewClient(base)
+	client, err := NewClient(context.Background(), base)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestClient_Cat_ObjectNotFound(t *testing.T) {
 		t.Fatalf("Failed to setup mock data: %v", err)
 	}
 
-	client, err := NewClient(base)
+	client, err := NewClient(context.Background(), base)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -347,7 +347,7 @@ func TestClient_Cat_NoKeys(t *testing.T) {
 		t.Fatalf("Failed to setup mock data: %v", err)
 	}
 
-	client, err := NewClient(base)
+	client, err := NewClient(context.Background(), base)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -385,7 +385,7 @@ func TestClient_Cat_WithEncryption(t *testing.T) {
 	}
 
 	// Create client with encryption - it will wrap the store
-	client, err := NewClient(base, WithEncryptionKey(encKey))
+	client, err := NewClient(context.Background(), base, WithEncryptionKey(encKey))
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -438,7 +438,7 @@ func TestClient_Cat_WithCompression(t *testing.T) {
 		t.Fatalf("Failed to setup mock data: %v", err)
 	}
 
-	client, err := NewClient(base)
+	client, err := NewClient(context.Background(), base)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}

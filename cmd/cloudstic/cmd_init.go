@@ -33,7 +33,7 @@ func parseInitArgs() *initArgs {
 	return a
 }
 
-func (r *runner) runInit() int {
+func (r *runner) runInit(ctx context.Context) int {
 	a := parseInitArgs()
 
 	raw, err := a.g.openStore()

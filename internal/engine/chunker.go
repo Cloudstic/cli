@@ -43,7 +43,7 @@ func NewChunker(s store.ObjectStore, hmacKey []byte) *Chunker {
 // and the SHA-256 content hash over the raw stream.
 //
 // onProgress is called after each chunk with the number of raw bytes consumed.
-func (c *Chunker) ProcessStream(r io.Reader, onProgress func(int64)) (refs []string, size int64, hash string, err error) {
+func (c *Chunker) ProcessStream(ctx context.Context, r io.Reader, onProgress func(int64)) (refs []string, size int64, hash string, err error) {
 	cdcMu.Lock()
 	cdc, err := fastcdc.NewChunker(r, fastcdc.Options{
 		MinSize:     cdcMinSize,
@@ -55,7 +55,6 @@ func (c *Chunker) ProcessStream(r io.Reader, onProgress func(int64)) (refs []str
 		return nil, 0, "", err
 	}
 
-	ctx := context.Background()
 	hasher := sha256.New()
 
 	type chunkJob struct {
@@ -145,7 +144,7 @@ func (c *Chunker) ProcessStream(r io.Reader, onProgress func(int64)) (refs []str
 // CreateContentObject persists a Content object. The object is keyed by an HMAC
 // of the contentHash (if encryption is enabled) to prevent hash leakage, or the
 // plain contentHash otherwise. Returns the secure contentRef (the hex hash used).
-func (c *Chunker) CreateContentObject(chunkRefs []string, size int64, contentHash string) (string, error) {
+func (c *Chunker) CreateContentObject(ctx context.Context, chunkRefs []string, size int64, contentHash string) (string, error) {
 	content := core.Content{
 		Type:   core.ObjectTypeContent,
 		Size:   size,
@@ -165,7 +164,7 @@ func (c *Chunker) CreateContentObject(chunkRefs []string, size int64, contentHas
 	}
 
 	ref := "content/" + contentRef
-	if err := c.store.Put(context.Background(), ref, data); err != nil {
+	if err := c.store.Put(ctx, ref, data); err != nil {
 		return "", err
 	}
 	return contentRef, nil

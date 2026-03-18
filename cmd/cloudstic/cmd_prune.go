@@ -24,9 +24,9 @@ func parsePruneArgs() *pruneArgs {
 	return a
 }
 
-func (r *runner) runPrune() int {
+func (r *runner) runPrune(ctx context.Context) int {
 	a := parsePruneArgs()
-	if err := r.openClient(a.g); err != nil {
+	if err := r.openClient(ctx, a.g); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 

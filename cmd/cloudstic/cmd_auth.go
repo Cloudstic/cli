@@ -13,7 +13,7 @@ import (
 	"github.com/cloudstic/cli/internal/paths"
 )
 
-func (r *runner) runAuth() int {
+func (r *runner) runAuth(ctx context.Context) int {
 	if len(os.Args) < 3 {
 		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic auth <subcommand> [options]")
 		_, _ = fmt.Fprintln(r.errOut, "")
@@ -23,19 +23,19 @@ func (r *runner) runAuth() int {
 
 	switch os.Args[2] {
 	case "list":
-		return r.runAuthList()
+		return r.runAuthList(ctx)
 	case "show":
-		return r.runAuthShow()
+		return r.runAuthShow(ctx)
 	case "new":
-		return r.runAuthNew()
+		return r.runAuthNew(ctx)
 	case "login":
-		return r.runAuthLogin()
+		return r.runAuthLogin(ctx)
 	default:
 		return r.fail("Unknown auth subcommand: %s", os.Args[2])
 	}
 }
 
-func (r *runner) runAuthList() int {
+func (r *runner) runAuthList(ctx context.Context) int {
 	fs := flag.NewFlagSet("auth list", flag.ExitOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
 	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
@@ -52,7 +52,7 @@ func (r *runner) runAuthList() int {
 	return 0
 }
 
-func (r *runner) runAuthShow() int {
+func (r *runner) runAuthShow(ctx context.Context) int {
 	fs := flag.NewFlagSet("auth show", flag.ExitOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
 	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
@@ -73,7 +73,7 @@ func (r *runner) runAuthShow() int {
 			return r.fail("usage: cloudstic auth show [-profiles-file <path>] <name>")
 		}
 		names := sortedKeys(cfg.Auth)
-		picked, pickErr := r.promptSelect("Select auth entry", names)
+		picked, pickErr := r.promptSelect(ctx, "Select auth entry", names)
 		if pickErr != nil {
 			return r.fail("Failed to select auth entry: %v", pickErr)
 		}
@@ -88,7 +88,7 @@ func (r *runner) runAuthShow() int {
 	return 0
 }
 
-func (r *runner) runAuthNew() int {
+func (r *runner) runAuthNew(ctx context.Context) int {
 	fs := flag.NewFlagSet("auth new", flag.ExitOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
 	name := fs.String("name", "", "Auth reference name")
@@ -101,7 +101,7 @@ func (r *runner) runAuthNew() int {
 
 	if *name == "" {
 		if r.canPrompt() {
-			v, err := r.promptLine("Auth reference name", "")
+			v, err := r.promptLine(ctx, "Auth reference name", "")
 			if err != nil {
 				return r.fail("Failed to read auth reference name: %v", err)
 			}
@@ -116,7 +116,7 @@ func (r *runner) runAuthNew() int {
 	}
 	if *provider != "google" && *provider != "onedrive" {
 		if r.canPrompt() {
-			picked, err := r.promptSelect("Select auth provider", []string{"google", "onedrive"})
+			picked, err := r.promptSelect(ctx, "Select auth provider", []string{"google", "onedrive"})
 			if err != nil {
 				return r.fail("Failed to read auth provider: %v", err)
 			}
@@ -132,7 +132,7 @@ func (r *runner) runAuthNew() int {
 		if *googleTokenFile == "" {
 			if r.canPrompt() {
 				def := defaultAuthTokenPath("google", *name)
-				v, err := r.promptLine("Google token file path", def)
+				v, err := r.promptLine(ctx, "Google token file path", def)
 				if err != nil {
 					return r.fail("Failed to read google token file path: %v", err)
 				}
@@ -152,7 +152,7 @@ func (r *runner) runAuthNew() int {
 		if *onedriveTokenFile == "" {
 			if r.canPrompt() {
 				def := defaultAuthTokenPath("onedrive", *name)
-				v, err := r.promptLine("OneDrive token file path", def)
+				v, err := r.promptLine(ctx, "OneDrive token file path", def)
 				if err != nil {
 					return r.fail("Failed to read onedrive token file path: %v", err)
 				}
@@ -183,7 +183,7 @@ func (r *runner) runAuthNew() int {
 	return 0
 }
 
-func (r *runner) runAuthLogin() int {
+func (r *runner) runAuthLogin(ctx context.Context) int {
 	fs := flag.NewFlagSet("auth login", flag.ExitOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
 	name := fs.String("name", "", "Auth reference name")
@@ -197,7 +197,7 @@ func (r *runner) runAuthLogin() int {
 	if *name == "" {
 		if r.canPrompt() {
 			names := sortedKeys(cfg.Auth)
-			picked, pickErr := r.promptSelect("Select auth entry", names)
+			picked, pickErr := r.promptSelect(ctx, "Select auth entry", names)
 			if pickErr != nil {
 				return r.fail("Failed to select auth entry: %v", pickErr)
 			}
@@ -214,7 +214,6 @@ func (r *runner) runAuthLogin() int {
 	}
 
 	g := newAuthGlobalFlags()
-	ctx := context.Background()
 
 	switch auth.Provider {
 	case "google":

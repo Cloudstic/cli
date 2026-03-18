@@ -27,8 +27,7 @@ type KDFParams struct {
 }
 
 // LoadKeySlots reads all key slot objects from the store.
-func LoadKeySlots(s store.ObjectStore) ([]KeySlot, error) {
-	ctx := context.Background()
+func LoadKeySlots(ctx context.Context, s store.ObjectStore) ([]KeySlot, error) {
 	keys, err := s.List(ctx, store.KeySlotPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("list key slots: %w", err)
@@ -52,17 +51,17 @@ func slotObjectKey(slotType, label string) string {
 	return store.KeySlotPrefix + slotType + "-" + label
 }
 
-func WriteKeySlot(s store.ObjectStore, slot KeySlot) error {
+func WriteKeySlot(ctx context.Context, s store.ObjectStore, slot KeySlot) error {
 	data, err := json.Marshal(slot)
 	if err != nil {
 		return fmt.Errorf("marshal key slot: %w", err)
 	}
-	return s.Put(context.Background(), slotObjectKey(slot.SlotType, slot.Label), data)
+	return s.Put(ctx, slotObjectKey(slot.SlotType, slot.Label), data)
 }
 
 // HasKeySlots reports whether the store contains any encryption key slots.
-func HasKeySlots(s store.ObjectStore) bool {
-	keys, err := s.List(context.Background(), store.KeySlotPrefix)
+func HasKeySlots(ctx context.Context, s store.ObjectStore) bool {
+	keys, err := s.List(ctx, store.KeySlotPrefix)
 	return err == nil && len(keys) > 0
 }
 

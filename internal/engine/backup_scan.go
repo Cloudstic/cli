@@ -60,10 +60,10 @@ func (bm *BackupManager) processEntry(ctx context.Context, meta *core.FileMeta, 
 	// Resolve Paths when the source hasn't populated it (incremental/changes
 	// sources only emit changed entries and can't build a full path map).
 	if len(meta.Paths) == 0 {
-		meta.Paths = []string{bm.buildPathFromTree(s.root, meta)}
+		meta.Paths = []string{bm.buildPathFromTree(ctx, s.root, meta)}
 	}
 
-	changed, oldRef, err := bm.detectChange(oldRoot, meta)
+	changed, oldRef, err := bm.detectChange(ctx, oldRoot, meta)
 	if err != nil {
 		return err
 	}
@@ -121,7 +121,7 @@ func (bm *BackupManager) scanIncremental(ctx context.Context, oldRoot string, in
 			bm.recordRemoved(fc.Meta.Type)
 			deleteParentID := primaryParentID(&fc.Meta)
 			if deleteParentID == "" {
-				deleteParentID, err = bm.lookupDeleteParentID(s.root, fc.Meta.FileID)
+				deleteParentID, err = bm.lookupDeleteParentID(ctx, s.root, fc.Meta.FileID)
 				if err != nil {
 					return err
 				}
@@ -145,7 +145,7 @@ func (bm *BackupManager) scanIncremental(ctx context.Context, oldRoot string, in
 	return s.root, s.pending, s.totalBytes, newToken, nil
 }
 
-func (bm *BackupManager) lookupDeleteParentID(root, fileID string) (string, error) {
+func (bm *BackupManager) lookupDeleteParentID(ctx context.Context, root, fileID string) (string, error) {
 	if root == "" {
 		return "", nil
 	}
@@ -158,7 +158,7 @@ func (bm *BackupManager) lookupDeleteParentID(root, fileID string) (string, erro
 		return "", nil
 	}
 
-	oldMeta, err := bm.loadMeta(ref)
+	oldMeta, err := bm.loadMeta(ctx, ref)
 	if err != nil {
 		return "", fmt.Errorf("load old file metadata for delete %s: %w", fileID, err)
 	}
@@ -171,7 +171,7 @@ func (bm *BackupManager) lookupDeleteParentID(root, fileID string) (string, erro
 // For sources that do not provide a content hash (e.g. Google Drive), a
 // fast-path compares observable metadata and carries the hash forward to avoid
 // false-positive diffs.
-func (bm *BackupManager) detectChange(oldRoot string, meta *core.FileMeta) (changed bool, oldRef string, err error) {
+func (bm *BackupManager) detectChange(ctx context.Context, oldRoot string, meta *core.FileMeta) (changed bool, oldRef string, err error) {
 	oldRef, err = bm.tree.Lookup(oldRoot, primaryParentID(meta), meta.FileID)
 	if err != nil {
 		return false, "", fmt.Errorf("hamt lookup: %w", err)
@@ -180,7 +180,7 @@ func (bm *BackupManager) detectChange(oldRoot string, meta *core.FileMeta) (chan
 		return true, "", nil
 	}
 
-	oldMeta, err := bm.loadMeta(oldRef)
+	oldMeta, err := bm.loadMeta(ctx, oldRef)
 	if err != nil {
 		return false, "", err
 	}
@@ -352,12 +352,12 @@ func (bm *BackupManager) recordRemoved(ft core.FileType) {
 // buildPathFromTree reconstructs the full path for a FileMeta entry by walking
 // the parent chain in the HAMT tree. This is used for incremental/changes
 // sources that can't build a path map (the parent may not be in the change set).
-func (bm *BackupManager) buildPathFromTree(root string, meta *core.FileMeta) string {
+func (bm *BackupManager) buildPathFromTree(ctx context.Context, root string, meta *core.FileMeta) string {
 	const maxDepth = 50
 	parts := []string{meta.Name}
 	curParents := meta.Parents
 	for i := 0; i < maxDepth && len(curParents) > 0; i++ {
-		parent := bm.lookupMetaByFileID(root, curParents[0])
+		parent := bm.lookupMetaByFileID(ctx, root, curParents[0])
 		if parent == nil {
 			break
 		}
@@ -378,7 +378,7 @@ func (bm *BackupManager) buildPathFromTree(root string, meta *core.FileMeta) str
 // It checks newMetas (just inserted this scan) first, then falls back to the store.
 // Uses parentIndex to resolve the AffinityKey; falls back to a full-tree walk
 // for entries not yet seen in this scan (e.g. incremental backups).
-func (bm *BackupManager) lookupMetaByFileID(root, fileID string) *core.FileMeta {
+func (bm *BackupManager) lookupMetaByFileID(ctx context.Context, root, fileID string) *core.FileMeta {
 	parentID := bm.parentIndex[fileID]
 	ref, err := bm.tree.Lookup(root, parentID, fileID)
 	if err != nil || ref == "" {
@@ -392,7 +392,7 @@ func (bm *BackupManager) lookupMetaByFileID(root, fileID string) *core.FileMeta 
 	if fm, ok := bm.newMetas[ref]; ok {
 		return &fm
 	}
-	fm, err := bm.loadMeta(ref)
+	fm, err := bm.loadMeta(ctx, ref)
 	if err != nil {
 		return nil
 	}
@@ -401,13 +401,13 @@ func (bm *BackupManager) lookupMetaByFileID(root, fileID string) *core.FileMeta 
 
 // countRemoved uses a structural HAMT diff to count entries present in oldRoot
 // but absent from newRoot (full-scan path where deletions are implicit).
-func (bm *BackupManager) countRemoved(oldRoot, newRoot string) error {
+func (bm *BackupManager) countRemoved(ctx context.Context, oldRoot, newRoot string) error {
 	if oldRoot == "" {
 		return nil
 	}
 	return bm.tree.Diff(oldRoot, newRoot, func(d hamt.DiffEntry) error {
 		if d.OldValue != "" && d.NewValue == "" {
-			meta, err := bm.loadMeta(d.OldValue)
+			meta, err := bm.loadMeta(ctx, d.OldValue)
 			if err != nil {
 				return err
 			}

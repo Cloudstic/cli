@@ -168,14 +168,14 @@ func (bm *BackupManager) uploadContent(ctx context.Context, meta core.FileMeta, 
 		return bm.uploadInline(ctx, rc, meta, phase)
 	}
 
-	chunkRefs, size, hash, err := bm.chunker.ProcessStream(rc, func(n int64) {
+	chunkRefs, size, hash, err := bm.chunker.ProcessStream(ctx, rc, func(n int64) {
 		phase.Increment(n)
 	})
 	if err != nil {
 		return "", 0, "", nil, fmt.Errorf("chunking %s: %w", meta.Name, err)
 	}
 
-	contentRef, err = bm.chunker.CreateContentObject(chunkRefs, size, hash)
+	contentRef, err = bm.chunker.CreateContentObject(ctx, chunkRefs, size, hash)
 	if err != nil {
 		return "", 0, "", nil, fmt.Errorf("create content for %s: %w", meta.Name, err)
 	}

@@ -18,7 +18,7 @@ func DeriveEncryptionKey(masterKey []byte) ([]byte, error) {
 
 // AddRecoverySlot generates a recovery key, wraps the given master key with
 // it, stores the recovery slot, and returns the BIP39 24-word mnemonic.
-func AddRecoverySlot(s store.ObjectStore, masterKey []byte) (mnemonic string, err error) {
+func AddRecoverySlot(ctx context.Context, s store.ObjectStore, masterKey []byte) (mnemonic string, err error) {
 	mnemonic, recoveryKey, err := crypto.GenerateRecoveryMnemonic()
 	if err != nil {
 		return "", err
@@ -27,7 +27,7 @@ func AddRecoverySlot(s store.ObjectStore, masterKey []byte) (mnemonic string, er
 	if err != nil {
 		return "", err
 	}
-	if err := WriteKeySlot(s, slot); err != nil {
+	if err := WriteKeySlot(ctx, s, slot); err != nil {
 		return "", err
 	}
 	return mnemonic, nil
@@ -37,7 +37,7 @@ func AddRecoverySlot(s store.ObjectStore, masterKey []byte) (mnemonic string, er
 // repository. masterKey is the unwrapped master key; newPassword is the new
 // password to wrap it with. The old password slot (keys/password-default) is
 // overwritten.
-func ChangePasswordSlot(s store.ObjectStore, masterKey []byte, newPassword string) error {
+func ChangePasswordSlot(ctx context.Context, s store.ObjectStore, masterKey []byte, newPassword string) error {
 	if newPassword == "" {
 		return fmt.Errorf("new password cannot be empty")
 	}
@@ -45,7 +45,7 @@ func ChangePasswordSlot(s store.ObjectStore, masterKey []byte, newPassword strin
 	if err != nil {
 		return err
 	}
-	return WriteKeySlot(s, slot)
+	return WriteKeySlot(ctx, s, slot)
 }
 
 // Credential attempts to resolve or wrap the master key for the repository.

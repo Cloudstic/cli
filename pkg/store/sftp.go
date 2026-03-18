@@ -10,14 +10,17 @@ import (
 
 	intsftp "github.com/cloudstic/cli/internal/sftp"
 	"github.com/pkg/sftp"
+	"golang.org/x/crypto/ssh"
 )
 
 type sftpStoreOptions struct {
-	port, user     string
-	password       string
-	privateKeyPath string
-	basePath       string
-	client         *sftp.Client
+	port, user      string
+	password        string
+	privateKeyPath  string
+	basePath        string
+	hostKeyCallback ssh.HostKeyCallback
+	knownHostsPath  string
+	client          *sftp.Client
 }
 
 // SFTPStoreOption configures an SFTP store.
@@ -48,6 +51,20 @@ func WithSFTPPassword(password string) SFTPStoreOption {
 func WithSFTPKey(keyPath string) SFTPStoreOption {
 	return func(o *sftpStoreOptions) {
 		o.privateKeyPath = keyPath
+	}
+}
+
+// WithSFTPHostKeyCallback sets the host key verification callback.
+func WithSFTPHostKeyCallback(cb ssh.HostKeyCallback) SFTPStoreOption {
+	return func(o *sftpStoreOptions) {
+		o.hostKeyCallback = cb
+	}
+}
+
+// WithSFTPKnownHosts sets the path to the known_hosts file.
+func WithSFTPKnownHosts(path string) SFTPStoreOption {
+	return func(o *sftpStoreOptions) {
+		o.knownHostsPath = path
 	}
 }
 
@@ -84,12 +101,14 @@ func NewSFTPStore(host string, opts ...SFTPStoreOption) (*SFTPStore, error) {
 	client := o.client
 	if client == nil {
 		cfg := intsftp.Config{
-			Host:           host,
-			Port:           o.port,
-			User:           o.user,
-			Password:       o.password,
-			PrivateKeyPath: o.privateKeyPath,
-			BasePath:       o.basePath,
+			Host:            host,
+			Port:            o.port,
+			User:            o.user,
+			Password:        o.password,
+			PrivateKeyPath:  o.privateKeyPath,
+			BasePath:        o.basePath,
+			HostKeyCallback: o.hostKeyCallback,
+			KnownHostsPath:  o.knownHostsPath,
 		}
 		var err error
 		client, err = intsftp.Dial(cfg)

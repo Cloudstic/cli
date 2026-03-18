@@ -1,8 +1,13 @@
 package store
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/testcontainers/testcontainers-go"
@@ -42,6 +47,56 @@ func startSFTPContainer(t *testing.T, ctx context.Context) (testcontainers.Conta
 	return container, host, mappedPort.Port()
 }
 
+func writeKnownHosts(t *testing.T, ctx context.Context, container testcontainers.Container, host, port string) string {
+	t.Helper()
+
+	var lines []string
+	// Get all generated public host keys.
+	for _, keyType := range []string{"ed25519", "rsa", "ecdsa"} {
+		path := fmt.Sprintf("/etc/ssh/ssh_host_%s_key.pub", keyType)
+		exitCode, reader, err := container.Exec(ctx, []string{"cat", path})
+		if err == nil && exitCode == 0 {
+			var buf bytes.Buffer
+			if _, err := buf.ReadFrom(reader); err == nil {
+				pubKeyLine := strings.TrimSpace(buf.String())
+				if pubKeyLine == "" {
+					continue
+				}
+				parts := strings.Fields(pubKeyLine)
+				if len(parts) < 2 {
+					continue
+				}
+				keyTypeAndKey := parts[0] + " " + parts[1]
+
+				// known_hosts format: host1,host2,... keytype key
+				// We include host, 127.0.0.1, and ::1 to be safe against resolution differences.
+				hosts := fmt.Sprintf("[%s]:%s", host, port)
+				if host != "127.0.0.1" {
+					hosts += fmt.Sprintf(",[127.0.0.1]:%s", port)
+				}
+				if host != "::1" {
+					hosts += fmt.Sprintf(",[::1]:%s", port)
+				}
+				if host != "localhost" {
+					hosts += fmt.Sprintf(",[localhost]:%s", port)
+				}
+				lines = append(lines, fmt.Sprintf("%s %s", hosts, keyTypeAndKey))
+			}
+		}
+	}
+
+	if len(lines) == 0 {
+		t.Fatalf("failed to get any host key from container")
+	}
+
+	tmpFile := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(tmpFile, []byte(strings.Join(lines, "\n")+"\n"), 0600); err != nil {
+		t.Fatalf("failed to write known_hosts: %v", err)
+	}
+
+	return tmpFile
+}
+
 func TestSFTPStore(t *testing.T) {
 	// Check if docker is available
 	cmd := exec.Command("docker", "info")
@@ -58,12 +113,15 @@ func TestSFTPStore(t *testing.T) {
 		}
 	}()
 
+	knownHostsPath := writeKnownHosts(t, ctx, container, host, port)
+
 	st, err := NewSFTPStore(
 		host,
 		WithSFTPPort(port),
 		WithSFTPUser("test"),
 		WithSFTPPassword("test"),
 		WithSFTPBasePath("/upload/store"),
+		WithSFTPKnownHosts(knownHostsPath),
 	)
 	if err != nil {
 		t.Fatalf("NewSFTPStore failed: %v", err)

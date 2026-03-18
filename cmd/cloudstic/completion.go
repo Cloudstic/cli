@@ -43,7 +43,7 @@ _cloudstic() {
 
     local commands="init backup auth profile store restore list ls prune forget diff break-lock key cat completion version help"
 
-    local global_flags="-store -profile -profiles-file -s3-endpoint -s3-region -s3-profile -s3-access-key -s3-secret-key -source-sftp-password -source-sftp-key -store-sftp-password -store-sftp-key -encryption-key -password -recovery-key -kms-key-arn -kms-region -kms-endpoint -disable-packfile -prompt -no-prompt -verbose -quiet -debug"
+    local global_flags="-store -profile -profiles-file -s3-endpoint -s3-region -s3-profile -s3-access-key -s3-secret-key -source-sftp-password -source-sftp-key -source-sftp-known-hosts -source-sftp-insecure -store-sftp-password -store-sftp-key -store-sftp-known-hosts -store-sftp-insecure -encryption-key -password -recovery-key -kms-key-arn -kms-region -kms-endpoint -disable-packfile -prompt -no-prompt -verbose -quiet -debug"
 
     # Identify the subcommand
     local cmd=""
@@ -53,7 +53,7 @@ _cloudstic() {
             -*)
                 # skip flags and their values
 				case "${words[i]}" in
-					-store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-store-sftp-password|-store-sftp-key|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-all-profiles|-auth-ref|-google-credentials|-google-token-file|-onedrive-client-id|-onedrive-token-file|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account|-json|-xattr-namespaces)
+					-store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-source-sftp-known-hosts|-store-sftp-password|-store-sftp-key|-store-sftp-known-hosts|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-all-profiles|-auth-ref|-google-credentials|-google-token-file|-onedrive-client-id|-onedrive-token-file|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account|-json|-xattr-namespaces)
 						((i++)) ;;
 				esac
                 ;;
@@ -184,7 +184,7 @@ _cloudstic() {
 			init)
 				cmd_flags="-profiles-file -yes" ;;
 			new)
-				cmd_flags="-profiles-file -name -uri -s3-region -s3-profile -s3-endpoint -s3-access-key -s3-secret-key -s3-access-key-secret -s3-secret-key-secret -store-sftp-password -store-sftp-key -store-sftp-password-secret -store-sftp-key-secret -password-secret -encryption-key-secret -recovery-key-secret -kms-key-arn -kms-region -kms-endpoint" ;;
+				cmd_flags="-profiles-file -name -uri -s3-region -s3-profile -s3-endpoint -s3-access-key -s3-secret-key -s3-access-key-secret -s3-secret-key-secret -store-sftp-password -store-sftp-key -store-sftp-known-hosts -store-sftp-insecure -store-sftp-password-secret -store-sftp-key-secret -password-secret -encryption-key-secret -recovery-key-secret -kms-key-arn -kms-region -kms-endpoint" ;;
                 *)
                     cmd_flags="" ;;
             esac
@@ -259,8 +259,12 @@ _cloudstic() {
         '-s3-secret-key[S3 secret access key]:secret:'
         '-source-sftp-password[SFTP source password]:password:'
         '-source-sftp-key[Path to SSH private key for SFTP source]:key:_files'
+        '-source-sftp-known-hosts[Path to known_hosts file for SFTP source]:path:_files'
+        '-source-sftp-insecure[Skip host key validation for SFTP source (INSECURE)]'
         '-store-sftp-password[SFTP store password]:password:'
         '-store-sftp-key[Path to SSH private key for SFTP store]:key:_files'
+        '-store-sftp-known-hosts[Path to known_hosts file for SFTP store]:path:_files'
+        '-store-sftp-insecure[Skip host key validation for SFTP store (INSECURE)]'
         '-encryption-key[Platform key (hex-encoded)]:key:'
         '-password[Repository password]:password:'
         '-recovery-key[Recovery key (24-word mnemonic)]:words:'
@@ -474,6 +478,8 @@ _cloudstic() {
                         '-s3-secret-key-secret[Secret ref for S3 secret key]:ref:' \
                         '-store-sftp-password[SFTP password]:password:' \
                         '-store-sftp-key[SFTP private key path]:path:_files' \
+                        '-store-sftp-known-hosts[SFTP known_hosts path]:path:_files' \
+                        '-store-sftp-insecure[Skip SFTP host key validation (INSECURE)]' \
                         '-store-sftp-password-secret[Secret ref for SFTP password]:ref:' \
                         '-store-sftp-key-secret[Secret ref for SFTP key path]:ref:' \
                         '-password-secret[Secret ref for repository password]:ref:' \
@@ -615,8 +621,12 @@ complete -c cloudstic -l s3-access-key -x -d 'S3 access key ID'
 complete -c cloudstic -l s3-secret-key -x -d 'S3 secret access key'
 complete -c cloudstic -l source-sftp-password -x -d 'SFTP source password'
 complete -c cloudstic -l source-sftp-key -r -F -d 'Path to SSH private key for SFTP source'
+complete -c cloudstic -l source-sftp-known-hosts -r -F -d 'Path to known_hosts file for SFTP source'
+complete -c cloudstic -l source-sftp-insecure -d 'Skip host key validation for SFTP source (INSECURE)'
 complete -c cloudstic -l store-sftp-password -x -d 'SFTP store password'
 complete -c cloudstic -l store-sftp-key -r -F -d 'Path to SSH private key for SFTP store'
+complete -c cloudstic -l store-sftp-known-hosts -r -F -d 'Path to known_hosts file for SFTP store'
+complete -c cloudstic -l store-sftp-insecure -d 'Skip host key validation for SFTP store (INSECURE)'
 complete -c cloudstic -l encryption-key -x -d 'Platform key (hex-encoded)'
 complete -c cloudstic -l password -x -d 'Repository password'
 complete -c cloudstic -l recovery-key -x -d 'Recovery key (24-word mnemonic)'
@@ -684,6 +694,10 @@ complete -c cloudstic -n '__fish_seen_subcommand_from store; and not __fish_seen
 complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from list' -l profiles-file -r -F -d 'Path to profiles YAML file'
 complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from show' -l profiles-file -r -F -d 'Path to profiles YAML file'
 complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from new' -l profiles-file -r -F -d 'Path to profiles YAML file'
+complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from new' -l store-sftp-password -x -d 'SFTP store password'
+complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from new' -l store-sftp-key -r -F -d 'Path to SSH private key for SFTP store'
+complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from new' -l store-sftp-known-hosts -r -F -d 'Path to known_hosts file for SFTP store'
+complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from new' -l store-sftp-insecure -d 'Skip host key validation for SFTP store (INSECURE)'
 complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from verify' -l profiles-file -r -F -d 'Path to profiles YAML file'
 complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from init' -l profiles-file -r -F -d 'Path to profiles YAML file'
 complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from init' -l yes -d 'Initialize without confirmation prompt'

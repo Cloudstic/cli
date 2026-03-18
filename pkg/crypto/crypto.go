@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"math"
 
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/hkdf"
@@ -36,6 +37,9 @@ var (
 // Encrypt encrypts plaintext using AES-256-GCM with a random nonce.
 // Returns version(1) || nonce(12) || ciphertext || tag(16).
 func Encrypt(plaintext, key []byte) ([]byte, error) {
+	if len(plaintext) > math.MaxInt-Overhead {
+		return nil, fmt.Errorf("crypto: plaintext too large")
+	}
 	gcm, err := newGCM(key)
 	if err != nil {
 		return nil, err

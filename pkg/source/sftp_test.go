@@ -1,10 +1,14 @@
 package source
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cloudstic/cli/internal/core"
@@ -12,6 +16,7 @@ import (
 	"github.com/pkg/sftp"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 // startSFTPContainer spins up an OpenSSH SFTP server using the atmoz/sftp
@@ -47,20 +52,74 @@ func startSFTPContainer(t *testing.T, ctx context.Context) (testcontainers.Conta
 	return container, host, mappedPort.Port()
 }
 
-// dialTestSFTP creates a raw SFTP client for test seeding purposes.
-func dialTestSFTP(t *testing.T, host, port string) *sftp.Client {
+func dialTestSFTP(t *testing.T, host, port, knownHostsPath string) *sftp.Client {
 	t.Helper()
+	hostKeyCallback, err := knownhosts.New(knownHostsPath)
+	if err != nil {
+		t.Fatalf("failed to create host key callback for seeding: %v", err)
+	}
 	cfg := intsftp.Config{
-		Host:     host,
-		Port:     port,
-		User:     "test",
-		Password: "test",
+		Host:            host,
+		Port:            port,
+		User:            "test",
+		Password:        "test",
+		HostKeyCallback: hostKeyCallback,
 	}
 	c, err := intsftp.Dial(cfg)
 	if err != nil {
 		t.Fatalf("dialTestSFTP: %v", err)
 	}
 	return c
+}
+
+func writeKnownHosts(t *testing.T, ctx context.Context, container testcontainers.Container, host, port string) string {
+	t.Helper()
+
+	var lines []string
+	// Get all generated public host keys.
+	for _, keyType := range []string{"ed25519", "rsa", "ecdsa"} {
+		path := fmt.Sprintf("/etc/ssh/ssh_host_%s_key.pub", keyType)
+		exitCode, reader, err := container.Exec(ctx, []string{"cat", path})
+		if err == nil && exitCode == 0 {
+			var buf bytes.Buffer
+			if _, err := buf.ReadFrom(reader); err == nil {
+				pubKeyLine := strings.TrimSpace(buf.String())
+				if pubKeyLine == "" {
+					continue
+				}
+				parts := strings.Fields(pubKeyLine)
+				if len(parts) < 2 {
+					continue
+				}
+				keyTypeAndKey := parts[0] + " " + parts[1]
+
+				// known_hosts format: host1,host2,... keytype key
+				// We include host, 127.0.0.1, and ::1 to be safe against resolution differences.
+				hosts := fmt.Sprintf("[%s]:%s", host, port)
+				if host != "127.0.0.1" {
+					hosts += fmt.Sprintf(",[127.0.0.1]:%s", port)
+				}
+				if host != "::1" {
+					hosts += fmt.Sprintf(",[::1]:%s", port)
+				}
+				if host != "localhost" {
+					hosts += fmt.Sprintf(",[localhost]:%s", port)
+				}
+				lines = append(lines, fmt.Sprintf("%s %s", hosts, keyTypeAndKey))
+			}
+		}
+	}
+
+	if len(lines) == 0 {
+		t.Fatalf("failed to get any host key from container")
+	}
+
+	tmpFile := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(tmpFile, []byte(strings.Join(lines, "\n")+"\n"), 0600); err != nil {
+		t.Fatalf("failed to write known_hosts: %v", err)
+	}
+
+	return tmpFile
 }
 
 func TestSFTPSource(t *testing.T) {
@@ -79,17 +138,18 @@ func TestSFTPSource(t *testing.T) {
 		}
 	}()
 
+	knownHostsPath := writeKnownHosts(t, ctx, container, host, port)
 	basePath := "/upload/source"
 
 	// Seed some files via a direct SFTP connection.
-	seedClient := dialTestSFTP(t, host, port)
+	seedClient := dialTestSFTP(t, host, port, knownHostsPath)
 
 	if err := seedClient.MkdirAll(basePath + "/subdir"); err != nil {
 		t.Fatalf("seed mkdir: %v", err)
 	}
 
 	for _, rel := range []string{"file1.txt", "subdir/file2.txt"} {
-		f, err := seedClient.Create(fmt.Sprintf("%s/%s", basePath, rel))
+		f, err := seedClient.Create(basePath + "/" + rel)
 		if err != nil {
 			t.Fatalf("seed create %s: %v", rel, err)
 		}
@@ -108,6 +168,7 @@ func TestSFTPSource(t *testing.T) {
 		WithSFTPSourceUser("test"),
 		WithSFTPSourcePassword("test"),
 		WithSFTPSourceBasePath(basePath),
+		WithSFTPSourceKnownHosts(knownHostsPath),
 	)
 	if err != nil {
 		t.Fatalf("NewSFTPSource failed: %v", err)
@@ -131,8 +192,8 @@ func TestSFTPSource(t *testing.T) {
 	if sz.Files != 2 {
 		t.Errorf("Expected 2 files, got %d", sz.Files)
 	}
-	if sz.Bytes != int64(len("hello world")*2) {
-		t.Errorf("Expected %d bytes, got %d", len("hello world")*2, sz.Bytes)
+	if sz.Bytes != 22 { // "hello world" x 2
+		t.Errorf("Expected 22 bytes, got %d", sz.Bytes)
 	}
 
 	// Test Walk()
@@ -148,13 +209,14 @@ func TestSFTPSource(t *testing.T) {
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("Walk() failed: %v", err)
+		t.Fatalf("Walk failed: %v", err)
 	}
+	// 2 files + 1 subdir = 3 entries
 	if len(walkedFiles) != 2 {
-		t.Errorf("Expected to walk 2 files, got %d: %v", len(walkedFiles), walkedFiles)
+		t.Errorf("Expected 2 files walked, got %d", len(walkedFiles))
 	}
 	if len(walkedFolders) != 1 {
-		t.Errorf("Expected to walk 1 folder, got %d: %v", len(walkedFolders), walkedFolders)
+		t.Errorf("Expected 1 folder walked, got %d", len(walkedFolders))
 	}
 
 	// Test GetFileStream

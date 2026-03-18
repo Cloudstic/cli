@@ -63,8 +63,6 @@ func (s *LocalSource) Info() core.SourceInfo {
 		DriveName: s.volumeLabel,
 		FsType:    s.fsType,
 
-		VolumeUUID:  s.volumeUUID,
-		VolumeLabel: s.volumeLabel,
 		Identity: func() string {
 			if s.volumeUUID != "" {
 				return s.volumeUUID

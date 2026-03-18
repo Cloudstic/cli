@@ -86,7 +86,7 @@ func TestRenderSnapshotTable_WithReasons(t *testing.T) {
 	}
 }
 
-func TestRenderSnapshotTable_VolumeLabel(t *testing.T) {
+func TestRenderSnapshotTable_DriveName(t *testing.T) {
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}}
 
@@ -97,10 +97,10 @@ func TestRenderSnapshotTable_VolumeLabel(t *testing.T) {
 				Seq:     1,
 				Created: "2024-01-01T00:00:00Z",
 				Source: &core.SourceInfo{
-					Type:        "gdrive",
-					Account:     "user@gmail.com",
-					Path:        "/",
-					VolumeLabel: "My Drive",
+					Type:      "gdrive",
+					Account:   "user@gmail.com",
+					Path:      "/",
+					DriveName: "My Drive",
 				},
 			},
 		},
@@ -124,18 +124,18 @@ func TestSourceGroupKey(t *testing.T) {
 	}{
 		{"nil source", nil, ""},
 		{
-			"local with UUID",
-			&core.SourceInfo{Type: "local", Account: "host", Path: ".", VolumeUUID: "UUID-1"},
+			"local with identity",
+			&core.SourceInfo{Type: "local", Account: "host", Path: ".", Identity: "UUID-1"},
 			"local\x00UUID-1\x00.",
 		},
 		{
-			"gdrive no UUID",
+			"gdrive no identity",
 			&core.SourceInfo{Type: "gdrive", Account: "user@gmail.com", Path: "/"},
 			"gdrive\x00user@gmail.com\x00/",
 		},
 		{
-			"shared drive with UUID",
-			&core.SourceInfo{Type: "gdrive", Account: "user@gmail.com", Path: "/", VolumeUUID: "drive-123"},
+			"shared drive with identity",
+			&core.SourceInfo{Type: "gdrive", Account: "user@gmail.com", Path: "/", Identity: "drive-123"},
 			"gdrive\x00drive-123\x00/",
 		},
 	}
@@ -163,7 +163,7 @@ func TestSourceGroupLabel(t *testing.T) {
 		},
 		{
 			"gdrive with label",
-			&core.SourceInfo{Type: "gdrive", Account: "user@gmail.com", Path: "/", VolumeLabel: "My Drive"},
+			&core.SourceInfo{Type: "gdrive", Account: "user@gmail.com", Path: "/", DriveName: "My Drive"},
 			"gdrive (My Drive) · user@gmail.com · /",
 		},
 	}
@@ -186,7 +186,7 @@ func TestRenderGroupedSnapshotTables(t *testing.T) {
 			Ref: "snapshot/aaa",
 			Snap: core.Snapshot{
 				Seq: 1, Created: "2024-01-01T00:00:00Z",
-				Source: &core.SourceInfo{Type: "gdrive", Account: "user@gmail.com", Path: "/", VolumeLabel: "My Drive"},
+				Source: &core.SourceInfo{Type: "gdrive", Account: "user@gmail.com", Path: "/", DriveName: "My Drive"},
 			},
 		},
 		{
@@ -200,7 +200,7 @@ func TestRenderGroupedSnapshotTables(t *testing.T) {
 			Ref: "snapshot/ccc",
 			Snap: core.Snapshot{
 				Seq: 3, Created: "2024-01-03T00:00:00Z",
-				Source: &core.SourceInfo{Type: "gdrive", Account: "user@gmail.com", Path: "/", VolumeLabel: "My Drive"},
+				Source: &core.SourceInfo{Type: "gdrive", Account: "user@gmail.com", Path: "/", DriveName: "My Drive"},
 			},
 		},
 	}

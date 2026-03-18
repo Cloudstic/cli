@@ -54,7 +54,7 @@ func TestRunList_Group(t *testing.T) {
 					Ref: "snapshot/abc",
 					Snap: core.Snapshot{
 						Seq: 1, Created: "2024-01-01",
-						Source: &core.SourceInfo{Type: "gdrive", Account: "a@b.com", Path: "/", VolumeLabel: "My Drive"},
+						Source: &core.SourceInfo{Type: "gdrive", Account: "a@b.com", Path: "/", DriveName: "My Drive"},
 					},
 				},
 				{

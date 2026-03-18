@@ -48,9 +48,6 @@ func (r *runner) renderSnapshotTable(entries []engine.SnapshotEntry, reasons map
 		if e.Snap.Source != nil {
 			source = e.Snap.Source.Type
 			driveName := e.Snap.Source.DriveName
-			if driveName == "" {
-				driveName = e.Snap.Source.VolumeLabel
-			}
 			if driveName != "" {
 				source += " (" + driveName + ")"
 			}
@@ -85,9 +82,6 @@ func sourceGroupKey(s *core.SourceInfo) string {
 	if s.Identity != "" {
 		return s.Type + "\x00" + s.Identity + "\x00" + pathToken
 	}
-	if s.VolumeUUID != "" {
-		return s.Type + "\x00" + s.VolumeUUID + "\x00" + pathToken
-	}
 	return s.Type + "\x00" + s.Account + "\x00" + pathToken
 }
 
@@ -99,9 +93,6 @@ func sourceGroupLabel(s *core.SourceInfo) string {
 	var parts []string
 	label := s.Type
 	driveName := s.DriveName
-	if driveName == "" {
-		driveName = s.VolumeLabel
-	}
 	if driveName != "" {
 		label += " (" + driveName + ")"
 	}

@@ -159,3 +159,11 @@ func TestS3Store(t *testing.T) {
 		t.Fatalf("Expected key to be deleted")
 	}
 }
+
+func TestWithS3Prefix_NormalizesPrefix(t *testing.T) {
+	var opts s3Options
+	WithS3Prefix("nested/prefix")(&opts)
+	if opts.prefix != "nested/prefix/" {
+		t.Fatalf("prefix = %q", opts.prefix)
+	}
+}

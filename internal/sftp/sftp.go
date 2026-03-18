@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 // Config holds the parameters needed to connect to an SFTP server.
@@ -18,6 +20,13 @@ type Config struct {
 	Password       string // password auth (optional if key is set)
 	PrivateKeyPath string // path to PEM-encoded private key (optional if password is set)
 	BasePath       string
+	// HostKeyCallback is called during the cryptographic handshake to
+	// validate the server's host key. If nil, a default secure callback
+	// is used that checks KnownHostsPath or the default system known_hosts.
+	HostKeyCallback ssh.HostKeyCallback
+	// KnownHostsPath is the path to the known_hosts file. If empty,
+	// platform defaults are used (~/.ssh/known_hosts).
+	KnownHostsPath string
 }
 
 // Dial returns a new SFTP client connected to the server described by cfg.
@@ -32,10 +41,18 @@ func Dial(cfg Config) (*sftp.Client, error) {
 		return nil, err
 	}
 
+	hostKeyCallback := cfg.HostKeyCallback
+	if hostKeyCallback == nil {
+		hostKeyCallback, err = defaultHostKeyCallback(cfg.KnownHostsPath)
+		if err != nil {
+			return nil, fmt.Errorf("host key callback: %w", err)
+		}
+	}
+
 	sshCfg := &ssh.ClientConfig{
 		User:            cfg.User,
 		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), //nolint:gosec // users may override via SSH config
+		HostKeyCallback: hostKeyCallback,
 	}
 
 	conn, err := ssh.Dial("tcp", net.JoinHostPort(cfg.Host, port), sshCfg)
@@ -48,7 +65,25 @@ func Dial(cfg Config) (*sftp.Client, error) {
 		_ = conn.Close()
 		return nil, fmt.Errorf("sftp client: %w", err)
 	}
+
 	return client, nil
+}
+
+func defaultHostKeyCallback(knownHostsPath string) (ssh.HostKeyCallback, error) {
+	if knownHostsPath == "" {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			knownHostsPath = filepath.Join(home, ".ssh", "known_hosts")
+		}
+	}
+
+	if knownHostsPath != "" {
+		if _, err := os.Stat(knownHostsPath); err == nil {
+			return knownhosts.New(knownHostsPath)
+		}
+	}
+
+	return nil, fmt.Errorf("no known_hosts file found at %q; use ssh-keyscan to add the host key or specify KnownHostsPath", knownHostsPath)
 }
 
 func buildAuthMethods(cfg Config) ([]ssh.AuthMethod, error) {

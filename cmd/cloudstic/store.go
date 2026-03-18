@@ -16,6 +16,7 @@ import (
 	"github.com/cloudstic/cli/pkg/source"
 	"github.com/cloudstic/cli/pkg/store"
 	"github.com/moby/term"
+	"golang.org/x/crypto/ssh"
 )
 
 // openStore initializes the raw object store with debug wrapping applied.
@@ -315,6 +316,12 @@ func (g *globalFlags) buildSFTPStoreOpts(uri *storeURIParts) []store.SFTPStoreOp
 	if k := *g.storeSFTPKey; k != "" {
 		opts = append(opts, store.WithSFTPKey(k))
 	}
+	if *g.storeSFTPInsecure {
+		opts = append(opts, store.WithSFTPHostKeyCallback(ssh.InsecureIgnoreHostKey())) //nolint:gosec // explicitly requested by user
+	}
+	if *g.storeSFTPKnownHosts != "" {
+		opts = append(opts, store.WithSFTPKnownHosts(*g.storeSFTPKnownHosts))
+	}
 	return opts
 }
 
@@ -423,6 +430,12 @@ func (g *globalFlags) buildSFTPSourceOpts(uri *sourceURIParts) []source.SFTPOpti
 	}
 	if k := *g.sourceSFTPKey; k != "" {
 		opts = append(opts, source.WithSFTPSourceKey(k))
+	}
+	if *g.sourceSFTPInsecure {
+		opts = append(opts, source.WithSFTPSourceHostKeyCallback(ssh.InsecureIgnoreHostKey())) //nolint:gosec // explicitly requested by user
+	}
+	if *g.sourceSFTPKnownHosts != "" {
+		opts = append(opts, source.WithSFTPSourceKnownHosts(*g.sourceSFTPKnownHosts))
 	}
 	return opts
 }

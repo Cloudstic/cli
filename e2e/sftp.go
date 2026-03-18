@@ -1,24 +1,31 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"net"
+	"os"
 	"path"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pkg/sftp"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 // sftpTestStore implements TestStore for SFTP.
 type sftpTestStore struct {
-	host     string
-	port     string
-	user     string
-	password string
-	basePath string
+	host           string
+	port           string
+	user           string
+	password       string
+	basePath       string
+	knownHostsPath string
 }
 
 var _ TestStore = (*sftpTestStore)(nil)
@@ -26,6 +33,7 @@ var _ TestStore = (*sftpTestStore)(nil)
 func newSFTPTestStore(t *testing.T) *sftpTestStore {
 	ctx := context.Background()
 	container, host, port := startSFTPContainer(t, ctx)
+	knownHostsPath := writeKnownHosts(t, ctx, container, host, port)
 
 	t.Cleanup(func() {
 		if err := container.Terminate(context.Background()); err != nil {
@@ -34,11 +42,12 @@ func newSFTPTestStore(t *testing.T) *sftpTestStore {
 	})
 
 	return &sftpTestStore{
-		host:     host,
-		port:     port,
-		user:     "test",
-		password: "test",
-		basePath: "/upload/store",
+		host:           host,
+		port:           port,
+		user:           "test",
+		password:       "test",
+		basePath:       "/upload/store",
+		knownHostsPath: knownHostsPath,
 	}
 }
 
@@ -48,17 +57,19 @@ func (s *sftpTestStore) Setup(t *testing.T) []string {
 	return []string{
 		"-store", "sftp://" + s.user + "@" + s.host + ":" + s.port + s.basePath,
 		"-store-sftp-password", s.password,
+		"-store-sftp-known-hosts", s.knownHostsPath,
 	}
 }
 
 // sftpTestSource implements TestSource for SFTP.
 type sftpTestSource struct {
-	host       string
-	port       string
-	user       string
-	password   string
-	rootPath   string
-	sftpClient *sftp.Client
+	host           string
+	port           string
+	user           string
+	password       string
+	rootPath       string
+	knownHostsPath string
+	sftpClient     *sftp.Client
 }
 
 var _ TestSource = (*sftpTestSource)(nil)
@@ -66,6 +77,7 @@ var _ TestSource = (*sftpTestSource)(nil)
 func newSFTPTestSource(t *testing.T) *sftpTestSource {
 	ctx := context.Background()
 	container, host, port := startSFTPContainer(t, ctx)
+	knownHostsPath := writeKnownHosts(t, ctx, container, host, port)
 
 	t.Cleanup(func() {
 		if err := container.Terminate(context.Background()); err != nil {
@@ -74,12 +86,17 @@ func newSFTPTestSource(t *testing.T) *sftpTestSource {
 	})
 
 	// Setup a seeding client
+	hostKeyCallback, err := knownhosts.New(knownHostsPath)
+	if err != nil {
+		t.Fatalf("failed to create host key callback for seeding: %v", err)
+	}
+
 	sshCfg := &ssh.ClientConfig{
 		User: "test",
 		Auth: []ssh.AuthMethod{
 			ssh.Password("test"),
 		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: hostKeyCallback,
 	}
 	conn, err := ssh.Dial("tcp", net.JoinHostPort(host, port), sshCfg)
 	if err != nil {
@@ -91,12 +108,13 @@ func newSFTPTestSource(t *testing.T) *sftpTestSource {
 	}
 
 	return &sftpTestSource{
-		host:       host,
-		port:       port,
-		user:       "test",
-		password:   "test",
-		rootPath:   "/upload/source",
-		sftpClient: client,
+		host:           host,
+		port:           port,
+		user:           "test",
+		password:       "test",
+		rootPath:       "/upload/source",
+		knownHostsPath: knownHostsPath,
+		sftpClient:     client,
 	}
 }
 
@@ -106,6 +124,7 @@ func (s *sftpTestSource) Setup(t *testing.T) []string {
 	return []string{
 		"-source", "sftp://" + s.user + "@" + s.host + ":" + s.port + s.rootPath,
 		"-source-sftp-password", s.password,
+		"-source-sftp-known-hosts", s.knownHostsPath,
 	}
 }
 
@@ -158,6 +177,56 @@ func startSFTPContainer(t *testing.T, ctx context.Context) (testcontainers.Conta
 	}
 
 	return container, host, mappedPort.Port()
+}
+
+func writeKnownHosts(t *testing.T, ctx context.Context, container testcontainers.Container, host, port string) string {
+	t.Helper()
+
+	var lines []string
+	// Get all generated public host keys.
+	for _, keyType := range []string{"ed25519", "rsa", "ecdsa"} {
+		path := fmt.Sprintf("/etc/ssh/ssh_host_%s_key.pub", keyType)
+		exitCode, reader, err := container.Exec(ctx, []string{"cat", path})
+		if err == nil && exitCode == 0 {
+			var buf bytes.Buffer
+			if _, err := buf.ReadFrom(reader); err == nil {
+				pubKeyLine := strings.TrimSpace(buf.String())
+				if pubKeyLine == "" {
+					continue
+				}
+				parts := strings.Fields(pubKeyLine)
+				if len(parts) < 2 {
+					continue
+				}
+				keyTypeAndKey := parts[0] + " " + parts[1]
+
+				// known_hosts format: host1,host2,... keytype key
+				// We include host, 127.0.0.1, and ::1 to be safe against resolution differences.
+				hosts := fmt.Sprintf("[%s]:%s", host, port)
+				if host != "127.0.0.1" {
+					hosts += fmt.Sprintf(",[127.0.0.1]:%s", port)
+				}
+				if host != "::1" {
+					hosts += fmt.Sprintf(",[::1]:%s", port)
+				}
+				if host != "localhost" {
+					hosts += fmt.Sprintf(",[localhost]:%s", port)
+				}
+				lines = append(lines, fmt.Sprintf("%s %s", hosts, keyTypeAndKey))
+			}
+		}
+	}
+
+	if len(lines) == 0 {
+		t.Fatalf("failed to get any host key from container")
+	}
+
+	tmpFile := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(tmpFile, []byte(strings.Join(lines, "\n")+"\n"), 0600); err != nil {
+		t.Fatalf("failed to write known_hosts: %v", err)
+	}
+
+	return tmpFile
 }
 
 // mkdirAllSFTP helper copied and adapted for E2E tests

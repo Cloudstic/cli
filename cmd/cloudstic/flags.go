@@ -27,7 +27,11 @@ type globalFlags struct {
 	s3Endpoint, s3Region, s3Profile   *string
 	s3AccessKey, s3SecretKey          *string
 	sourceSFTPPassword, sourceSFTPKey *string
+	sourceSFTPInsecure                *bool
+	sourceSFTPKnownHosts              *string
 	storeSFTPPassword, storeSFTPKey   *string
+	storeSFTPInsecure                 *bool
+	storeSFTPKnownHosts               *string
 	encryptionKey                     *string
 	password                          *string
 	recoveryKey                       *string
@@ -54,9 +58,13 @@ func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 
 	g.sourceSFTPPassword = fs.String("source-sftp-password", envDefault("CLOUDSTIC_SOURCE_SFTP_PASSWORD", ""), "SFTP source password")
 	g.sourceSFTPKey = fs.String("source-sftp-key", envDefault("CLOUDSTIC_SOURCE_SFTP_KEY", ""), "Path to SSH private key for SFTP source")
+	g.sourceSFTPInsecure = fs.Bool("source-sftp-insecure", envBool("CLOUDSTIC_SOURCE_SFTP_INSECURE"), "Skip host key validation for SFTP source (INSECURE)")
+	g.sourceSFTPKnownHosts = fs.String("source-sftp-known-hosts", envDefault("CLOUDSTIC_SOURCE_SFTP_KNOWN_HOSTS", ""), "Path to known_hosts file for SFTP source")
 
 	g.storeSFTPPassword = fs.String("store-sftp-password", envDefault("CLOUDSTIC_STORE_SFTP_PASSWORD", ""), "SFTP store password")
 	g.storeSFTPKey = fs.String("store-sftp-key", envDefault("CLOUDSTIC_STORE_SFTP_KEY", ""), "Path to SSH private key for SFTP store")
+	g.storeSFTPInsecure = fs.Bool("store-sftp-insecure", envBool("CLOUDSTIC_STORE_SFTP_INSECURE"), "Skip host key validation for SFTP store (INSECURE)")
+	g.storeSFTPKnownHosts = fs.String("store-sftp-known-hosts", envDefault("CLOUDSTIC_STORE_SFTP_KNOWN_HOSTS", ""), "Path to known_hosts file for SFTP store")
 
 	g.encryptionKey = fs.String("encryption-key", envDefault("CLOUDSTIC_ENCRYPTION_KEY", ""), "Platform key (hex-encoded, 32 bytes)")
 	g.password = fs.String("password", envDefault("CLOUDSTIC_PASSWORD", ""), "Repository password")

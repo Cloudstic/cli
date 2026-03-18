@@ -793,12 +793,14 @@ func TestPromptSecretReferenceWithFns_DarwinKeychain(t *testing.T) {
 		},
 	})
 
-	gotRef, err := promptSecretReferenceWithFns(context.Background(), 
+	gotRef, err := promptSecretReferenceWithFns(context.Background(),
 		"prod-store",
 		"repository password",
 		"CLOUDSTIC_PASSWORD",
 		"password",
-		func(_ context.Context, _ string, _ []string) (string, error) { return "macOS Keychain (keychain://)", nil },
+		func(_ context.Context, _ string, _ []string) (string, error) {
+			return "macOS Keychain (keychain://)", nil
+		},
 		func(_ context.Context, label, def string) (string, error) { return def, nil },
 		func(_ context.Context, _ string) (string, error) { return "super-secret", nil },
 		func(string) (string, bool) { return "", false },
@@ -814,12 +816,14 @@ func TestPromptSecretReferenceWithFns_DarwinKeychain(t *testing.T) {
 
 func TestPromptSecretReferenceWithFns_EnvFallback(t *testing.T) {
 	resolver := secretref.NewResolver(nil)
-	gotRef, err := promptSecretReferenceWithFns(context.Background(), 
+	gotRef, err := promptSecretReferenceWithFns(context.Background(),
 		"prod-store",
 		"repository password",
 		"CLOUDSTIC_PASSWORD",
 		"password",
-		func(_ context.Context, _ string, _ []string) (string, error) { return "Environment variable (env://)", nil },
+		func(_ context.Context, _ string, _ []string) (string, error) {
+			return "Environment variable (env://)", nil
+		},
 		func(_ context.Context, label, def string) (string, error) {
 			if label != "Env var name" {
 				t.Fatalf("unexpected label: %s", label)
@@ -851,12 +855,14 @@ func TestPromptSecretReferenceWithFns_KeychainWriteError(t *testing.T) {
 			store:       func(context.Context, secretref.Ref, string) error { return errors.New("write failed") },
 		},
 	})
-	_, err := promptSecretReferenceWithFns(context.Background(), 
+	_, err := promptSecretReferenceWithFns(context.Background(),
 		"prod-store",
 		"repository password",
 		"CLOUDSTIC_PASSWORD",
 		"password",
-		func(_ context.Context, _ string, _ []string) (string, error) { return "macOS Keychain (keychain://)", nil },
+		func(_ context.Context, _ string, _ []string) (string, error) {
+			return "macOS Keychain (keychain://)", nil
+		},
 		func(_ context.Context, _ string, def string) (string, error) { return def, nil },
 		func(_ context.Context, _ string) (string, error) { return "secret", nil },
 		func(string) (string, bool) { return "", false },
@@ -874,12 +880,14 @@ func TestPromptSecretReferenceWithFns_EmptySecret(t *testing.T) {
 	resolver := secretref.NewResolver(map[string]secretref.Backend{
 		"keychain": writableBackendStub{scheme: "keychain", displayName: "macOS Keychain", defaultRef: "keychain://cloudstic/store/prod-store/password"},
 	})
-	_, err := promptSecretReferenceWithFns(context.Background(), 
+	_, err := promptSecretReferenceWithFns(context.Background(),
 		"prod-store",
 		"repository password",
 		"CLOUDSTIC_PASSWORD",
 		"password",
-		func(_ context.Context, _ string, _ []string) (string, error) { return "macOS Keychain (keychain://)", nil },
+		func(_ context.Context, _ string, _ []string) (string, error) {
+			return "macOS Keychain (keychain://)", nil
+		},
 		func(_ context.Context, _ string, def string) (string, error) { return def, nil },
 		func(_ context.Context, _ string) (string, error) { return "", nil },
 		func(string) (string, bool) { return "", false },
@@ -911,12 +919,14 @@ func TestPromptSecretReferenceWithFns_DarwinKeychainAdoptsExisting(t *testing.T)
 			},
 		},
 	})
-	gotRef, err := promptSecretReferenceWithFns(context.Background(), 
+	gotRef, err := promptSecretReferenceWithFns(context.Background(),
 		"prod-store",
 		"repository password",
 		"CLOUDSTIC_PASSWORD",
 		"password",
-		func(_ context.Context, _ string, _ []string) (string, error) { return "macOS Keychain (keychain://)", nil },
+		func(_ context.Context, _ string, _ []string) (string, error) {
+			return "macOS Keychain (keychain://)", nil
+		},
 		func(_ context.Context, _ string, def string) (string, error) { return def, nil },
 		func(_ context.Context, _ string) (string, error) {
 			t.Fatal("promptSecret should not be called when key exists")
@@ -944,7 +954,7 @@ func TestPromptSecretReferenceWithFns_DarwinEnvUnsetSwitchesToKeychain(t *testin
 			store:       func(context.Context, secretref.Ref, string) error { return nil },
 		},
 	})
-	gotRef, err := promptSecretReferenceWithFns(context.Background(), 
+	gotRef, err := promptSecretReferenceWithFns(context.Background(),
 		"prod-store",
 		"repository password",
 		"CLOUDSTIC_PASSWORD",
@@ -1088,11 +1098,13 @@ func TestExistingStoreInteractivePlan(t *testing.T) {
 
 func TestConfigureStoreEncryptionSelection_Password(t *testing.T) {
 	var out strings.Builder
-	s, err := configureStoreEncryptionSelection(context.Background(), 
+	s, err := configureStoreEncryptionSelection(context.Background(),
 		cloudstic.ProfileStore{},
 		"prod",
 		"Password (recommended for interactive use)",
-		func(context.Context, string, string, string, string) (string, error) { return "env://MY_BACKUP_PASSWORD", nil },
+		func(context.Context, string, string, string, string) (string, error) {
+			return "env://MY_BACKUP_PASSWORD", nil
+		},
 		func(context.Context, string, string) (string, error) { return "", nil },
 		&out,
 	)
@@ -1109,7 +1121,7 @@ func TestConfigureStoreEncryptionSelection_Password(t *testing.T) {
 
 func TestConfigureStoreEncryptionSelection_KMS(t *testing.T) {
 	var out strings.Builder
-	s, err := configureStoreEncryptionSelection(context.Background(), 
+	s, err := configureStoreEncryptionSelection(context.Background(),
 		cloudstic.ProfileStore{},
 		"prod",
 		"AWS KMS key (enterprise)",
@@ -1136,7 +1148,7 @@ func TestConfigureStoreEncryptionSelection_KMS(t *testing.T) {
 
 func TestConfigureStoreEncryptionSelection_NoEncryption(t *testing.T) {
 	var out strings.Builder
-	_, err := configureStoreEncryptionSelection(context.Background(), 
+	_, err := configureStoreEncryptionSelection(context.Background(),
 		cloudstic.ProfileStore{},
 		"prod",
 		"No encryption (not recommended)",
@@ -1153,7 +1165,7 @@ func TestConfigureStoreEncryptionSelection_NoEncryption(t *testing.T) {
 }
 
 func TestConfigureStoreEncryptionSelection_KMSError(t *testing.T) {
-	_, err := configureStoreEncryptionSelection(context.Background(), 
+	_, err := configureStoreEncryptionSelection(context.Background(),
 		cloudstic.ProfileStore{},
 		"prod",
 		"AWS KMS key (enterprise)",

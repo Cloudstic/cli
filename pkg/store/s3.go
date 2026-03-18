@@ -76,7 +76,7 @@ func WithS3Credentials(accessKey, secretKey string) S3Option {
 // Use this to isolate multiple repositories within a single bucket.
 func WithS3Prefix(prefix string) S3Option {
 	return func(o *s3Options) {
-		o.prefix = prefix
+		o.prefix = normalizeKeyPrefix(prefix)
 	}
 }
 

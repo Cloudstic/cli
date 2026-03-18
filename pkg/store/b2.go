@@ -26,7 +26,7 @@ type B2Option func(*b2Options)
 // (e.g. "prod/" and "staging/").
 func WithPrefix(prefix string) B2Option {
 	return func(o *b2Options) {
-		o.prefix = prefix
+		o.prefix = normalizeKeyPrefix(prefix)
 	}
 }
 

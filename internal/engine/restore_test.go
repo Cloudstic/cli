@@ -271,6 +271,63 @@ func TestRestoreManager_RunToDir_PathFilter(t *testing.T) {
 	}
 }
 
+func TestRestoreManager_RunToDir_SkipsExistingFiles(t *testing.T) {
+	dest := setupBackupForRestore(t)
+	rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())
+
+	outDir := filepath.Join(t.TempDir(), "restored")
+	if err := os.MkdirAll(filepath.Join(outDir, "subdir"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(outDir, "restore_me.txt"), []byte("existing"), 0o644); err != nil {
+		t.Fatalf("write restore_me: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(outDir, "subdir", "nested.txt"), []byte("existing nested"), 0o644); err != nil {
+		t.Fatalf("write nested: %v", err)
+	}
+
+	writer, err := NewFSRestoreWriter(outDir)
+	if err != nil {
+		t.Fatalf("NewFSRestoreWriter failed: %v", err)
+	}
+	result, err := rsMgr.Run(context.Background(), writer, "")
+	if err != nil {
+		t.Fatalf("RunToDir failed: %v", err)
+	}
+	if result.Warnings == 0 {
+		t.Fatal("expected warnings for skipped existing files")
+	}
+	if got, err := os.ReadFile(filepath.Join(outDir, "restore_me.txt")); err != nil || string(got) != "existing" {
+		t.Fatalf("restore_me.txt = %q, %v", string(got), err)
+	}
+	if got, err := os.ReadFile(filepath.Join(outDir, "subdir", "nested.txt")); err != nil || string(got) != "existing nested" {
+		t.Fatalf("nested.txt = %q, %v", string(got), err)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "subdir", "deep", "file.txt")); err != nil {
+		t.Fatalf("expected missing file to be restored: %v", err)
+	}
+	if result.FilesWritten == 0 {
+		t.Fatal("expected at least one file to be restored")
+	}
+}
+
+func TestFSRestoreWriter_WarnDedupf(t *testing.T) {
+	writer, err := NewFSRestoreWriter(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFSRestoreWriter failed: %v", err)
+	}
+	fw := writer.(*fsRestoreWriter)
+	var warnings []string
+	fw.SetWarningFunc(func(msg string) { warnings = append(warnings, msg) })
+
+	fw.warnDedupf("could not set xattr %q: %v", "com.apple.provenance", os.ErrPermission)
+	fw.warnDedupf("could not set xattr %q: %v", "com.apple.provenance", os.ErrPermission)
+
+	if len(warnings) != 1 {
+		t.Fatalf("warnings=%d want=1: %#v", len(warnings), warnings)
+	}
+}
+
 func TestRestoreManager_RunToDir_DryRun_NoWrites(t *testing.T) {
 	dest := setupBackupForRestore(t)
 	rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())

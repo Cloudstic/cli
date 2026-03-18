@@ -128,22 +128,21 @@ func (r *runner) runSingleBackup(a *backupArgs) int {
 
 	ctx := context.Background()
 
-	src, err := initSource(
-		ctx,
-		a.sourceURI,
-		a.skipNativeFiles,
-		a.volumeUUID,
-		a.googleCreds,
-		a.googleTokenFile,
-		a.onedriveClientID,
-		a.onedriveTokenFile,
-		a.skipMode,
-		a.skipFlags,
-		a.skipXattrs,
-		a.xattrNamespaces,
-		a.g,
-		excludePatterns,
-	)
+	src, err := initSource(ctx, initSourceOptions{
+		sourceURI:         a.sourceURI,
+		skipNativeFiles:   a.skipNativeFiles,
+		volumeUUID:        a.volumeUUID,
+		googleCreds:       a.googleCreds,
+		googleTokenFile:   a.googleTokenFile,
+		onedriveClientID:  a.onedriveClientID,
+		onedriveTokenFile: a.onedriveTokenFile,
+		skipMode:          a.skipMode,
+		skipFlags:         a.skipFlags,
+		skipXattrs:        a.skipXattrs,
+		xattrNamespaces:   a.xattrNamespaces,
+		globalFlags:       a.g,
+		excludePatterns:   excludePatterns,
+	})
 	if err != nil {
 		return r.fail("Failed to init source: %v", err)
 	}
@@ -603,93 +602,109 @@ func (r *runner) printBackupSummary(res *engine.RunResult) {
 	}
 }
 
-func initSource(ctx context.Context, sourceURI string, skipNativeFiles bool, volumeUUID, googleCreds, googleTokenFile, onedriveClientID, onedriveTokenFile string, skipMode, skipFlags, skipXattrs bool, xattrNamespaces string, g *globalFlags, excludePatterns []string) (source.Source, error) {
-	uri, err := parseSourceURI(sourceURI)
+type initSourceOptions struct {
+	sourceURI         string
+	skipNativeFiles   bool
+	volumeUUID        string
+	googleCreds       string
+	googleTokenFile   string
+	onedriveClientID  string
+	onedriveTokenFile string
+	skipMode          bool
+	skipFlags         bool
+	skipXattrs        bool
+	xattrNamespaces   string
+	globalFlags       *globalFlags
+	excludePatterns   []string
+}
+
+func initSource(ctx context.Context, opts initSourceOptions) (source.Source, error) {
+	uri, err := parseSourceURI(opts.sourceURI)
 	if err != nil {
 		return nil, err
 	}
 
 	switch uri.scheme {
 	case "local":
-		opts := []source.LocalOption{source.WithLocalExcludePatterns(excludePatterns)}
-		if volumeUUID != "" {
-			opts = append(opts, source.WithVolumeUUID(volumeUUID))
+		localOpts := []source.LocalOption{source.WithLocalExcludePatterns(opts.excludePatterns)}
+		if opts.volumeUUID != "" {
+			localOpts = append(localOpts, source.WithVolumeUUID(opts.volumeUUID))
 		}
-		if skipMode {
-			opts = append(opts, source.WithSkipMode())
+		if opts.skipMode {
+			localOpts = append(localOpts, source.WithSkipMode())
 		}
-		if skipFlags {
-			opts = append(opts, source.WithSkipFlags())
+		if opts.skipFlags {
+			localOpts = append(localOpts, source.WithSkipFlags())
 		}
-		if skipXattrs {
-			opts = append(opts, source.WithSkipXattrs())
+		if opts.skipXattrs {
+			localOpts = append(localOpts, source.WithSkipXattrs())
 		}
-		if xattrNamespaces != "" {
-			prefixes := parseXattrNamespacePrefixes(xattrNamespaces)
+		if opts.xattrNamespaces != "" {
+			prefixes := parseXattrNamespacePrefixes(opts.xattrNamespaces)
 			if len(prefixes) > 0 {
-				opts = append(opts, source.WithXattrNamespaces(prefixes))
+				localOpts = append(localOpts, source.WithXattrNamespaces(prefixes))
 			}
 		}
-		return source.NewLocalSource(uri.path, opts...), nil
+		return source.NewLocalSource(uri.path, localOpts...), nil
 	case "sftp":
-		sftpOpts := g.buildSFTPSourceOpts(uri)
-		sftpOpts = append(sftpOpts, source.WithSFTPExcludePatterns(excludePatterns))
+		sftpOpts := opts.globalFlags.buildSFTPSourceOpts(uri)
+		sftpOpts = append(sftpOpts, source.WithSFTPExcludePatterns(opts.excludePatterns))
 		return source.NewSFTPSource(uri.host, sftpOpts...)
 	case "gdrive":
-		tokenPath, err := resolveTokenPath(googleTokenFile, "google_token.json")
+		tokenPath, err := resolveTokenPath(opts.googleTokenFile, "google_token.json")
 		if err != nil {
 			return nil, err
 		}
 		gdriveOpts := []source.GDriveOption{
-			source.WithCredsPath(googleCreds),
+			source.WithCredsPath(opts.googleCreds),
 			source.WithTokenPath(tokenPath),
 			source.WithDriveName(uri.host),
 			source.WithRootPath(uri.path),
-			source.WithGDriveExcludePatterns(excludePatterns),
+			source.WithGDriveExcludePatterns(opts.excludePatterns),
 		}
-		if skipNativeFiles {
+		if opts.skipNativeFiles {
 			gdriveOpts = append(gdriveOpts, source.WithSkipNativeFiles())
 		}
 		return source.NewGDriveSource(ctx, gdriveOpts...)
 	case "gdrive-changes":
-		tokenPath, err := resolveTokenPath(googleTokenFile, "google_token.json")
+		tokenPath, err := resolveTokenPath(opts.googleTokenFile, "google_token.json")
 		if err != nil {
 			return nil, err
 		}
 		gdriveOpts := []source.GDriveOption{
-			source.WithCredsPath(googleCreds),
+			source.WithCredsPath(opts.googleCreds),
 			source.WithTokenPath(tokenPath),
 			source.WithDriveName(uri.host),
 			source.WithRootPath(uri.path),
-			source.WithGDriveExcludePatterns(excludePatterns),
+			source.WithGDriveExcludePatterns(opts.excludePatterns),
 		}
-		if skipNativeFiles {
+		if opts.skipNativeFiles {
 			gdriveOpts = append(gdriveOpts, source.WithSkipNativeFiles())
 		}
 		return source.NewGDriveChangeSource(ctx, gdriveOpts...)
 	case "onedrive":
-		tokenPath, err := resolveTokenPath(onedriveTokenFile, "onedrive_token.json")
+		tokenPath, err := resolveTokenPath(opts.onedriveTokenFile, "onedrive_token.json")
 		if err != nil {
 			return nil, err
 		}
 		return source.NewOneDriveSource(ctx,
-			source.WithOneDriveClientID(onedriveClientID),
+			source.WithOneDriveClientID(opts.onedriveClientID),
 			source.WithOneDriveTokenPath(tokenPath),
 			source.WithOneDriveDriveName(uri.host),
 			source.WithOneDriveRootPath(uri.path),
-			source.WithOneDriveExcludePatterns(excludePatterns),
+			source.WithOneDriveExcludePatterns(opts.excludePatterns),
 		)
 	case "onedrive-changes":
-		tokenPath, err := resolveTokenPath(onedriveTokenFile, "onedrive_token.json")
+		tokenPath, err := resolveTokenPath(opts.onedriveTokenFile, "onedrive_token.json")
 		if err != nil {
 			return nil, err
 		}
 		return source.NewOneDriveChangeSource(ctx,
-			source.WithOneDriveClientID(onedriveClientID),
+			source.WithOneDriveClientID(opts.onedriveClientID),
 			source.WithOneDriveTokenPath(tokenPath),
 			source.WithOneDriveDriveName(uri.host),
 			source.WithOneDriveRootPath(uri.path),
-			source.WithOneDriveExcludePatterns(excludePatterns),
+			source.WithOneDriveExcludePatterns(opts.excludePatterns),
 		)
 	default:
 		return nil, fmt.Errorf("unsupported source: %s", uri.scheme)

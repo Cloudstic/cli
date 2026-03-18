@@ -1,6 +1,6 @@
 # RFC 0006: Direct-to-Filesystem Restore
 
-* **Status:** In Progress
+* **Status:** Implemented
 * **Date:** 2026-03-08
 * **Affects:** `internal/engine/restore.go`, `cmd/cloudstic/cmd_restore.go`, `client.go`, `cmd/cloudstic/client_iface.go`
 * **Depends on:** RFC 0004 (Extended File Attributes)

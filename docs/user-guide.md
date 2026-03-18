@@ -585,9 +585,8 @@ Prefer `*_secret` fields and secret refs in `profiles.yaml`. Supported schemes:
 
 - `env://VAR_NAME`
 - `keychain://service/account` (macOS)
-
-`wincred://...` (Windows) and `secret-service://...` (Linux) are planned but not
-yet available in the default CLI resolver.
+- `wincred://target` (Windows)
+- `secret-service://collection/item` (Linux)
 
 Legacy `*_env` fields are still read for backward compatibility, but new writes
 should use `*_secret`.
@@ -667,6 +666,13 @@ Restore a snapshot either as a ZIP archive (`-format zip`) or directly to a
 directory (`-format dir`). By default, the format is inferred from `-output`.
 If `-output` ends with `.zip`, Cloudstic uses ZIP format; otherwise it restores
 to a directory.
+
+In directory mode, Cloudstic creates parent directories automatically and, on
+macOS and Linux, replays captured metadata on a best-effort basis (for example
+mode bits, ownership, modification times, xattrs, and file flags where the
+destination filesystem supports them). Existing files are skipped with warnings
+instead of being overwritten, so rerunning the same restore into the same output
+directory is safe.
 
 ```bash
 # Restore the latest snapshot
@@ -1167,7 +1173,7 @@ cloudstic backup -source local:~/project -exclude-file .backupignore
 
 Cloudstic walks the directory recursively. Symbolic links are not followed.
 
-**Extended file attributes:** By default, Cloudstic captures POSIX permissions (mode bits), numeric ownership (uid/gid), file creation time (btime, where supported), per-file flags, and extended attributes (xattrs). These are stored in each snapshot and will be used by future restore modes to faithfully recreate file metadata. To control what is captured:
+**Extended file attributes:** By default, Cloudstic captures POSIX permissions (mode bits), numeric ownership (uid/gid), file creation time (btime, where supported), per-file flags, and extended attributes (xattrs). Directory restores on macOS and Linux replay this metadata on a best-effort basis where supported by the destination filesystem. Known OS-managed xattrs that are not meaningfully restorable, such as `com.apple.provenance`, are excluded automatically. To control what is captured:
 
 ```bash
 # Skip all POSIX metadata (mode, uid, gid, btime, flags)

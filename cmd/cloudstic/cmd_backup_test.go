@@ -16,7 +16,7 @@ func TestInitSource_Local_ExtendedOptions(t *testing.T) {
 	}
 	g := &globalFlags{}
 
-	src, err := initSource(context.Background(), "local:"+tmpDir, false, "", "", "", "", "", a.skipMode, a.skipFlags, a.skipXattrs, a.xattrNamespaces, g, nil)
+	src, err := initSource(context.Background(), initSourceOptions{sourceURI: "local:" + tmpDir, skipMode: a.skipMode, skipFlags: a.skipFlags, skipXattrs: a.skipXattrs, xattrNamespaces: a.xattrNamespaces, globalFlags: g})
 	if err != nil {
 		t.Fatalf("initSource failed: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestInitSource_Local_NoExtendedOptions(t *testing.T) {
 	a := &backupArgs{}
 	g := &globalFlags{}
 
-	src, err := initSource(context.Background(), "local:"+tmpDir, false, "", "", "", "", "", a.skipMode, a.skipFlags, a.skipXattrs, a.xattrNamespaces, g, nil)
+	src, err := initSource(context.Background(), initSourceOptions{sourceURI: "local:" + tmpDir, skipMode: a.skipMode, skipFlags: a.skipFlags, skipXattrs: a.skipXattrs, xattrNamespaces: a.xattrNamespaces, globalFlags: g})
 	if err != nil {
 		t.Fatalf("initSource failed: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestInitSource_Local_VolumeUUID(t *testing.T) {
 	a := &backupArgs{}
 	g := &globalFlags{}
 
-	src, err := initSource(context.Background(), "local:"+tmpDir, false, "test-uuid-123", "", "", "", "", a.skipMode, a.skipFlags, a.skipXattrs, a.xattrNamespaces, g, nil)
+	src, err := initSource(context.Background(), initSourceOptions{sourceURI: "local:" + tmpDir, volumeUUID: "test-uuid-123", skipMode: a.skipMode, skipFlags: a.skipFlags, skipXattrs: a.skipXattrs, xattrNamespaces: a.xattrNamespaces, globalFlags: g})
 	if err != nil {
 		t.Fatalf("initSource failed: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestInitSource_Local_XattrNamespacesParsing(t *testing.T) {
 	}
 	g := &globalFlags{}
 
-	src, err := initSource(context.Background(), "local:"+tmpDir, false, "", "", "", "", "", a.skipMode, a.skipFlags, a.skipXattrs, a.xattrNamespaces, g, nil)
+	src, err := initSource(context.Background(), initSourceOptions{sourceURI: "local:" + tmpDir, skipMode: a.skipMode, skipFlags: a.skipFlags, skipXattrs: a.skipXattrs, xattrNamespaces: a.xattrNamespaces, globalFlags: g})
 	if err != nil {
 		t.Fatalf("initSource failed: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestInitSource_UnsupportedType(t *testing.T) {
 	a := &backupArgs{}
 	g := &globalFlags{}
 
-	_, err := initSource(context.Background(), "invalid-source:/", false, "", "", "", "", "", a.skipMode, a.skipFlags, a.skipXattrs, a.xattrNamespaces, g, nil)
+	_, err := initSource(context.Background(), initSourceOptions{sourceURI: "invalid-source:/", skipMode: a.skipMode, skipFlags: a.skipFlags, skipXattrs: a.skipXattrs, xattrNamespaces: a.xattrNamespaces, globalFlags: g})
 	if err == nil {
 		t.Fatal("expected error for unsupported source type")
 	}

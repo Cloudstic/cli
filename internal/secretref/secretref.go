@@ -86,6 +86,19 @@ type Backend interface {
 	Resolve(ctx context.Context, ref Ref) (string, error)
 }
 
+// BlobBackend extends a backend to support binary data retrieval.
+type BlobBackend interface {
+	Backend
+	LoadBlob(ctx context.Context, ref Ref) ([]byte, error)
+}
+
+// WritableBlobBackend extends a backend to support atomic binary data storage.
+type WritableBlobBackend interface {
+	BlobBackend
+	SaveBlob(ctx context.Context, ref Ref, data []byte) error
+	DeleteBlob(ctx context.Context, ref Ref) error
+}
+
 // WritableBackend extends a backend with native-store write and existence checks
 // for interactive CLI flows.
 type WritableBackend interface {
@@ -116,6 +129,8 @@ func NewResolver(backends map[string]Backend) *Resolver {
 func NewDefaultResolver() *Resolver {
 	return NewResolver(map[string]Backend{
 		"env":            NewEnvBackend(nil),
+		"file":           NewFileBackend(),
+		"config-token":   NewConfigTokenBackend(),
 		"keychain":       NewKeychainBackend(),
 		"wincred":        NewWincredBackend(),
 		"secret-service": NewSecretServiceBackend(),
@@ -138,6 +153,73 @@ func (r *Resolver) Resolve(ctx context.Context, raw string) (string, error) {
 		return "", errorf(KindBackendUnavailable, parsed.Raw, err.Error(), err)
 	}
 	return value, nil
+}
+
+// LoadBlob parses and retrieves a binary blob from a secret reference.
+func (r *Resolver) LoadBlob(ctx context.Context, raw string) ([]byte, error) {
+	parsed, backend, err := r.lookupBackend(raw)
+	if err != nil {
+		return nil, err
+	}
+
+	blobBackend, ok := backend.(BlobBackend)
+	if !ok {
+		return nil, errorf(KindBackendUnavailable, parsed.Raw, fmt.Sprintf("scheme %q does not support loading blobs", parsed.Scheme), nil)
+	}
+
+	data, err := blobBackend.LoadBlob(ctx, parsed)
+	if err != nil {
+		var refErr *Error
+		if errors.As(err, &refErr) {
+			return nil, err
+		}
+		return nil, errorf(KindBackendUnavailable, parsed.Raw, err.Error(), err)
+	}
+	return data, nil
+}
+
+// SaveBlob parses and atomically stores a binary blob to a secret reference.
+func (r *Resolver) SaveBlob(ctx context.Context, raw string, data []byte) error {
+	parsed, backend, err := r.lookupBackend(raw)
+	if err != nil {
+		return err
+	}
+
+	writable, ok := backend.(WritableBlobBackend)
+	if !ok {
+		return errorf(KindBackendUnavailable, parsed.Raw, fmt.Sprintf("scheme %q does not support saving blobs", parsed.Scheme), nil)
+	}
+
+	if err := writable.SaveBlob(ctx, parsed, data); err != nil {
+		var refErr *Error
+		if errors.As(err, &refErr) {
+			return err
+		}
+		return errorf(KindBackendUnavailable, parsed.Raw, err.Error(), err)
+	}
+	return nil
+}
+
+// DeleteBlob parses and removes a binary blob from a secret reference.
+func (r *Resolver) DeleteBlob(ctx context.Context, raw string) error {
+	parsed, backend, err := r.lookupBackend(raw)
+	if err != nil {
+		return err
+	}
+
+	writable, ok := backend.(WritableBlobBackend)
+	if !ok {
+		return errorf(KindBackendUnavailable, parsed.Raw, fmt.Sprintf("scheme %q does not support deleting blobs", parsed.Scheme), nil)
+	}
+
+	if err := writable.DeleteBlob(ctx, parsed); err != nil {
+		var refErr *Error
+		if errors.As(err, &refErr) {
+			return err
+		}
+		return errorf(KindBackendUnavailable, parsed.Raw, err.Error(), err)
+	}
+	return nil
 }
 
 // Exists reports whether a writable secret reference already exists.

@@ -94,9 +94,12 @@ func (r *runner) runAuthNew() int {
 	name := fs.String("name", "", "Auth reference name")
 	provider := fs.String("provider", "", "Auth provider: google|onedrive")
 	googleCreds := fs.String("google-credentials", "", "Path to Google service account credentials JSON file")
+	googleCredsRef := fs.String("google-credentials-ref", "", "Secret reference to Google service account credentials JSON")
 	googleTokenFile := fs.String("google-token-file", "", "Path to Google OAuth token file")
+	googleTokenRef := fs.String("google-token-ref", "", "Secret reference to Google OAuth token")
 	onedriveClientID := fs.String("onedrive-client-id", "", "OneDrive OAuth client ID")
 	onedriveTokenFile := fs.String("onedrive-token-file", "", "Path to OneDrive OAuth token file")
+	onedriveTokenRef := fs.String("onedrive-token-ref", "", "Secret reference to OneDrive OAuth token")
 	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
 
 	if *name == "" {
@@ -129,44 +132,51 @@ func (r *runner) runAuthNew() int {
 
 	auth := cloudstic.ProfileAuth{Provider: *provider}
 	if *provider == "google" {
-		if *googleTokenFile == "" {
+		if *googleTokenFile == "" && *googleTokenRef == "" {
 			if r.canPrompt() {
+				// We still default to file if not interactive, but we could offer keychain here too.
+				// For now let's keep it simple and add the fields.
 				def := defaultAuthTokenPath("google", *name)
-				v, err := r.promptLine("Google token file path", def)
+				v, err := r.promptLine("Google token file path (or keychain://...)", def)
 				if err != nil {
-					return r.fail("Failed to read google token file path: %v", err)
+					return r.fail("Failed to read google token storage: %v", err)
 				}
-				*googleTokenFile = v
+				if strings.Contains(v, "://") {
+					*googleTokenRef = v
+				} else {
+					*googleTokenFile = v
+				}
 			}
-			if *googleTokenFile == "" {
+			if *googleTokenFile == "" && *googleTokenRef == "" {
 				*googleTokenFile = defaultAuthTokenPath("google", *name)
-			}
-			if *googleTokenFile == "" {
-				return r.fail("-google-token-file is required for provider=google")
 			}
 		}
 		auth.GoogleCreds = *googleCreds
+		auth.GoogleCredsRef = *googleCredsRef
 		auth.GoogleTokenFile = *googleTokenFile
+		auth.GoogleTokenRef = *googleTokenRef
 	}
 	if *provider == "onedrive" {
-		if *onedriveTokenFile == "" {
+		if *onedriveTokenFile == "" && *onedriveTokenRef == "" {
 			if r.canPrompt() {
 				def := defaultAuthTokenPath("onedrive", *name)
-				v, err := r.promptLine("OneDrive token file path", def)
+				v, err := r.promptLine("OneDrive token file path (or keychain://...)", def)
 				if err != nil {
-					return r.fail("Failed to read onedrive token file path: %v", err)
+					return r.fail("Failed to read onedrive token storage: %v", err)
 				}
-				*onedriveTokenFile = v
+				if strings.Contains(v, "://") {
+					*onedriveTokenRef = v
+				} else {
+					*onedriveTokenFile = v
+				}
 			}
-			if *onedriveTokenFile == "" {
+			if *onedriveTokenFile == "" && *onedriveTokenRef == "" {
 				*onedriveTokenFile = defaultAuthTokenPath("onedrive", *name)
-			}
-			if *onedriveTokenFile == "" {
-				return r.fail("-onedrive-token-file is required for provider=onedrive")
 			}
 		}
 		auth.OneDriveClientID = *onedriveClientID
 		auth.OneDriveTokenFile = *onedriveTokenFile
+		auth.OneDriveTokenRef = *onedriveTokenRef
 	}
 
 	cfg, err := loadProfilesOrInit(*profilesFile)
@@ -219,13 +229,15 @@ func (r *runner) runAuthLogin() int {
 	switch auth.Provider {
 	case "google":
 		googleCreds := auth.GoogleCreds
-		if googleCreds == "" {
+		if googleCreds == "" && auth.GoogleCredsRef == "" {
 			googleCreds = os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
 		}
 		src, err := initSource(ctx, initSourceOptions{
 			sourceURI:       "gdrive:/",
 			googleCreds:     googleCreds,
+			googleCredsRef:  auth.GoogleCredsRef,
 			googleTokenFile: auth.GoogleTokenFile,
+			googleTokenRef:  auth.GoogleTokenRef,
 			globalFlags:     g,
 		})
 		if err != nil {
@@ -241,6 +253,7 @@ func (r *runner) runAuthLogin() int {
 			sourceURI:         "onedrive:/",
 			onedriveClientID:  onedriveClientID,
 			onedriveTokenFile: auth.OneDriveTokenFile,
+			onedriveTokenRef:  auth.OneDriveTokenRef,
 			globalFlags:       g,
 		})
 		if err != nil {

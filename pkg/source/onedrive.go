@@ -13,16 +13,22 @@ import (
 	"time"
 
 	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/internal/retry"
+	"github.com/cloudstic/cli/internal/secretref"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/microsoft"
 )
 
+var onedriveLog = logger.New("onedrive", logger.ColorCyan)
+
 // oneDriveOptions holds configuration for a OneDrive source.
 type oneDriveOptions struct {
 	clientID        string
+	resolver        *secretref.Resolver
 	tokenPath       string
+	tokenRef        string
 	driveName       string
 	rootPath        string
 	excludePatterns []string
@@ -35,6 +41,13 @@ type OneDriveOption func(*oneDriveOptions)
 func WithOneDriveClientID(id string) OneDriveOption {
 	return func(o *oneDriveOptions) {
 		o.clientID = id
+	}
+}
+
+// WithOneDriveResolver sets the secret resolver for ref-based auth.
+func WithOneDriveResolver(r *secretref.Resolver) OneDriveOption {
+	return func(o *oneDriveOptions) {
+		o.resolver = r
 	}
 }
 
@@ -56,6 +69,13 @@ func WithOneDriveRootPath(path string) OneDriveOption {
 func WithOneDriveTokenPath(path string) OneDriveOption {
 	return func(o *oneDriveOptions) {
 		o.tokenPath = path
+	}
+}
+
+// WithOneDriveTokenRef sets the secret reference where the OAuth token is cached.
+func WithOneDriveTokenRef(ref string) OneDriveOption {
+	return func(o *oneDriveOptions) {
+		o.tokenRef = ref
 	}
 }
 
@@ -95,16 +115,42 @@ func NewOneDriveSource(ctx context.Context, opts ...OneDriveOption) (*OneDriveSo
 		Endpoint: microsoft.AzureADEndpoint("common"),
 	}
 
-	token, err := loadToken(cfg.tokenPath)
+	var token *oauth2.Token
+	var err error
+	if cfg.tokenRef != "" && cfg.resolver != nil {
+		token, err = loadTokenRef(ctx, cfg.resolver, cfg.tokenRef)
+	} else {
+		token, err = loadToken(cfg.tokenPath)
+	}
+
 	if err != nil {
 		token, err = exchangeWithLocalServer(conf, oauth2.AccessTypeOffline)
 		if err != nil {
 			return nil, fmt.Errorf("onedrive auth: %w", err)
 		}
-		_ = saveTokenJSON(cfg.tokenPath, token)
+		if cfg.tokenRef != "" && cfg.resolver != nil {
+			_ = saveTokenRefJSON(ctx, cfg.resolver, cfg.tokenRef, token)
+		} else {
+			_ = saveTokenJSON(cfg.tokenPath, token)
+		}
 	}
 
-	client := conf.Client(ctx, token)
+	// Use a persistent token source so that refreshes are saved.
+	ts := oauth2.ReuseTokenSource(token, conf.TokenSource(ctx, token))
+	pts := &persistentTokenSource{
+		ts: ts,
+		save: func(t *oauth2.Token) error {
+			if cfg.tokenRef != "" && cfg.resolver != nil {
+				return saveTokenRefJSON(ctx, cfg.resolver, cfg.tokenRef, t)
+			}
+			if cfg.tokenPath != "" {
+				return saveTokenJSON(cfg.tokenPath, t)
+			}
+			return nil
+		},
+	}
+
+	client := oauth2.NewClient(ctx, pts)
 
 	rootPath := normalizeOneDriveRootPath(cfg.rootPath)
 	src := &OneDriveSource{
@@ -291,16 +337,35 @@ func loadToken(file string) (*oauth2.Token, error) {
 	return &tok, err
 }
 
+func loadTokenRef(ctx context.Context, r *secretref.Resolver, ref string) (*oauth2.Token, error) {
+	data, err := r.LoadBlob(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	var tok oauth2.Token
+	if err := json.Unmarshal(data, &tok); err != nil {
+		return nil, fmt.Errorf("decode token from ref: %w", err)
+	}
+	return &tok, nil
+}
+
 func saveTokenJSON(file string, token *oauth2.Token) error {
 	if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
 		return fmt.Errorf("create token directory: %w", err)
 	}
-	f, err := os.OpenFile(file, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	data, err := json.Marshal(token)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = f.Close() }()
-	return json.NewEncoder(f).Encode(token)
+	return os.WriteFile(file, data, 0600)
+}
+
+func saveTokenRefJSON(ctx context.Context, r *secretref.Resolver, ref string, token *oauth2.Token) error {
+	data, err := json.Marshal(token)
+	if err != nil {
+		return err
+	}
+	return r.SaveBlob(ctx, ref, data)
 }
 
 // Graph API Models

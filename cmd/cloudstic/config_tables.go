@@ -124,13 +124,13 @@ func profileHealth(cfg *cloudstic.ProfilesConfig, p cloudstic.BackupProfile) (st
 func authHealth(auth cloudstic.ProfileAuth) (string, []string) {
 	switch auth.Provider {
 	case "google":
-		if auth.GoogleTokenFile == "" {
-			return "warning", []string{"missing token file"}
+		if auth.GoogleTokenFile == "" && auth.GoogleTokenRef == "" {
+			return "warning", []string{"missing token storage"}
 		}
 		return "ready", nil
 	case "onedrive":
-		if auth.OneDriveTokenFile == "" {
-			return "warning", []string{"missing token file"}
+		if auth.OneDriveTokenFile == "" && auth.OneDriveTokenRef == "" {
+			return "warning", []string{"missing token storage"}
 		}
 		return "ready", nil
 	default:
@@ -263,8 +263,14 @@ func dashIfEmpty(v string) string {
 }
 
 func authTokenPath(auth cloudstic.ProfileAuth) string {
+	if auth.GoogleTokenRef != "" {
+		return auth.GoogleTokenRef
+	}
 	if auth.GoogleTokenFile != "" {
 		return auth.GoogleTokenFile
+	}
+	if auth.OneDriveTokenRef != "" {
+		return auth.OneDriveTokenRef
 	}
 	if auth.OneDriveTokenFile != "" {
 		return auth.OneDriveTokenFile
@@ -360,22 +366,31 @@ func (r *runner) renderAuthShow(cfg *cloudstic.ProfilesConfig, name string, auth
 	renderSectionHeading(r.out, fmt.Sprintf("Auth %s", name), -1)
 	renderKVTable(r.out, appendWarningRow([]table.Row{
 		{"Provider", auth.Provider},
-		{"Token File", authTokenPath(auth)},
+		{"Token Storage", authTokenPath(auth)},
 		{"Status", statusLabel(status)},
 	}, warnings))
 
 	providerRows := []table.Row{}
 	if auth.GoogleCreds != "" {
-		providerRows = append(providerRows, table.Row{"Google Credentials", auth.GoogleCreds})
+		providerRows = append(providerRows, table.Row{"Google Credentials File", auth.GoogleCreds})
+	}
+	if auth.GoogleCredsRef != "" {
+		providerRows = append(providerRows, table.Row{"Google Credentials Ref", auth.GoogleCredsRef})
 	}
 	if auth.GoogleTokenFile != "" {
 		providerRows = append(providerRows, table.Row{"Google Token File", auth.GoogleTokenFile})
+	}
+	if auth.GoogleTokenRef != "" {
+		providerRows = append(providerRows, table.Row{"Google Token Ref", auth.GoogleTokenRef})
 	}
 	if auth.OneDriveClientID != "" {
 		providerRows = append(providerRows, table.Row{"OneDrive Client ID", auth.OneDriveClientID})
 	}
 	if auth.OneDriveTokenFile != "" {
 		providerRows = append(providerRows, table.Row{"OneDrive Token File", auth.OneDriveTokenFile})
+	}
+	if auth.OneDriveTokenRef != "" {
+		providerRows = append(providerRows, table.Row{"OneDrive Token Ref", auth.OneDriveTokenRef})
 	}
 	if len(providerRows) > 0 {
 		renderSectionHeading(r.out, "Provider Details", -1)
@@ -457,16 +472,25 @@ func (r *runner) renderProfileShow(cfg *cloudstic.ProfilesConfig, name string, p
 		optionRows = append(optionRows, table.Row{"Volume UUID", p.VolumeUUID})
 	}
 	if p.GoogleCreds != "" {
-		optionRows = append(optionRows, table.Row{"Google Credentials", p.GoogleCreds})
+		optionRows = append(optionRows, table.Row{"Google Credentials File", p.GoogleCreds})
+	}
+	if p.GoogleCredsRef != "" {
+		optionRows = append(optionRows, table.Row{"Google Credentials Ref", p.GoogleCredsRef})
 	}
 	if p.GoogleTokenFile != "" {
 		optionRows = append(optionRows, table.Row{"Google Token File", p.GoogleTokenFile})
+	}
+	if p.GoogleTokenRef != "" {
+		optionRows = append(optionRows, table.Row{"Google Token Ref", p.GoogleTokenRef})
 	}
 	if p.OneDriveClientID != "" {
 		optionRows = append(optionRows, table.Row{"OneDrive Client ID", p.OneDriveClientID})
 	}
 	if p.OneDriveTokenFile != "" {
 		optionRows = append(optionRows, table.Row{"OneDrive Token File", p.OneDriveTokenFile})
+	}
+	if p.OneDriveTokenRef != "" {
+		optionRows = append(optionRows, table.Row{"OneDrive Token Ref", p.OneDriveTokenRef})
 	}
 	renderSectionHeading(r.out, "Options", -1)
 	renderKVTable(r.out, optionRows)

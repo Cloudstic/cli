@@ -15,6 +15,7 @@ import (
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/engine"
 	"github.com/cloudstic/cli/internal/paths"
+	"github.com/cloudstic/cli/internal/secretref"
 	"github.com/cloudstic/cli/pkg/source"
 )
 
@@ -30,9 +31,12 @@ type backupArgs struct {
 	skipNativeFiles   bool
 	volumeUUID        string
 	googleCreds       string
+	googleCredsRef    string
 	googleTokenFile   string
+	googleTokenRef    string
 	onedriveClientID  string
 	onedriveTokenFile string
+	onedriveTokenRef  string
 	skipMode          bool
 	skipFlags         bool
 	skipXattrs        bool
@@ -54,9 +58,12 @@ func parseBackupArgs() *backupArgs {
 	excludeFile := fs.String("exclude-file", "", "Path to file with exclude patterns (one per line, gitignore syntax)")
 	volumeUUID := fs.String("volume-uuid", envDefault("CLOUDSTIC_VOLUME_UUID", ""), "Override volume UUID for local source (enables cross-machine incremental backup)")
 	googleCreds := fs.String("google-credentials", envDefault("GOOGLE_APPLICATION_CREDENTIALS", ""), "Path to Google service account credentials JSON file")
+	googleCredsRef := fs.String("google-credentials-ref", "", "Secret reference to Google service account credentials JSON")
 	googleTokenFile := fs.String("google-token-file", envDefault("GOOGLE_TOKEN_FILE", ""), "Path to Google OAuth token file")
+	googleTokenRef := fs.String("google-token-ref", "", "Secret reference to Google OAuth token")
 	onedriveClientID := fs.String("onedrive-client-id", envDefault("ONEDRIVE_CLIENT_ID", ""), "OneDrive OAuth client ID")
 	onedriveTokenFile := fs.String("onedrive-token-file", envDefault("ONEDRIVE_TOKEN_FILE", ""), "Path to OneDrive OAuth token file")
+	onedriveTokenRef := fs.String("onedrive-token-ref", "", "Secret reference to OneDrive OAuth token")
 	skipMode := fs.Bool("skip-mode", false, "Skip POSIX mode, uid, gid, btime, and flags collection")
 	skipFlags := fs.Bool("skip-flags", false, "Skip file flags collection")
 	skipXattrs := fs.Bool("skip-xattrs", false, "Skip extended attribute collection")
@@ -74,9 +81,12 @@ func parseBackupArgs() *backupArgs {
 	a.excludeFile = *excludeFile
 	a.volumeUUID = *volumeUUID
 	a.googleCreds = *googleCreds
+	a.googleCredsRef = *googleCredsRef
 	a.googleTokenFile = *googleTokenFile
+	a.googleTokenRef = *googleTokenRef
 	a.onedriveClientID = *onedriveClientID
 	a.onedriveTokenFile = *onedriveTokenFile
+	a.onedriveTokenRef = *onedriveTokenRef
 	a.skipMode = *skipMode
 	a.skipFlags = *skipFlags
 	a.skipXattrs = *skipXattrs
@@ -133,9 +143,12 @@ func (r *runner) runSingleBackup(a *backupArgs) int {
 		skipNativeFiles:   a.skipNativeFiles,
 		volumeUUID:        a.volumeUUID,
 		googleCreds:       a.googleCreds,
+		googleCredsRef:    a.googleCredsRef,
 		googleTokenFile:   a.googleTokenFile,
+		googleTokenRef:    a.googleTokenRef,
 		onedriveClientID:  a.onedriveClientID,
 		onedriveTokenFile: a.onedriveTokenFile,
+		onedriveTokenRef:  a.onedriveTokenRef,
 		skipMode:          a.skipMode,
 		skipFlags:         a.skipFlags,
 		skipXattrs:        a.skipXattrs,
@@ -321,14 +334,23 @@ func mergeProfileBackupArgs(base *backupArgs, profileName string, p cloudstic.Ba
 	if !a.flagsSet["google-credentials"] && p.GoogleCreds != "" {
 		a.googleCreds = p.GoogleCreds
 	}
+	if !a.flagsSet["google-credentials-ref"] && p.GoogleCredsRef != "" {
+		a.googleCredsRef = p.GoogleCredsRef
+	}
 	if !a.flagsSet["google-token-file"] && p.GoogleTokenFile != "" {
 		a.googleTokenFile = p.GoogleTokenFile
+	}
+	if !a.flagsSet["google-token-ref"] && p.GoogleTokenRef != "" {
+		a.googleTokenRef = p.GoogleTokenRef
 	}
 	if !a.flagsSet["onedrive-client-id"] && p.OneDriveClientID != "" {
 		a.onedriveClientID = p.OneDriveClientID
 	}
 	if !a.flagsSet["onedrive-token-file"] && p.OneDriveTokenFile != "" {
 		a.onedriveTokenFile = p.OneDriveTokenFile
+	}
+	if !a.flagsSet["onedrive-token-ref"] && p.OneDriveTokenRef != "" {
+		a.onedriveTokenRef = p.OneDriveTokenRef
 	}
 
 	if len(a.tags) == 0 && len(p.Tags) > 0 {
@@ -400,8 +422,14 @@ func applyProfileAuthToBackupArgs(a *backupArgs, auth cloudstic.ProfileAuth) err
 		if !a.flagsSet["google-credentials"] && auth.GoogleCreds != "" {
 			a.googleCreds = auth.GoogleCreds
 		}
+		if !a.flagsSet["google-credentials-ref"] && auth.GoogleCredsRef != "" {
+			a.googleCredsRef = auth.GoogleCredsRef
+		}
 		if !a.flagsSet["google-token-file"] && auth.GoogleTokenFile != "" {
 			a.googleTokenFile = auth.GoogleTokenFile
+		}
+		if !a.flagsSet["google-token-ref"] && auth.GoogleTokenRef != "" {
+			a.googleTokenRef = auth.GoogleTokenRef
 		}
 	}
 
@@ -411,6 +439,9 @@ func applyProfileAuthToBackupArgs(a *backupArgs, auth cloudstic.ProfileAuth) err
 		}
 		if !a.flagsSet["onedrive-token-file"] && auth.OneDriveTokenFile != "" {
 			a.onedriveTokenFile = auth.OneDriveTokenFile
+		}
+		if !a.flagsSet["onedrive-token-ref"] && auth.OneDriveTokenRef != "" {
+			a.onedriveTokenRef = auth.OneDriveTokenRef
 		}
 	}
 
@@ -607,9 +638,12 @@ type initSourceOptions struct {
 	skipNativeFiles   bool
 	volumeUUID        string
 	googleCreds       string
+	googleCredsRef    string
 	googleTokenFile   string
+	googleTokenRef    string
 	onedriveClientID  string
 	onedriveTokenFile string
+	onedriveTokenRef  string
 	skipMode          bool
 	skipFlags         bool
 	skipXattrs        bool
@@ -623,6 +657,8 @@ func initSource(ctx context.Context, opts initSourceOptions) (source.Source, err
 	if err != nil {
 		return nil, err
 	}
+
+	resolver := secretref.NewDefaultResolver()
 
 	switch uri.scheme {
 	case "local":
@@ -656,8 +692,11 @@ func initSource(ctx context.Context, opts initSourceOptions) (source.Source, err
 			return nil, err
 		}
 		gdriveOpts := []source.GDriveOption{
+			source.WithResolver(resolver),
 			source.WithCredsPath(opts.googleCreds),
+			source.WithCredsRef(opts.googleCredsRef),
 			source.WithTokenPath(tokenPath),
+			source.WithTokenRef(opts.googleTokenRef),
 			source.WithDriveName(uri.host),
 			source.WithRootPath(uri.path),
 			source.WithGDriveExcludePatterns(opts.excludePatterns),
@@ -672,8 +711,11 @@ func initSource(ctx context.Context, opts initSourceOptions) (source.Source, err
 			return nil, err
 		}
 		gdriveOpts := []source.GDriveOption{
+			source.WithResolver(resolver),
 			source.WithCredsPath(opts.googleCreds),
+			source.WithCredsRef(opts.googleCredsRef),
 			source.WithTokenPath(tokenPath),
+			source.WithTokenRef(opts.googleTokenRef),
 			source.WithDriveName(uri.host),
 			source.WithRootPath(uri.path),
 			source.WithGDriveExcludePatterns(opts.excludePatterns),
@@ -688,8 +730,10 @@ func initSource(ctx context.Context, opts initSourceOptions) (source.Source, err
 			return nil, err
 		}
 		return source.NewOneDriveSource(ctx,
+			source.WithOneDriveResolver(resolver),
 			source.WithOneDriveClientID(opts.onedriveClientID),
 			source.WithOneDriveTokenPath(tokenPath),
+			source.WithOneDriveTokenRef(opts.onedriveTokenRef),
 			source.WithOneDriveDriveName(uri.host),
 			source.WithOneDriveRootPath(uri.path),
 			source.WithOneDriveExcludePatterns(opts.excludePatterns),
@@ -700,8 +744,10 @@ func initSource(ctx context.Context, opts initSourceOptions) (source.Source, err
 			return nil, err
 		}
 		return source.NewOneDriveChangeSource(ctx,
+			source.WithOneDriveResolver(resolver),
 			source.WithOneDriveClientID(opts.onedriveClientID),
 			source.WithOneDriveTokenPath(tokenPath),
+			source.WithOneDriveTokenRef(opts.onedriveTokenRef),
 			source.WithOneDriveDriveName(uri.host),
 			source.WithOneDriveRootPath(uri.path),
 			source.WithOneDriveExcludePatterns(opts.excludePatterns),

@@ -40,11 +40,11 @@ func TestParseKeychainPath(t *testing.T) {
 }
 
 func TestKeychainBackend_Resolve(t *testing.T) {
-	b := newKeychainBackendWithLookup(func(_ context.Context, service, account string) (string, error) {
+	b := newKeychainBackendWithLookup(func(_ context.Context, service, account string) ([]byte, error) {
 		if service != "cloudstic/prod" || account != "password" {
 			t.Fatalf("unexpected lookup args: %q/%q", service, account)
 		}
-		return "s3cr3t", nil
+		return []byte("s3cr3t"), nil
 	})
 
 	got, err := b.Resolve(context.Background(), Ref{Raw: "keychain://cloudstic/prod/password", Scheme: "keychain", Path: "cloudstic/prod/password"})
@@ -84,11 +84,11 @@ func TestKeychainBackend_ResolveErrors(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			b := newKeychainBackendWithLookup(func(context.Context, string, string) (string, error) {
+			b := newKeychainBackendWithLookup(func(context.Context, string, string) ([]byte, error) {
 				if tc.err == nil {
-					return "", nil
+					return nil, nil
 				}
-				return "", tc.err
+				return nil, tc.err
 			})
 
 			_, err := b.Resolve(context.Background(), tc.ref)
@@ -115,13 +115,14 @@ func TestKeychainBackend_DefaultRef(t *testing.T) {
 
 func TestKeychainBackend_Exists(t *testing.T) {
 	b := newKeychainBackendWithFns(
-		func(context.Context, string, string) (string, error) { return "", nil },
+		func(context.Context, string, string) ([]byte, error) { return nil, nil },
 		func(_ context.Context, service, account string) (bool, error) {
 			if service != "cloudstic/store/prod" || account != "password" {
 				t.Fatalf("unexpected args %q/%q", service, account)
 			}
 			return true, nil
 		},
+		nil,
 		nil,
 	)
 	exists, err := b.Exists(context.Background(), Ref{Raw: "keychain://cloudstic/store/prod/password", Scheme: "keychain", Path: "cloudstic/store/prod/password"})
@@ -135,16 +136,54 @@ func TestKeychainBackend_Exists(t *testing.T) {
 
 func TestKeychainBackend_Store(t *testing.T) {
 	b := newKeychainBackendWithFns(
-		func(context.Context, string, string) (string, error) { return "", nil },
+		func(context.Context, string, string) ([]byte, error) { return nil, nil },
 		nil,
-		func(_ context.Context, service, account, value string) error {
-			if service != "cloudstic/store/prod" || account != "password" || value != "secret" {
-				t.Fatalf("unexpected args %q/%q/%q", service, account, value)
+		func(_ context.Context, service, account string, value []byte) error {
+			if service != "cloudstic/store/prod" || account != "password" || string(value) != "secret" {
+				t.Fatalf("unexpected args %q/%q/%q", service, account, string(value))
 			}
 			return nil
 		},
+		nil,
 	)
 	if err := b.Store(context.Background(), Ref{Raw: "keychain://cloudstic/store/prod/password", Scheme: "keychain", Path: "cloudstic/store/prod/password"}, "secret"); err != nil {
 		t.Fatalf("Store: %v", err)
+	}
+}
+
+func TestKeychainBackend_BlobRoundTrip(t *testing.T) {
+	var storedValue []byte
+	b := newKeychainBackendWithFns(
+		func(context.Context, string, string) ([]byte, error) { return storedValue, nil },
+		nil,
+		func(_ context.Context, service, account string, value []byte) error {
+			storedValue = value
+			return nil
+		},
+		func(_ context.Context, service, account string) error {
+			storedValue = nil
+			return nil
+		},
+	)
+
+	ctx := context.Background()
+	ref := Ref{Raw: "keychain://cloudstic/token/gdrive", Scheme: "keychain", Path: "cloudstic/token/gdrive"}
+	data := []byte("binary-data")
+
+	if err := b.SaveBlob(ctx, ref, data); err != nil {
+		t.Fatalf("SaveBlob: %v", err)
+	}
+	got, err := b.LoadBlob(ctx, ref)
+	if err != nil {
+		t.Fatalf("LoadBlob: %v", err)
+	}
+	if string(got) != string(data) {
+		t.Errorf("got %q want %q", string(got), string(data))
+	}
+	if err := b.DeleteBlob(ctx, ref); err != nil {
+		t.Fatalf("DeleteBlob: %v", err)
+	}
+	if storedValue != nil {
+		t.Fatal("expected storedValue to be nil after delete")
 	}
 }

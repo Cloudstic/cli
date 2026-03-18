@@ -18,7 +18,7 @@ func TestDefaultKeychainLookup_NotFoundOnNilData(t *testing.T) {
 		return nil, nil
 	}
 
-	_, err := defaultKeychainLookup(context.Background(), "svc", "acct")
+	_, err := defaultKeychainLookupBlob(context.Background(), "svc", "acct")
 	if !errors.Is(err, errKeychainNotFound) {
 		t.Fatalf("expected errKeychainNotFound, got %v", err)
 	}
@@ -32,7 +32,7 @@ func TestDefaultKeychainLookup_MapsInteractionNotAllowed(t *testing.T) {
 		return nil, keychain.ErrorInteractionNotAllowed
 	}
 
-	_, err := defaultKeychainLookup(context.Background(), "svc", "acct")
+	_, err := defaultKeychainLookupBlob(context.Background(), "svc", "acct")
 	if !errors.Is(err, errKeychainUnavailable) {
 		t.Fatalf("expected errKeychainUnavailable, got %v", err)
 	}
@@ -55,8 +55,8 @@ func TestDefaultKeychainStore_DuplicateUpdates(t *testing.T) {
 		return nil
 	}
 
-	if err := defaultKeychainStore(context.Background(), "svc", "acct", "secret"); err != nil {
-		t.Fatalf("defaultKeychainStore: %v", err)
+	if err := defaultKeychainStoreBlob(context.Background(), "svc", "acct", []byte("secret")); err != nil {
+		t.Fatalf("defaultKeychainStoreBlob: %v", err)
 	}
 	if !updated {
 		t.Fatal("expected update on duplicate item")

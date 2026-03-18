@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -17,7 +18,7 @@ func TestRunCat_SingleKey_JSON(t *testing.T) {
 		},
 	}}
 
-	r.runCat()
+	r.runCat(context.Background())
 
 	got := out.String()
 	if !strings.Contains(got, `"version"`) {
@@ -35,7 +36,7 @@ func TestRunCat_MultipleKeys_HeadersShown(t *testing.T) {
 		},
 	}}
 
-	r.runCat()
+	r.runCat(context.Background())
 
 	got := errOut.String()
 	if !strings.Contains(got, "==> config <==") {
@@ -56,7 +57,7 @@ func TestRunCat_QuietMode_NoHeaders(t *testing.T) {
 		},
 	}}
 
-	r.runCat()
+	r.runCat(context.Background())
 
 	if strings.Contains(errOut.String(), "==>") {
 		t.Errorf("quiet mode should not show headers, got:\n%s", errOut.String())
@@ -71,7 +72,7 @@ func TestRunCat_RawMode(t *testing.T) {
 		catResults: []*cloudstic.CatResult{{Key: "config", Data: rawData}},
 	}}
 
-	r.runCat()
+	r.runCat(context.Background())
 
 	if out.String() != string(rawData) {
 		t.Errorf("raw mode: expected %q, got %q", rawData, out.String())
@@ -85,7 +86,7 @@ func TestRunCat_InvalidJSON_PrintsRaw(t *testing.T) {
 		catResults: []*cloudstic.CatResult{{Key: "config", Data: []byte("not-json")}},
 	}}
 
-	r.runCat()
+	r.runCat(context.Background())
 
 	if !strings.Contains(out.String(), "not-json") {
 		t.Errorf("expected raw fallback output, got:\n%s", out.String())

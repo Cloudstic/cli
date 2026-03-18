@@ -62,7 +62,7 @@ func ListKeySlots(ctx context.Context, rawStore store.ObjectStore) ([]KeySlot, e
 	if err := requireEncryptedRepo(ctx, rawStore); err != nil {
 		return nil, err
 	}
-	slots, err := keychain.LoadKeySlots(rawStore)
+	slots, err := keychain.LoadKeySlots(ctx, rawStore)
 	if err != nil {
 		return nil, fmt.Errorf("load key slots: %w", err)
 	}
@@ -75,7 +75,7 @@ func ChangePassword(ctx context.Context, rawStore store.ObjectStore, kc keychain
 	if err := requireEncryptedRepo(ctx, rawStore); err != nil {
 		return err
 	}
-	slots, err := keychain.LoadKeySlots(rawStore)
+	slots, err := keychain.LoadKeySlots(ctx, rawStore)
 	if err != nil {
 		return fmt.Errorf("load key slots: %w", err)
 	}
@@ -87,7 +87,7 @@ func ChangePassword(ctx context.Context, rawStore store.ObjectStore, kc keychain
 	if err != nil {
 		return err
 	}
-	return keychain.ChangePasswordSlot(rawStore, masterKey, newPassword)
+	return keychain.ChangePasswordSlot(ctx, rawStore, masterKey, newPassword)
 }
 
 // AddRecoveryKey generates a BIP39 recovery key for the repository,
@@ -97,7 +97,7 @@ func AddRecoveryKey(ctx context.Context, rawStore store.ObjectStore, kc keychain
 	if err := requireEncryptedRepo(ctx, rawStore); err != nil {
 		return "", err
 	}
-	slots, err := keychain.LoadKeySlots(rawStore)
+	slots, err := keychain.LoadKeySlots(ctx, rawStore)
 	if err != nil {
 		return "", fmt.Errorf("load key slots: %w", err)
 	}
@@ -105,7 +105,7 @@ func AddRecoveryKey(ctx context.Context, rawStore store.ObjectStore, kc keychain
 	if err != nil {
 		return "", fmt.Errorf("unlock repository: %w", err)
 	}
-	return keychain.AddRecoverySlot(rawStore, masterKey)
+	return keychain.AddRecoverySlot(ctx, rawStore, masterKey)
 }
 
 // LoadRepoConfig reads the repository marker from a raw (undecorated) store.
@@ -224,7 +224,7 @@ type Client struct {
 	reporter       ui.Reporter
 }
 
-func NewClient(base store.ObjectStore, opts ...ClientOption) (*Client, error) {
+func NewClient(ctx context.Context, base store.ObjectStore, opts ...ClientOption) (*Client, error) {
 	c := &Client{
 		enablePackfile: true, // Packfile is enabled by default
 		reporter:       ui.NewNoOpReporter(),
@@ -235,7 +235,7 @@ func NewClient(base store.ObjectStore, opts ...ClientOption) (*Client, error) {
 
 	// Auto-detect encryption from the repo config if no explicit key is set.
 	if len(c.encryptionKey) == 0 {
-		encKey, err := c.resolveKeyFromConfig(base)
+		encKey, err := c.resolveKeyFromConfig(ctx, base)
 		if err != nil {
 			return nil, err
 		}
@@ -277,8 +277,7 @@ func NewClient(base store.ObjectStore, opts ...ClientOption) (*Client, error) {
 
 // resolveKeyFromConfig reads the repo config and, if the repository is
 // encrypted, uses the Keychain to resolve the master key and derive the encryption key.
-func (c *Client) resolveKeyFromConfig(base store.ObjectStore) ([]byte, error) {
-	ctx := context.Background()
+func (c *Client) resolveKeyFromConfig(ctx context.Context, base store.ObjectStore) ([]byte, error) {
 	cfg, err := LoadRepoConfig(ctx, base)
 	if err != nil {
 		return nil, fmt.Errorf("read repo config: %w", err)
@@ -289,7 +288,7 @@ func (c *Client) resolveKeyFromConfig(base store.ObjectStore) ([]byte, error) {
 	if !cfg.Encrypted {
 		return nil, nil
 	}
-	slots, err := keychain.LoadKeySlots(base)
+	slots, err := keychain.LoadKeySlots(ctx, base)
 	if err != nil {
 		return nil, fmt.Errorf("load key slots: %w", err)
 	}

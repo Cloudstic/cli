@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -24,7 +25,7 @@ func TestRunDiff_Success(t *testing.T) {
 		},
 	}}
 
-	r.runDiff()
+	r.runDiff(context.Background())
 
 	got := out.String()
 	if !strings.Contains(got, "snapshot/aaa") {
@@ -52,7 +53,7 @@ func TestRunDiff_NoChanges(t *testing.T) {
 		},
 	}}
 
-	r.runDiff()
+	r.runDiff(context.Background())
 
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
 	if len(lines) != 1 {

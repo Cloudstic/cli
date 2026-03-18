@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,14 +22,14 @@ func TestRunAuthNewAndListAndShow(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runAuth(); code != 0 {
+	if code := r.runAuth(context.Background()); code != 0 {
 		t.Fatalf("auth new failed: %s", errOut.String())
 	}
 
 	os.Args = []string{"cloudstic", "auth", "list", "-profiles-file", profilesPath}
 	out.Reset()
 	errOut.Reset()
-	if code := r.runAuth(); code != 0 {
+	if code := r.runAuth(context.Background()); code != 0 {
 		t.Fatalf("auth list failed: %s", errOut.String())
 	}
 	if !strings.Contains(out.String(), "Auth") || !strings.Contains(out.String(), "google-work") || !strings.Contains(out.String(), "PROVIDER") {
@@ -38,7 +39,7 @@ func TestRunAuthNewAndListAndShow(t *testing.T) {
 	os.Args = []string{"cloudstic", "auth", "show", "-profiles-file", profilesPath, "google-work"}
 	out.Reset()
 	errOut.Reset()
-	if code := r.runAuth(); code != 0 {
+	if code := r.runAuth(context.Background()); code != 0 {
 		t.Fatalf("auth show failed: %s", errOut.String())
 	}
 	if !strings.Contains(out.String(), "Auth google-work") || !strings.Contains(out.String(), "Provider Details") || !strings.Contains(out.String(), "/tmp/google-work.json") {
@@ -51,7 +52,7 @@ func TestRunAuth_NoSubcommand(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runAuth(); code != 1 {
+	if code := r.runAuth(context.Background()); code != 1 {
 		t.Fatalf("expected exit code 1, got %d", code)
 	}
 	if !strings.Contains(errOut.String(), "Available subcommands") {
@@ -64,7 +65,7 @@ func TestRunAuth_UnknownSubcommand(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runAuth(); code != 1 {
+	if code := r.runAuth(context.Background()); code != 1 {
 		t.Fatalf("expected exit code 1, got %d", code)
 	}
 	if !strings.Contains(errOut.String(), "Unknown auth subcommand") {
@@ -87,7 +88,7 @@ func TestRunAuthNew_OneDriveProvider(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runAuth(); code != 0 {
+	if code := r.runAuth(context.Background()); code != 0 {
 		t.Fatalf("auth new failed: %s", errOut.String())
 	}
 
@@ -95,7 +96,7 @@ func TestRunAuthNew_OneDriveProvider(t *testing.T) {
 	os.Args = []string{"cloudstic", "auth", "show", "-profiles-file", profilesPath, "od-personal"}
 	out.Reset()
 	errOut.Reset()
-	if code := r.runAuth(); code != 0 {
+	if code := r.runAuth(context.Background()); code != 0 {
 		t.Fatalf("auth show failed: %s", errOut.String())
 	}
 	got := out.String()
@@ -114,7 +115,7 @@ func TestRunAuthNew_RequiresName(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut, noPrompt: true}
-	if code := r.runAuth(); code != 1 {
+	if code := r.runAuth(context.Background()); code != 1 {
 		t.Fatalf("expected exit code 1, got %d", code)
 	}
 	if !strings.Contains(errOut.String(), "-name is required") {
@@ -130,7 +131,7 @@ func TestRunAuthNew_RequiresProvider(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut, noPrompt: true}
-	if code := r.runAuth(); code != 1 {
+	if code := r.runAuth(context.Background()); code != 1 {
 		t.Fatalf("expected exit code 1, got %d", code)
 	}
 	if !strings.Contains(errOut.String(), "-provider must be") {
@@ -146,7 +147,7 @@ func TestRunAuthNew_InvalidName(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runAuth(); code != 1 {
+	if code := r.runAuth(context.Background()); code != 1 {
 		t.Fatalf("expected exit code 1, got %d", code)
 	}
 	if !strings.Contains(errOut.String(), "invalid auth name") {
@@ -169,7 +170,7 @@ func TestRunAuthShow_UnknownAuth(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runAuth(); code != 0 {
+	if code := r.runAuth(context.Background()); code != 0 {
 		t.Fatalf("setup auth new failed: %s", errOut.String())
 	}
 
@@ -177,7 +178,7 @@ func TestRunAuthShow_UnknownAuth(t *testing.T) {
 	os.Args = []string{"cloudstic", "auth", "show", "-profiles-file", profilesPath, "missing"}
 	out.Reset()
 	errOut.Reset()
-	if code := r.runAuth(); code != 1 {
+	if code := r.runAuth(context.Background()); code != 1 {
 		t.Fatalf("expected exit code 1, got %d", code)
 	}
 	if !strings.Contains(errOut.String(), "Unknown auth") {
@@ -193,7 +194,7 @@ func TestRunAuthList_MissingFile(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runAuth(); code != 0 {
+	if code := r.runAuth(context.Background()); code != 0 {
 		t.Fatalf("expected exit code 0, got %d; errOut: %s", code, errOut.String())
 	}
 }
@@ -230,7 +231,7 @@ func TestRunAuthNew_OneDriveDerivesTokenFile(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runAuth(); code != 0 {
+	if code := r.runAuth(context.Background()); code != 0 {
 		t.Fatalf("auth new failed: %s", errOut.String())
 	}
 
@@ -252,7 +253,7 @@ func TestRunAuthNew_DerivesDefaultTokenFile(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runAuth(); code != 0 {
+	if code := r.runAuth(context.Background()); code != 0 {
 		t.Fatalf("auth new failed: %s", errOut.String())
 	}
 	raw, err := os.ReadFile(profilesPath)

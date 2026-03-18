@@ -19,9 +19,9 @@ func parseBreakLockArgs() *breakLockArgs {
 	return a
 }
 
-func (r *runner) runBreakLock() int {
+func (r *runner) runBreakLock(ctx context.Context) int {
 	a := parseBreakLockArgs()
-	if err := r.openClient(a.g); err != nil {
+	if err := r.openClient(ctx, a.g); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 

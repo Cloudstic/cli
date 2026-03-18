@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -18,7 +19,7 @@ func (r *runner) canPrompt() bool {
 	return !r.noPrompt && term.IsTerminal(stdin.Fd()) && term.IsTerminal(os.Stdout.Fd())
 }
 
-func (r *runner) promptLine(label, defaultValue string) (string, error) {
+func (r *runner) promptLine(ctx context.Context, label, defaultValue string) (string, error) {
 	if defaultValue != "" {
 		_, _ = fmt.Fprintf(r.errOut, "%s [%s]: ", label, defaultValue)
 	} else {
@@ -35,14 +36,14 @@ func (r *runner) promptLine(label, defaultValue string) (string, error) {
 	return line, nil
 }
 
-func (r *runner) promptConfirm(label string, defaultYes bool) (bool, error) {
+func (r *runner) promptConfirm(ctx context.Context, label string, defaultYes bool) (bool, error) {
 	hint := "y/N"
 	dflt := "n"
 	if defaultYes {
 		hint = "Y/n"
 		dflt = "y"
 	}
-	answer, err := r.promptLine(fmt.Sprintf("%s [%s]", label, hint), dflt)
+	answer, err := r.promptLine(ctx, fmt.Sprintf("%s [%s]", label, hint), dflt)
 	if err != nil {
 		return false, err
 	}
@@ -50,7 +51,7 @@ func (r *runner) promptConfirm(label string, defaultYes bool) (bool, error) {
 	return answer == "y" || answer == "yes", nil
 }
 
-func (r *runner) promptSelect(label string, options []string) (string, error) {
+func (r *runner) promptSelect(ctx context.Context, label string, options []string) (string, error) {
 	if len(options) == 0 {
 		return "", fmt.Errorf("no options available")
 	}
@@ -59,7 +60,7 @@ func (r *runner) promptSelect(label string, options []string) (string, error) {
 		_, _ = fmt.Fprintf(r.errOut, "  %d) %s\n", i+1, opt)
 	}
 	for {
-		choice, err := r.promptLine("Select option number", "1")
+		choice, err := r.promptLine(ctx, "Select option number", "1")
 		if err != nil {
 			return "", err
 		}
@@ -72,7 +73,7 @@ func (r *runner) promptSelect(label string, options []string) (string, error) {
 	}
 }
 
-func (r *runner) promptSecret(label string) (string, error) {
+func (r *runner) promptSecret(ctx context.Context, label string) (string, error) {
 	_, _ = fmt.Fprintf(r.errOut, "%s: ", label)
 	stdin := r.stdin
 	if stdin == nil {

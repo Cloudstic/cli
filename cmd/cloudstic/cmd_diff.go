@@ -30,9 +30,9 @@ func parseDiffArgs() *diffArgs {
 	return a
 }
 
-func (r *runner) runDiff() int {
+func (r *runner) runDiff(ctx context.Context) int {
 	a := parseDiffArgs()
-	if err := r.openClient(a.g); err != nil {
+	if err := r.openClient(ctx, a.g); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 

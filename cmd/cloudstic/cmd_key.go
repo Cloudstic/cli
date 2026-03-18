@@ -13,7 +13,7 @@ import (
 	"github.com/moby/term"
 )
 
-func (r *runner) runKey() int {
+func (r *runner) runKey(ctx context.Context) int {
 	if len(os.Args) < 3 {
 		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic key <subcommand>")
 		_, _ = fmt.Fprintln(r.errOut)
@@ -29,11 +29,11 @@ func (r *runner) runKey() int {
 
 	switch sub {
 	case "list":
-		return r.runKeyList()
+		return r.runKeyList(ctx)
 	case "add-recovery":
-		return r.runAddRecoveryKey()
+		return r.runAddRecoveryKey(ctx)
 	case "passwd":
-		return r.runKeyPasswd()
+		return r.runKeyPasswd(ctx)
 	default:
 		return r.fail("Unknown key subcommand: %s", sub)
 	}
@@ -50,7 +50,7 @@ func parseKeyListArgs() *keyListArgs {
 	return a
 }
 
-func (r *runner) runKeyList() int {
+func (r *runner) runKeyList(ctx context.Context) int {
 	a := parseKeyListArgs()
 
 	raw, err := a.g.openStore()
@@ -58,7 +58,7 @@ func (r *runner) runKeyList() int {
 		return r.fail("Failed to init store: %v", err)
 	}
 
-	slots, err := cloudstic.ListKeySlots(context.Background(), raw)
+	slots, err := cloudstic.ListKeySlots(ctx, raw)
 	if err != nil {
 		return r.fail("Failed to list key slots: %v", err)
 	}
@@ -101,10 +101,8 @@ func parseKeyPasswdArgs() *keyPasswdArgs {
 	return a
 }
 
-func (r *runner) runKeyPasswd() int {
+func (r *runner) runKeyPasswd(ctx context.Context) int {
 	a := parseKeyPasswdArgs()
-
-	ctx := context.Background()
 
 	raw, err := a.g.openStore()
 	if err != nil {
@@ -150,10 +148,8 @@ func parseAddRecoveryKeyArgs() *addRecoveryKeyArgs {
 	return a
 }
 
-func (r *runner) runAddRecoveryKey() int {
+func (r *runner) runAddRecoveryKey(ctx context.Context) int {
 	a := parseAddRecoveryKeyArgs()
-
-	ctx := context.Background()
 
 	raw, err := a.g.openStore()
 	if err != nil {

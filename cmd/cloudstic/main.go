@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 )
@@ -35,40 +36,41 @@ func main() {
 
 func runCmd(cmd string) int {
 	r := newRunner()
+	ctx := context.Background()
 	switch cmd {
 	case "version", "--version", "-v":
 		fmt.Printf("cloudstic %s (commit %s, built %s)\n", version, commit, date)
 		return 0
 	case "init":
-		return r.runInit()
+		return r.runInit(ctx)
 	case "backup":
-		return r.runBackup()
+		return r.runBackup(ctx)
 	case "restore":
-		return r.runRestore()
+		return r.runRestore(ctx)
 	case "list":
-		return r.runList()
+		return r.runList(ctx)
 	case "ls":
-		return r.runLsSnapshot()
+		return r.runLsSnapshot(ctx)
 	case "prune":
-		return r.runPrune()
+		return r.runPrune(ctx)
 	case "forget":
-		return r.runForget()
+		return r.runForget(ctx)
 	case "diff":
-		return r.runDiff()
+		return r.runDiff(ctx)
 	case "break-lock":
-		return r.runBreakLock()
+		return r.runBreakLock(ctx)
 	case "key":
-		return r.runKey()
+		return r.runKey(ctx)
 	case "check":
-		return r.runCheck()
+		return r.runCheck(ctx)
 	case "cat":
-		return r.runCat()
+		return r.runCat(ctx)
 	case "profile":
-		return r.runProfile()
+		return r.runProfile(ctx)
 	case "auth":
-		return r.runAuth()
+		return r.runAuth(ctx)
 	case "store":
-		return r.runStore()
+		return r.runStore(ctx)
 	case "completion":
 		runCompletion()
 		return 0

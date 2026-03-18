@@ -28,9 +28,9 @@ func parseCheckArgs() *checkArgs {
 	return a
 }
 
-func (r *runner) runCheck() int {
+func (r *runner) runCheck(ctx context.Context) int {
 	a := parseCheckArgs()
-	if err := r.openClient(a.g); err != nil {
+	if err := r.openClient(ctx, a.g); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 

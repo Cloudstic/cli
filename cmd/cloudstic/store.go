@@ -44,7 +44,7 @@ func (g *globalFlags) applyDebug(s store.ObjectStore) store.ObjectStore {
 	return store.NewDebugStore(s, g.debugLog)
 }
 
-func (g *globalFlags) openClient() (*cloudstic.Client, error) {
+func (g *globalFlags) openClient(ctx context.Context) (*cloudstic.Client, error) {
 	if err := g.applyProfileStoreOverrides(); err != nil {
 		return nil, err
 	}
@@ -67,12 +67,12 @@ func (g *globalFlags) openClient() (*cloudstic.Client, error) {
 		reporter = cr
 	}
 
-	kc, err := g.buildKeychain(context.Background())
+	kc, err := g.buildKeychain(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	return cloudstic.NewClient(raw,
+	return cloudstic.NewClient(ctx, raw,
 		cloudstic.WithKeychain(kc),
 		cloudstic.WithReporter(reporter),
 		cloudstic.WithPackfile(packfileEnabled),

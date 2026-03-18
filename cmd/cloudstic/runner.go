@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -55,11 +56,11 @@ func (r *runner) fail(format string, args ...any) int {
 
 // openClient opens the cloudstic client from the given global flags.
 // No-op if r.client is already set (e.g. injected for tests).
-func (r *runner) openClient(g *globalFlags) error {
+func (r *runner) openClient(ctx context.Context, g *globalFlags) error {
 	if r.client != nil {
 		return nil
 	}
-	client, err := g.openClient()
+	client, err := g.openClient(ctx)
 	if err != nil {
 		return err
 	}

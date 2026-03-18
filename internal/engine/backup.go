@@ -216,7 +216,7 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 
 	if bm.cfg.dryRun {
 		if usedFullScan {
-			if err := bm.countRemoved(oldRoot, newRoot); err != nil {
+			if err := bm.countRemoved(ctx, oldRoot, newRoot); err != nil {
 				return nil, fmt.Errorf("counting removed entries: %w", err)
 			}
 		}
@@ -241,7 +241,7 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 	}
 
 	if usedFullScan {
-		if err := bm.countRemoved(oldRoot, newRoot); err != nil {
+		if err := bm.countRemoved(ctx, oldRoot, newRoot); err != nil {
 			return nil, fmt.Errorf("counting removed entries: %w", err)
 		}
 	}
@@ -375,7 +375,7 @@ func (bm *BackupManager) trackFileMeta(ref string, fm core.FileMeta) {
 	bm.newMetas[ref] = fm
 }
 
-func (bm *BackupManager) loadMeta(ref string) (*core.FileMeta, error) {
+func (bm *BackupManager) loadMeta(ctx context.Context, ref string) (*core.FileMeta, error) {
 	bm.metaCacheMu.RLock()
 	fm, ok := bm.metaCache[ref]
 	bm.metaCacheMu.RUnlock()
@@ -383,7 +383,7 @@ func (bm *BackupManager) loadMeta(ref string) (*core.FileMeta, error) {
 		return &fm, nil
 	}
 
-	data, err := bm.store.Get(context.Background(), ref)
+	data, err := bm.store.Get(ctx, ref)
 	if err != nil {
 		return nil, err
 	}

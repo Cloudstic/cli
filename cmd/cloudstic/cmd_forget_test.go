@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -17,7 +18,7 @@ func TestRunForget_SingleSnapshot(t *testing.T) {
 		forgetResult: &cloudstic.ForgetResult{Prune: nil},
 	}}
 
-	r.runForget()
+	r.runForget(context.Background())
 
 	if !strings.Contains(out.String(), "Snapshot removed.") {
 		t.Errorf("expected 'Snapshot removed.', got:\n%s", out.String())
@@ -37,7 +38,7 @@ func TestRunForget_SingleSnapshot_WithPruneResult(t *testing.T) {
 		},
 	}}
 
-	r.runForget()
+	r.runForget(context.Background())
 
 	got := out.String()
 	if !strings.Contains(got, "Snapshot removed.") {
@@ -63,7 +64,7 @@ func TestRunForget_Policy_NoRemove(t *testing.T) {
 		},
 	}}
 
-	r.runForget()
+	r.runForget(context.Background())
 
 	got := out.String()
 	if !strings.Contains(got, "No snapshots to remove") {
@@ -86,7 +87,7 @@ func TestRunForget_Policy_WithRemoval(t *testing.T) {
 		},
 	}}
 
-	r.runForget()
+	r.runForget(context.Background())
 
 	got := out.String()
 	if !strings.Contains(got, "1 snapshots have been removed") {
@@ -108,7 +109,7 @@ func TestRunForget_Policy_DryRun(t *testing.T) {
 		},
 	}}
 
-	r.runForget()
+	r.runForget(context.Background())
 
 	got := out.String()
 	if !strings.Contains(got, "would remove") {

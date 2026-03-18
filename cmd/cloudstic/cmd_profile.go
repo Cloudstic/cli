@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -22,7 +23,7 @@ func defaultProfilesPath() (string, error) {
 	return filepath.Join(configDir, defaultProfilesFilename), nil
 }
 
-func (r *runner) runProfile() int {
+func (r *runner) runProfile(ctx context.Context) int {
 	if len(os.Args) < 3 {
 		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic profile <subcommand> [options]")
 		_, _ = fmt.Fprintln(r.errOut, "")
@@ -32,11 +33,11 @@ func (r *runner) runProfile() int {
 
 	switch os.Args[2] {
 	case "list":
-		return r.runProfileList()
+		return r.runProfileList(ctx)
 	case "show":
-		return r.runProfileShow()
+		return r.runProfileShow(ctx)
 	case "new":
-		return r.runProfileNew()
+		return r.runProfileNew(ctx)
 	default:
 		return r.fail("Unknown profile subcommand: %s", os.Args[2])
 	}
@@ -66,7 +67,7 @@ func parseProfileShowArgs() (*profileShowArgs, error) {
 	return a, nil
 }
 
-func (r *runner) runProfileShow() int {
+func (r *runner) runProfileShow(ctx context.Context) int {
 	a, err := parseProfileShowArgs()
 	if err != nil {
 		return r.fail("%v", err)
@@ -80,7 +81,7 @@ func (r *runner) runProfileShow() int {
 			return r.fail("usage: cloudstic profile show [-profiles-file <path>] <name>")
 		}
 		names := sortedKeys(cfg.Profiles)
-		picked, pickErr := r.promptSelect("Select profile", names)
+		picked, pickErr := r.promptSelect(ctx, "Select profile", names)
 		if pickErr != nil {
 			return r.fail("Failed to select profile: %v", pickErr)
 		}
@@ -124,7 +125,7 @@ func parseProfileListArgs() *profileListArgs {
 	return a
 }
 
-func (r *runner) runProfileList() int {
+func (r *runner) runProfileList(ctx context.Context) int {
 	a := parseProfileListArgs()
 	cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
 	if err != nil {
@@ -206,11 +207,11 @@ func parseProfileNewArgs() *profileNewArgs {
 	return a
 }
 
-func (r *runner) runProfileNew() int {
+func (r *runner) runProfileNew(ctx context.Context) int {
 	a := parseProfileNewArgs()
 	if a.name == "" {
 		if r.canPrompt() {
-			v, err := r.promptLine("Profile name", "")
+			v, err := r.promptLine(ctx, "Profile name", "")
 			if err != nil {
 				return r.fail("Failed to read profile name: %v", err)
 			}
@@ -237,7 +238,7 @@ func (r *runner) runProfileNew() int {
 
 	if a.source == "" {
 		if r.canPrompt() {
-			v, err := r.promptLine("Source URI", "")
+			v, err := r.promptLine(ctx, "Source URI", "")
 			if err != nil {
 				return r.fail("Failed to read source URI: %v", err)
 			}
@@ -252,7 +253,7 @@ func (r *runner) runProfileNew() int {
 	}
 	if a.store != "" && a.storeRef == "" {
 		if r.canPrompt() {
-			v, err := r.promptLine("Store reference name", "default-store")
+			v, err := r.promptLine(ctx, "Store reference name", "default-store")
 			if err != nil {
 				return r.fail("Failed to read store reference: %v", err)
 			}
@@ -278,7 +279,7 @@ func (r *runner) runProfileNew() int {
 	} else {
 		// No store provided — prompt or fail.
 		if r.canPrompt() {
-			ref, created, code := r.promptStoreSelection(cfg)
+			ref, created, code := r.promptStoreSelection(ctx, cfg)
 			if code != 0 {
 				return code
 			}
@@ -293,9 +294,9 @@ func (r *runner) runProfileNew() int {
 	if createdStore && r.canPrompt() {
 		s := cfg.Stores[a.storeRef]
 		if !storeHasExplicitEncryption(s) {
-			r.promptEncryptionConfig(cfg, a.storeRef, a.profilesFile)
+			r.promptEncryptionConfig(ctx, cfg, a.storeRef, a.profilesFile)
 		}
-		if err := r.checkOrInitStore(cfg, a.storeRef, a.profilesFile, checkOrInitOptions{
+		if err := r.checkOrInitStore(ctx, cfg, a.storeRef, a.profilesFile, checkOrInitOptions{
 			allowMissingSecrets:  true,
 			warnOnMissingSecrets: true,
 			offerInit:            true,
@@ -337,7 +338,7 @@ func (r *runner) runProfileNew() int {
 	} else if requiredProvider != "" {
 		// Cloud source without -auth-ref — prompt or fail.
 		if r.canPrompt() {
-			ref, code := r.promptAuthSelection(cfg, requiredProvider, a.name)
+			ref, code := r.promptAuthSelection(ctx, cfg, requiredProvider, a.name)
 			if code != 0 {
 				return code
 			}
@@ -375,14 +376,14 @@ func (r *runner) runProfileNew() int {
 // promptStoreSelection prompts the user to pick an existing store or create a
 // new one. It returns the chosen store-ref name, whether a new store was
 // created, and exit code 0 on success.
-func (r *runner) promptStoreSelection(cfg *cloudstic.ProfilesConfig) (string, bool, int) {
+func (r *runner) promptStoreSelection(ctx context.Context, cfg *cloudstic.ProfilesConfig) (string, bool, int) {
 	options := []string{"Create new store"}
 	for name := range cfg.Stores {
 		options = append(options, name)
 	}
 	sort.Strings(options[1:])
 
-	picked, err := r.promptSelect("Select a store", options)
+	picked, err := r.promptSelect(ctx, "Select a store", options)
 	if err != nil {
 		return "", false, r.fail("Failed to select store: %v", err)
 	}
@@ -392,14 +393,14 @@ func (r *runner) promptStoreSelection(cfg *cloudstic.ProfilesConfig) (string, bo
 	}
 
 	// Create a new store inline.
-	refName, err := r.promptLine("Store reference name", "default-store")
+	refName, err := r.promptLine(ctx, "Store reference name", "default-store")
 	if err != nil {
 		return "", false, r.fail("Failed to read store reference name: %v", err)
 	}
 	if refName == "" {
 		return "", false, r.fail("Store reference name is required")
 	}
-	uri, err := r.promptLine("Store URI (e.g. s3:bucket/path, local:/path, sftp://host/path)", "")
+	uri, err := r.promptLine(ctx, "Store URI (e.g. s3:bucket/path, local:/path, sftp://host/path)", "")
 	if err != nil {
 		return "", false, r.fail("Failed to read store URI: %v", err)
 	}
@@ -416,7 +417,7 @@ func (r *runner) promptStoreSelection(cfg *cloudstic.ProfilesConfig) (string, bo
 // promptAuthSelection prompts the user to pick an existing auth entry (filtered
 // by provider) or create a new one. It returns the chosen auth-ref name and
 // exit code 0 on success. The new entry is added to cfg.Auth in place.
-func (r *runner) promptAuthSelection(cfg *cloudstic.ProfilesConfig, provider, profileName string) (string, int) {
+func (r *runner) promptAuthSelection(ctx context.Context, cfg *cloudstic.ProfilesConfig, provider, profileName string) (string, int) {
 	options := []string{"Create new auth"}
 	for name, auth := range cfg.Auth {
 		if auth.Provider == provider {
@@ -425,7 +426,7 @@ func (r *runner) promptAuthSelection(cfg *cloudstic.ProfilesConfig, provider, pr
 	}
 	sort.Strings(options[1:])
 
-	picked, err := r.promptSelect(fmt.Sprintf("Select %s auth entry", provider), options)
+	picked, err := r.promptSelect(ctx, fmt.Sprintf("Select %s auth entry", provider), options)
 	if err != nil {
 		return "", r.fail("Failed to select auth entry: %v", err)
 	}
@@ -433,7 +434,7 @@ func (r *runner) promptAuthSelection(cfg *cloudstic.ProfilesConfig, provider, pr
 		return picked, 0
 	}
 
-	refName, err := r.promptLine("Auth reference name", provider+"-"+profileName)
+	refName, err := r.promptLine(ctx, "Auth reference name", provider+"-"+profileName)
 	if err != nil {
 		return "", r.fail("Failed to read auth reference name: %v", err)
 	}
@@ -441,7 +442,7 @@ func (r *runner) promptAuthSelection(cfg *cloudstic.ProfilesConfig, provider, pr
 		return "", r.fail("Auth reference name is required")
 	}
 
-	tokenFile, err := r.promptLine("Token file path", defaultAuthTokenPath(provider, refName))
+	tokenFile, err := r.promptLine(ctx, "Token file path", defaultAuthTokenPath(provider, refName))
 	if err != nil {
 		return "", r.fail("Failed to read token file path: %v", err)
 	}

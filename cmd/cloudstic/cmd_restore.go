@@ -41,7 +41,7 @@ func parseRestoreArgs() *restoreArgs {
 	return a
 }
 
-func (r *runner) runRestore() int {
+func (r *runner) runRestore(ctx context.Context) int {
 	a := parseRestoreArgs()
 	format, err := resolveRestoreFormat(a.format, a.output)
 	if err != nil {
@@ -49,7 +49,7 @@ func (r *runner) runRestore() int {
 	}
 	a.format = format
 
-	if err := r.openClient(a.g); err != nil {
+	if err := r.openClient(ctx, a.g); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 

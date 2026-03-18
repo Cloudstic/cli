@@ -90,7 +90,7 @@ func initEncryptionKey(s *mockStore, platformKey []byte, password string) ([]byt
 		return nil, err
 	}
 	for _, slot := range slots {
-		if err := WriteKeySlot(s, slot); err != nil {
+		if err := WriteKeySlot(context.Background(), s, slot); err != nil {
 			return nil, err
 		}
 	}
@@ -109,7 +109,7 @@ func TestInitAndOpenPlatformKey(t *testing.T) {
 		t.Fatalf("encryption key length = %d, want %d", len(encKey), crypto.KeySize)
 	}
 
-	slots, err := LoadKeySlots(inner)
+	slots, err := LoadKeySlots(context.Background(), inner)
 	if err != nil {
 		t.Fatalf("LoadKeySlots: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestInitAndOpenPassword(t *testing.T) {
 		t.Fatalf("InitEncryptionKey: %v", err)
 	}
 
-	slots, err := LoadKeySlots(inner)
+	slots, err := LoadKeySlots(context.Background(), inner)
 	if err != nil {
 		t.Fatalf("LoadKeySlots: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestOpenWithWrongPassword(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	slots, _ := LoadKeySlots(inner)
+	slots, _ := LoadKeySlots(context.Background(), inner)
 	if _, err := (Chain{WithPassword("wrong-password")}).Resolve(context.Background(), slots); err == nil {
 		t.Fatal("expected error with wrong password")
 	}
@@ -194,7 +194,7 @@ func TestOpenWithWrongPlatformKey(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	slots, _ := LoadKeySlots(inner)
+	slots, _ := LoadKeySlots(context.Background(), inner)
 	if _, err := (Chain{WithPlatformKey(key2)}).Resolve(context.Background(), slots); err == nil {
 		t.Fatal("expected error with wrong platform key")
 	}
@@ -210,7 +210,7 @@ func TestDualSlots(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	slots, _ := LoadKeySlots(inner)
+	slots, _ := LoadKeySlots(context.Background(), inner)
 	if len(slots) != 2 {
 		t.Fatalf("expected 2 slots, got %d", len(slots))
 	}
@@ -264,13 +264,13 @@ func TestAddAndOpenRecoveryKey(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	slots, _ := LoadKeySlots(inner)
+	slots, _ := LoadKeySlots(context.Background(), inner)
 	masterKey, err := (Chain{WithPlatformKey(platformKey)}).Resolve(context.Background(), slots)
 	if err != nil {
 		t.Fatalf("Resolve with platform key: %v", err)
 	}
 
-	mnemonic, err := AddRecoverySlot(inner, masterKey)
+	mnemonic, err := AddRecoverySlot(context.Background(), inner, masterKey)
 	if err != nil {
 		t.Fatalf("AddRecoverySlot: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestAddAndOpenRecoveryKey(t *testing.T) {
 		t.Fatal("mnemonic should not be empty")
 	}
 
-	slots, _ = LoadKeySlots(inner)
+	slots, _ = LoadKeySlots(context.Background(), inner)
 	var hasRecovery bool
 	for _, s := range slots {
 		if s.SlotType == "recovery" {
@@ -309,11 +309,11 @@ func TestOpenWithWrongRecoveryKey(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	slots, _ := LoadKeySlots(inner)
+	slots, _ := LoadKeySlots(context.Background(), inner)
 	mk, _ := (Chain{WithPlatformKey(platformKey)}).Resolve(context.Background(), slots)
-	_, _ = AddRecoverySlot(inner, mk)
+	_, _ = AddRecoverySlot(context.Background(), inner, mk)
 
-	slots, _ = LoadKeySlots(inner)
+	slots, _ = LoadKeySlots(context.Background(), inner)
 
 	// Create another valid mnemonic
 	wrongMnemonic, _, _ := crypto.GenerateRecoveryMnemonic()
@@ -333,18 +333,18 @@ func TestChangePasswordSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	slots, _ := LoadKeySlots(inner)
+	slots, _ := LoadKeySlots(context.Background(), inner)
 	mk, err := (Chain{WithPassword(oldPassword)}).Resolve(context.Background(), slots)
 	if err != nil {
 		t.Fatalf("Resolve with old password: %v", err)
 	}
 
-	if err := ChangePasswordSlot(inner, mk, newPassword); err != nil {
+	if err := ChangePasswordSlot(context.Background(), inner, mk, newPassword); err != nil {
 		t.Fatalf("ChangePasswordSlot: %v", err)
 	}
 
 	// Old password should no longer work.
-	slots, _ = LoadKeySlots(inner)
+	slots, _ = LoadKeySlots(context.Background(), inner)
 	if _, err := (Chain{WithPassword(oldPassword)}).Resolve(context.Background(), slots); err == nil {
 		t.Fatal("old password should no longer open the repo")
 	}
@@ -364,19 +364,19 @@ func TestChangePasswordSlot(t *testing.T) {
 func TestChangePasswordSlot_EmptyPassword(t *testing.T) {
 	inner := newMemStore()
 	mk, _ := crypto.GenerateKey()
-	if err := ChangePasswordSlot(inner, mk, ""); err == nil {
+	if err := ChangePasswordSlot(context.Background(), inner, mk, ""); err == nil {
 		t.Fatal("expected error for empty password")
 	}
 }
 
 func TestHasKeySlots(t *testing.T) {
 	inner := newMemStore()
-	if HasKeySlots(inner) {
+	if HasKeySlots(context.Background(), inner) {
 		t.Fatal("empty store should not have key slots")
 	}
 	key, _ := crypto.GenerateKey()
 	_, _ = initEncryptionKey(inner, key, "")
-	if !HasKeySlots(inner) {
+	if !HasKeySlots(context.Background(), inner) {
 		t.Fatal("store should have key slots after init")
 	}
 }

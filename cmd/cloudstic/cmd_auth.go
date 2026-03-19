@@ -6,11 +6,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	cloudstic "github.com/cloudstic/cli"
-	"github.com/cloudstic/cli/internal/paths"
 )
 
 func (r *runner) runAuth(ctx context.Context) int {
@@ -94,9 +92,12 @@ func (r *runner) runAuthNew(ctx context.Context) int {
 	name := fs.String("name", "", "Auth reference name")
 	provider := fs.String("provider", "", "Auth provider: google|onedrive")
 	googleCreds := fs.String("google-credentials", "", "Path to Google service account credentials JSON file")
+	googleCredsRef := fs.String("google-credentials-ref", "", "Secret reference to Google service account credentials JSON")
 	googleTokenFile := fs.String("google-token-file", "", "Path to Google OAuth token file")
+	googleTokenRef := fs.String("google-token-ref", "", "Secret reference to Google OAuth token")
 	onedriveClientID := fs.String("onedrive-client-id", "", "OneDrive OAuth client ID")
 	onedriveTokenFile := fs.String("onedrive-token-file", "", "Path to OneDrive OAuth token file")
+	onedriveTokenRef := fs.String("onedrive-token-ref", "", "Secret reference to OneDrive OAuth token")
 	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
 
 	if *name == "" {
@@ -129,44 +130,49 @@ func (r *runner) runAuthNew(ctx context.Context) int {
 
 	auth := cloudstic.ProfileAuth{Provider: *provider}
 	if *provider == "google" {
-		if *googleTokenFile == "" {
+		if *googleTokenFile == "" && *googleTokenRef == "" {
+			def := defaultAuthTokenRef("google", *name)
 			if r.canPrompt() {
-				def := defaultAuthTokenPath("google", *name)
-				v, err := r.promptLine(ctx, "Google token file path", def)
+				v, err := r.promptLine(ctx, "Google token storage (file path or secret ref)", def)
 				if err != nil {
-					return r.fail("Failed to read google token file path: %v", err)
+					return r.fail("Failed to read google token storage: %v", err)
 				}
-				*googleTokenFile = v
+				if strings.Contains(v, "://") {
+					*googleTokenRef = v
+				} else {
+					*googleTokenFile = v
+				}
 			}
-			if *googleTokenFile == "" {
-				*googleTokenFile = defaultAuthTokenPath("google", *name)
-			}
-			if *googleTokenFile == "" {
-				return r.fail("-google-token-file is required for provider=google")
+			if *googleTokenFile == "" && *googleTokenRef == "" {
+				*googleTokenRef = def
 			}
 		}
 		auth.GoogleCreds = *googleCreds
+		auth.GoogleCredsRef = *googleCredsRef
 		auth.GoogleTokenFile = *googleTokenFile
+		auth.GoogleTokenRef = *googleTokenRef
 	}
 	if *provider == "onedrive" {
-		if *onedriveTokenFile == "" {
+		if *onedriveTokenFile == "" && *onedriveTokenRef == "" {
+			def := defaultAuthTokenRef("onedrive", *name)
 			if r.canPrompt() {
-				def := defaultAuthTokenPath("onedrive", *name)
-				v, err := r.promptLine(ctx, "OneDrive token file path", def)
+				v, err := r.promptLine(ctx, "OneDrive token storage (file path or secret ref)", def)
 				if err != nil {
-					return r.fail("Failed to read onedrive token file path: %v", err)
+					return r.fail("Failed to read onedrive token storage: %v", err)
 				}
-				*onedriveTokenFile = v
+				if strings.Contains(v, "://") {
+					*onedriveTokenRef = v
+				} else {
+					*onedriveTokenFile = v
+				}
 			}
-			if *onedriveTokenFile == "" {
-				*onedriveTokenFile = defaultAuthTokenPath("onedrive", *name)
-			}
-			if *onedriveTokenFile == "" {
-				return r.fail("-onedrive-token-file is required for provider=onedrive")
+			if *onedriveTokenFile == "" && *onedriveTokenRef == "" {
+				*onedriveTokenRef = def
 			}
 		}
 		auth.OneDriveClientID = *onedriveClientID
 		auth.OneDriveTokenFile = *onedriveTokenFile
+		auth.OneDriveTokenRef = *onedriveTokenRef
 	}
 
 	cfg, err := loadProfilesOrInit(*profilesFile)
@@ -193,19 +199,16 @@ func (r *runner) runAuthLogin(ctx context.Context) int {
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
 	}
-
 	if *name == "" {
-		if r.canPrompt() {
-			names := sortedKeys(cfg.Auth)
-			picked, pickErr := r.promptSelect(ctx, "Select auth entry", names)
-			if pickErr != nil {
-				return r.fail("Failed to select auth entry: %v", pickErr)
-			}
-			*name = picked
+		if !r.canPrompt() {
+			return r.fail("usage: cloudstic auth login [-profiles-file <path>] <name>")
 		}
-		if *name == "" {
-			return r.fail("-name is required")
+		names := sortedKeys(cfg.Auth)
+		picked, pickErr := r.promptSelect(ctx, "Select auth entry", names)
+		if pickErr != nil {
+			return r.fail("Failed to select auth entry: %v", pickErr)
 		}
+		*name = picked
 	}
 
 	auth, ok := cfg.Auth[*name]
@@ -213,61 +216,30 @@ func (r *runner) runAuthLogin(ctx context.Context) int {
 		return r.fail("Unknown auth %q", *name)
 	}
 
-	g := newAuthGlobalFlags()
-
-	switch auth.Provider {
-	case "google":
-		googleCreds := auth.GoogleCreds
-		if googleCreds == "" {
-			googleCreds = os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
-		}
-		src, err := initSource(ctx, initSourceOptions{
-			sourceURI:       "gdrive:/",
-			googleCreds:     googleCreds,
-			googleTokenFile: auth.GoogleTokenFile,
-			globalFlags:     g,
-		})
-		if err != nil {
-			return r.fail("Failed to initialize Google auth source: %v", err)
-		}
-		_ = src.Info()
-	case "onedrive":
-		onedriveClientID := auth.OneDriveClientID
-		if onedriveClientID == "" {
-			onedriveClientID = os.Getenv("ONEDRIVE_CLIENT_ID")
-		}
-		src, err := initSource(ctx, initSourceOptions{
-			sourceURI:         "onedrive:/",
-			onedriveClientID:  onedriveClientID,
-			onedriveTokenFile: auth.OneDriveTokenFile,
-			globalFlags:       g,
-		})
-		if err != nil {
-			return r.fail("Failed to initialize OneDrive auth source: %v", err)
-		}
-		_ = src.Info()
-	default:
-		return r.fail("Unsupported auth provider %q", auth.Provider)
+	src, err := initSource(ctx, initSourceOptions{
+		sourceURI:         auth.Provider + "://auth",
+		googleCreds:       auth.GoogleCreds,
+		googleCredsRef:    auth.GoogleCredsRef,
+		googleTokenFile:   auth.GoogleTokenFile,
+		googleTokenRef:    auth.GoogleTokenRef,
+		onedriveClientID:  auth.OneDriveClientID,
+		onedriveTokenFile: auth.OneDriveTokenFile,
+		onedriveTokenRef:  auth.OneDriveTokenRef,
+		globalFlags:       &globalFlags{}, // dummy
+	})
+	if err != nil {
+		return r.fail("Failed to initialize auth source: %v", err)
 	}
 
-	_, _ = fmt.Fprintf(r.out, "Auth %q is ready\n", *name)
+	info := src.Info()
+
+	_, _ = fmt.Fprintf(r.out, "Successfully logged in as %s (%s)\n", info.Account, info.Type)
 	return 0
 }
 
-func newAuthGlobalFlags() *globalFlags {
-	fs := flag.NewFlagSet("auth-login-flags", flag.ContinueOnError)
-	return addGlobalFlags(fs)
-}
-
-func defaultAuthTokenPath(provider, name string) string {
-	configDir, err := paths.ConfigDir()
-	if err != nil {
-		return ""
+func defaultAuthTokenRef(provider, name string) string {
+	if name == "" {
+		name = "default"
 	}
-	safeName := strings.ReplaceAll(strings.TrimSpace(name), " ", "-")
-	if safeName == "" {
-		safeName = "default"
-	}
-	file := fmt.Sprintf("%s-%s_token.json", provider, safeName)
-	return filepath.Join(configDir, "tokens", file)
+	return "config-token://" + provider + "/" + name
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/paths"
@@ -441,21 +442,34 @@ func (r *runner) promptAuthSelection(ctx context.Context, cfg *cloudstic.Profile
 	if refName == "" {
 		return "", r.fail("Auth reference name is required")
 	}
-
-	tokenFile, err := r.promptLine(ctx, "Token file path", defaultAuthTokenPath(provider, refName))
-	if err != nil {
-		return "", r.fail("Failed to read token file path: %v", err)
+	if err := validateRefName("auth", refName); err != nil {
+		return "", r.fail("%v", err)
 	}
-	if tokenFile == "" {
-		return "", r.fail("Token file path is required")
+
+	defTokenRef := "config-token://" + provider + "/" + refName
+	tokenStorage, err := r.promptLine(ctx, "Token storage (file path or secret ref)", defTokenRef)
+	if err != nil {
+		return "", r.fail("Failed to read token storage: %v", err)
+	}
+	if tokenStorage == "" {
+		tokenStorage = defTokenRef
 	}
 
 	auth := cloudstic.ProfileAuth{Provider: provider}
-	switch provider {
-	case "google":
-		auth.GoogleTokenFile = tokenFile
-	case "onedrive":
-		auth.OneDriveTokenFile = tokenFile
+	if strings.Contains(tokenStorage, "://") {
+		switch provider {
+		case "google":
+			auth.GoogleTokenRef = tokenStorage
+		case "onedrive":
+			auth.OneDriveTokenRef = tokenStorage
+		}
+	} else {
+		switch provider {
+		case "google":
+			auth.GoogleTokenFile = tokenStorage
+		case "onedrive":
+			auth.OneDriveTokenFile = tokenStorage
+		}
 	}
 	cfg.Auth[refName] = auth
 	return refName, 0

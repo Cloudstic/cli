@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	cloudstic "github.com/cloudstic/cli"
 )
 
 func TestRunAuthNewAndListAndShow(t *testing.T) {
@@ -199,28 +202,18 @@ func TestRunAuthList_MissingFile(t *testing.T) {
 	}
 }
 
-func TestDefaultAuthTokenPath(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("CLOUDSTIC_CONFIG_DIR", tmpDir)
-
-	got := defaultAuthTokenPath("google", "work")
-	want := filepath.Join("tokens", "google-work_token.json")
-	if !strings.HasSuffix(got, want) {
-		t.Fatalf("expected path ending with %q, got %q", want, got)
+func TestDefaultAuthTokenRef(t *testing.T) {
+	if got := defaultAuthTokenRef("google", "work"); got != "config-token://google/work" {
+		t.Fatalf("unexpected ref: %q", got)
 	}
-
-	// Empty name should use "default"
-	got = defaultAuthTokenPath("google", "")
-	want = filepath.Join("tokens", "google-default_token.json")
-	if !strings.HasSuffix(got, want) {
-		t.Fatalf("expected path ending with %q, got %q", want, got)
+	if got := defaultAuthTokenRef("google", ""); got != "config-token://google/default" {
+		t.Fatalf("unexpected default ref for empty name: %q", got)
 	}
 }
 
-func TestRunAuthNew_OneDriveDerivesTokenFile(t *testing.T) {
+func TestRunAuthNew_OneDriveDerivesTokenRef(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
-	t.Setenv("CLOUDSTIC_CONFIG_DIR", tmpDir)
 
 	os.Args = []string{
 		"cloudstic", "auth", "new",
@@ -230,7 +223,7 @@ func TestRunAuthNew_OneDriveDerivesTokenFile(t *testing.T) {
 	}
 	var out strings.Builder
 	var errOut strings.Builder
-	r := &runner{out: &out, errOut: &errOut}
+	r := &runner{out: &out, errOut: &errOut, noPrompt: true}
 	if code := r.runAuth(context.Background()); code != 0 {
 		t.Fatalf("auth new failed: %s", errOut.String())
 	}
@@ -239,20 +232,19 @@ func TestRunAuthNew_OneDriveDerivesTokenFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read profiles file: %v", err)
 	}
-	if !strings.Contains(string(raw), "onedrive-od-work_token.json") {
-		t.Fatalf("expected derived onedrive token file path in profiles file:\n%s", string(raw))
+	if !strings.Contains(string(raw), "onedrive_token_ref: config-token://onedrive/od-work") {
+		t.Fatalf("expected derived onedrive token ref in profiles file:\n%s", string(raw))
 	}
 }
 
-func TestRunAuthNew_DerivesDefaultTokenFile(t *testing.T) {
+func TestRunAuthNew_DerivesDefaultTokenRef(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
-	t.Setenv("CLOUDSTIC_CONFIG_DIR", tmpDir)
 
 	os.Args = []string{"cloudstic", "auth", "new", "-profiles-file", profilesPath, "-name", "g", "-provider", "google"}
 	var out strings.Builder
 	var errOut strings.Builder
-	r := &runner{out: &out, errOut: &errOut}
+	r := &runner{out: &out, errOut: &errOut, noPrompt: true}
 	if code := r.runAuth(context.Background()); code != 0 {
 		t.Fatalf("auth new failed: %s", errOut.String())
 	}
@@ -260,7 +252,43 @@ func TestRunAuthNew_DerivesDefaultTokenFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read profiles file: %v", err)
 	}
-	if !strings.Contains(string(raw), "google-g_token.json") {
-		t.Fatalf("expected derived token file path in profiles file:\n%s", string(raw))
+	if !strings.Contains(string(raw), "google_token_ref: config-token://google/g") {
+		t.Fatalf("expected derived token ref in profiles file:\n%s", string(raw))
+	}
+}
+
+func TestPromptAuthSelection_DerivesTokenRef(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("CLOUDSTIC_CONFIG_DIR", tmpDir)
+	cfg := &cloudstic.ProfilesConfig{
+		Auth: make(map[string]cloudstic.ProfileAuth),
+	}
+
+	r := &runner{
+		out:    &strings.Builder{},
+		errOut: &strings.Builder{},
+		// Mock prompt interactions:
+		// 1. Select option: "Create new auth"
+		// 2. Auth name: "my-google"
+		// 3. Token storage: use default (config-token://google/my-google)
+		lineIn: bufio.NewReader(strings.NewReader("1\nmy-google\n\n")),
+	}
+
+	ctx := context.Background()
+	name, code := r.promptAuthSelection(ctx, cfg, "google", "test-profile")
+	if code != 0 {
+		t.Fatalf("promptAuthSelection failed with code %d", code)
+	}
+	if name != "my-google" {
+		t.Fatalf("expected name 'my-google', got %q", name)
+	}
+
+	auth, ok := cfg.Auth["my-google"]
+	if !ok {
+		t.Fatal("auth entry not created in config")
+	}
+	expectedRef := "config-token://google/my-google"
+	if auth.GoogleTokenRef != expectedRef {
+		t.Fatalf("expected token ref %q, got %q", expectedRef, auth.GoogleTokenRef)
 	}
 }

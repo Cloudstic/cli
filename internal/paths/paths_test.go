@@ -3,6 +3,7 @@ package paths
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -89,5 +90,31 @@ func TestTokenPath_ReturnsError(t *testing.T) {
 	_, err := TokenPath("token.json")
 	if err == nil {
 		t.Error("expected error when config dir cannot be created")
+	}
+}
+
+func TestSaveAtomic_ReplacesExistingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "token.json")
+	if err := os.WriteFile(path, []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveAtomic(path, []byte("new")); err != nil {
+		t.Fatalf("SaveAtomic failed: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	if string(got) != "new" {
+		t.Fatalf("got %q want %q", got, "new")
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("Stat failed: %v", err)
+		}
+		if info.Mode().Perm() != 0600 {
+			t.Fatalf("got perms %o want 600", info.Mode().Perm())
+		}
 	}
 }

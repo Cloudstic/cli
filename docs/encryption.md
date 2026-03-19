@@ -102,6 +102,43 @@ passes through any object under the `keys/` prefix without encrypting or
 decrypting it, avoiding the chicken-and-egg problem of needing the
 encryption key to read the encryption key.
 
+## Auth Material Encryption
+
+In addition to repository data, Cloudstic provides at-rest protection for
+sensitive authentication material (like OAuth tokens) stored locally on the
+client machine via the `config-token://` reference scheme.
+
+### Managed Token Storage
+
+When using `config-token://<provider>/<name>`, Cloudstic manages the lifecycle
+and security of the token blob:
+
+- **Location**: Tokens are stored in the app's config directory (e.g.,
+  `~/.config/cloudstic/tokens/`).
+- **Encryption**: Blobs are encrypted using AES-256-GCM before being written
+  to disk.
+- **Key Derivation**: The encryption key is unique to the machine and user.
+  It is derived from a persistent random salt file (`auth_salt`), a
+  hardware-specific Machine ID, and a stable per-user OS identifier
+  (UID on Unix-like systems, the platform user identifier elsewhere).
+- **Atomic Updates**: To prevent corruption during OAuth token refreshes,
+  updates are performed atomically using a write-to-temporary-then-rename
+  pattern.
+- **Permissions**: All managed token files and directories are restricted to
+  the current user (`0600` for files, `0700` for directories).
+
+### Native Keychain Integration
+
+On supported platforms (e.g., macOS), Cloudstic can store auth blobs directly in
+the OS-native secure store using the `keychain://` scheme. In this mode, the OS
+handles encryption and access control, providing the highest level of security.
+
+### Unencrypted Fallback (Stateless/Cloud)
+
+For environments where local encryption is not desired (e.g., when secrets are
+already managed by Kubernetes or a Cloud provider), the `file://` scheme can
+be used to read and write auth material in its raw, unencrypted form.
+
 ### Key derivation
 
 The master key is not used directly for encryption. Instead, HKDF-SHA256
@@ -271,15 +308,23 @@ Repository encryption key slots and profile credentials are separate concerns:
 `profiles.yaml` should store secret references, not secret values. Supported
 reference schemes:
 
-- `env://VAR_NAME`
-- `keychain://service/account` (macOS)
+- `env://VAR_NAME` (Stateless environments, CI/CD)
+- `keychain://service/account` (OS-native secure store)
+- `config-token://provider/name` (Encrypted local file managed by Cloudstic)
+- `file:///path/to/secret` (Raw local file)
 
-`wincred://...` (Windows) and `secret-service://...` (Linux) are planned but not
-yet available in the default CLI resolver.
+`wincred://...` (Windows) and `secret-service://...` (Linux) are also supported
+as native backends.
 
 Examples:
 
 ```yaml
+auth:
+  google-work:
+    provider: google
+    google_token_ref: config-token://google/google-work
+    google_credentials_ref: keychain://cloudstic/auth/google-creds
+
 stores:
   prod:
     uri: s3:my-bucket/cloudstic

@@ -12,41 +12,47 @@ var (
 	errKeychainUnavailable = errors.New("keychain backend unavailable")
 )
 
-type keychainLookupFunc func(ctx context.Context, service, account string) (string, error)
+type keychainLookupBlobFunc func(ctx context.Context, service, account string) ([]byte, error)
 type keychainExistsFunc func(ctx context.Context, service, account string) (bool, error)
-type keychainStoreFunc func(ctx context.Context, service, account, value string) error
+type keychainStoreBlobFunc func(ctx context.Context, service, account string, value []byte) error
+type keychainDeleteFunc func(ctx context.Context, service, account string) error
 
 // KeychainBackend resolves keychain://service/account references.
 type KeychainBackend struct {
-	lookup keychainLookupFunc
-	exists keychainExistsFunc
-	store  keychainStoreFunc
+	lookupBlob keychainLookupBlobFunc
+	exists     keychainExistsFunc
+	storeBlob  keychainStoreBlobFunc
+	delete     keychainDeleteFunc
 }
 
 // NewKeychainBackend creates a keychain backend for the current platform.
 func NewKeychainBackend() *KeychainBackend {
 	return &KeychainBackend{
-		lookup: defaultKeychainLookup,
-		exists: defaultKeychainExists,
-		store:  defaultKeychainStore,
+		lookupBlob: defaultKeychainLookupBlob,
+		exists:     defaultKeychainExists,
+		storeBlob:  defaultKeychainStoreBlob,
+		delete:     defaultKeychainDelete,
 	}
 }
 
-func newKeychainBackendWithFns(lookup keychainLookupFunc, exists keychainExistsFunc, store keychainStoreFunc) *KeychainBackend {
+func newKeychainBackendWithFns(lookup keychainLookupBlobFunc, exists keychainExistsFunc, store keychainStoreBlobFunc, deleteFn keychainDeleteFunc) *KeychainBackend {
 	if lookup == nil {
-		lookup = defaultKeychainLookup
+		lookup = defaultKeychainLookupBlob
 	}
 	if exists == nil {
 		exists = defaultKeychainExists
 	}
 	if store == nil {
-		store = defaultKeychainStore
+		store = defaultKeychainStoreBlob
 	}
-	return &KeychainBackend{lookup: lookup, exists: exists, store: store}
+	if deleteFn == nil {
+		deleteFn = defaultKeychainDelete
+	}
+	return &KeychainBackend{lookupBlob: lookup, exists: exists, storeBlob: store, delete: deleteFn}
 }
 
-func newKeychainBackendWithLookup(lookup keychainLookupFunc) *KeychainBackend {
-	return newKeychainBackendWithFns(lookup, nil, nil)
+func newKeychainBackendWithLookup(lookup keychainLookupBlobFunc) *KeychainBackend {
+	return newKeychainBackendWithFns(lookup, nil, nil, nil)
 }
 
 func parseKeychainPath(path string) (service string, account string, err error) {
@@ -68,20 +74,28 @@ func parseKeychainPath(path string) (service string, account string, err error) 
 }
 
 func (b *KeychainBackend) Resolve(ctx context.Context, ref Ref) (string, error) {
+	data, err := b.LoadBlob(ctx, ref)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(string(data), "\r\n"), nil
+}
+
+func (b *KeychainBackend) LoadBlob(ctx context.Context, ref Ref) ([]byte, error) {
 	service, account, err := parseKeychainPath(ref.Path)
 	if err != nil {
-		return "", errorf(KindInvalidRef, ref.Raw, err.Error(), nil)
+		return nil, errorf(KindInvalidRef, ref.Raw, err.Error(), nil)
 	}
 
-	value, err := b.lookup(ctx, service, account)
+	value, err := b.lookupBlob(ctx, service, account)
 	if err != nil {
 		switch {
 		case errors.Is(err, errKeychainNotFound):
-			return "", errorf(KindNotFound, ref.Raw, fmt.Sprintf("keychain item %q/%q not found", service, account), err)
+			return nil, errorf(KindNotFound, ref.Raw, fmt.Sprintf("keychain item %q/%q not found", service, account), err)
 		case errors.Is(err, errKeychainUnavailable):
-			return "", errorf(KindBackendUnavailable, ref.Raw, err.Error(), err)
+			return nil, errorf(KindBackendUnavailable, ref.Raw, err.Error(), err)
 		default:
-			return "", errorf(KindBackendUnavailable, ref.Raw, err.Error(), err)
+			return nil, errorf(KindBackendUnavailable, ref.Raw, err.Error(), err)
 		}
 	}
 
@@ -118,12 +132,33 @@ func (b *KeychainBackend) Exists(ctx context.Context, ref Ref) (bool, error) {
 }
 
 func (b *KeychainBackend) Store(ctx context.Context, ref Ref, value string) error {
+	return b.SaveBlob(ctx, ref, []byte(value))
+}
+
+func (b *KeychainBackend) SaveBlob(ctx context.Context, ref Ref, data []byte) error {
 	service, account, err := parseKeychainPath(ref.Path)
 	if err != nil {
 		return errorf(KindInvalidRef, ref.Raw, err.Error(), nil)
 	}
 
-	if err := b.store(ctx, service, account, value); err != nil {
+	if err := b.storeBlob(ctx, service, account, data); err != nil {
+		switch {
+		case errors.Is(err, errKeychainUnavailable):
+			return errorf(KindBackendUnavailable, ref.Raw, err.Error(), err)
+		default:
+			return errorf(KindBackendUnavailable, ref.Raw, err.Error(), err)
+		}
+	}
+	return nil
+}
+
+func (b *KeychainBackend) DeleteBlob(ctx context.Context, ref Ref) error {
+	service, account, err := parseKeychainPath(ref.Path)
+	if err != nil {
+		return errorf(KindInvalidRef, ref.Raw, err.Error(), nil)
+	}
+
+	if err := b.delete(ctx, service, account); err != nil {
 		switch {
 		case errors.Is(err, errKeychainUnavailable):
 			return errorf(KindBackendUnavailable, ref.Raw, err.Error(), err)

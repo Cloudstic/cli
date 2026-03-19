@@ -6,23 +6,26 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 )
 
 type runner struct {
-	out      io.Writer
-	errOut   io.Writer
-	client   cloudsticClient
-	noPrompt bool
-	stdin    *os.File
-	lineIn   *bufio.Reader
+	out               io.Writer
+	errOut            io.Writer
+	client            cloudsticClient
+	noPrompt          bool
+	stdin             *os.File
+	lineIn            *bufio.Reader
+	runInteractiveCmd func(context.Context, *os.File, io.Writer, io.Writer, string, ...string) error
 }
 
 func newRunner() *runner {
 	return &runner{
-		out:      os.Stdout,
-		errOut:   os.Stderr,
-		noPrompt: hasGlobalFlag("no-prompt"),
-		stdin:    os.Stdin,
+		out:               os.Stdout,
+		errOut:            os.Stderr,
+		noPrompt:          hasGlobalFlag("no-prompt"),
+		stdin:             os.Stdin,
+		runInteractiveCmd: defaultRunInteractiveCmd,
 	}
 }
 
@@ -66,4 +69,15 @@ func (r *runner) openClient(ctx context.Context, g *globalFlags) error {
 	}
 	r.client = client
 	return nil
+}
+
+func defaultRunInteractiveCmd(ctx context.Context, stdin *os.File, stdout, stderr io.Writer, name string, args ...string) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	if stdin == nil {
+		stdin = os.Stdin
+	}
+	cmd.Stdin = stdin
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	return cmd.Run()
 }

@@ -142,7 +142,12 @@ func (r *runner) runStoreNew(ctx context.Context) int {
 
 	if *name == "" {
 		if r.canPrompt() {
-			v, err := r.promptLine(ctx, "Store reference name", "")
+			v, err := r.promptValidatedLine(ctx, "Store reference name", "", func(v string) error {
+				if v == "" {
+					return fmt.Errorf("store reference name is required")
+				}
+				return validateRefName("store", v)
+			})
 			if err != nil {
 				return r.fail("Failed to read store name: %v", err)
 			}
@@ -175,7 +180,13 @@ func (r *runner) runStoreNew(ctx context.Context) int {
 
 	if *uri == "" || forcePromptURI {
 		if r.canPrompt() {
-			v, err := r.promptLine(ctx, "Store URI", *uri)
+			v, err := r.promptValidatedLine(ctx, "Store URI", *uri, func(v string) error {
+				if v == "" {
+					return fmt.Errorf("store URI is required")
+				}
+				_, err := parseStoreURI(v)
+				return err
+			})
 			if err != nil {
 				return r.fail("Failed to read store URI: %v", err)
 			}
@@ -211,11 +222,11 @@ func (r *runner) runStoreNew(ctx context.Context) int {
 		if forcePromptEncryption || !storeHasExplicitEncryption(s) {
 			r.promptEncryptionConfig(ctx, cfg, *name, *profilesFile)
 		}
-		if err := r.checkOrInitStore(ctx, cfg, *name, *profilesFile, checkOrInitOptions{
+		if err := r.checkOrInitStoreWithRecovery(ctx, cfg, *name, *profilesFile, checkOrInitOptions{
 			allowMissingSecrets:  true,
 			warnOnMissingSecrets: !existedBefore,
 			offerInit:            true,
-		}); err != nil {
+		}, true); err != nil {
 			_, _ = fmt.Fprintf(r.errOut, "%v\n", err)
 		}
 	}
@@ -264,9 +275,9 @@ func (r *runner) runStoreVerify(ctx context.Context) int {
 	if _, ok := cfg.Stores[name]; !ok {
 		return r.fail("Unknown store %q", name)
 	}
-	if err := r.checkOrInitStore(ctx, cfg, name, *profilesFile, checkOrInitOptions{
+	if err := r.checkOrInitStoreWithRecovery(ctx, cfg, name, *profilesFile, checkOrInitOptions{
 		warnOnMissingSecrets: true,
-	}); err != nil {
+	}, false); err != nil {
 		return r.fail("%v", err)
 	}
 	return 0
@@ -309,11 +320,11 @@ func (r *runner) runStoreInit(ctx context.Context) int {
 	if _, ok := cfg.Stores[name]; !ok {
 		return r.fail("Unknown store %q", name)
 	}
-	if err := r.checkOrInitStore(ctx, cfg, name, *profilesFile, checkOrInitOptions{
+	if err := r.checkOrInitStoreWithRecovery(ctx, cfg, name, *profilesFile, checkOrInitOptions{
 		warnOnMissingSecrets: true,
 		offerInit:            true,
 		assumeYes:            *yes,
-	}); err != nil {
+	}, false); err != nil {
 		return r.fail("%v", err)
 	}
 	return 0
@@ -402,6 +413,48 @@ func (r *runner) checkOrInitStore(ctx context.Context, cfg *cloudstic.ProfilesCo
 	}
 	r.printInitResult(result)
 	return nil
+}
+
+func (r *runner) checkOrInitStoreWithRecovery(ctx context.Context, cfg *cloudstic.ProfilesConfig, storeName, profilesFile string, opts checkOrInitOptions, allowSkip bool) error {
+	for {
+		err := r.checkOrInitStore(ctx, cfg, storeName, profilesFile, opts)
+		if err == nil || !r.canPrompt() {
+			return err
+		}
+
+		s := cfg.Stores[storeName]
+		options := []string{"Retry"}
+		loginOption := awsSSOLoginOption(s, err)
+		if loginOption != "" {
+			options = append(options, loginOption)
+		}
+		if allowSkip {
+			options = append(options, "Skip for now")
+		} else {
+			options = append(options, "Abort")
+		}
+
+		_, _ = fmt.Fprintf(r.errOut, "%v\n", err)
+		picked, promptErr := r.promptSelect(ctx, "Store verification failed", options)
+		if promptErr != nil {
+			return err
+		}
+
+		switch picked {
+		case "Retry":
+			continue
+		case "Skip for now":
+			return nil
+		case "Abort":
+			return err
+		case loginOption:
+			if runErr := r.runAWSSSOLogin(ctx, s); runErr != nil {
+				_, _ = fmt.Fprintf(r.errOut, "AWS SSO login failed: %v\n", runErr)
+			}
+		default:
+			return err
+		}
+	}
 }
 
 // promptEncryptionConfig guides the user through encryption configuration
@@ -605,6 +658,52 @@ func verifyStoreEncryptionCredentials(ctx context.Context, g *globalFlags, raw s
 		return err
 	}
 	return nil
+}
+
+func awsSSOLoginOption(s cloudstic.ProfileStore, err error) string {
+	if !isAWSExpiredAuthError(err) {
+		return ""
+	}
+	if s.S3Profile != "" {
+		return fmt.Sprintf("Run aws sso login --profile %s", s.S3Profile)
+	}
+	return "Run aws sso login"
+}
+
+func isAWSExpiredAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, needle := range []string{
+		"sso session has expired",
+		"sso session is expired",
+		"sso session is invalid",
+		"ssoproviderinvalidtoken",
+		"token has expired and refresh failed",
+		"the security token included in the request is expired",
+		"expiredtoken",
+		"expired token",
+		"invalid security token",
+	} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *runner) runAWSSSOLogin(ctx context.Context, s cloudstic.ProfileStore) error {
+	args := []string{"sso", "login"}
+	if s.S3Profile != "" {
+		args = append(args, "--profile", s.S3Profile)
+	}
+	_, _ = fmt.Fprintf(r.errOut, "Running: aws %s\n", strings.Join(args, " "))
+	runFn := r.runInteractiveCmd
+	if runFn == nil {
+		runFn = defaultRunInteractiveCmd
+	}
+	return runFn(ctx, r.stdin, r.out, r.errOut, "aws", args...)
 }
 
 func hasStoreNewOverrideFlags(flagsSet map[string]bool) bool {

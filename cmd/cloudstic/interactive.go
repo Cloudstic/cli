@@ -36,6 +36,23 @@ func (r *runner) promptLine(ctx context.Context, label, defaultValue string) (st
 	return line, nil
 }
 
+func (r *runner) promptValidatedLine(ctx context.Context, label, defaultValue string, validate func(string) error) (string, error) {
+	for {
+		value, err := r.promptLine(ctx, label, defaultValue)
+		if err != nil {
+			return "", err
+		}
+		if validate == nil {
+			return value, nil
+		}
+		if err := validate(value); err != nil {
+			_, _ = fmt.Fprintf(r.errOut, "%v\n", err)
+			continue
+		}
+		return value, nil
+	}
+}
+
 func (r *runner) promptConfirm(ctx context.Context, label string, defaultYes bool) (bool, error) {
 	hint := "y/N"
 	dflt := "n"

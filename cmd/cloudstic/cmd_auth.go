@@ -102,7 +102,12 @@ func (r *runner) runAuthNew(ctx context.Context) int {
 
 	if *name == "" {
 		if r.canPrompt() {
-			v, err := r.promptLine(ctx, "Auth reference name", "")
+			v, err := r.promptValidatedLine(ctx, "Auth reference name", "", func(v string) error {
+				if v == "" {
+					return fmt.Errorf("auth reference name is required")
+				}
+				return validateRefName("auth", v)
+			})
 			if err != nil {
 				return r.fail("Failed to read auth reference name: %v", err)
 			}

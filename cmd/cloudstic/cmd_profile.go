@@ -212,7 +212,12 @@ func (r *runner) runProfileNew(ctx context.Context) int {
 	a := parseProfileNewArgs()
 	if a.name == "" {
 		if r.canPrompt() {
-			v, err := r.promptLine(ctx, "Profile name", "")
+			v, err := r.promptValidatedLine(ctx, "Profile name", "", func(v string) error {
+				if v == "" {
+					return fmt.Errorf("profile name is required")
+				}
+				return validateRefName("profile", v)
+			})
 			if err != nil {
 				return r.fail("Failed to read profile name: %v", err)
 			}
@@ -239,7 +244,16 @@ func (r *runner) runProfileNew(ctx context.Context) int {
 
 	if a.source == "" {
 		if r.canPrompt() {
-			v, err := r.promptLine(ctx, "Source URI", "")
+			v, err := r.promptValidatedLine(ctx, "Source URI", "", func(v string) error {
+				if v == "" {
+					return fmt.Errorf("source URI is required")
+				}
+				_, err := parseSourceURI(v)
+				if err != nil {
+					return fmt.Errorf("invalid source: %w", err)
+				}
+				return nil
+			})
 			if err != nil {
 				return r.fail("Failed to read source URI: %v", err)
 			}
@@ -297,11 +311,11 @@ func (r *runner) runProfileNew(ctx context.Context) int {
 		if !storeHasExplicitEncryption(s) {
 			r.promptEncryptionConfig(ctx, cfg, a.storeRef, a.profilesFile)
 		}
-		if err := r.checkOrInitStore(ctx, cfg, a.storeRef, a.profilesFile, checkOrInitOptions{
+		if err := r.checkOrInitStoreWithRecovery(ctx, cfg, a.storeRef, a.profilesFile, checkOrInitOptions{
 			allowMissingSecrets:  true,
 			warnOnMissingSecrets: true,
 			offerInit:            true,
-		}); err != nil {
+		}, true); err != nil {
 			_, _ = fmt.Fprintf(r.errOut, "%v\n", err)
 		}
 	}
@@ -394,22 +408,27 @@ func (r *runner) promptStoreSelection(ctx context.Context, cfg *cloudstic.Profil
 	}
 
 	// Create a new store inline.
-	refName, err := r.promptLine(ctx, "Store reference name", "default-store")
+	refName, err := r.promptValidatedLine(ctx, "Store reference name", "default-store", func(v string) error {
+		if v == "" {
+			return fmt.Errorf("store reference name is required")
+		}
+		return validateRefName("store", v)
+	})
 	if err != nil {
 		return "", false, r.fail("Failed to read store reference name: %v", err)
 	}
-	if refName == "" {
-		return "", false, r.fail("Store reference name is required")
-	}
-	uri, err := r.promptLine(ctx, "Store URI (e.g. s3:bucket/path, local:/path, sftp://host/path)", "")
+	uri, err := r.promptValidatedLine(ctx, "Store URI (e.g. s3:bucket/path, local:/path, sftp://host/path)", "", func(v string) error {
+		if v == "" {
+			return fmt.Errorf("store URI is required")
+		}
+		_, err := parseStoreURI(v)
+		if err != nil {
+			return fmt.Errorf("invalid store URI: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
 		return "", false, r.fail("Failed to read store URI: %v", err)
-	}
-	if uri == "" {
-		return "", false, r.fail("Store URI is required")
-	}
-	if _, err := parseStoreURI(uri); err != nil {
-		return "", false, r.fail("Invalid store URI: %v", err)
 	}
 	cfg.Stores[refName] = cloudstic.ProfileStore{URI: uri}
 	return refName, true, 0
@@ -435,15 +454,14 @@ func (r *runner) promptAuthSelection(ctx context.Context, cfg *cloudstic.Profile
 		return picked, 0
 	}
 
-	refName, err := r.promptLine(ctx, "Auth reference name", provider+"-"+profileName)
+	refName, err := r.promptValidatedLine(ctx, "Auth reference name", provider+"-"+profileName, func(v string) error {
+		if v == "" {
+			return fmt.Errorf("auth reference name is required")
+		}
+		return validateRefName("auth", v)
+	})
 	if err != nil {
 		return "", r.fail("Failed to read auth reference name: %v", err)
-	}
-	if refName == "" {
-		return "", r.fail("Auth reference name is required")
-	}
-	if err := validateRefName("auth", refName); err != nil {
-		return "", r.fail("%v", err)
 	}
 
 	defTokenRef := "config-token://" + provider + "/" + refName

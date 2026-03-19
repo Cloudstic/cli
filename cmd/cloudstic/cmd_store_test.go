@@ -1056,6 +1056,46 @@ func TestStoreHasExplicitEncryption(t *testing.T) {
 	}
 }
 
+func TestIsAWSExpiredAuthError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "nil", err: nil, want: false},
+		{name: "generic", err: errors.New("connection refused"), want: false},
+		{name: "expired token", err: errors.New("ExpiredToken: The security token included in the request is expired"), want: true},
+		{name: "sso invalid", err: errors.New("failed to refresh cached credentials, the SSO session has expired or is invalid"), want: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isAWSExpiredAuthError(tc.err); got != tc.want {
+				t.Fatalf("got %v want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAWSSSOLoginOption(t *testing.T) {
+	err := errors.New("failed to refresh cached credentials, the SSO session has expired or is invalid")
+
+	got := awsSSOLoginOption(cloudstic.ProfileStore{URI: "s3:bucket", S3Profile: "work"}, err)
+	if got != "Run aws sso login --profile work" {
+		t.Fatalf("got %q", got)
+	}
+
+	got = awsSSOLoginOption(cloudstic.ProfileStore{URI: "s3:bucket"}, err)
+	if got != "Run aws sso login" {
+		t.Fatalf("got %q", got)
+	}
+
+	got = awsSSOLoginOption(cloudstic.ProfileStore{URI: "s3:bucket"}, errors.New("bucket not found"))
+	if got != "" {
+		t.Fatalf("expected empty option, got %q", got)
+	}
+}
+
 func TestHasStoreNewOverrideFlags(t *testing.T) {
 	if hasStoreNewOverrideFlags(map[string]bool{"name": true}) {
 		t.Fatal("name-only should not count as override")

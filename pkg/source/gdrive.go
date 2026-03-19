@@ -196,9 +196,9 @@ func NewGDriveSource(ctx context.Context, opts ...GDriveOption) (*GDriveSource, 
 		} else {
 			// Try service account if it wasn't a user config
 			if cfg.credsPath != "" {
-				srv, err = drive.NewService(ctx, option.WithCredentialsFile(cfg.credsPath))
+				srv, err = drive.NewService(ctx, option.WithAuthCredentialsFile(option.ServiceAccount, cfg.credsPath))
 			} else {
-				srv, err = drive.NewService(ctx, option.WithCredentialsJSON(b))
+				srv, err = drive.NewService(ctx, option.WithAuthCredentialsJSON(option.ServiceAccount, b))
 			}
 			if err != nil {
 				return nil, fmt.Errorf("create drive client (service account): %w", err)

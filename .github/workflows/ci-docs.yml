@@ -22,7 +22,7 @@ jobs:
     name: Lint Docs
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Markdown Lint
         uses: DavidAnson/markdownlint-cli2-action@v22
         with:

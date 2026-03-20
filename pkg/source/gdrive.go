@@ -24,10 +24,12 @@ import (
 
 // gDriveOptions holds configuration for a Google Drive source.
 type gDriveOptions struct {
+	service         *drive.Service // pre-built service; highest priority
 	httpClient      *http.Client
 	resolver        *secretref.Resolver
 	credsPath       string
 	credsRef        string
+	credsJSON       []byte // inline credential JSON (OAuth client or service-account)
 	tokenPath       string
 	tokenRef        string
 	driveID         string
@@ -41,6 +43,15 @@ type gDriveOptions struct {
 
 // GDriveOption configures a Google Drive source.
 type GDriveOption func(*gDriveOptions)
+
+// WithDriveService injects a fully-constructed *drive.Service.
+// When set, all credential/token options are ignored — the caller is
+// responsible for scopes, token refresh, etc.
+func WithDriveService(srv *drive.Service) GDriveOption {
+	return func(o *gDriveOptions) {
+		o.service = srv
+	}
+}
 
 // WithHTTPClient sets a custom HTTP client for OAuth.
 func WithHTTPClient(client *http.Client) GDriveOption {
@@ -68,6 +79,15 @@ func WithCredsPath(path string) GDriveOption {
 func WithCredsRef(ref string) GDriveOption {
 	return func(o *gDriveOptions) {
 		o.credsRef = ref
+	}
+}
+
+// WithCredsJSON provides credentials as raw JSON bytes (inline).
+// Supports both OAuth-client and service-account credential formats.
+// This mirrors rclone's service_account_credentials option.
+func WithCredsJSON(data []byte) GDriveOption {
+	return func(o *gDriveOptions) {
+		o.credsJSON = data
 	}
 }
 
@@ -162,86 +182,14 @@ func NewGDriveSource(ctx context.Context, opts ...GDriveOption) (*GDriveSource, 
 		opt(&cfg)
 	}
 
-	var srv *drive.Service
-	var err error
-	if cfg.httpClient != nil {
-		srv, err = drive.NewService(ctx, option.WithHTTPClient(cfg.httpClient))
-		if err != nil {
-			return nil, fmt.Errorf("create drive client (custom http client): %w", err)
-		}
-	} else if cfg.credsRef != "" || cfg.credsPath != "" {
-		var b []byte
-		if cfg.credsRef != "" && cfg.resolver != nil {
-			b, err = cfg.resolver.LoadBlob(ctx, cfg.credsRef)
-			if err != nil {
-				return nil, fmt.Errorf("load credentials from ref %q: %w", cfg.credsRef, err)
-			}
-		} else if cfg.credsPath != "" {
-			b, err = os.ReadFile(cfg.credsPath)
-			if err != nil {
-				return nil, fmt.Errorf("read credentials file: %w", err)
-			}
-		}
-
-		config, err := google.ConfigFromJSON(b, drive.DriveReadonlyScope)
-		if err == nil {
-			client, err := oauthClient(ctx, config, cfg.resolver, cfg.tokenRef, cfg.tokenPath)
-			if err != nil {
-				return nil, err
-			}
-			srv, err = drive.NewService(ctx, option.WithHTTPClient(client))
-			if err != nil {
-				return nil, fmt.Errorf("create drive client (user auth): %w", err)
-			}
-		} else {
-			// Try service account if it wasn't a user config
-			if cfg.credsPath != "" {
-				srv, err = drive.NewService(ctx, option.WithAuthCredentialsFile(option.ServiceAccount, cfg.credsPath))
-			} else {
-				srv, err = drive.NewService(ctx, option.WithAuthCredentialsJSON(option.ServiceAccount, b))
-			}
-			if err != nil {
-				return nil, fmt.Errorf("create drive client (service account): %w", err)
-			}
-		}
-	} else {
-		config := &oauth2.Config{
-			ClientID:     defaultGoogleClientID,
-			ClientSecret: defaultGoogleClientSecret,
-			Scopes:       []string{drive.DriveReadonlyScope},
-			Endpoint:     google.Endpoint,
-		}
-		client, err := oauthClient(ctx, config, cfg.resolver, cfg.tokenRef, cfg.tokenPath)
-		if err != nil {
-			return nil, err
-		}
-		srv, err = drive.NewService(ctx, option.WithHTTPClient(client))
-		if err != nil {
-			return nil, fmt.Errorf("create drive client: %w", err)
-		}
+	srv, err := buildDriveService(ctx, cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	if cfg.driveName != "" && cfg.driveID == "" {
-		// Try to see if the provided name is actually an ID
-		if d, err := srv.Drives.Get(cfg.driveName).Fields("id, name").Do(); err == nil {
-			cfg.driveID = d.Id
-			cfg.driveName = d.Name
-		} else {
-			// Search by name
-			query := fmt.Sprintf("name = '%s'", strings.ReplaceAll(cfg.driveName, "'", "\\'"))
-			call := srv.Drives.List().Q(query).Fields("drives(id, name)").Context(ctx)
-			r, err := driveCallWithRetry(ctx, func() (*drive.DriveList, error) { return call.Do() })
-			if err != nil {
-				return nil, fmt.Errorf("resolve drive %q: %w", cfg.driveName, err)
-			}
-			if len(r.Drives) == 0 {
-				return nil, fmt.Errorf("shared drive %q not found", cfg.driveName)
-			}
-			if len(r.Drives) > 1 {
-				return nil, fmt.Errorf("ambiguous shared drive name: multiple drives named %q found", cfg.driveName)
-			}
-			cfg.driveID = r.Drives[0].Id
-			cfg.driveName = r.Drives[0].Name
+		if err := resolveDriveName(ctx, srv, &cfg); err != nil {
+			return nil, err
 		}
 	}
 
@@ -256,7 +204,7 @@ func NewGDriveSource(ctx context.Context, opts ...GDriveOption) (*GDriveSource, 
 		skipNativeFiles: cfg.skipNativeFiles,
 	}
 
-	// Resolve the shared drive name for VolumeLabel if driveID was set directly
+	// Resolve the shared drive name for VolumeLabel if driveID was set directly.
 	if cfg.driveID != "" && src.driveName == "" {
 		if d, err := srv.Drives.Get(cfg.driveID).Fields("name").Do(); err == nil {
 			src.driveName = d.Name
@@ -274,6 +222,140 @@ func NewGDriveSource(ctx context.Context, opts ...GDriveOption) (*GDriveSource, 
 	}
 
 	return src, nil
+}
+
+// ---------------------------------------------------------------------------
+// Service construction helpers
+// ---------------------------------------------------------------------------
+
+// buildDriveService creates a *drive.Service from the supplied options.
+// Auth strategies are tried in priority order with early returns:
+//  1. Pre-built service (WithDriveService)
+//  2. Custom HTTP client (WithHTTPClient)
+//  3. Explicit credentials (WithCredsJSON / WithCredsRef / WithCredsPath)
+//  4. Built-in default OAuth client
+func buildDriveService(ctx context.Context, cfg gDriveOptions) (*drive.Service, error) {
+	// 1. Pre-built service — caller manages auth entirely.
+	if cfg.service != nil {
+		return cfg.service, nil
+	}
+
+	// 2. Custom HTTP client.
+	if cfg.httpClient != nil {
+		srv, err := drive.NewService(ctx, option.WithHTTPClient(cfg.httpClient))
+		if err != nil {
+			return nil, fmt.Errorf("create drive client (custom http client): %w", err)
+		}
+		return srv, nil
+	}
+
+	// 3. Explicit credentials: inline JSON, secret ref, or file path.
+	if b, ok, err := loadCredsBytes(ctx, cfg); err != nil {
+		return nil, err
+	} else if ok {
+		return serviceFromCredsBytes(ctx, cfg, b)
+	}
+
+	// 4. Default built-in OAuth client.
+	config := &oauth2.Config{
+		ClientID:     defaultGoogleClientID,
+		ClientSecret: defaultGoogleClientSecret,
+		Scopes:       []string{drive.DriveReadonlyScope},
+		Endpoint:     google.Endpoint,
+	}
+	client, err := oauthClient(ctx, config, cfg.resolver, cfg.tokenRef, cfg.tokenPath)
+	if err != nil {
+		return nil, err
+	}
+	srv, err := drive.NewService(ctx, option.WithHTTPClient(client))
+	if err != nil {
+		return nil, fmt.Errorf("create drive client: %w", err)
+	}
+	return srv, nil
+}
+
+// loadCredsBytes resolves credential JSON from the first available source:
+// inline JSON > secret ref > file path. Returns (nil, false, nil) when no
+// credential source is configured.
+func loadCredsBytes(ctx context.Context, cfg gDriveOptions) ([]byte, bool, error) {
+	if len(cfg.credsJSON) > 0 {
+		return cfg.credsJSON, true, nil
+	}
+	if cfg.credsRef != "" && cfg.resolver != nil {
+		b, err := cfg.resolver.LoadBlob(ctx, cfg.credsRef)
+		if err != nil {
+			return nil, false, fmt.Errorf("load credentials from ref %q: %w", cfg.credsRef, err)
+		}
+		return b, true, nil
+	}
+	if cfg.credsPath != "" {
+		b, err := os.ReadFile(cfg.credsPath)
+		if err != nil {
+			return nil, false, fmt.Errorf("read credentials file: %w", err)
+		}
+		return b, true, nil
+	}
+	return nil, false, nil
+}
+
+// serviceFromCredsBytes builds a *drive.Service from raw credential JSON.
+// It first tries to interpret the JSON as an OAuth user-credential config;
+// if that fails it falls back to service-account authentication.
+func serviceFromCredsBytes(ctx context.Context, cfg gDriveOptions, b []byte) (*drive.Service, error) {
+	// Try OAuth user config first.
+	oauthCfg, err := google.ConfigFromJSON(b, drive.DriveReadonlyScope)
+	if err == nil {
+		client, err := oauthClient(ctx, oauthCfg, cfg.resolver, cfg.tokenRef, cfg.tokenPath)
+		if err != nil {
+			return nil, err
+		}
+		srv, err := drive.NewService(ctx, option.WithHTTPClient(client))
+		if err != nil {
+			return nil, fmt.Errorf("create drive client (user auth): %w", err)
+		}
+		return srv, nil
+	}
+
+	// Fall back to service-account credentials.
+	if cfg.credsPath != "" {
+		srv, err := drive.NewService(ctx, option.WithAuthCredentialsFile(option.ServiceAccount, cfg.credsPath))
+		if err != nil {
+			return nil, fmt.Errorf("create drive client (service account): %w", err)
+		}
+		return srv, nil
+	}
+	srv, err := drive.NewService(ctx, option.WithAuthCredentialsJSON(option.ServiceAccount, b))
+	if err != nil {
+		return nil, fmt.Errorf("create drive client (service account): %w", err)
+	}
+	return srv, nil
+}
+
+// resolveDriveName resolves a shared drive name (or ID) to an actual driveID.
+func resolveDriveName(ctx context.Context, srv *drive.Service, cfg *gDriveOptions) error {
+	// Try to see if the provided name is actually an ID.
+	if d, err := srv.Drives.Get(cfg.driveName).Fields("id, name").Do(); err == nil {
+		cfg.driveID = d.Id
+		cfg.driveName = d.Name
+		return nil
+	}
+
+	// Search by name.
+	query := fmt.Sprintf("name = '%s'", strings.ReplaceAll(cfg.driveName, "'", "\\'"))
+	call := srv.Drives.List().Q(query).Fields("drives(id, name)").Context(ctx)
+	r, err := driveCallWithRetry(ctx, func() (*drive.DriveList, error) { return call.Do() })
+	if err != nil {
+		return fmt.Errorf("resolve drive %q: %w", cfg.driveName, err)
+	}
+	if len(r.Drives) == 0 {
+		return fmt.Errorf("shared drive %q not found", cfg.driveName)
+	}
+	if len(r.Drives) > 1 {
+		return fmt.Errorf("ambiguous shared drive name: multiple drives named %q found", cfg.driveName)
+	}
+	cfg.driveID = r.Drives[0].Id
+	cfg.driveName = r.Drives[0].Name
+	return nil
 }
 
 func (s *GDriveSource) Info() core.SourceInfo {

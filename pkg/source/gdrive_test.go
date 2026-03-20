@@ -1,6 +1,8 @@
 package source
 
 import (
+	"context"
+	"net/http"
 	"testing"
 
 	"github.com/cloudstic/cli/internal/core"
@@ -538,6 +540,72 @@ func TestWithSkipNativeFiles(t *testing.T) {
 	opt(&cfg)
 	if !cfg.skipNativeFiles {
 		t.Error("WithSkipNativeFiles should set skipNativeFiles to true")
+	}
+}
+
+func TestWithDriveService(t *testing.T) {
+	// Verify the option sets the service field on gDriveOptions.
+	srv := &drive.Service{}
+	var cfg gDriveOptions
+	opt := WithDriveService(srv)
+	opt(&cfg)
+	if cfg.service != srv {
+		t.Error("WithDriveService should set the service field")
+	}
+}
+
+func TestWithCredsJSON(t *testing.T) {
+	data := []byte(`{"type":"service_account"}`)
+	var cfg gDriveOptions
+	opt := WithCredsJSON(data)
+	opt(&cfg)
+	if string(cfg.credsJSON) != string(data) {
+		t.Errorf("WithCredsJSON: credsJSON = %q, want %q", cfg.credsJSON, data)
+	}
+}
+
+func TestBuildDriveService_PrebuiltServiceTakesPriority(t *testing.T) {
+	injected := &drive.Service{}
+	cfg := gDriveOptions{
+		service:    injected,
+		httpClient: &http.Client{}, // should be ignored
+		credsJSON:  []byte(`{"type":"service_account"}`), // should be ignored
+	}
+	srv, err := buildDriveService(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("buildDriveService: %v", err)
+	}
+	if srv != injected {
+		t.Error("buildDriveService should return the pre-built service when set")
+	}
+}
+
+func TestLoadCredsBytes_InlineJSON(t *testing.T) {
+	data := []byte(`{"inline":"creds"}`)
+	cfg := gDriveOptions{
+		credsJSON: data,
+		credsPath: "/should/be/ignored",
+	}
+	b, ok, err := loadCredsBytes(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("loadCredsBytes: %v", err)
+	}
+	if !ok {
+		t.Fatal("loadCredsBytes should return ok=true for inline JSON")
+	}
+	if string(b) != string(data) {
+		t.Errorf("loadCredsBytes = %q, want %q", b, data)
+	}
+}
+
+func TestLoadCredsBytes_NoneConfigured(t *testing.T) {
+	cfg := gDriveOptions{}
+	_, ok, err := loadCredsBytes(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("loadCredsBytes: %v", err)
+	}
+	if ok {
+		t.Error("loadCredsBytes should return ok=false when nothing configured")
 	}
 }
 

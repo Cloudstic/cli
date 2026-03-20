@@ -53,6 +53,7 @@ type BackupProfile struct {
 	VolumeUUID        string   `yaml:"volume_uuid,omitempty"`
 	GoogleCreds       string   `yaml:"google_credentials,omitempty"`
 	GoogleCredsRef    string   `yaml:"google_credentials_ref,omitempty"`
+	GoogleCredsJSON   string   `yaml:"google_credentials_json,omitempty"`
 	GoogleTokenFile   string   `yaml:"google_token_file,omitempty"`
 	GoogleTokenRef    string   `yaml:"google_token_ref,omitempty"`
 	OneDriveClientID  string   `yaml:"onedrive_client_id,omitempty"`
@@ -66,6 +67,7 @@ type ProfileAuth struct {
 	Provider          string `yaml:"provider"` // google | onedrive
 	GoogleCreds       string `yaml:"google_credentials,omitempty"`
 	GoogleCredsRef    string `yaml:"google_credentials_ref,omitempty"`
+	GoogleCredsJSON   string `yaml:"google_credentials_json,omitempty"`
 	GoogleTokenFile   string `yaml:"google_token_file,omitempty"`
 	GoogleTokenRef    string `yaml:"google_token_ref,omitempty"`
 	OneDriveClientID  string `yaml:"onedrive_client_id,omitempty"`

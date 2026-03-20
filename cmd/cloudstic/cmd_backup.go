@@ -32,6 +32,7 @@ type backupArgs struct {
 	volumeUUID        string
 	googleCreds       string
 	googleCredsRef    string
+	googleCredsJSON   string
 	googleTokenFile   string
 	googleTokenRef    string
 	onedriveClientID  string
@@ -59,6 +60,7 @@ func parseBackupArgs() *backupArgs {
 	volumeUUID := fs.String("volume-uuid", envDefault("CLOUDSTIC_VOLUME_UUID", ""), "Override volume UUID for local source (enables cross-machine incremental backup)")
 	googleCreds := fs.String("google-credentials", envDefault("GOOGLE_APPLICATION_CREDENTIALS", ""), "Path to Google service account credentials JSON file")
 	googleCredsRef := fs.String("google-credentials-ref", "", "Secret reference to Google service account credentials JSON")
+	googleCredsJSON := fs.String("google-credentials-json", envDefault("GOOGLE_CREDENTIALS_JSON", ""), "Inline Google credentials JSON (OAuth client or service account)")
 	googleTokenFile := fs.String("google-token-file", envDefault("GOOGLE_TOKEN_FILE", ""), "Path to Google OAuth token file")
 	googleTokenRef := fs.String("google-token-ref", "", "Secret reference to Google OAuth token")
 	onedriveClientID := fs.String("onedrive-client-id", envDefault("ONEDRIVE_CLIENT_ID", ""), "OneDrive OAuth client ID")
@@ -82,6 +84,7 @@ func parseBackupArgs() *backupArgs {
 	a.volumeUUID = *volumeUUID
 	a.googleCreds = *googleCreds
 	a.googleCredsRef = *googleCredsRef
+	a.googleCredsJSON = *googleCredsJSON
 	a.googleTokenFile = *googleTokenFile
 	a.googleTokenRef = *googleTokenRef
 	a.onedriveClientID = *onedriveClientID
@@ -144,6 +147,7 @@ func (r *runner) runSingleBackup(a *backupArgs) int {
 		volumeUUID:        a.volumeUUID,
 		googleCreds:       a.googleCreds,
 		googleCredsRef:    a.googleCredsRef,
+		googleCredsJSON:   a.googleCredsJSON,
 		googleTokenFile:   a.googleTokenFile,
 		googleTokenRef:    a.googleTokenRef,
 		onedriveClientID:  a.onedriveClientID,
@@ -243,6 +247,9 @@ func ensureDefaultAuthRefForCloudBackup(a *backupArgs) error {
 			if a.googleCreds != "" {
 				auth.GoogleCreds = a.googleCreds
 			}
+			if a.googleCredsJSON != "" {
+				auth.GoogleCredsJSON = a.googleCredsJSON
+			}
 			auth.GoogleTokenFile = tokenPath
 		}
 		if provider == "onedrive" {
@@ -337,6 +344,9 @@ func mergeProfileBackupArgs(base *backupArgs, profileName string, p cloudstic.Ba
 	if !a.flagsSet["google-credentials-ref"] && p.GoogleCredsRef != "" {
 		a.googleCredsRef = p.GoogleCredsRef
 	}
+	if !a.flagsSet["google-credentials-json"] && p.GoogleCredsJSON != "" {
+		a.googleCredsJSON = p.GoogleCredsJSON
+	}
 	if !a.flagsSet["google-token-file"] && p.GoogleTokenFile != "" {
 		a.googleTokenFile = p.GoogleTokenFile
 	}
@@ -424,6 +434,9 @@ func applyProfileAuthToBackupArgs(a *backupArgs, auth cloudstic.ProfileAuth) err
 		}
 		if !a.flagsSet["google-credentials-ref"] && auth.GoogleCredsRef != "" {
 			a.googleCredsRef = auth.GoogleCredsRef
+		}
+		if !a.flagsSet["google-credentials-json"] && auth.GoogleCredsJSON != "" {
+			a.googleCredsJSON = auth.GoogleCredsJSON
 		}
 		if !a.flagsSet["google-token-file"] && auth.GoogleTokenFile != "" {
 			a.googleTokenFile = auth.GoogleTokenFile
@@ -639,6 +652,7 @@ type initSourceOptions struct {
 	volumeUUID        string
 	googleCreds       string
 	googleCredsRef    string
+	googleCredsJSON   string
 	googleTokenFile   string
 	googleTokenRef    string
 	onedriveClientID  string
@@ -695,6 +709,7 @@ func initSource(ctx context.Context, opts initSourceOptions) (source.Source, err
 			source.WithResolver(resolver),
 			source.WithCredsPath(opts.googleCreds),
 			source.WithCredsRef(opts.googleCredsRef),
+			source.WithCredsJSON([]byte(opts.googleCredsJSON)),
 			source.WithTokenPath(tokenPath),
 			source.WithTokenRef(opts.googleTokenRef),
 			source.WithDriveName(uri.host),
@@ -714,6 +729,7 @@ func initSource(ctx context.Context, opts initSourceOptions) (source.Source, err
 			source.WithResolver(resolver),
 			source.WithCredsPath(opts.googleCreds),
 			source.WithCredsRef(opts.googleCredsRef),
+			source.WithCredsJSON([]byte(opts.googleCredsJSON)),
 			source.WithTokenPath(tokenPath),
 			source.WithTokenRef(opts.googleTokenRef),
 			source.WithDriveName(uri.host),

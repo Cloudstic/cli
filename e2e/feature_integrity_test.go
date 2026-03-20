@@ -1,34 +1,24 @@
 package e2e
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 func TestCLI_Feature_IntegrityCheck(t *testing.T) {
 	runFeatureMatrix(t, featureSpec{
 		name: "integrity_check",
 		test: func(t *testing.T, h *harness, entry matrixEntry) {
-			h.writeFile("file1.txt", "hello world")
-			h.writeFile("secret.txt", "classified data")
+			r := h.
+				WithFile("file1.txt", "hello world").
+				WithFile("secret.txt", "classified data").
+				MustInitEncrypted()
 
-			h.initEncrypted()
-			h.backup()
-			h.writeFile("secret.txt", "updated classified data")
-			h.backup()
+			r.Backup()
+			r.WithFile("secret.txt", "updated classified data").Backup()
 
-			out := h.check()
-			if !strings.Contains(out, "repository is healthy") {
-				t.Errorf("expected healthy check output, got: %s", out)
-			}
+			r.Check().MustContain("repository is healthy")
 
-			out = h.check("--read-data")
-			if !strings.Contains(out, "repository is healthy") {
-				t.Errorf("expected healthy check --read-data output, got: %s", out)
-			}
-			if !strings.Contains(out, "Snapshots checked:") {
-				t.Errorf("expected check summary in output, got: %s", out)
-			}
+			r.Check("--read-data").
+				MustContain("repository is healthy").
+				MustContain("Snapshots checked:")
 		},
 	})
 }

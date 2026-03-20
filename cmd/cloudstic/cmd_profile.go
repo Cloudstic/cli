@@ -158,9 +158,13 @@ type profileNewArgs struct {
 	skipNativeFiles   bool
 	volumeUUID        string
 	googleCreds       string
+	googleCredsRef    string
+	googleCredsJSON   string
 	googleTokenFile   string
+	googleTokenRef    string
 	onedriveClientID  string
 	onedriveTokenFile string
+	onedriveTokenRef  string
 	flagsSet          map[string]bool
 }
 
@@ -181,9 +185,13 @@ func parseProfileNewArgs() *profileNewArgs {
 	skipNativeFiles := fs.Bool("skip-native-files", false, "Exclude Google-native files (Docs, Sheets, Slides, etc.)")
 	volumeUUID := fs.String("volume-uuid", "", "Override volume UUID for local source")
 	googleCreds := fs.String("google-credentials", "", "Path to Google service account credentials JSON file")
+	googleCredsRef := fs.String("google-credentials-ref", "", "Secret reference to Google service account credentials JSON")
+	googleCredsJSON := fs.String("google-credentials-json", "", "Inline Google credentials JSON")
 	googleTokenFile := fs.String("google-token-file", "", "Path to Google OAuth token file")
+	googleTokenRef := fs.String("google-token-ref", "", "Secret reference to Google OAuth token")
 	onedriveClientID := fs.String("onedrive-client-id", "", "OneDrive OAuth client ID")
 	onedriveTokenFile := fs.String("onedrive-token-file", "", "Path to OneDrive OAuth token file")
+	onedriveTokenRef := fs.String("onedrive-token-ref", "", "Secret reference to OneDrive OAuth token")
 	fs.Var(&a.tags, "tag", "Tag to apply to snapshots (repeatable)")
 	fs.Var(&a.excludes, "exclude", "Exclude pattern (repeatable)")
 	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
@@ -201,9 +209,13 @@ func parseProfileNewArgs() *profileNewArgs {
 	a.skipNativeFiles = *skipNativeFiles
 	a.volumeUUID = *volumeUUID
 	a.googleCreds = *googleCreds
+	a.googleCredsRef = *googleCredsRef
+	a.googleCredsJSON = *googleCredsJSON
 	a.googleTokenFile = *googleTokenFile
+	a.googleTokenRef = *googleTokenRef
 	a.onedriveClientID = *onedriveClientID
 	a.onedriveTokenFile = *onedriveTokenFile
+	a.onedriveTokenRef = *onedriveTokenRef
 
 	return a
 }
@@ -374,9 +386,13 @@ func (r *runner) runProfileNew(ctx context.Context) int {
 		SkipNativeFiles:   a.skipNativeFiles,
 		VolumeUUID:        a.volumeUUID,
 		GoogleCreds:       a.googleCreds,
+		GoogleCredsRef:    a.googleCredsRef,
+		GoogleCredsJSON:   a.googleCredsJSON,
 		GoogleTokenFile:   a.googleTokenFile,
+		GoogleTokenRef:    a.googleTokenRef,
 		OneDriveClientID:  a.onedriveClientID,
 		OneDriveTokenFile: a.onedriveTokenFile,
+		OneDriveTokenRef:  a.onedriveTokenRef,
 	}
 	cfg.Profiles[a.name] = p
 
@@ -515,14 +531,26 @@ func prefillProfileArgs(a *profileNewArgs, p cloudstic.BackupProfile) {
 	if !a.flagsSet["google-credentials"] && p.GoogleCreds != "" {
 		a.googleCreds = p.GoogleCreds
 	}
+	if !a.flagsSet["google-credentials-ref"] && p.GoogleCredsRef != "" {
+		a.googleCredsRef = p.GoogleCredsRef
+	}
+	if !a.flagsSet["google-credentials-json"] && p.GoogleCredsJSON != "" {
+		a.googleCredsJSON = p.GoogleCredsJSON
+	}
 	if !a.flagsSet["google-token-file"] && p.GoogleTokenFile != "" {
 		a.googleTokenFile = p.GoogleTokenFile
+	}
+	if !a.flagsSet["google-token-ref"] && p.GoogleTokenRef != "" {
+		a.googleTokenRef = p.GoogleTokenRef
 	}
 	if !a.flagsSet["onedrive-client-id"] && p.OneDriveClientID != "" {
 		a.onedriveClientID = p.OneDriveClientID
 	}
 	if !a.flagsSet["onedrive-token-file"] && p.OneDriveTokenFile != "" {
 		a.onedriveTokenFile = p.OneDriveTokenFile
+	}
+	if !a.flagsSet["onedrive-token-ref"] && p.OneDriveTokenRef != "" {
+		a.onedriveTokenRef = p.OneDriveTokenRef
 	}
 	if len(a.tags) == 0 && len(p.Tags) > 0 {
 		a.tags = append(stringArrayFlags{}, p.Tags...)

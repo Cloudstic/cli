@@ -52,8 +52,7 @@ _cloudstic() {
         case "${words[i]}" in
             -*)
                 # skip flags and their values
-				case "${words[i]}" in
-					-store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-source-sftp-known-hosts|-store-sftp-password|-store-sftp-key|-store-sftp-known-hosts|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-all-profiles|-auth-ref|-google-credentials|-google-token-file|-onedrive-client-id|-onedrive-token-file|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account|-json|-xattr-namespaces)
+					-store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-source-sftp-known-hosts|-store-sftp-password|-store-sftp-key|-store-sftp-known-hosts|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-all-profiles|-auth-ref|-google-credentials|-google-credentials-ref|-google-credentials-json|-google-token-file|-google-token-ref|-onedrive-client-id|-onedrive-token-file|-onedrive-token-ref|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account|-json|-xattr-namespaces)
 						((i++)) ;;
 				esac
                 ;;
@@ -76,7 +75,7 @@ _cloudstic() {
 		init)
 			cmd_flags="-add-recovery-key -no-encryption -adopt-slots" ;;
 		backup)
-			cmd_flags="-source -profile -all-profiles -auth-ref -profiles-file -skip-native-files -google-credentials -google-token-file -onedrive-client-id -onedrive-token-file -tag -dry-run -skip-mode -skip-flags -skip-xattrs -xattr-namespaces" ;;
+			cmd_flags="-source -profile -all-profiles -auth-ref -profiles-file -skip-native-files -google-credentials -google-credentials-ref -google-credentials-json -google-token-file -google-token-ref -onedrive-client-id -onedrive-token-file -onedrive-token-ref -tag -dry-run -skip-mode -skip-flags -skip-xattrs -xattr-namespaces" ;;
         restore)
             cmd_flags="-output -format -path -dry-run" ;;
         prune)
@@ -130,7 +129,7 @@ _cloudstic() {
                 show)
                     cmd_flags="-profiles-file" ;;
                 new)
-                    cmd_flags="-profiles-file -name -source -store-ref -store -auth-ref -tag -exclude -exclude-file -skip-native-files -volume-uuid -google-credentials -google-token-file -onedrive-client-id -onedrive-token-file" ;;
+                    cmd_flags="-profiles-file -name -source -store-ref -store -auth-ref -tag -exclude -exclude-file -skip-native-files -volume-uuid -google-credentials -google-credentials-ref -google-credentials-json -google-token-file -google-token-ref -onedrive-client-id -onedrive-token-file -onedrive-token-ref" ;;
                 *)
                     cmd_flags="" ;;
             esac
@@ -154,7 +153,7 @@ _cloudstic() {
                 show)
                     cmd_flags="-profiles-file" ;;
                 new)
-                    cmd_flags="-profiles-file -name -provider -google-credentials -google-token-file -onedrive-client-id -onedrive-token-file" ;;
+                    cmd_flags="-profiles-file -name -provider -google-credentials -google-credentials-ref -google-credentials-json -google-token-file -google-token-ref -onedrive-client-id -onedrive-token-file -onedrive-token-ref" ;;
                 login)
                     cmd_flags="-profiles-file -name" ;;
                 *)
@@ -287,7 +286,7 @@ _cloudstic() {
             -*)
                 # Skip flags with values
                 case "${words[i]}" in
-					-store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-store-sftp-password|-store-sftp-key|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-auth-ref|-google-credentials|-google-token-file|-onedrive-client-id|-onedrive-token-file|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account)
+					-store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-store-sftp-password|-store-sftp-key|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-auth-ref|-google-credentials|-google-credentials-ref|-google-credentials-json|-google-token-file|-google-token-ref|-onedrive-client-id|-onedrive-token-file|-onedrive-token-ref|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account)
 						(( i++ )) ;;
 				esac
                 ;;
@@ -321,9 +320,13 @@ _cloudstic() {
                 '-profiles-file[Path to profiles YAML file]:path:_files' \
                 '-skip-native-files[Exclude Google-native files]' \
                 '-google-credentials[Google service account credentials JSON]:path:_files' \
+                '-google-credentials-ref[Secret reference to Google credentials]:ref:' \
+                '-google-credentials-json[Inline Google credentials JSON]:json:' \
                 '-google-token-file[Google OAuth token file]:path:_files' \
+                '-google-token-ref[Secret reference to Google OAuth token]:ref:' \
                 '-onedrive-client-id[OneDrive OAuth client ID]:id:' \
                 '-onedrive-token-file[OneDrive OAuth token file]:path:_files' \
+                '-onedrive-token-ref[Secret reference to OneDrive OAuth token]:ref:' \
                 '*-tag[Tag for the snapshot]:tag:' \
                 '-dry-run[Scan without writing]' \
                 '-skip-mode[Skip POSIX mode/uid/gid/btime/flags]' \
@@ -372,9 +375,13 @@ _cloudstic() {
                         '-skip-native-files[Exclude Google-native files]' \
                         '-volume-uuid[Volume UUID override]:uuid:' \
                         '-google-credentials[Google service account credentials JSON]:path:_files' \
+                        '-google-credentials-ref[Secret reference to Google credentials]:ref:' \
+                        '-google-credentials-json[Inline Google credentials JSON]:json:' \
                         '-google-token-file[Google OAuth token file]:path:_files' \
+                        '-google-token-ref[Secret reference to Google OAuth token]:ref:' \
                         '-onedrive-client-id[OneDrive OAuth client ID]:id:' \
-                        '-onedrive-token-file[OneDrive OAuth token file]:path:_files'
+                        '-onedrive-token-file[OneDrive OAuth token file]:path:_files' \
+                        '-onedrive-token-ref[Secret reference to OneDrive OAuth token]:ref:'
                     ;;
                 *)
                     _arguments
@@ -415,6 +422,7 @@ _cloudstic() {
                         '-name[Auth reference name]:name:' \
                         '-provider[Auth provider]:provider:(google onedrive)' \
                         '-google-credentials[Google service account credentials JSON]:path:_files' \
+                        '-google-credentials-json[Inline Google credentials JSON]:json:' \
                         '-google-token-file[Google OAuth token file]:path:_files' \
                         '-onedrive-client-id[OneDrive OAuth client ID]:id:' \
                         '-onedrive-token-file[OneDrive OAuth token file]:path:_files'
@@ -653,9 +661,13 @@ complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l auth-ref -x -d 
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l profiles-file -r -F -d 'Path to profiles YAML file'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-native-files -d 'Exclude Google-native files'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l google-credentials -r -F -d 'Google service account credentials JSON'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l google-credentials-ref -x -d 'Secret reference to Google credentials'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l google-credentials-json -x -d 'Inline Google credentials JSON'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l google-token-file -r -F -d 'Google OAuth token file'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l google-token-ref -x -d 'Secret reference to Google OAuth token'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l onedrive-client-id -x -d 'OneDrive OAuth client ID'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l onedrive-token-file -r -F -d 'OneDrive OAuth token file'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l onedrive-token-ref -x -d 'Secret reference to OneDrive OAuth token'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l tag -x -d 'Tag for the snapshot'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l dry-run -d 'Scan without writing'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-mode -d 'Skip POSIX mode/uid/gid/btime/flags'
@@ -681,9 +693,13 @@ complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_s
 complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l skip-native-files -d 'Exclude Google-native files'
 complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l volume-uuid -x -d 'Volume UUID override'
 complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l google-credentials -r -F -d 'Google service account credentials JSON'
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l google-credentials-ref -x -d 'Secret reference to Google credentials'
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l google-credentials-json -x -d 'Inline Google credentials JSON'
 complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l google-token-file -r -F -d 'Google OAuth token file'
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l google-token-ref -x -d 'Secret reference to Google OAuth token'
 complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l onedrive-client-id -x -d 'OneDrive OAuth client ID'
 complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l onedrive-token-file -r -F -d 'OneDrive OAuth token file'
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l onedrive-token-ref -x -d 'Secret reference to OneDrive OAuth token'
 
 # store subcommands
 complete -c cloudstic -n '__fish_seen_subcommand_from store; and not __fish_seen_subcommand_from list show new verify init' -a list -d 'List configured stores'
@@ -713,9 +729,13 @@ complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subc
 complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l name -x -d 'Auth reference name'
 complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l provider -x -a 'google onedrive' -d 'Auth provider'
 complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l google-credentials -r -F -d 'Google service account credentials JSON'
+complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l google-credentials-ref -x -d 'Secret reference to Google credentials'
+complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l google-credentials-json -x -d 'Inline Google credentials JSON'
 complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l google-token-file -r -F -d 'Google OAuth token file'
+complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l google-token-ref -x -d 'Secret reference to Google OAuth token'
 complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l onedrive-client-id -x -d 'OneDrive OAuth client ID'
 complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l onedrive-token-file -r -F -d 'OneDrive OAuth token file'
+complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l onedrive-token-ref -x -d 'Secret reference to OneDrive OAuth token'
 complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from login' -l profiles-file -r -F -d 'Path to profiles YAML file'
 complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from login' -l name -x -d 'Auth reference name'
 

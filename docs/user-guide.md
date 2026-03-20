@@ -1327,7 +1327,43 @@ cloudstic backup -source "gdrive://Company Data/path/to/folder"
 | Variable | Description |
 |----------|-------------|
 | `GOOGLE_APPLICATION_CREDENTIALS` | Path to your own Google OAuth credentials JSON file (overrides built-in credentials) |
-| `GOOGLE_TOKEN_FILE` | Override token cache path (default: `<config-dir>/google_token.json`) |
+| `GOOGLE_CREDENTIALS_JSON` | Inline Google credentials JSON string — OAuth client or service account (useful in CI/CD where mounting files is inconvenient) |
+| `GOOGLE_TOKEN_FILE` | Override token cache path (flag: `-google-token-file`) |
+| `-google-token-ref` | (Flag only) Secret reference to Google OAuth token (e.g., `config-token://google/default`) |
+| `-google-credentials-ref` | (Flag only) Secret reference to service account credentials JSON |
+
+**Using your own credentials or a service account:**
+
+Cloudstic ships with built-in OAuth credentials, but you can use your own OAuth client or a Google service account instead.
+
+Credentials can be provided in three ways (in priority order):
+
+1. **Inline JSON** via flag or env var (highest priority, ideal for CI/CD):
+
+   ```bash
+   # Via environment variable
+   export GOOGLE_CREDENTIALS_JSON='{"type":"service_account", ...}'
+   cloudstic backup -source gdrive-changes
+
+   # Via flag
+   cloudstic backup -source gdrive-changes \
+     -google-credentials-json '{"type":"service_account", ...}'
+   ```
+
+2. **Secret reference** (for profiles using secret managers):
+
+   ```bash
+   cloudstic backup -source gdrive -google-credentials-ref keychain://cloudstic/google-creds
+   ```
+
+3. **File path**:
+
+   ```bash
+   export GOOGLE_APPLICATION_CREDENTIALS=~/service-account.json
+   cloudstic backup -source gdrive-changes
+   ```
+
+Both OAuth client JSON (authorized-user flow) and service-account JSON are auto-detected — Cloudstic tries the OAuth user flow first, then falls back to service-account auth.
 
 ### Google Drive (Incremental)
 
@@ -1382,7 +1418,8 @@ No client secret is needed — Cloudstic uses the public client flow with PKCE.
 | Variable | Description |
 |----------|-------------|
 | `ONEDRIVE_CLIENT_ID` | Azure app client ID (overrides built-in credentials) |
-| `ONEDRIVE_TOKEN_FILE` | Override token cache path (default: `<config-dir>/onedrive_token.json`) |
+| `ONEDRIVE_TOKEN_FILE` | Override token cache path (flag: `-onedrive-token-file`) |
+| `-onedrive-token-ref` | (Flag only) Secret reference to OneDrive OAuth token (e.g., `config-token://onedrive/default`) |
 
 ### OneDrive (Incremental)
 
@@ -1664,8 +1701,9 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 | `CLOUDSTIC_KMS_ENDPOINT` | `-kms-endpoint` | Custom AWS KMS endpoint URL |
 | `CLOUDSTIC_PROFILES_FILE` | `-profiles-file` | Path to profiles YAML file |
 | `CLOUDSTIC_CONFIG_DIR` | — | Override config directory path |
-| `GOOGLE_APPLICATION_CREDENTIALS` | — | Path to your own Google OAuth credentials file (optional, overrides built-in) |
-| `GOOGLE_TOKEN_FILE` | — | Override Google OAuth token path |
+| `GOOGLE_APPLICATION_CREDENTIALS` | `-google-credentials` | Path to your own Google OAuth credentials file (optional, overrides built-in) |
+| `GOOGLE_CREDENTIALS_JSON` | `-google-credentials-json` | Inline Google credentials JSON (OAuth client or service account) |
+| `GOOGLE_TOKEN_FILE` | `-google-token-file` | Override Google OAuth token path |
 | `ONEDRIVE_CLIENT_ID` | — | Microsoft app client ID (optional, overrides built-in) |
 | `ONEDRIVE_TOKEN_FILE` | — | Override OneDrive token path |
 | `B2_KEY_ID` | — | Backblaze B2 key ID |

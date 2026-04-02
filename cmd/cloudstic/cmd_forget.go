@@ -26,7 +26,9 @@ type forgetArgs struct {
 	filterPath    string
 	filterAccount string
 	groupBy       string
+	groupBySet    bool
 	snapshotID    string
+	hasFilters    bool
 	hasPolicy     bool
 }
 
@@ -47,6 +49,11 @@ func parseForgetArgs() *forgetArgs {
 	filterAccount := fs.String("account", "", "Filter by account")
 	groupBy := fs.String("group-by", "source,account,path", "Group snapshots by fields (comma-separated)")
 	mustParse(fs)
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "group-by" {
+			a.groupBySet = true
+		}
+	})
 	a.prune = *prune
 	a.dryRun = *dryRun
 	a.keepLast = *keepLast
@@ -72,15 +79,78 @@ func parseForgetArgs() *forgetArgs {
 			a.filterPath = parts.path
 		}
 	}
+	a.hasFilters = len(a.filterTags) > 0 || a.filterSource != "" || a.filterAccount != "" || a.filterPath != ""
 	a.hasPolicy = a.keepLast > 0 || a.keepHourly > 0 || a.keepDaily > 0 ||
 		a.keepWeekly > 0 || a.keepMonthly > 0 || a.keepYearly > 0
 	a.snapshotID = fs.Arg(0)
-	if a.snapshotID == "" && !a.hasPolicy {
-		fmt.Fprintln(os.Stderr, "Usage: cloudstic forget [options] <snapshot_id>")
-		fmt.Fprintln(os.Stderr, "       cloudstic forget --keep-last n [--keep-daily n] [--prune] [--dry-run]")
+
+	if err := validateForgetArgs(a); err != nil {
+		printForgetUsage(os.Stderr)
+		fmt.Fprintf(os.Stderr, "\nError: %v\n", err)
 		os.Exit(1)
 	}
+
 	return a
+}
+
+func printForgetUsage(w *os.File) {
+	fmt.Fprintln(w, "Usage: cloudstic forget [options] <snapshot_id>")
+	fmt.Fprintln(w, "       cloudstic forget --keep-last n [--tag X] [--source SRC] [--account NAME] [--prune] [--dry-run]")
+	fmt.Fprintln(w, "       cloudstic forget --tag X [--tag Y] [--source SRC] [--account NAME] [--prune] [--dry-run]")
+	fmt.Fprintln(w, "       cloudstic forget --source local:./docs [--tag X] [--prune] [--dry-run]")
+}
+
+func validateForgetArgs(a *forgetArgs) error {
+	if a.snapshotID == "" {
+		if !a.hasPolicy && !a.hasFilters {
+			return fmt.Errorf("specify either <snapshot_id>, at least one -keep-* option, or a filter such as -tag, -source, or -account")
+		}
+		if a.hasFilters && !a.hasPolicy {
+			// Filter-only execution reuses policy mode with zero keep counts.
+			a.hasPolicy = true
+		}
+		return nil
+	}
+
+	var conflicting []string
+	if a.keepLast > 0 {
+		conflicting = append(conflicting, "-keep-last")
+	}
+	if a.keepHourly > 0 {
+		conflicting = append(conflicting, "-keep-hourly")
+	}
+	if a.keepDaily > 0 {
+		conflicting = append(conflicting, "-keep-daily")
+	}
+	if a.keepWeekly > 0 {
+		conflicting = append(conflicting, "-keep-weekly")
+	}
+	if a.keepMonthly > 0 {
+		conflicting = append(conflicting, "-keep-monthly")
+	}
+	if a.keepYearly > 0 {
+		conflicting = append(conflicting, "-keep-yearly")
+	}
+	if len(a.filterTags) > 0 {
+		conflicting = append(conflicting, "-tag")
+	}
+	if a.filterSource != "" {
+		conflicting = append(conflicting, "-source")
+	}
+	if a.filterAccount != "" {
+		conflicting = append(conflicting, "-account")
+	}
+	if a.filterPath != "" {
+		conflicting = append(conflicting, "-path")
+	}
+	if a.groupBySet {
+		conflicting = append(conflicting, "-group-by")
+	}
+	if len(conflicting) > 0 {
+		return fmt.Errorf("<snapshot_id> cannot be combined with %s", strings.Join(conflicting, ", "))
+	}
+
+	return nil
 }
 
 func (r *runner) runForget(ctx context.Context) int {

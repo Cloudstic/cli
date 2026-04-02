@@ -240,8 +240,8 @@ func (fm *ForgetManager) RunPolicy(ctx context.Context, opts ...ForgetOption) (*
 		opt(cfg)
 	}
 
-	if cfg.policy.IsEmpty() {
-		return nil, fmt.Errorf("empty policy: specify at least one --keep-* option")
+	if cfg.policy.IsEmpty() && cfg.filter.IsEmpty() {
+		return nil, fmt.Errorf("empty policy: specify at least one -keep-* option or a tag/source/account/path filter")
 	}
 
 	entries, err := LoadSnapshotCatalog(fm.store)

@@ -119,3 +119,63 @@ func TestRunForget_Policy_DryRun(t *testing.T) {
 		t.Errorf("expected 'dry run' in summary, got:\n%s", got)
 	}
 }
+
+func TestValidateForgetArgs_FilterOnlyEnablesPolicyMode(t *testing.T) {
+	args := &forgetArgs{
+		filterTags: []string{"daily"},
+		hasFilters: true,
+	}
+
+	if err := validateForgetArgs(args); err != nil {
+		t.Fatalf("validateForgetArgs returned error: %v", err)
+	}
+	if !args.hasPolicy {
+		t.Fatal("expected filter-only forget args to enable policy mode")
+	}
+}
+
+func TestValidateForgetArgs_RequiresSelection(t *testing.T) {
+	err := validateForgetArgs(&forgetArgs{})
+	if err == nil {
+		t.Fatal("expected error for empty forget args")
+	}
+	if !strings.Contains(err.Error(), "specify either <snapshot_id>") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateForgetArgs_RejectsSnapshotIDWithPolicyOrFilters(t *testing.T) {
+	tests := []struct {
+		name string
+		args *forgetArgs
+		want string
+	}{
+		{
+			name: "keep_last",
+			args: &forgetArgs{snapshotID: "abc123", keepLast: 1},
+			want: "-keep-last",
+		},
+		{
+			name: "tag_filter",
+			args: &forgetArgs{snapshotID: "abc123", filterTags: []string{"daily"}},
+			want: "-tag",
+		},
+		{
+			name: "group_by",
+			args: &forgetArgs{snapshotID: "abc123", groupBySet: true},
+			want: "-group-by",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateForgetArgs(tt.args)
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected error to mention %q, got: %v", tt.want, err)
+			}
+		})
+	}
+}

@@ -155,6 +155,7 @@ type profileNewArgs struct {
 	tags              stringArrayFlags
 	excludes          stringArrayFlags
 	excludeFile       string
+	ignoreEmpty       bool
 	skipNativeFiles   bool
 	volumeUUID        string
 	googleCreds       string
@@ -182,6 +183,7 @@ func parseProfileNewArgs() *profileNewArgs {
 	store := fs.String("store", "", "Store URI to create/update under -store-ref")
 	authRef := fs.String("auth-ref", "", "Auth reference name from top-level auth map")
 	excludeFile := fs.String("exclude-file", "", "Path to file with exclude patterns")
+	ignoreEmpty := fs.Bool("ignore-empty-snapshot", false, "Skip creating a new snapshot when nothing changed")
 	skipNativeFiles := fs.Bool("skip-native-files", false, "Exclude Google-native files (Docs, Sheets, Slides, etc.)")
 	volumeUUID := fs.String("volume-uuid", "", "Override volume UUID for local source")
 	googleCreds := fs.String("google-credentials", "", "Path to Google service account credentials JSON file")
@@ -206,6 +208,7 @@ func parseProfileNewArgs() *profileNewArgs {
 	a.store = *store
 	a.authRef = *authRef
 	a.excludeFile = *excludeFile
+	a.ignoreEmpty = *ignoreEmpty
 	a.skipNativeFiles = *skipNativeFiles
 	a.volumeUUID = *volumeUUID
 	a.googleCreds = *googleCreds
@@ -383,6 +386,7 @@ func (r *runner) runProfileNew(ctx context.Context) int {
 		Tags:              []string(a.tags),
 		Excludes:          []string(a.excludes),
 		ExcludeFile:       a.excludeFile,
+		IgnoreEmpty:       a.ignoreEmpty,
 		SkipNativeFiles:   a.skipNativeFiles,
 		VolumeUUID:        a.volumeUUID,
 		GoogleCreds:       a.googleCreds,

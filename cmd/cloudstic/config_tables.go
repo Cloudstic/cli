@@ -458,6 +458,7 @@ func (r *runner) renderProfileShow(cfg *cloudstic.ProfilesConfig, name string, p
 		{"Tags", joinOrDash(p.Tags)},
 		{"Excludes", fmt.Sprintf("%d pattern(s)", len(p.Excludes))},
 		{"Exclude File", dashIfEmpty(p.ExcludeFile)},
+		{"Ignore Empty Snapshot", boolLabel(p.IgnoreEmpty)},
 		{"Skip Native Files", boolLabel(p.SkipNativeFiles)},
 	}
 	if p.VolumeUUID != "" {

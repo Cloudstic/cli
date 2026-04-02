@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/cloudstic/cli/internal/core"
@@ -219,6 +220,83 @@ func TestBackupManager_Run(t *testing.T) {
 	meta2v3 := lookupMeta(snap3.Root, "id2")
 	if meta2v3 == nil {
 		t.Error("id2 missing in third snapshot")
+	}
+}
+
+func TestBackupManager_IgnoreEmptySnapshot(t *testing.T) {
+	ctx := context.Background()
+	src := NewMockSource()
+	dest := NewMockStore()
+
+	src.AddFile("file1.txt", "id1", []byte("hello world"))
+
+	first := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil)
+	firstResult, err := first.Run(ctx)
+	if err != nil {
+		t.Fatalf("first backup failed: %v", err)
+	}
+
+	readStore := store.NewCompressedStore(dest)
+	idxData, err := readStore.Get(ctx, "index/latest")
+	if err != nil {
+		t.Fatalf("read index/latest after first backup: %v", err)
+	}
+	var idx core.Index
+	if err := json.Unmarshal(idxData, &idx); err != nil {
+		t.Fatalf("unmarshal index: %v", err)
+	}
+	firstLatest := idx.LatestSnapshot
+
+	second := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, WithIgnoreEmptySnapshot())
+	result, err := second.Run(ctx)
+	if err != nil {
+		t.Fatalf("second backup failed: %v", err)
+	}
+	if !result.EmptySnapshotIgnored {
+		t.Fatal("expected EmptySnapshotIgnored to be true")
+	}
+	if result.SnapshotRef != "" {
+		t.Fatalf("SnapshotRef=%q want empty", result.SnapshotRef)
+	}
+	if result.SnapshotHash != "" {
+		t.Fatalf("SnapshotHash=%q want empty", result.SnapshotHash)
+	}
+	if result.Root != firstResult.Root {
+		t.Fatalf("Root=%q want %q", result.Root, firstResult.Root)
+	}
+	if result.FilesChanged != 0 || result.FilesNew != 0 || result.FilesRemoved != 0 {
+		t.Fatalf("unexpected file changes in result: %+v", result)
+	}
+	if result.FilesUnmodified != 1 {
+		t.Fatalf("FilesUnmodified=%d want 1", result.FilesUnmodified)
+	}
+
+	idxData2, err := readStore.Get(ctx, "index/latest")
+	if err != nil {
+		t.Fatalf("read index/latest after second backup: %v", err)
+	}
+	var idx2 core.Index
+	if err := json.Unmarshal(idxData2, &idx2); err != nil {
+		t.Fatalf("unmarshal second index: %v", err)
+	}
+	if idx2.Seq != 1 {
+		t.Fatalf("seq=%d want 1", idx2.Seq)
+	}
+	if idx2.LatestSnapshot != firstLatest {
+		t.Fatalf("latest=%q want %q", idx2.LatestSnapshot, firstLatest)
+	}
+
+	snapshotKeys, err := readStore.List(ctx, "snapshot/")
+	if err != nil {
+		t.Fatalf("list snapshots: %v", err)
+	}
+	if len(snapshotKeys) != 1 {
+		t.Fatalf("snapshot count=%d want 1 (%v)", len(snapshotKeys), snapshotKeys)
+	}
+	for _, key := range snapshotKeys {
+		if !strings.HasPrefix(key, "snapshot/") {
+			t.Fatalf("unexpected snapshot key %q", key)
+		}
 	}
 }
 

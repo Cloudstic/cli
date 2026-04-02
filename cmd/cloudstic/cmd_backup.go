@@ -27,6 +27,7 @@ type backupArgs struct {
 	authRef           string
 	profilesFile      string
 	dryRun            bool
+	ignoreEmpty       bool
 	excludeFile       string
 	skipNativeFiles   bool
 	volumeUUID        string
@@ -55,6 +56,7 @@ func parseBackupArgs() *backupArgs {
 	allProfiles := fs.Bool("all-profiles", false, "Run backup for all enabled profiles from profiles.yaml")
 	authRef := fs.String("auth-ref", "", "Use named auth entry from profiles.yaml for cloud source credentials")
 	dryRun := fs.Bool("dry-run", false, "Scan source and report changes without writing to the store")
+	ignoreEmpty := fs.Bool("ignore-empty-snapshot", false, "Skip creating a new snapshot when nothing changed")
 	skipNativeFiles := fs.Bool("skip-native-files", false, "Exclude Google-native files (Docs, Sheets, Slides, etc.) from the backup")
 	excludeFile := fs.String("exclude-file", "", "Path to file with exclude patterns (one per line, gitignore syntax)")
 	volumeUUID := fs.String("volume-uuid", envDefault("CLOUDSTIC_VOLUME_UUID", ""), "Override volume UUID for local source (enables cross-machine incremental backup)")
@@ -79,6 +81,7 @@ func parseBackupArgs() *backupArgs {
 	a.authRef = *authRef
 	a.profilesFile = *a.g.profilesFile
 	a.dryRun = *dryRun
+	a.ignoreEmpty = *ignoreEmpty
 	a.skipNativeFiles = *skipNativeFiles
 	a.excludeFile = *excludeFile
 	a.volumeUUID = *volumeUUID
@@ -375,6 +378,9 @@ func mergeProfileBackupArgs(base *backupArgs, profileName string, p cloudstic.Ba
 	if !a.flagsSet["exclude-file"] && p.ExcludeFile != "" {
 		a.excludeFile = p.ExcludeFile
 	}
+	if !a.flagsSet["ignore-empty-snapshot"] {
+		a.ignoreEmpty = p.IgnoreEmpty
+	}
 
 	if p.Store != "" {
 		storeCfg, ok := cfg.Stores[p.Store]
@@ -616,6 +622,9 @@ func buildBackupOpts(a *backupArgs, excludePatterns []string) []cloudstic.Backup
 	if a.dryRun {
 		opts = append(opts, engine.WithBackupDryRun())
 	}
+	if a.ignoreEmpty {
+		opts = append(opts, cloudstic.WithIgnoreEmptySnapshot())
+	}
 	if len(a.tags) > 0 {
 		opts = append(opts, cloudstic.WithTags(a.tags...))
 	}
@@ -631,6 +640,8 @@ func (r *runner) printBackupSummary(res *engine.RunResult) {
 		res.DirsNew + res.DirsChanged + res.DirsUnmodified
 	if res.DryRun {
 		_, _ = fmt.Fprintf(r.out, "\nBackup dry run complete.\n")
+	} else if res.EmptySnapshotIgnored {
+		_, _ = fmt.Fprintf(r.out, "\nBackup complete. No new snapshot created; nothing changed. Root: %s\n", res.Root)
 	} else {
 		_, _ = fmt.Fprintf(r.out, "\nBackup complete. Snapshot: %s, Root: %s\n", res.SnapshotRef, res.Root)
 	}
@@ -638,13 +649,13 @@ func (r *runner) printBackupSummary(res *engine.RunResult) {
 		res.FilesNew, res.FilesChanged, res.FilesUnmodified, res.FilesRemoved)
 	_, _ = fmt.Fprintf(r.out, "Dirs:   %d new,  %d changed,  %d unmodified,  %d removed\n",
 		res.DirsNew, res.DirsChanged, res.DirsUnmodified, res.DirsRemoved)
-	if !res.DryRun {
+	if !res.DryRun && !res.EmptySnapshotIgnored {
 		_, _ = fmt.Fprintf(r.out, "Added to the repository: %s (%s compressed)\n",
 			formatBytes(res.BytesAddedRaw), formatBytes(res.BytesAddedStored))
 	}
 	_, _ = fmt.Fprintf(r.out, "Processed %d entries in %s\n",
 		total, res.Duration.Round(time.Second))
-	if !res.DryRun {
+	if !res.DryRun && !res.EmptySnapshotIgnored {
 		_, _ = fmt.Fprintf(r.out, "Snapshot %s saved\n", res.SnapshotHash)
 	}
 }

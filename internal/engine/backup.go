@@ -37,17 +37,24 @@ type backupStats struct {
 type BackupOption func(*backupConfig)
 
 type backupConfig struct {
-	verbose     bool
-	dryRun      bool
-	tags        []string
-	generator   string
-	meta        map[string]string
-	excludeHash string
+	verbose             bool
+	dryRun              bool
+	ignoreEmptySnapshot bool
+	tags                []string
+	generator           string
+	meta                map[string]string
+	excludeHash         string
 }
 
 // WithBackupDryRun scans the source and reports what would change without writing to the store.
 func WithBackupDryRun() BackupOption {
 	return func(cfg *backupConfig) { cfg.dryRun = true }
+}
+
+// WithIgnoreEmptySnapshot skips persisting a new snapshot when the resulting
+// tree is identical to the previous snapshot for the same source lineage.
+func WithIgnoreEmptySnapshot() BackupOption {
+	return func(cfg *backupConfig) { cfg.ignoreEmptySnapshot = true }
 }
 
 // WithVerbose enables verbose output during backup.
@@ -130,21 +137,22 @@ func NewBackupManager(src source.Source, dest store.ObjectStore, reporter ui.Rep
 
 // RunResult holds the outcome of a successful backup run.
 type RunResult struct {
-	SnapshotHash     string
-	SnapshotRef      string
-	Root             string
-	FilesNew         int64
-	FilesChanged     int64
-	FilesUnmodified  int64
-	FilesRemoved     int64
-	DirsNew          int64
-	DirsChanged      int64
-	DirsUnmodified   int64
-	DirsRemoved      int64
-	BytesAddedRaw    int64
-	BytesAddedStored int64
-	Duration         time.Duration
-	DryRun           bool
+	SnapshotHash         string
+	SnapshotRef          string
+	Root                 string
+	FilesNew             int64
+	FilesChanged         int64
+	FilesUnmodified      int64
+	FilesRemoved         int64
+	DirsNew              int64
+	DirsChanged          int64
+	DirsUnmodified       int64
+	DirsRemoved          int64
+	BytesAddedRaw        int64
+	BytesAddedStored     int64
+	Duration             time.Duration
+	DryRun               bool
+	EmptySnapshotIgnored bool
 }
 
 // Run executes a full backup: scan the source for changes, upload new/modified
@@ -244,6 +252,13 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 		if err := bm.countRemoved(ctx, oldRoot, newRoot); err != nil {
 			return nil, fmt.Errorf("counting removed entries: %w", err)
 		}
+	}
+
+	if bm.cfg.ignoreEmptySnapshot && prevSnap != nil && newRoot == oldRoot {
+		r := bm.buildResult()
+		r.Root = newRoot
+		r.EmptySnapshotIgnored = true
+		return r, nil
 	}
 
 	snapRef, snapHash, snap, err := bm.saveSnapshot(ctx, newRoot, seq+1, newToken)

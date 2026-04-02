@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/cloudstic/cli/internal/engine"
 )
 
 func TestInitSource_Local_ExtendedOptions(t *testing.T) {
@@ -105,4 +107,32 @@ func TestParseXattrNamespacePrefixes(t *testing.T) {
 func TestPrintUsage_Smoke(t *testing.T) {
 	// Verify printUsage doesn't panic.
 	printUsage()
+}
+
+func TestBuildBackupOpts_IgnoreEmptySnapshot(t *testing.T) {
+	a := &backupArgs{ignoreEmpty: true, g: newTestGlobalFlags()}
+	opts := buildBackupOpts(a, nil)
+	if len(opts) != 1 {
+		t.Fatalf("len(opts)=%d want 1", len(opts))
+	}
+}
+
+func TestPrintBackupSummary_EmptySnapshotIgnored(t *testing.T) {
+	var out strings.Builder
+	r := &runner{out: &out}
+
+	r.printBackupSummary(&engine.RunResult{
+		Root:                 "node/abc",
+		FilesUnmodified:      1,
+		Duration:             2,
+		EmptySnapshotIgnored: true,
+	})
+
+	got := out.String()
+	if !strings.Contains(got, "No new snapshot created; nothing changed") {
+		t.Fatalf("missing empty snapshot message:\n%s", got)
+	}
+	if strings.Contains(got, "saved") {
+		t.Fatalf("unexpected snapshot saved line:\n%s", got)
+	}
 }

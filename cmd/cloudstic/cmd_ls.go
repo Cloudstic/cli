@@ -43,6 +43,9 @@ func (r *runner) runLsSnapshot(ctx context.Context) int {
 	if err != nil {
 		return r.fail("Ls failed: %v", err)
 	}
+	if a.g.jsonEnabled() {
+		return r.writeJSON(result)
+	}
 	r.printLsResult(result, time.Since(start))
 	return 0
 }

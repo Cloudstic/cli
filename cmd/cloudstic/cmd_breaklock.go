@@ -29,6 +29,9 @@ func (r *runner) runBreakLock(ctx context.Context) int {
 	if err != nil {
 		return r.fail("Failed to break lock: %v", err)
 	}
+	if a.g.jsonEnabled() {
+		return r.writeJSON(&breakLockJSONResult{Locks: removed})
+	}
 	r.printBreakLockResult(removed)
 	return 0
 }

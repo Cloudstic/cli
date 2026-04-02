@@ -66,6 +66,7 @@ func printUsage() {
 		{"-no-prompt", "Disable interactive prompts (for scripts and CI)"},
 		{"-verbose", "Log detailed file-level operations"},
 		{"-quiet", "Suppress progress bars (keeps final summary)"},
+		{"-json", "Write command result as JSON to stdout"},
 		{"-debug", "Log every store request (network calls, timing, sizes)"},
 	})
 	t.Blank()
@@ -354,9 +355,6 @@ func printUsage() {
 	t.Blank()
 
 	t.Command("cat", "<object_key> [object_key...]")
-	t.Flags([][2]string{
-		{"-json", "Suppress non-JSON output (alias for -quiet)"},
-	})
 	t.Note("  Display raw JSON for one or more repository objects.",
 		"  Object keys: snapshot/<hash>, filemeta/<hash>, content/<hash>,",
 		"  node/<hash>, chunk/<hash>, config, index/latest, keys/<slot>")

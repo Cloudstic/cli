@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -39,6 +40,32 @@ func TestRunDiff_Success(t *testing.T) {
 	}
 	if !strings.Contains(got, "removed old/file.txt") {
 		t.Errorf("expected removed file in output, got:\n%s", got)
+	}
+}
+
+func TestRunDiff_JSON(t *testing.T) {
+	os.Args = []string{"cloudstic", "diff", "-json", "aaa", "bbb"}
+	var out strings.Builder
+	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
+		diffResult: &cloudstic.DiffResult{
+			Ref1: "snapshot/aaa",
+			Ref2: "snapshot/bbb",
+			Changes: []engine.FileChange{
+				{Type: "A", Path: "docs/readme.md"},
+			},
+		},
+	}}
+
+	if exit := r.runDiff(context.Background()); exit != 0 {
+		t.Fatalf("runDiff() exit = %d, want 0", exit)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out.String()), &got); err != nil {
+		t.Fatalf("json unmarshal: %v\noutput:\n%s", err, out.String())
+	}
+	if got["Ref1"] != "snapshot/aaa" {
+		t.Fatalf("Ref1 = %v, want snapshot/aaa", got["Ref1"])
 	}
 }
 

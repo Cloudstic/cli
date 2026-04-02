@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -29,6 +30,32 @@ func TestRunCheck_Healthy(t *testing.T) {
 	}
 	if !strings.Contains(got, "5") {
 		t.Errorf("expected SnapshotsChecked=5 in output, got:\n%s", got)
+	}
+}
+
+func TestRunCheck_JSONWithErrorsReturnsExitOne(t *testing.T) {
+	os.Args = []string{"cloudstic", "check", "-json"}
+	var out strings.Builder
+	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
+		checkResult: &cloudstic.CheckResult{
+			SnapshotsChecked: 1,
+			ObjectsVerified:  2,
+			Errors: []engine.CheckError{
+				{Type: "corrupt", Key: "content/xyz", Message: "checksum mismatch"},
+			},
+		},
+	}}
+
+	if exit := r.runCheck(context.Background()); exit != 1 {
+		t.Fatalf("runCheck() exit = %d, want 1", exit)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out.String()), &got); err != nil {
+		t.Fatalf("json unmarshal: %v\noutput:\n%s", err, out.String())
+	}
+	if _, ok := got["Errors"]; !ok {
+		t.Fatalf("expected Errors key in JSON output, got: %v", got)
 	}
 }
 

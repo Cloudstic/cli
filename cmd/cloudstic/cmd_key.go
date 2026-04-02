@@ -63,6 +63,9 @@ func (r *runner) runKeyList(ctx context.Context) int {
 		return r.fail("Failed to list key slots: %v", err)
 	}
 
+	if a.g.jsonEnabled() {
+		return r.writeJSON(slots)
+	}
 	r.printKeySlots(slots)
 	return 0
 }
@@ -133,6 +136,9 @@ func (r *runner) runKeyPasswd(ctx context.Context) int {
 		return r.fail("Failed to change password: %v", err)
 	}
 
+	if a.g.jsonEnabled() {
+		return r.writeJSON(&keyPasswordJSONResult{Changed: true})
+	}
 	_, _ = fmt.Fprintln(r.errOut, "Repository password has been changed.")
 	return 0
 }
@@ -166,6 +172,9 @@ func (r *runner) runAddRecoveryKey(ctx context.Context) int {
 		return r.fail("Failed to create recovery key: %v", err)
 	}
 
+	if a.g.jsonEnabled() {
+		return r.writeJSON(&recoveryKeyJSONResult{RecoveryKey: mnemonic})
+	}
 	r.printRecoveryKey(mnemonic)
 	_, _ = fmt.Fprintln(r.errOut, "Recovery key slot has been added to the repository.")
 	return 0

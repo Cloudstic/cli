@@ -178,6 +178,12 @@ func (r *runner) execForgetSingle(a *forgetArgs) int {
 	if err != nil {
 		return r.fail("Forget failed: %v", err)
 	}
+	if a.g.jsonEnabled() {
+		return r.writeJSON(&forgetSingleJSONResult{
+			SnapshotID: a.snapshotID,
+			Prune:      result.Prune,
+		})
+	}
 	_, _ = fmt.Fprintln(r.out)
 	_, _ = fmt.Fprintln(r.out, "Snapshot removed.")
 	if result.Prune != nil {
@@ -191,6 +197,9 @@ func (r *runner) execForgetPolicy(a *forgetArgs) int {
 	result, err := r.client.ForgetPolicy(context.Background(), opts...)
 	if err != nil {
 		return r.fail("Forget failed: %v", err)
+	}
+	if a.g.jsonEnabled() {
+		return r.writeJSON(makeForgetPolicyJSONResult(result, a.dryRun))
 	}
 	r.printPolicyResult(result, a.dryRun)
 	return 0

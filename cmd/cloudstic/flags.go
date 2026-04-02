@@ -38,6 +38,7 @@ type globalFlags struct {
 	kmsKeyARN, kmsRegion, kmsEndpoint *string
 	disablePackfile                   *bool
 	prompt, verbose, quiet, debug     *bool
+	json                              *bool
 	debugLog                          *ui.SafeLogWriter
 }
 
@@ -76,8 +77,13 @@ func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 	g.prompt = fs.Bool("prompt", false, "Prompt for password interactively (use alongside --encryption-key or --kms-key-arn to add a password layer)")
 	g.verbose = fs.Bool("verbose", false, "Log detailed file-level operations")
 	g.quiet = fs.Bool("quiet", false, "Suppress progress bars (keeps final summary)")
+	g.json = fs.Bool("json", false, "Write command result as JSON to stdout")
 	g.debug = fs.Bool("debug", false, "Log every store request (network calls, timing, sizes)")
 	return g
+}
+
+func (g *globalFlags) jsonEnabled() bool {
+	return g != nil && g.json != nil && *g.json
 }
 
 func cliFlagProvided(name string) bool {

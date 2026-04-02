@@ -152,8 +152,7 @@ func TestBackupManager_Run(t *testing.T) {
 	meta1 := lookupMeta(snap.Root, "id1")
 	if meta1 == nil {
 		t.Fatal("id1 not found in backup")
-	}
-	if meta1.Name != "file1.txt" {
+	} else if meta1.Name != "file1.txt" {
 		t.Errorf("Name mismatch: %s", meta1.Name)
 	}
 
@@ -187,9 +186,7 @@ func TestBackupManager_Run(t *testing.T) {
 	meta1v2 := lookupMeta(snap2.Root, "id1")
 	if meta1v2 == nil {
 		t.Fatal("id1 missing in second snapshot")
-	}
-
-	if meta1v2.ContentHash != meta1.ContentHash {
+	} else if meta1v2.ContentHash != meta1.ContentHash {
 		t.Errorf("ContentHash changed for unchanged file")
 	}
 
@@ -281,9 +278,8 @@ func TestFindPreviousSnapshot_Identity(t *testing.T) {
 	prev := bm.findPreviousSnapshot(info)
 	if prev == nil {
 		t.Fatal("expected to find previous snapshot via identity match")
-	}
-	// Should return the most recent (Linux) snapshot since catalog is newest-first.
-	if prev.Root != "node/linux" {
+	} else if prev.Root != "node/linux" {
+		// Should return the most recent (Linux) snapshot since catalog is newest-first.
 		t.Errorf("expected linux snapshot (newest), got root=%s", prev.Root)
 	}
 }
@@ -321,8 +317,7 @@ func TestFindPreviousSnapshot_LegacyFallback(t *testing.T) {
 	prev := bm.findPreviousSnapshot(info)
 	if prev == nil {
 		t.Fatal("expected to find previous snapshot via legacy match")
-	}
-	if prev.Root != "node/legacy" {
+	} else if prev.Root != "node/legacy" {
 		t.Errorf("expected root=node/legacy, got %s", prev.Root)
 	}
 }
@@ -380,8 +375,7 @@ func TestFindPreviousSnapshot_IdentityPreferredOverLegacy(t *testing.T) {
 	prev := bm.findPreviousSnapshot(info)
 	if prev == nil {
 		t.Fatal("expected to find previous snapshot")
-	}
-	if prev.Root != "node/new" {
+	} else if prev.Root != "node/new" {
 		t.Errorf("expected identity-matched snapshot (node/new), got root=%s", prev.Root)
 	}
 }

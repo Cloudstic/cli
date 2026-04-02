@@ -6,51 +6,53 @@ import (
 	"testing"
 )
 
+// TestCLI_Feature_EncryptedRepoErrors verifies that accessing an encrypted
+// repository with no credentials or the wrong password produces clear errors.
 func TestCLI_Feature_EncryptedRepoErrors(t *testing.T) {
 	runFeatureMatrix(t, featureSpec{
 		name:         "encrypted_repo_errors",
 		sourceFilter: localOnlySource,
 		storeFilter:  localOnlyStore,
 		test: func(t *testing.T, h *harness, entry matrixEntry) {
-			h.writeFile("file1.txt", "hello world")
-			h.initEncrypted()
-			h.backup()
+			r := h.WithFile("file1.txt", "hello world").MustInitEncrypted()
+			r.Backup()
 
-			out := runExpectFail(t, h.bin, append([]string{"list", "--password", "wrong-password"}, h.storeArgs...)...)
-			if !strings.Contains(out, "no provided credential matches") {
-				t.Errorf("expected credential mismatch error, got: %s", out)
-			}
+			// Wrong password must produce a credential-mismatch error.
+			h.RunExpectFail(append([]string{"list", "--password", "wrong-password"}, h.storeArgs...)...).
+				MustContain("no provided credential matches")
 
-			out = runExpectFail(t, h.bin, append([]string{"list"}, h.storeArgs...)...)
-			if !strings.Contains(out, "repository is encrypted") {
-				t.Errorf("expected encrypted-repo error, got: %s", out)
-			}
+			// No credentials at all must produce an encrypted-repo error.
+			h.RunExpectFail(append([]string{"list"}, h.storeArgs...)...).
+				MustContain("repository is encrypted")
 		},
 	})
 }
 
+// TestCLI_Feature_InitRequiresEncryption verifies that `init` without any
+// encryption option fails with an actionable error message.
 func TestCLI_Feature_InitRequiresEncryption(t *testing.T) {
-	if !shouldRun(Hermetic) {
-		t.Skip("skipping hermetic test")
-	}
-
-	bin := buildBinary(t)
-	dummyStoreDir := t.TempDir()
-	dummyStoreArgs := []string{"--store", "local:" + dummyStoreDir}
-	out := runExpectFail(t, bin, append([]string{"init"}, dummyStoreArgs...)...)
-	if !strings.Contains(out, "encryption is required") {
-		t.Errorf("expected encryption-required error, got: %s", out)
-	}
+	runFeatureMatrix(t, featureSpec{
+		name:         "init_requires_encryption",
+		sourceFilter: localOnlySource,
+		storeFilter:  localOnlyStore,
+		test: func(t *testing.T, h *harness, entry matrixEntry) {
+			h.RunExpectFail(append([]string{"init"}, h.storeArgs...)...).
+				MustContain("encryption is required")
+		},
+	})
 }
 
+// TestCLI_Feature_RecoveryKeyRoundTrip verifies the full recovery-key flow:
+// init with a BIP39 recovery key → backup → restore using only the mnemonic.
 func TestCLI_Feature_RecoveryKeyRoundTrip(t *testing.T) {
 	runFeatureMatrix(t, featureSpec{
 		name:         "recovery_key_round_trip",
 		sourceFilter: localOnlySource,
 		storeFilter:  localOnlyStore,
 		test: func(t *testing.T, h *harness, entry matrixEntry) {
-			h.writeFile("file1.txt", "hello world")
-			out := h.initEncrypted("--adopt-slots", "--add-recovery-key")
+			h.WithFile("file1.txt", "hello world")
+
+			r, out := h.InitEncrypted("--adopt-slots", "--add-recovery-key")
 			if !strings.Contains(out, "RECOVERY KEY") {
 				t.Fatalf("expected recovery key output on init, got: %s", out)
 			}
@@ -60,79 +62,65 @@ func TestCLI_Feature_RecoveryKeyRoundTrip(t *testing.T) {
 				t.Fatal("could not extract mnemonic from recovery key output")
 			}
 
-			h.backup()
+			r.Backup()
 
-			zipPath := filepath.Join(h.restoreRoot, "recovery_restore.zip")
-			args := append([]string{"restore", "--output", zipPath, "--recovery-key", mnemonic}, h.storeArgs...)
-			run(t, h.bin, args...)
-
-			if got := readZipFile(t, zipPath, "file1.txt"); got != "hello world" {
-				t.Errorf("recovery restore content mismatch for file1.txt: got %q, want %q", got, "hello world")
-			}
+			// Restore using only the recovery key — no password required.
+			zipPath := filepath.Join(r.h.restoreRoot, "recovery_restore.zip")
+			h.Run(
+				append([]string{"restore", "--output", zipPath, "--recovery-key", mnemonic},
+					r.h.storeArgs...)...)
+			(&restoreZipResult{t: t, zipPath: zipPath}).MustHaveFileContent("file1.txt", "hello world")
 		},
 	})
 }
 
+// TestCLI_Feature_UnencryptedLifecycle exercises the full backup/restore/check/prune
+// lifecycle on a repository that was intentionally initialised without encryption.
+// Using initUnencrypted() switches the harness authArgs to bare store args,
+// so all subsequent harness calls (backup, list, check, forget) work without
+// a password — no separate *Unencrypted methods needed.
 func TestCLI_Feature_UnencryptedLifecycle(t *testing.T) {
 	runFeatureMatrix(t, featureSpec{
 		name:         "unencrypted_lifecycle",
 		sourceFilter: localOnlySource,
 		storeFilter:  localOnlyStore,
 		test: func(t *testing.T, h *harness, entry matrixEntry) {
-			h.writeFile("file1.txt", "hello world")
-			h.writeFile("secret.txt", "updated classified data")
-			h.writeFile("subdir/nested.txt", "nested content")
+			h.WithFile("file1.txt", "hello world").
+				WithFile("secret.txt", "updated classified data").
+				WithFile("subdir/nested.txt", "nested content")
 
-			out := h.initUnencrypted()
+			r, out := h.InitUnencrypted()
 			if !strings.Contains(out, "encrypted: false") {
-				t.Errorf("expected 'encrypted: false' in init output, got: %s", out)
+				t.Fatalf("expected 'encrypted: false' in init output, got: %s", out)
 			}
 
-			h.backupUnencrypted()
-			out = h.listUnencrypted()
-			if !strings.Contains(out, "1 snapshot") {
-				t.Fatalf("unencrypted: expected 1 snapshot, got: %s", out)
-			}
+			r.Backup()
+			r.List().MustHaveSnapshotCount(1)
 
-			h.writeFile("unenc-file.txt", "plaintext content")
-			h.backupUnencrypted()
-			out = h.listUnencrypted()
-			if !strings.Contains(out, "2 snapshots") {
-				t.Fatalf("unencrypted: expected 2 snapshots, got: %s", out)
-			}
+			r.WithFile("unenc-file.txt", "plaintext content").Backup()
+			r.List().MustHaveSnapshotCount(2)
 
-			zipPath := h.restoreZipUnencrypted("unenc_restore.zip")
+			zipOut := r.RestoreZip("unenc_restore.zip")
 			for _, tc := range []struct {
 				path    string
 				content string
 			}{
-				{path: "file1.txt", content: "hello world"},
-				{path: "secret.txt", content: "updated classified data"},
-				{path: "subdir/nested.txt", content: "nested content"},
-				{path: "unenc-file.txt", content: "plaintext content"},
+				{"file1.txt", "hello world"},
+				{"secret.txt", "updated classified data"},
+				{"subdir/nested.txt", "nested content"},
+				{"unenc-file.txt", "plaintext content"},
 			} {
-				if got := readZipFile(t, zipPath, tc.path); got != tc.content {
-					t.Errorf("unencrypted restore mismatch for %s: got %q, want %q", tc.path, got, tc.content)
-				}
+				zipOut.MustHaveFileContent(tc.path, tc.content)
 			}
 
-			out = h.checkUnencrypted("--read-data")
-			if !strings.Contains(out, "repository is healthy") {
-				t.Errorf("unencrypted: expected healthy check output, got: %s", out)
-			}
+			r.Check("--read-data").MustContain("repository is healthy")
 
-			out = h.forgetUnencrypted("--keep-last", "1", "--prune")
-			if !strings.Contains(out, "Objects deleted:") {
-				t.Errorf("unencrypted: expected prune to delete objects, got: %s", out)
-			}
-			if !strings.Contains(out, "Space reclaimed:") {
-				t.Errorf("unencrypted: expected prune to reclaim space, got: %s", out)
-			}
+			r.Forget("--keep-last", "1", "--prune").
+				MustRemove(1).
+				MustContain("Objects deleted:").
+				MustContain("Space reclaimed:")
 
-			out = h.listUnencrypted()
-			if !strings.Contains(out, "1 snapshot") {
-				t.Errorf("unencrypted: expected 1 snapshot after prune, got: %s", out)
-			}
+			r.List().MustHaveSnapshotCount(1)
 		},
 	})
 }

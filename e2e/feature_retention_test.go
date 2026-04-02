@@ -11,25 +11,17 @@ func TestCLI_Feature_RetentionAndPrune(t *testing.T) {
 		sourceFilter: localOnlySource,
 		storeFilter:  localOnlyStore,
 		test: func(t *testing.T, h *harness, entry matrixEntry) {
-			h.writeFile("file1.txt", "hello world")
-			h.initEncrypted()
-			h.backup()
+			r := h.WithFile("file1.txt", "hello world").MustInitEncrypted()
+			r.Backup()
 
-			h.writeFile("file2.txt", "new file")
-			h.backup()
+			r.WithFile("file2.txt", "new file").Backup()
 
-			out := h.forget("--keep-last", "1", "--prune")
-			if !strings.Contains(out, "Objects deleted:") {
-				t.Errorf("expected prune to delete objects, got: %s", out)
-			}
-			if !strings.Contains(out, "Space reclaimed:") {
-				t.Errorf("expected prune to reclaim space, got: %s", out)
-			}
+			r.Forget("--keep-last", "1", "--prune").
+				MustRemove(1).
+				MustContain("Objects deleted:").
+				MustContain("Space reclaimed:")
 
-			out = h.list()
-			if !strings.Contains(out, "1 snapshot") {
-				t.Errorf("expected 1 snapshot after prune, got: %s", out)
-			}
+			r.List().MustHaveSnapshotCount(1)
 		},
 	})
 }
@@ -40,24 +32,18 @@ func TestCLI_Feature_ForgetDryRunPolicy(t *testing.T) {
 		sourceFilter: localOnlySource,
 		storeFilter:  localOnlyStore,
 		test: func(t *testing.T, h *harness, entry matrixEntry) {
-			h.writeFile("policy-file.txt", "x")
-			h.initEncrypted()
+			r := h.WithFile("policy-file.txt", "x").MustInitEncrypted()
 
 			for i := range 3 {
-				h.writeFile("policy-file.txt", strings.Repeat("x", i+1))
-				h.backup()
+				r.WithFile("policy-file.txt", strings.Repeat("x", i+1)).Backup()
 			}
 
-			out := h.forget("--keep-last", "1", "--dry-run")
-			if !strings.Contains(out, "would remove") {
-				t.Errorf("expected dry-run output, got: %s", out)
-			}
+			r.Forget("--keep-last", "1", "--dry-run").
+				MustBeDryRun().
+				MustWouldRemove(2)
 
-			h.forget("--keep-last", "1", "--prune")
-			out = h.list()
-			if !strings.Contains(out, "1 snapshot") {
-				t.Errorf("expected 1 snapshot after policy, got: %s", out)
-			}
+			r.Forget("--keep-last", "1", "--prune").MustRemove(2)
+			r.List().MustHaveSnapshotCount(1)
 		},
 	})
 }

@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -33,28 +32,24 @@ func TestDetectVolumeIdentity_TempDir(t *testing.T) {
 	}
 }
 
-func TestDetectVolumeIdentity_ReturnsUppercaseUUID(t *testing.T) {
-	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" && runtime.GOOS != "windows" {
-		t.Skip("UUID detection only implemented on darwin, linux, and windows")
+func TestNormalizeVolumeUUID(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "empty", in: "", want: ""},
+		{name: "already_upper", in: "ABCDEF12-3456-7890-ABCD-EF1234567890", want: "ABCDEF12-3456-7890-ABCD-EF1234567890"},
+		{name: "lowercase", in: "abcdef12-3456-7890-abcd-ef1234567890", want: "ABCDEF12-3456-7890-ABCD-EF1234567890"},
+		{name: "trim_spaces", in: "  abcdef12-3456-7890-abcd-ef1234567890  ", want: "ABCDEF12-3456-7890-ABCD-EF1234567890"},
 	}
 
-	tmpDir, err := os.MkdirTemp("", "cloudstic-case-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
-
-	uuid, _, _ := detectVolumeIdentity(tmpDir)
-	if uuid == "" {
-		t.Skip("no UUID detected for temp dir filesystem")
-	}
-
-	// UUIDs should be uppercase for consistent cross-platform matching.
-	for _, c := range uuid {
-		if c >= 'a' && c <= 'f' {
-			t.Errorf("UUID %q contains lowercase hex; expected uppercase for consistency", uuid)
-			break
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeVolumeUUID(tt.in); got != tt.want {
+				t.Fatalf("normalizeVolumeUUID(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
 	}
 }
 

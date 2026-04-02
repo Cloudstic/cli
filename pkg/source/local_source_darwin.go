@@ -45,6 +45,7 @@ func detectVolumeIdentity(path string) (uuid, label, mountPoint string) {
 	} else {
 		uuid = getVolumeUUID(path)
 	}
+	uuid = normalizeVolumeUUID(uuid)
 	label = getVolumeLabel(path)
 	return uuid, label, mountPoint
 }
@@ -98,7 +99,7 @@ func extractPlistValue(data []byte, key string) string {
 			} else if foundKey && t.Name.Local == "string" {
 				var v string
 				if err := d.DecodeElement(&v, &t); err == nil {
-					return strings.ToUpper(v)
+					return v
 				}
 				return ""
 			} else {

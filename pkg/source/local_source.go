@@ -12,6 +12,10 @@ import (
 
 var filepathAbs = filepath.Abs
 
+func normalizeVolumeUUID(uuid string) string {
+	return strings.ToUpper(strings.TrimSpace(uuid))
+}
+
 func (s *LocalSource) Info() core.SourceInfo {
 	hostname, _ := os.Hostname()
 	absPath, _ := filepathAbs(s.rootPath)

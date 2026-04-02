@@ -26,6 +26,7 @@ func detectVolumeIdentity(path string) (uuid, label, mountPoint string) {
 	if uuid == "" {
 		uuid = findUUIDForDevice(device)
 	}
+	uuid = normalizeVolumeUUID(uuid)
 	label = findLabelForDevice(device)
 	return uuid, label, mountPoint
 }
@@ -135,7 +136,7 @@ func findUUIDForDevice(device string) string {
 			continue
 		}
 		if filepath.Base(target) == deviceBase {
-			return strings.ToUpper(e.Name())
+			return e.Name()
 		}
 	}
 	return ""
@@ -157,7 +158,7 @@ func findPartUUIDForDevice(device string) string {
 			continue
 		}
 		if filepath.Base(target) == deviceBase {
-			return strings.ToUpper(e.Name())
+			return e.Name()
 		}
 	}
 	return ""

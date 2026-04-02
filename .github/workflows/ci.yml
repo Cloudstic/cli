@@ -79,7 +79,7 @@ jobs:
             echo '```' >> $GITHUB_STEP_SUMMARY
           fi
       - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         if: matrix.os == 'ubuntu-latest'
         with:
           slug: Cloudstic/cli

@@ -28,7 +28,7 @@ func printUsage() {
 		{"store show", "Show one store and its configuration"},
 		{"store verify", "Verify one store's credentials and connectivity"},
 		{"source discover", "Discover local source candidates for onboarding"},
-		{"setup workstation", "Preview workstation onboarding plan"},
+		{"setup workstation", "Guide workstation onboarding and profile scaffolding"},
 		{"profile new", "Create or update a backup profile in profiles.yaml"},
 		{"profile list", "List stores, auth entries, and backup profiles"},
 		{"profile show", "Show one profile and resolved store/auth references"},
@@ -233,14 +233,14 @@ func printUsage() {
 	t.Command("setup workstation", "")
 	t.Flags([][2]string{
 		{"-dry-run", "Preview generated profiles without writing configuration"},
-		{"-yes", "Accept default selections without prompting"},
+		{"-yes", "Accept the proposed plan without confirmation"},
 		{"-profiles-file <path>", ui.Env("Path to profiles YAML file", "CLOUDSTIC_PROFILES_FILE")},
 		{"-store-ref <name>", "Existing store reference to attach to generated profiles"},
 		{"-json", "Write onboarding plan as JSON"},
 	})
 	t.Note(
-		"  Build a workstation onboarding plan using OS-aware folder suggestions and portable-drive discovery.",
-		"  Only dry-run preview is implemented currently; no configuration is written.",
+		"  Build a workstation onboarding flow using OS-aware folder suggestions and portable-drive discovery.",
+		"  Interactive by default. Use -dry-run to preview without writing, or -yes to save without confirmation.",
 	)
 	t.Blank()
 

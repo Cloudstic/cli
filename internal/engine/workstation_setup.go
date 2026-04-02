@@ -60,6 +60,12 @@ type WorkstationCoverageSummary struct {
 	Warnings             []string `json:"warnings,omitempty"`
 }
 
+type WorkstationApplyResult struct {
+	ProfilesCreated int      `json:"profiles_created"`
+	ProfilesUpdated int      `json:"profiles_updated"`
+	ProfileNames    []string `json:"profile_names,omitempty"`
+}
+
 type WorkstationSetupPlan struct {
 	Hostname        string                       `json:"hostname"`
 	StoreRef        string                       `json:"store_ref,omitempty"`
@@ -155,6 +161,42 @@ func PlanWorkstationSetup(ctx context.Context, opts ...WorkstationSetupOption) (
 	plan.Coverage.SkippedIntentionally = append(plan.Coverage.SkippedIntentionally, skipped...)
 	plan.Coverage.Warnings = append(plan.Coverage.Warnings, warnings...)
 	return plan, nil
+}
+
+func ApplyWorkstationSetupPlan(cfg *ProfilesConfig, plan *WorkstationSetupPlan) (*WorkstationApplyResult, error) {
+	if plan == nil {
+		return nil, fmt.Errorf("workstation setup plan is required")
+	}
+	cfg = normalizeProfilesConfig(cfg)
+
+	result := &WorkstationApplyResult{
+		ProfileNames: make([]string, 0, len(plan.Profiles)),
+	}
+
+	for _, draft := range plan.Profiles {
+		if strings.TrimSpace(draft.Name) == "" {
+			return nil, fmt.Errorf("workstation setup plan contains a draft with no profile name")
+		}
+		if strings.TrimSpace(draft.SourceURI) == "" {
+			return nil, fmt.Errorf("workstation setup plan contains an empty source URI for profile %q", draft.Name)
+		}
+
+		if _, ok := cfg.Profiles[draft.Name]; ok {
+			result.ProfilesUpdated++
+		} else {
+			result.ProfilesCreated++
+		}
+
+		cfg.Profiles[draft.Name] = BackupProfile{
+			Source: draft.SourceURI,
+			Store:  draft.StoreRef,
+			Tags:   slices.Clone(draft.Tags),
+		}
+		result.ProfileNames = append(result.ProfileNames, draft.Name)
+	}
+
+	slices.Sort(result.ProfileNames)
+	return result, nil
 }
 
 func discoverWorkstationFolders() ([]WorkstationFolderCandidate, []string, error) {

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	cloudstic "github.com/cloudstic/cli"
+	"github.com/cloudstic/cli/internal/engine"
 	"github.com/jedib0t/go-pretty/v6/table"
 )
 
@@ -69,16 +70,48 @@ func parseSetupWorkstationArgs() *setupWorkstationArgs {
 
 func (r *runner) runSetupWorkstation(ctx context.Context) int {
 	args := parseSetupWorkstationArgs()
-	if !args.dryRun {
-		return r.fail("setup workstation write mode is not implemented yet; use -dry-run")
-	}
-
 	cfg, err := loadProfilesOrInit(args.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
 	}
+	ensureProfilesMaps(cfg)
 	if r.client == nil {
 		r.client = &cloudstic.Client{}
+	}
+
+	if !args.dryRun && args.storeRef == "" {
+		if len(cfg.Stores) == 0 {
+			if !r.canPrompt() || args.yes {
+				return r.fail("No store is configured; create one first with 'cloudstic store new' or rerun interactively")
+			}
+			ref, created, code := r.promptStoreSelection(ctx, cfg)
+			if code != 0 {
+				return code
+			}
+			args.storeRef = ref
+			if created {
+				s := cfg.Stores[args.storeRef]
+				if !storeHasExplicitEncryption(s) {
+					r.promptEncryptionConfig(ctx, cfg, args.storeRef, args.profilesFile)
+				}
+				if err := r.checkOrInitStoreWithRecovery(ctx, cfg, args.storeRef, args.profilesFile, checkOrInitOptions{
+					allowMissingSecrets:  true,
+					warnOnMissingSecrets: true,
+					offerInit:            true,
+				}, true); err != nil {
+					_, _ = fmt.Fprintf(r.errOut, "%v\n", err)
+				}
+			}
+		} else if len(cfg.Stores) > 1 {
+			if !r.canPrompt() || args.yes {
+				return r.fail("Multiple stores are configured; pass -store-ref or rerun interactively")
+			}
+			ref, _, code := r.promptStoreSelection(ctx, cfg)
+			if code != 0 {
+				return code
+			}
+			args.storeRef = ref
+		}
 	}
 
 	opts := []cloudstic.WorkstationSetupOption{cloudstic.WithWorkstationProfiles(cfg)}
@@ -94,12 +127,53 @@ func (r *runner) runSetupWorkstation(ctx context.Context) int {
 		return r.writeJSON(plan)
 	}
 
-	printWorkstationSetupPlan(r.out, plan)
+	printWorkstationSetupPlan(r.out, plan, args.dryRun)
+	if args.dryRun {
+		return 0
+	}
+
+	if plan.StoreRef == "" {
+		return r.fail("Store selection is still unresolved; pass -store-ref or rerun interactively")
+	}
+	if len(plan.Profiles) == 0 {
+		_, _ = fmt.Fprintln(r.out, "\nNothing to save.")
+		return 0
+	}
+	if !args.yes {
+		if !r.canPrompt() {
+			return r.fail("setup workstation requires an interactive terminal or -yes")
+		}
+		ok, err := r.promptConfirm(ctx, "Save workstation setup?", true)
+		if err != nil {
+			return r.fail("Failed to confirm workstation setup: %v", err)
+		}
+		if !ok {
+			_, _ = fmt.Fprintln(r.out, "Workstation setup cancelled.")
+			return 0
+		}
+	}
+
+	result, err := engine.ApplyWorkstationSetupPlan(cfg, (*engine.WorkstationSetupPlan)(plan))
+	if err != nil {
+		return r.fail("Failed to apply workstation setup plan: %v", err)
+	}
+	if err := cloudstic.SaveProfilesFile(args.profilesFile, cfg); err != nil {
+		return r.fail("Failed to save profiles: %v", err)
+	}
+	_, _ = fmt.Fprintf(r.out, "\nSaved %d profile(s) in %s", len(result.ProfileNames), args.profilesFile)
+	if result.ProfilesCreated > 0 || result.ProfilesUpdated > 0 {
+		_, _ = fmt.Fprintf(r.out, " (%d created, %d updated)", result.ProfilesCreated, result.ProfilesUpdated)
+	}
+	_, _ = fmt.Fprintln(r.out)
 	return 0
 }
 
-func printWorkstationSetupPlan(out io.Writer, plan *cloudstic.WorkstationSetupPlan) {
-	_, _ = fmt.Fprintln(out, "Workstation setup plan (dry-run)")
+func printWorkstationSetupPlan(out io.Writer, plan *cloudstic.WorkstationSetupPlan, dryRun bool) {
+	if dryRun {
+		_, _ = fmt.Fprintln(out, "Workstation setup plan (dry-run)")
+	} else {
+		_, _ = fmt.Fprintln(out, "Workstation setup plan")
+	}
 	_, _ = fmt.Fprintf(out, "Host: %s\n", plan.Hostname)
 	if plan.StoreRef != "" {
 		_, _ = fmt.Fprintf(out, "Store: %s (%s)\n", plan.StoreRef, plan.StoreAction)

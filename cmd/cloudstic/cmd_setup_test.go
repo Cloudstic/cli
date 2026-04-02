@@ -64,16 +64,54 @@ func TestRunSetupWorkstation_JSON(t *testing.T) {
 	}
 }
 
-func TestRunSetupWorkstation_RequiresDryRun(t *testing.T) {
+func TestRunSetupWorkstation_ApplyYes(t *testing.T) {
+	client := &stubClient{
+		setupPlan: &cloudstic.WorkstationSetupPlan{
+			Hostname:    "testbox",
+			StoreRef:    "primary",
+			StoreAction: "use-existing",
+			Profiles: []cloudstic.WorkstationProfileDraft{
+				{Name: "documents", SourceURI: "local:/Users/test/Documents", StoreRef: "primary", Tags: []string{"workstation"}, Action: "create"},
+			},
+		},
+	}
+	profilesPath := filepath.Join(t.TempDir(), "profiles.yaml")
+	if err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
+		Version: 1,
+		Stores:  map[string]cloudstic.ProfileStore{"primary": {URI: "local:/repo"}},
+	}); err != nil {
+		t.Fatalf("SaveProfilesFile: %v", err)
+	}
+
 	osArgs := os.Args
 	t.Cleanup(func() { os.Args = osArgs })
-	os.Args = []string{"cloudstic", "setup", "workstation"}
+	os.Args = []string{"cloudstic", "setup", "workstation", "-yes", "-profiles-file", profilesPath}
 
 	var out strings.Builder
 	var errOut strings.Builder
-	r := &runner{out: &out, errOut: &errOut, client: &stubClient{}}
+	r := &runner{out: &out, errOut: &errOut, client: client, noPrompt: true}
+	if code := r.runSetup(context.Background()); code != 0 {
+		t.Fatalf("code=%d err=%s", code, errOut.String())
+	}
+	cfg, err := cloudstic.LoadProfilesFile(profilesPath)
+	if err != nil {
+		t.Fatalf("LoadProfilesFile: %v", err)
+	}
+	if got := cfg.Profiles["documents"].Store; got != "primary" {
+		t.Fatalf("documents store = %q, want primary", got)
+	}
+}
+
+func TestRunSetupWorkstation_RequiresStoreResolutionWithoutPrompt(t *testing.T) {
+	osArgs := os.Args
+	t.Cleanup(func() { os.Args = osArgs })
+	os.Args = []string{"cloudstic", "setup", "workstation", "-yes"}
+
+	var out strings.Builder
+	var errOut strings.Builder
+	r := &runner{out: &out, errOut: &errOut, client: &stubClient{}, noPrompt: true}
 	if code := r.runSetup(context.Background()); code == 0 {
-		t.Fatal("expected failure without -dry-run")
+		t.Fatal("expected failure without store resolution")
 	}
 }
 

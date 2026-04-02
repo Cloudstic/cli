@@ -179,3 +179,96 @@ func TestValidateForgetArgs_RejectsSnapshotIDWithPolicyOrFilters(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateForgetArgs_RejectsSnapshotIDWithAllFilterKinds(t *testing.T) {
+	args := &forgetArgs{
+		snapshotID:    "abc123",
+		filterSource:  "local",
+		filterAccount: "host",
+		filterPath:    "/docs",
+		groupBySet:    true,
+	}
+
+	err := validateForgetArgs(args)
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	for _, want := range []string{"-source", "-account", "-path", "-group-by"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error to mention %q, got: %v", want, err)
+		}
+	}
+}
+
+func TestParseForgetArgs_FilterOnlySourceSetsPolicyAndGrouping(t *testing.T) {
+	origArgs := os.Args
+	defer func() { os.Args = origArgs }()
+
+	os.Args = []string{
+		"cloudstic", "forget",
+		"--source", "local:/docs",
+		"--account", "workstation",
+		"--group-by", "source,path",
+	}
+
+	args := parseForgetArgs()
+
+	if !args.hasFilters {
+		t.Fatal("expected parseForgetArgs to detect filters")
+	}
+	if !args.hasPolicy {
+		t.Fatal("expected filter-only parse to enable policy mode")
+	}
+	if !args.groupBySet {
+		t.Fatal("expected explicit group-by to be recorded")
+	}
+	if args.filterSource != "local" {
+		t.Fatalf("filterSource = %q, want %q", args.filterSource, "local")
+	}
+	if args.filterPath != "/docs" {
+		t.Fatalf("filterPath = %q, want %q", args.filterPath, "/docs")
+	}
+	if args.filterAccount != "workstation" {
+		t.Fatalf("filterAccount = %q, want %q", args.filterAccount, "workstation")
+	}
+	if args.groupBy != "source,path" {
+		t.Fatalf("groupBy = %q, want %q", args.groupBy, "source,path")
+	}
+}
+
+func TestParseForgetArgs_BareSourceKeywordDoesNotSetFilterPath(t *testing.T) {
+	origArgs := os.Args
+	defer func() { os.Args = origArgs }()
+
+	os.Args = []string{"cloudstic", "forget", "--source", "local"}
+
+	args := parseForgetArgs()
+
+	if args.filterSource != "local" {
+		t.Fatalf("filterSource = %q, want %q", args.filterSource, "local")
+	}
+	if args.filterPath != "" {
+		t.Fatalf("filterPath = %q, want empty", args.filterPath)
+	}
+	if !args.hasFilters || !args.hasPolicy {
+		t.Fatalf("expected bare source filter to enable filter-only policy mode: %+v", args)
+	}
+}
+
+func TestPrintForgetUsage(t *testing.T) {
+	var out strings.Builder
+
+	printForgetUsage(&out)
+
+	got := out.String()
+	for _, want := range []string{
+		"Usage: cloudstic forget [options] <snapshot_id>",
+		"cloudstic forget --keep-last n",
+		"cloudstic forget --tag X [--tag Y]",
+		"cloudstic forget --source local:./docs",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected usage output to contain %q, got:\n%s", want, got)
+		}
+	}
+}

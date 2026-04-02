@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -93,7 +94,7 @@ func parseForgetArgs() *forgetArgs {
 	return a
 }
 
-func printForgetUsage(w *os.File) {
+func printForgetUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "Usage: cloudstic forget [options] <snapshot_id>")
 	_, _ = fmt.Fprintln(w, "       cloudstic forget --keep-last n [--tag X] [--source SRC] [--account NAME] [--prune] [--dry-run]")
 	_, _ = fmt.Fprintln(w, "       cloudstic forget --tag X [--tag Y] [--source SRC] [--account NAME] [--prune] [--dry-run]")

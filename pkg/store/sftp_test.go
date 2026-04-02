@@ -12,6 +12,8 @@ import (
 
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 // startSFTPContainer spins up an OpenSSH SFTP server using the atmoz/sftp
@@ -62,25 +64,22 @@ func writeKnownHosts(t *testing.T, ctx context.Context, container testcontainers
 				if pubKeyLine == "" {
 					continue
 				}
-				parts := strings.Fields(pubKeyLine)
-				if len(parts) < 2 {
+				pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(pubKeyLine))
+				if err != nil {
 					continue
 				}
-				keyTypeAndKey := parts[0] + " " + parts[1]
 
-				// known_hosts format: host1,host2,... keytype key
-				// We include host, 127.0.0.1, and ::1 to be safe against resolution differences.
-				hosts := fmt.Sprintf("[%s]:%s", host, port)
+				hosts := []string{fmt.Sprintf("[%s]:%s", host, port)}
 				if host != "127.0.0.1" {
-					hosts += fmt.Sprintf(",[127.0.0.1]:%s", port)
+					hosts = append(hosts, fmt.Sprintf("[127.0.0.1]:%s", port))
 				}
 				if host != "::1" {
-					hosts += fmt.Sprintf(",[::1]:%s", port)
+					hosts = append(hosts, fmt.Sprintf("[::1]:%s", port))
 				}
 				if host != "localhost" {
-					hosts += fmt.Sprintf(",[localhost]:%s", port)
+					hosts = append(hosts, fmt.Sprintf("[localhost]:%s", port))
 				}
-				lines = append(lines, fmt.Sprintf("%s %s", hosts, keyTypeAndKey))
+				lines = append(lines, knownhosts.Line(hosts, pubKey))
 			}
 		}
 	}

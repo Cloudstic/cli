@@ -71,6 +71,8 @@ func runCmd(cmd string) int {
 		return r.runAuth(ctx)
 	case "store":
 		return r.runStore(ctx)
+	case "source":
+		return r.runSource(ctx)
 	case "completion":
 		runCompletion()
 		return 0

@@ -41,7 +41,7 @@ _cloudstic() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="init backup auth profile store restore list ls prune forget diff break-lock key cat completion version help"
+    local commands="init backup auth profile store source restore list ls prune forget diff break-lock key cat completion version help"
 
     local global_flags="-store -profile -profiles-file -s3-endpoint -s3-region -s3-profile -s3-access-key -s3-secret-key -source-sftp-password -source-sftp-key -source-sftp-known-hosts -source-sftp-insecure -store-sftp-password -store-sftp-key -store-sftp-known-hosts -store-sftp-insecure -encryption-key -password -recovery-key -kms-key-arn -kms-region -kms-endpoint -disable-packfile -prompt -no-prompt -verbose -quiet -json -debug"
 
@@ -188,6 +188,26 @@ _cloudstic() {
                     cmd_flags="" ;;
             esac
             ;;
+        source)
+            local source_sub=""
+            local j
+            for ((j=i+1; j < cword; j++)); do
+                case "${words[j]}" in
+                    -*) ;;
+                    *) source_sub="${words[j]}"; break ;;
+                esac
+            done
+            if [[ -z "$source_sub" ]]; then
+                COMPREPLY=($(compgen -W "discover" -- "$cur"))
+                return
+            fi
+            case "$source_sub" in
+                discover)
+                    cmd_flags="-portable-only -json" ;;
+                *)
+                    cmd_flags="" ;;
+            esac
+            ;;
         check)
             cmd_flags="-read-data" ;;
         ls|diff|break-lock|version|help)
@@ -232,6 +252,7 @@ _cloudstic() {
         'backup:Create a new backup snapshot from a source'
         'auth:Manage reusable cloud auth entries'
         'profile:Manage backup profiles'
+        'source:Discover source candidates for onboarding'
         'restore:Restore files from a backup snapshot'
         'list:List all backup snapshots in the repository'
         'ls:List files within a specific snapshot'
@@ -505,6 +526,33 @@ _cloudstic() {
                     ;;
             esac
             ;;
+        source)
+            local -a source_commands
+            source_commands=(
+                'discover:Discover local source candidates'
+            )
+            local source_sub
+            local -i soi=$((i+1))
+            while (( soi < CURRENT )); do
+                case "${words[soi]}" in
+                    -*) ;;
+                    *) source_sub="${words[soi]}"; break ;;
+                esac
+                (( soi++ ))
+            done
+            if [[ -z "$source_sub" ]]; then
+                _describe -t source-commands 'source subcommand' source_commands
+                return
+            fi
+            case "$source_sub" in
+                discover)
+                    _arguments '-portable-only[Only show portable or external source candidates]' '-json[Write discovered sources as JSON]'
+                    ;;
+                *)
+                    _arguments
+                    ;;
+            esac
+            ;;
         restore)
             _arguments $global_flags \
                 '-output[Output path for zip or dir restore]:path:_files' \
@@ -607,6 +655,7 @@ complete -c cloudstic -n __fish_use_subcommand -a init -d 'Initialize a new repo
 complete -c cloudstic -n __fish_use_subcommand -a backup -d 'Create a new backup snapshot'
 complete -c cloudstic -n __fish_use_subcommand -a auth -d 'Manage reusable cloud auth entries'
 complete -c cloudstic -n __fish_use_subcommand -a profile -d 'Manage backup profiles'
+complete -c cloudstic -n __fish_use_subcommand -a source -d 'Discover source candidates for onboarding'
 complete -c cloudstic -n __fish_use_subcommand -a restore -d 'Restore files from a snapshot'
 complete -c cloudstic -n __fish_use_subcommand -a list -d 'List all backup snapshots'
 complete -c cloudstic -n __fish_use_subcommand -a ls -d 'List files within a snapshot'
@@ -722,6 +771,11 @@ complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_sub
 complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from verify' -l profiles-file -r -F -d 'Path to profiles YAML file'
 complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from init' -l profiles-file -r -F -d 'Path to profiles YAML file'
 complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from init' -l yes -d 'Initialize without confirmation prompt'
+
+# source subcommands
+complete -c cloudstic -n '__fish_seen_subcommand_from source; and not __fish_seen_subcommand_from discover' -a discover -d 'Discover local source candidates'
+complete -c cloudstic -n '__fish_seen_subcommand_from source; and __fish_seen_subcommand_from discover' -l portable-only -d 'Only show portable or external source candidates'
+complete -c cloudstic -n '__fish_seen_subcommand_from source; and __fish_seen_subcommand_from discover' -l json -d 'Write discovered sources as JSON'
 
 # auth subcommands
 complete -c cloudstic -n '__fish_seen_subcommand_from auth; and not __fish_seen_subcommand_from list show new login' -a list -d 'List auth entries from profiles.yaml'

@@ -515,6 +515,31 @@ that provider matches the source type.
 
 ---
 
+### source
+
+Inspect local source candidates for workstation onboarding.
+
+#### source discover
+
+List local source roots with mount metadata and portable-drive hints.
+
+```bash
+cloudstic source discover
+
+# Only show portable/external candidates
+cloudstic source discover -portable-only
+
+# JSON output for automation
+cloudstic source discover -json
+```
+
+This command is intended to support workstation onboarding and source
+selection flows. It emits candidate `local:` source URIs together with mount
+metadata such as identity, filesystem type, and whether the source is
+considered portable.
+
+---
+
 ### store
 
 Manage named store entries in `profiles.yaml`. Stores define storage backend, connection credentials, and encryption settings.

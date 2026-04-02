@@ -70,6 +70,9 @@ cloudstic restore
 
 # Preview what a backup would do (dry run)
 cloudstic backup -source local:~/Documents -dry-run
+
+# Discover local source candidates and portable drives
+cloudstic source discover -portable-only
 ```
 
 ## Profiles

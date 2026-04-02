@@ -20,7 +20,7 @@ func TestCompletionBash(t *testing.T) {
 		"_cloudstic()",
 		"complete -F _cloudstic cloudstic",
 		// All commands are listed
-		"init", "backup", "auth", "profile", "restore", "list", "ls", "prune", "forget",
+		"init", "backup", "auth", "profile", "store", "source", "restore", "list", "ls", "prune", "forget",
 		"diff", "break-lock", "key", "cat", "completion",
 		// Key subcommands
 		"list add-recovery passwd",
@@ -66,6 +66,8 @@ func TestCompletionZsh(t *testing.T) {
 		"login:Run OAuth login flow for one auth entry",
 		"key:Manage encryption key slots",
 		"completion:Generate shell completion scripts",
+		"source:Discover source candidates for onboarding",
+		"discover:Discover local source candidates",
 		// Key subcommands
 		"list:List all encryption key slots",
 		"add-recovery:Generate a 24-word recovery key",
@@ -109,6 +111,7 @@ func TestCompletionFish(t *testing.T) {
 		"complete -c cloudstic -n __fish_use_subcommand -a backup",
 		"complete -c cloudstic -n __fish_use_subcommand -a profile",
 		"complete -c cloudstic -n __fish_use_subcommand -a auth",
+		"complete -c cloudstic -n __fish_use_subcommand -a source",
 		"complete -c cloudstic -n __fish_use_subcommand -a key",
 		"complete -c cloudstic -n __fish_use_subcommand -a completion",
 		// Key subcommands

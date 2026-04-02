@@ -27,6 +27,7 @@ func printUsage() {
 		{"store list", "List configured stores"},
 		{"store show", "Show one store and its configuration"},
 		{"store verify", "Verify one store's credentials and connectivity"},
+		{"source discover", "Discover local source candidates for onboarding"},
 		{"profile new", "Create or update a backup profile in profiles.yaml"},
 		{"profile list", "List stores, auth entries, and backup profiles"},
 		{"profile show", "Show one profile and resolved store/auth references"},
@@ -214,6 +215,17 @@ func printUsage() {
 	t.Note("  Create or update a store entry in profiles.yaml.",
 		"  Prefer secret refs: -password-secret / -encryption-key-secret / -recovery-key-secret.",
 		"  KMS settings are stored directly (ARN is not a secret).",
+	)
+	t.Blank()
+
+	t.Command("source discover", "")
+	t.Flags([][2]string{
+		{"-portable-only", "Only show portable/external source candidates"},
+		{"-json", "Write discovered sources as JSON"},
+	})
+	t.Note(
+		"  Discover local source candidates with mount metadata and portable-drive hints.",
+		"  Intended for workstation onboarding and source selection workflows.",
 	)
 	t.Blank()
 

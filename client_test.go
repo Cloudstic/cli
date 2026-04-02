@@ -216,6 +216,13 @@ func TestAddRecoveryKey_WrongCredentials(t *testing.T) {
 	}
 }
 
+func TestClientDiscoverSources(t *testing.T) {
+	c := &Client{}
+	if _, err := c.DiscoverSources(context.Background()); err != nil {
+		t.Fatalf("DiscoverSources: %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Cat
 // ---------------------------------------------------------------------------

@@ -13,6 +13,8 @@ import (
 type stubClient struct {
 	backupResult    *cloudstic.BackupResult
 	backupErr       error
+	discoverResult  []cloudstic.DiscoveredSource
+	discoverErr     error
 	restoreResult   *cloudstic.RestoreResult
 	restoreErr      error
 	listResult      *cloudstic.ListResult
@@ -37,6 +39,10 @@ type stubClient struct {
 
 func (s *stubClient) Backup(_ context.Context, _ source.Source, _ ...cloudstic.BackupOption) (*cloudstic.BackupResult, error) {
 	return s.backupResult, s.backupErr
+}
+
+func (s *stubClient) DiscoverSources(_ context.Context) ([]cloudstic.DiscoveredSource, error) {
+	return s.discoverResult, s.discoverErr
 }
 
 func (s *stubClient) Restore(_ context.Context, _ io.Writer, _ string, _ ...cloudstic.RestoreOption) (*cloudstic.RestoreResult, error) {

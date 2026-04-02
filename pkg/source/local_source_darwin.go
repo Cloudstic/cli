@@ -99,7 +99,7 @@ func extractPlistValue(data []byte, key string) string {
 			} else if foundKey && t.Name.Local == "string" {
 				var v string
 				if err := d.DecodeElement(&v, &t); err == nil {
-					return v
+					return strings.ToUpper(v)
 				}
 				return ""
 			} else {

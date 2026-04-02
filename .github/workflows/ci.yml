@@ -58,7 +58,7 @@ jobs:
           set -o pipefail
           E2E_COVERAGE_OUT=e2e_coverage.out go test -v -json -count=1 ./e2e/ | tee -a test-output.json
       - name: Test Report
-        uses: dorny/test-reporter@v2
+        uses: dorny/test-reporter@v3
         if: always()
         with:
           name: Go Tests (${{ matrix.os }})

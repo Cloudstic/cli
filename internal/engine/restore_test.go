@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/internal/hamt"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/store"
 )
@@ -654,5 +655,93 @@ func TestRestoreManager_PathFilter_DryRun(t *testing.T) {
 	// Buffer should be empty in dry-run mode.
 	if buf.Len() != 0 {
 		t.Errorf("Expected empty buffer in dry run, got %d bytes", buf.Len())
+	}
+}
+
+func TestRestoreManager_PathFilter_MixedLegacyAndNormalizedFileMeta(t *testing.T) {
+	ctx := context.Background()
+	dest := NewMockStore()
+
+	rootMeta := core.FileMeta{
+		FileID: "dir",
+		Name:   "docs",
+		Type:   core.FileTypeFolder,
+		Paths:  []string{"docs"},
+	}
+	childMeta := core.FileMeta{
+		FileID:  "file",
+		Name:    "guide.txt",
+		Type:    core.FileTypeFile,
+		Parents: []string{"dir"},
+		Size:    int64(len("guide")),
+	}
+
+	rootRef, rootData, err := rootMeta.Ref()
+	if err != nil {
+		t.Fatalf("root meta ref: %v", err)
+	}
+	if err := dest.Put(ctx, rootRef, rootData); err != nil {
+		t.Fatalf("put root meta: %v", err)
+	}
+
+	content := core.Content{Type: core.ObjectTypeContent, Size: childMeta.Size, DataInlineB64: []byte("guide")}
+	contentHash, contentData, err := core.ComputeJSONHash(&content)
+	if err != nil {
+		t.Fatalf("content ref: %v", err)
+	}
+	contentRef := "content/" + contentHash
+	if err := dest.Put(ctx, contentRef, contentData); err != nil {
+		t.Fatalf("put content: %v", err)
+	}
+
+	childMeta.ContentHash = core.ComputeHash([]byte("guide"))
+	childMeta.ContentRef = contentHash
+	childRef, childData, err := childMeta.Ref()
+	if err != nil {
+		t.Fatalf("child meta ref: %v", err)
+	}
+	if err := dest.Put(ctx, childRef, childData); err != nil {
+		t.Fatalf("put child meta: %v", err)
+	}
+
+	tree := hamt.NewTree(dest)
+	root, err := tree.Insert("", "", rootMeta.FileID, rootRef)
+	if err != nil {
+		t.Fatalf("insert root: %v", err)
+	}
+	root, err = tree.Insert(root, rootMeta.FileID, childMeta.FileID, childRef)
+	if err != nil {
+		t.Fatalf("insert child: %v", err)
+	}
+
+	snap := core.Snapshot{Root: root, Seq: 1, Created: "2026-04-02T00:00:00Z"}
+	snapHash, snapData, err := core.ComputeJSONHash(&snap)
+	if err != nil {
+		t.Fatalf("snapshot ref: %v", err)
+	}
+	snapRef := "snapshot/" + snapHash
+	if err := dest.Put(ctx, snapRef, snapData); err != nil {
+		t.Fatalf("put snapshot: %v", err)
+	}
+	if err := dest.Put(ctx, "index/latest", createIndex(snapRef, 1)); err != nil {
+		t.Fatalf("put latest index: %v", err)
+	}
+
+	rsMgr := NewRestoreManager(dest, ui.NewNoOpReporter())
+	var buf bytes.Buffer
+	result, err := rsMgr.Run(ctx, NewZipRestoreWriter(&buf), "latest", WithRestorePath("docs/guide.txt"))
+	if err != nil {
+		t.Fatalf("Restore failed: %v", err)
+	}
+	if result.FilesWritten != 1 {
+		t.Fatalf("Expected 1 file, got %d", result.FilesWritten)
+	}
+
+	entries := zipEntries(t, &buf)
+	if _, ok := entries["docs/guide.txt"]; !ok {
+		t.Fatal("docs/guide.txt not restored")
+	}
+	if _, ok := entries["docs/"]; !ok {
+		t.Fatal("docs/ ancestor directory not restored")
 	}
 }

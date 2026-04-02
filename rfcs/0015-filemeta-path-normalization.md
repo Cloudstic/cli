@@ -1,6 +1,6 @@
 # RFC 0015: FileMeta Path Normalization
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Date:** 2026-03-17
 - **Affects:** `internal/core`, `internal/engine`, `pkg/source`, docs
 - **Related:** [RFC 0001](./0001-hamt-evolution.md), [RFC 0006](./0006-direct-to-filesystem-restore.md)
@@ -212,14 +212,15 @@ The extra reconstruction cost is acceptable because:
 ## Rollout plan
 
 1. Add shared helpers for normalized ephemeral path handling and derived-path
-   reconstruction.
+   reconstruction. (done)
 2. Update engine consumers so correctness no longer depends on persisted
-   `Paths`.
+   `Paths`. (done)
 3. Change backup persistence to clear `Paths` before hashing and writing new
-   `FileMeta` objects.
-4. Update docs/spec examples to show `paths` as optional legacy compatibility
+   `FileMeta` objects. (done)
+4. Update docs/spec examples to show `paths` as optional legacy compatibility.
+   (done)
    data.
-5. Validate mixed old/new snapshot behavior in integration tests.
+5. Validate mixed old/new snapshot behavior in integration tests. (done)
 
 ## Open questions
 

@@ -499,27 +499,10 @@ func (rm *RestoreManager) writeFileContent(ctx context.Context, w io.Writer, met
 }
 
 func buildRestorePath(meta core.FileMeta, byID map[string]core.FileMeta) string {
-	// Fast path: use stored Paths when available (new snapshots).
-	if len(meta.Paths) > 0 {
-		return meta.Paths[0]
-	}
-
-	// Fallback: reconstruct from parent chain (old snapshots).
-	const maxDepth = 50
-	parts := []string{meta.Name}
-	cur := meta
-	for i := 0; i < maxDepth && len(cur.Parents) > 0; i++ {
-		parent, ok := byID[cur.Parents[0]]
-		if !ok {
-			break
-		}
-		parts = append(parts, parent.Name)
-		cur = parent
-	}
-	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
-		parts[i], parts[j] = parts[j], parts[i]
-	}
-	return path.Join(parts...)
+	return fileMetaPath(meta, func(parentID string) (core.FileMeta, bool) {
+		parent, ok := byID[parentID]
+		return parent, ok
+	})
 }
 
 // filterByPath returns only the entries whose restore path matches the given filter.

@@ -14,6 +14,8 @@ import (
 	"github.com/jedib0t/go-pretty/v6/table"
 )
 
+var planWorkstationSetup = cloudstic.PlanWorkstationSetup
+
 func defaultProfilesPathNoCreate() string {
 	if path := os.Getenv("CLOUDSTIC_PROFILES_FILE"); path != "" {
 		return path
@@ -75,9 +77,6 @@ func (r *runner) runSetupWorkstation(ctx context.Context) int {
 		return r.fail("Failed to load profiles: %v", err)
 	}
 	ensureProfilesMaps(cfg)
-	if r.client == nil {
-		r.client = &cloudstic.Client{}
-	}
 
 	if !args.dryRun && args.storeRef == "" {
 		if len(cfg.Stores) == 0 {
@@ -118,7 +117,7 @@ func (r *runner) runSetupWorkstation(ctx context.Context) int {
 	if args.storeRef != "" {
 		opts = append(opts, cloudstic.WithWorkstationStoreRef(args.storeRef))
 	}
-	plan, err := r.client.PlanWorkstationSetup(ctx, opts...)
+	plan, err := planWorkstationSetup(ctx, opts...)
 	if err != nil {
 		return r.fail("Failed to plan workstation setup: %v", err)
 	}
@@ -169,7 +168,7 @@ func (r *runner) runSetupWorkstation(ctx context.Context) int {
 		}
 	}
 
-	result, err := engine.ApplyWorkstationSetupPlan(cfg, (*engine.WorkstationSetupPlan)(plan))
+	result, err := cloudstic.ApplyWorkstationSetupPlan(cfg, plan)
 	if err != nil {
 		return r.fail("Failed to apply workstation setup plan: %v", err)
 	}

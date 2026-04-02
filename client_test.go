@@ -224,9 +224,23 @@ func TestClientDiscoverSources(t *testing.T) {
 }
 
 func TestClientPlanWorkstationSetup(t *testing.T) {
-	c := &Client{}
-	if _, err := c.PlanWorkstationSetup(context.Background()); err != nil {
+	if _, err := PlanWorkstationSetup(context.Background()); err != nil {
 		t.Fatalf("PlanWorkstationSetup: %v", err)
+	}
+}
+
+func TestApplyWorkstationSetupPlan(t *testing.T) {
+	cfg := &ProfilesConfig{}
+	result, err := ApplyWorkstationSetupPlan(cfg, &WorkstationSetupPlan{
+		Profiles: []WorkstationProfileDraft{
+			{Name: "documents", SourceURI: "local:/Users/test/Documents", StoreRef: "primary", Tags: []string{"workstation"}, Selected: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ApplyWorkstationSetupPlan: %v", err)
+	}
+	if result.ProfilesCreated != 1 || cfg.Profiles["documents"].Store != "primary" {
+		t.Fatalf("unexpected apply result: %#v %#v", result, cfg)
 	}
 }
 

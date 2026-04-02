@@ -11,21 +11,29 @@ import (
 	"github.com/cloudstic/cli/internal/engine"
 )
 
-func TestRunSetupWorkstation_DryRun(t *testing.T) {
-	client := &stubClient{
-		setupPlan: &cloudstic.WorkstationSetupPlan{
-			Hostname:    "testbox",
-			StoreRef:    "primary",
-			StoreAction: "use-existing",
-			Profiles: []cloudstic.WorkstationProfileDraft{
-				{Name: "documents", SourceURI: "local:/Users/test/Documents", StoreRef: "primary", Tags: []string{"workstation"}, Action: "create", Selected: true},
-			},
-			Coverage: cloudstic.WorkstationCoverageSummary{
-				ProtectedNow:         []string{"Documents (/Users/test/Documents)"},
-				SkippedIntentionally: []string{"Downloads (/Users/test/Downloads)"},
-			},
-		},
+func stubSetupWorkstationPlan(t *testing.T, plan *cloudstic.WorkstationSetupPlan, err error) {
+	t.Helper()
+	old := planWorkstationSetup
+	planWorkstationSetup = func(context.Context, ...cloudstic.WorkstationSetupOption) (*cloudstic.WorkstationSetupPlan, error) {
+		return plan, err
 	}
+	t.Cleanup(func() { planWorkstationSetup = old })
+}
+
+func TestRunSetupWorkstation_DryRun(t *testing.T) {
+	t.Setenv("CLOUDSTIC_CONFIG_DIR", t.TempDir())
+	stubSetupWorkstationPlan(t, &cloudstic.WorkstationSetupPlan{
+		Hostname:    "testbox",
+		StoreRef:    "primary",
+		StoreAction: "use-existing",
+		Profiles: []cloudstic.WorkstationProfileDraft{
+			{Name: "documents", SourceURI: "local:/Users/test/Documents", StoreRef: "primary", Tags: []string{"workstation"}, Action: "create", Selected: true},
+		},
+		Coverage: cloudstic.WorkstationCoverageSummary{
+			ProtectedNow:         []string{"Documents (/Users/test/Documents)"},
+			SkippedIntentionally: []string{"Downloads (/Users/test/Downloads)"},
+		},
+	}, nil)
 
 	osArgs := os.Args
 	t.Cleanup(func() { os.Args = osArgs })
@@ -33,7 +41,7 @@ func TestRunSetupWorkstation_DryRun(t *testing.T) {
 
 	var out strings.Builder
 	var errOut strings.Builder
-	r := &runner{out: &out, errOut: &errOut, client: client}
+	r := &runner{out: &out, errOut: &errOut, client: &stubClient{}}
 	if code := r.runSetup(context.Background()); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}
@@ -44,11 +52,10 @@ func TestRunSetupWorkstation_DryRun(t *testing.T) {
 }
 
 func TestRunSetupWorkstation_JSON(t *testing.T) {
-	client := &stubClient{
-		setupPlan: &cloudstic.WorkstationSetupPlan{
-			Hostname: "testbox",
-		},
-	}
+	t.Setenv("CLOUDSTIC_CONFIG_DIR", t.TempDir())
+	stubSetupWorkstationPlan(t, &cloudstic.WorkstationSetupPlan{
+		Hostname: "testbox",
+	}, nil)
 
 	osArgs := os.Args
 	t.Cleanup(func() { os.Args = osArgs })
@@ -56,7 +63,7 @@ func TestRunSetupWorkstation_JSON(t *testing.T) {
 
 	var out strings.Builder
 	var errOut strings.Builder
-	r := &runner{out: &out, errOut: &errOut, client: client}
+	r := &runner{out: &out, errOut: &errOut, client: &stubClient{}}
 	if code := r.runSetup(context.Background()); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}
@@ -66,16 +73,14 @@ func TestRunSetupWorkstation_JSON(t *testing.T) {
 }
 
 func TestRunSetupWorkstation_ApplyYes(t *testing.T) {
-	client := &stubClient{
-		setupPlan: &cloudstic.WorkstationSetupPlan{
-			Hostname:    "testbox",
-			StoreRef:    "primary",
-			StoreAction: "use-existing",
-			Profiles: []cloudstic.WorkstationProfileDraft{
-				{Name: "documents", SourceURI: "local:/Users/test/Documents", StoreRef: "primary", Tags: []string{"workstation"}, Action: "create", Selected: true},
-			},
+	stubSetupWorkstationPlan(t, &cloudstic.WorkstationSetupPlan{
+		Hostname:    "testbox",
+		StoreRef:    "primary",
+		StoreAction: "use-existing",
+		Profiles: []cloudstic.WorkstationProfileDraft{
+			{Name: "documents", SourceURI: "local:/Users/test/Documents", StoreRef: "primary", Tags: []string{"workstation"}, Action: "create", Selected: true},
 		},
-	}
+	}, nil)
 	profilesPath := filepath.Join(t.TempDir(), "profiles.yaml")
 	if err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
 		Version: 1,
@@ -90,7 +95,7 @@ func TestRunSetupWorkstation_ApplyYes(t *testing.T) {
 
 	var out strings.Builder
 	var errOut strings.Builder
-	r := &runner{out: &out, errOut: &errOut, client: client, noPrompt: true}
+	r := &runner{out: &out, errOut: &errOut, client: &stubClient{}, noPrompt: true}
 	if code := r.runSetup(context.Background()); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}

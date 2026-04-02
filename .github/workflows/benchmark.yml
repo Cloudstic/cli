@@ -1,0 +1,59 @@
+name: Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to benchmark (branch, tag, or refs/pull/<number>/head)
+        required: false
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-benchmark-${{ github.event_name }}-${{ github.event.inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    name: Cloudstic local/local benchmark
+    runs-on: macos-latest
+    steps:
+      - name: Checkout target ref
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p benchmark-results
+          ./scripts/benchmark/run.sh local local cloudstic | tee benchmark-results/local-local-cloudstic.txt
+
+      - name: Publish summary
+        shell: bash
+        run: |
+          {
+            echo "## Local Benchmark"
+            echo ""
+            echo "- Ref: \`${{ github.event.inputs.ref || github.ref }}\`"
+            echo "- Runner: \`${{ runner.os }}\`"
+            echo ""
+            echo '```text'
+            cat benchmark-results/local-local-cloudstic.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-local-cloudstic-benchmark
+          path: benchmark-results/local-local-cloudstic.txt

@@ -568,7 +568,7 @@ func TestBuildDriveService_PrebuiltServiceTakesPriority(t *testing.T) {
 	injected := &drive.Service{}
 	cfg := gDriveOptions{
 		service:    injected,
-		httpClient: &http.Client{}, // should be ignored
+		httpClient: &http.Client{},                       // should be ignored
 		credsJSON:  []byte(`{"type":"service_account"}`), // should be ignored
 	}
 	srv, err := buildDriveService(context.Background(), cfg)

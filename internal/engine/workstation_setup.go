@@ -27,6 +27,7 @@ type WorkstationSetupOption func(*workstationSetupOptions)
 type workstationSetupOptions struct {
 	profiles *ProfilesConfig
 	storeRef string
+	dryRun   bool
 }
 
 func WithWorkstationProfiles(cfg *ProfilesConfig) WorkstationSetupOption {
@@ -35,6 +36,10 @@ func WithWorkstationProfiles(cfg *ProfilesConfig) WorkstationSetupOption {
 
 func WithWorkstationStoreRef(name string) WorkstationSetupOption {
 	return func(o *workstationSetupOptions) { o.storeRef = strings.TrimSpace(name) }
+}
+
+func WithWorkstationDryRun() WorkstationSetupOption {
+	return func(o *workstationSetupOptions) { o.dryRun = true }
 }
 
 type WorkstationFolderCandidate struct {
@@ -66,6 +71,11 @@ type WorkstationApplyResult struct {
 	ProfilesCreated int      `json:"profiles_created"`
 	ProfilesUpdated int      `json:"profiles_updated"`
 	ProfileNames    []string `json:"profile_names,omitempty"`
+}
+
+type WorkstationSetupResult struct {
+	Plan    *WorkstationSetupPlan   `json:"plan,omitempty"`
+	Applied *WorkstationApplyResult `json:"applied,omitempty"`
 }
 
 type WorkstationSetupPlan struct {
@@ -167,6 +177,30 @@ func PlanWorkstationSetup(ctx context.Context, opts ...WorkstationSetupOption) (
 	plan.Coverage.SkippedIntentionally = append(plan.Coverage.SkippedIntentionally, skipped...)
 	plan.Coverage.Warnings = append(plan.Coverage.Warnings, warnings...)
 	return plan, nil
+}
+
+func SetupWorkstation(ctx context.Context, opts ...WorkstationSetupOption) (*WorkstationSetupResult, error) {
+	options := workstationSetupOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+
+	plan, err := PlanWorkstationSetup(ctx, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &WorkstationSetupResult{Plan: plan}
+	if options.dryRun {
+		return result, nil
+	}
+
+	applied, err := ApplyWorkstationSetupPlan(options.profiles, plan)
+	if err != nil {
+		return nil, err
+	}
+	result.Applied = applied
+	return result, nil
 }
 
 func ApplyWorkstationSetupPlan(cfg *ProfilesConfig, plan *WorkstationSetupPlan) (*WorkstationApplyResult, error) {

@@ -314,6 +314,7 @@ type BackupProfile = engine.BackupProfile
 type DiscoveredSource = engine.DiscoveredSource
 type WorkstationSetupPlan = engine.WorkstationSetupPlan
 type WorkstationSetupOption = engine.WorkstationSetupOption
+type WorkstationApplyResult = engine.WorkstationApplyResult
 type WorkstationProfileDraft = engine.WorkstationProfileDraft
 type WorkstationFolderCandidate = engine.WorkstationFolderCandidate
 type WorkstationCoverageSummary = engine.WorkstationCoverageSummary
@@ -349,8 +350,12 @@ func (c *Client) DiscoverSources(ctx context.Context) ([]DiscoveredSource, error
 	return engine.DiscoverSources(ctx)
 }
 
-func (c *Client) PlanWorkstationSetup(ctx context.Context, opts ...WorkstationSetupOption) (*WorkstationSetupPlan, error) {
+func PlanWorkstationSetup(ctx context.Context, opts ...WorkstationSetupOption) (*WorkstationSetupPlan, error) {
 	return engine.PlanWorkstationSetup(ctx, opts...)
+}
+
+func ApplyWorkstationSetupPlan(cfg *ProfilesConfig, plan *WorkstationSetupPlan) (*WorkstationApplyResult, error) {
+	return engine.ApplyWorkstationSetupPlan(cfg, plan)
 }
 
 // LoadProfilesFile parses a backup profiles YAML file.

@@ -182,6 +182,54 @@ func TestApplyWorkstationSetupPlan_Errors(t *testing.T) {
 	}
 }
 
+func TestSetupWorkstation_DryRun(t *testing.T) {
+	reset := stubWorkstationSetupEnv(t)
+	defer reset()
+
+	workstationHostnameFunc = func() (string, error) { return "host", nil }
+	workstationUserHomeDirFunc = func() (string, error) { return "/home/test", nil }
+	workstationPathExistsFunc = func(path string) bool { return path == "/home/test/Documents" }
+	workstationDiscoverSourcesFunc = func(context.Context) ([]DiscoveredSource, error) { return nil, nil }
+
+	cfg := &ProfilesConfig{}
+	result, err := SetupWorkstation(context.Background(), WithWorkstationProfiles(cfg), WithWorkstationDryRun())
+	if err != nil {
+		t.Fatalf("SetupWorkstation: %v", err)
+	}
+	if result.Plan == nil || result.Applied != nil {
+		t.Fatalf("unexpected setup result: %#v", result)
+	}
+	if len(cfg.Profiles) != 0 {
+		t.Fatalf("dry-run should not mutate profiles: %#v", cfg.Profiles)
+	}
+}
+
+func TestSetupWorkstation_Apply(t *testing.T) {
+	reset := stubWorkstationSetupEnv(t)
+	defer reset()
+
+	workstationHostnameFunc = func() (string, error) { return "host", nil }
+	workstationUserHomeDirFunc = func() (string, error) { return "/home/test", nil }
+	workstationPathExistsFunc = func(path string) bool { return path == "/home/test/Documents" }
+	workstationDiscoverSourcesFunc = func(context.Context) ([]DiscoveredSource, error) { return nil, nil }
+
+	cfg := &ProfilesConfig{
+		Stores: map[string]ProfileStore{
+			"primary": {URI: "local:/repo"},
+		},
+	}
+	result, err := SetupWorkstation(context.Background(), WithWorkstationProfiles(cfg), WithWorkstationStoreRef("primary"))
+	if err != nil {
+		t.Fatalf("SetupWorkstation: %v", err)
+	}
+	if result.Applied == nil || result.Applied.ProfilesCreated != 1 {
+		t.Fatalf("unexpected apply result: %#v", result)
+	}
+	if got := cfg.Profiles["documents"].Store; got != "primary" {
+		t.Fatalf("documents store = %q, want primary", got)
+	}
+}
+
 func stubWorkstationSetupEnv(t *testing.T) func() {
 	t.Helper()
 	oldDiscover := workstationDiscoverSourcesFunc

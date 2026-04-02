@@ -129,8 +129,8 @@ func TestApplyWorkstationSetupPlan(t *testing.T) {
 	}
 	result, err := ApplyWorkstationSetupPlan(cfg, &WorkstationSetupPlan{
 		Profiles: []WorkstationProfileDraft{
-			{Name: "documents", SourceURI: "local:/Users/test/Documents", StoreRef: "primary", Tags: []string{"workstation"}},
-			{Name: "archive", SourceURI: "local:/Volumes/Archive", StoreRef: "primary", Tags: []string{"portable", "workstation"}},
+			{Name: "documents", SourceURI: "local:/Users/test/Documents", StoreRef: "primary", Tags: []string{"workstation"}, Selected: true},
+			{Name: "archive", SourceURI: "local:/Volumes/Archive", StoreRef: "primary", Tags: []string{"portable", "workstation"}, Selected: true},
 		},
 	})
 	if err != nil {
@@ -147,17 +147,36 @@ func TestApplyWorkstationSetupPlan(t *testing.T) {
 	}
 }
 
+func TestApplyWorkstationSetupPlan_SkipsDeselectedDrafts(t *testing.T) {
+	cfg := &ProfilesConfig{}
+	result, err := ApplyWorkstationSetupPlan(cfg, &WorkstationSetupPlan{
+		Profiles: []WorkstationProfileDraft{
+			{Name: "documents", SourceURI: "local:/Users/test/Documents", Selected: true},
+			{Name: "desktop", SourceURI: "local:/Users/test/Desktop", Selected: false},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ApplyWorkstationSetupPlan: %v", err)
+	}
+	if result.ProfilesCreated != 1 {
+		t.Fatalf("ProfilesCreated = %d, want 1", result.ProfilesCreated)
+	}
+	if _, ok := cfg.Profiles["desktop"]; ok {
+		t.Fatal("desktop profile should not be created")
+	}
+}
+
 func TestApplyWorkstationSetupPlan_Errors(t *testing.T) {
 	if _, err := ApplyWorkstationSetupPlan(nil, nil); err == nil {
 		t.Fatal("expected nil plan error")
 	}
 	if _, err := ApplyWorkstationSetupPlan(nil, &WorkstationSetupPlan{
-		Profiles: []WorkstationProfileDraft{{Name: "", SourceURI: "local:/tmp"}},
+		Profiles: []WorkstationProfileDraft{{Name: "", SourceURI: "local:/tmp", Selected: true}},
 	}); err == nil {
 		t.Fatal("expected missing name error")
 	}
 	if _, err := ApplyWorkstationSetupPlan(nil, &WorkstationSetupPlan{
-		Profiles: []WorkstationProfileDraft{{Name: "docs", SourceURI: ""}},
+		Profiles: []WorkstationProfileDraft{{Name: "docs", SourceURI: "", Selected: true}},
 	}); err == nil {
 		t.Fatal("expected missing source error")
 	}

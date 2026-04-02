@@ -75,7 +75,7 @@ _cloudstic() {
 		init)
 			cmd_flags="-add-recovery-key -no-encryption -adopt-slots" ;;
 		backup)
-			cmd_flags="-source -profile -all-profiles -auth-ref -profiles-file -skip-native-files -google-credentials -google-credentials-ref -google-credentials-json -google-token-file -google-token-ref -onedrive-client-id -onedrive-token-file -onedrive-token-ref -tag -dry-run -skip-mode -skip-flags -skip-xattrs -xattr-namespaces" ;;
+			cmd_flags="-source -profile -all-profiles -auth-ref -profiles-file -skip-native-files -google-credentials -google-credentials-ref -google-credentials-json -google-token-file -google-token-ref -onedrive-client-id -onedrive-token-file -onedrive-token-ref -tag -ignore-empty-snapshot -dry-run -skip-mode -skip-flags -skip-xattrs -xattr-namespaces" ;;
         restore)
             cmd_flags="-output -format -path -dry-run" ;;
         prune)
@@ -129,7 +129,7 @@ _cloudstic() {
                 show)
                     cmd_flags="-profiles-file" ;;
                 new)
-                    cmd_flags="-profiles-file -name -source -store-ref -store -auth-ref -tag -exclude -exclude-file -skip-native-files -volume-uuid -google-credentials -google-credentials-ref -google-credentials-json -google-token-file -google-token-ref -onedrive-client-id -onedrive-token-file -onedrive-token-ref" ;;
+                    cmd_flags="-profiles-file -name -source -store-ref -store -auth-ref -tag -exclude -exclude-file -ignore-empty-snapshot -skip-native-files -volume-uuid -google-credentials -google-credentials-ref -google-credentials-json -google-token-file -google-token-ref -onedrive-client-id -onedrive-token-file -onedrive-token-ref" ;;
                 *)
                     cmd_flags="" ;;
             esac
@@ -329,6 +329,7 @@ _cloudstic() {
                 '-onedrive-token-file[OneDrive OAuth token file]:path:_files' \
                 '-onedrive-token-ref[Secret reference to OneDrive OAuth token]:ref:' \
                 '*-tag[Tag for the snapshot]:tag:' \
+                '-ignore-empty-snapshot[Skip creating a new snapshot when nothing changed]' \
                 '-dry-run[Scan without writing]' \
                 '-skip-mode[Skip POSIX mode/uid/gid/btime/flags]' \
                 '-skip-flags[Skip file flags collection]' \
@@ -373,6 +374,7 @@ _cloudstic() {
                         '*-tag[Tag for snapshots]:tag:' \
                         '*-exclude[Exclude pattern]:pattern:' \
                         '-exclude-file[Path to exclude file]:path:_files' \
+                        '-ignore-empty-snapshot[Skip creating a new snapshot when nothing changed]' \
                         '-skip-native-files[Exclude Google-native files]' \
                         '-volume-uuid[Volume UUID override]:uuid:' \
                         '-google-credentials[Google service account credentials JSON]:path:_files' \
@@ -670,6 +672,7 @@ complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l onedrive-client
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l onedrive-token-file -r -F -d 'OneDrive OAuth token file'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l onedrive-token-ref -x -d 'Secret reference to OneDrive OAuth token'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l tag -x -d 'Tag for the snapshot'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l ignore-empty-snapshot -d 'Skip creating a new snapshot when nothing changed'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l dry-run -d 'Scan without writing'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-mode -d 'Skip POSIX mode/uid/gid/btime/flags'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-flags -d 'Skip file flags collection'
@@ -691,6 +694,7 @@ complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_s
 complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l tag -x -d 'Tag for snapshots'
 complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l exclude -x -d 'Exclude pattern'
 complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l exclude-file -r -F -d 'Path to exclude file'
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l ignore-empty-snapshot -d 'Skip creating a new snapshot when nothing changed'
 complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l skip-native-files -d 'Exclude Google-native files'
 complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l volume-uuid -x -d 'Volume UUID override'
 complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l google-credentials -r -F -d 'Google service account credentials JSON'

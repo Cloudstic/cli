@@ -27,10 +27,11 @@ func TestMergeProfileBackupArgs_AppliesProfileAndStore(t *testing.T) {
 		},
 	}
 	p := cloudstic.BackupProfile{
-		Source:   "local:/data",
-		Store:    "s",
-		Tags:     []string{"daily"},
-		Excludes: []string{"*.tmp"},
+		Source:      "local:/data",
+		Store:       "s",
+		Tags:        []string{"daily"},
+		Excludes:    []string{"*.tmp"},
+		IgnoreEmpty: true,
 	}
 
 	eff, err := mergeProfileBackupArgs(base, "p", p, cfg)
@@ -51,6 +52,9 @@ func TestMergeProfileBackupArgs_AppliesProfileAndStore(t *testing.T) {
 	}
 	if len(eff.excludes) != 1 || eff.excludes[0] != "*.tmp" {
 		t.Fatalf("excludes=%v want [*.tmp]", eff.excludes)
+	}
+	if !eff.ignoreEmpty {
+		t.Fatal("expected ignoreEmpty to be true")
 	}
 }
 

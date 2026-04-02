@@ -313,12 +313,13 @@ type ProfileAuth = engine.ProfileAuth
 type BackupProfile = engine.BackupProfile
 
 var (
-	WithVerbose      = engine.WithVerbose
-	WithBackupDryRun = engine.WithBackupDryRun
-	WithTags         = engine.WithTags
-	WithGenerator    = engine.WithGenerator
-	WithMeta         = engine.WithMeta
-	WithExcludeHash  = engine.WithExcludeHash
+	WithVerbose             = engine.WithVerbose
+	WithBackupDryRun        = engine.WithBackupDryRun
+	WithIgnoreEmptySnapshot = engine.WithIgnoreEmptySnapshot
+	WithTags                = engine.WithTags
+	WithGenerator           = engine.WithGenerator
+	WithMeta                = engine.WithMeta
+	WithExcludeHash         = engine.WithExcludeHash
 )
 
 func (c *Client) Backup(ctx context.Context, src source.Source, opts ...BackupOption) (*BackupResult, error) {

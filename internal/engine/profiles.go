@@ -49,6 +49,7 @@ type BackupProfile struct {
 	Tags              []string `yaml:"tags,omitempty"`
 	Excludes          []string `yaml:"excludes,omitempty"`
 	ExcludeFile       string   `yaml:"exclude_file,omitempty"`
+	IgnoreEmpty       bool     `yaml:"ignore_empty,omitempty"`
 	SkipNativeFiles   bool     `yaml:"skip_native_files,omitempty"`
 	VolumeUUID        string   `yaml:"volume_uuid,omitempty"`
 	GoogleCreds       string   `yaml:"google_credentials,omitempty"`

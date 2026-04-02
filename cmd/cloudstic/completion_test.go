@@ -31,6 +31,7 @@ func TestCompletionBash(t *testing.T) {
 		"-profiles-file",
 		"-profile", "-all-profiles",
 		"-auth-ref",
+		"-ignore-empty-snapshot",
 		// Value completions
 		"local: s3: b2: sftp://",
 		"gdrive", "onedrive",
@@ -81,6 +82,7 @@ func TestCompletionZsh(t *testing.T) {
 		"-profile[Backup profile name]",
 		"-all-profiles[Run all enabled backup profiles]",
 		"-auth-ref[Use named auth entry from profiles.yaml]",
+		"-ignore-empty-snapshot[Skip creating a new snapshot when nothing changed]",
 		// Value completions (source type list still present)
 		"(local: sftp:// gdrive gdrive-changes onedrive onedrive-changes)",
 		"(bash zsh fish)",
@@ -128,6 +130,7 @@ func TestCompletionFish(t *testing.T) {
 		"-l profile",
 		"-l all-profiles",
 		"-l auth-ref",
+		"-l ignore-empty-snapshot",
 		"-a show -d 'Show one profile and resolved refs'",
 		"-a new -d 'Create or update backup profile'",
 		"-a login -d 'Run OAuth login flow for auth entry'",

@@ -316,6 +316,7 @@ cloudstic backup -source local:~/Documents -dry-run
 | `-tag` | | Tag to apply to the snapshot (repeatable) |
 | `-exclude` | | Exclude pattern using gitignore syntax (repeatable) |
 | `-exclude-file` | | Path to file containing exclude patterns, one per line |
+| `-ignore-empty-snapshot` | `false` | Skip creating a new snapshot when the resulting tree is identical to the previous one |
 | `-volume-uuid` | | Override volume UUID for local source (enables cross-machine incremental backup for portable drives) |
 | `-skip-mode` | | Skip POSIX metadata collection (mode, uid, gid, btime, flags) |
 | `-skip-flags` | | Skip file flags collection |
@@ -335,6 +336,8 @@ provider default auth entry in `profiles.yaml` so it is discoverable later:
 - OneDrive sources -> `onedrive-default`
 
 The `gdrive-changes` and `onedrive-changes` source types use their respective change/delta APIs for faster incremental backups after the first full backup.
+
+When `-ignore-empty-snapshot` is enabled, Cloudstic still scans the source and reports stats, but it does not write a new snapshot if the resulting tree is unchanged. For changes-based cloud sources, this also means an unchanged run does not persist a fresh change token, so the next run may revisit the same empty delta window.
 
 Cloudstic tracks source lineage using stable source identities internally (container identity + root location identity), not just display labels. For cloud sources, this uses stable drive/folder IDs so incremental continuity is preserved across folder renames or moves.
 

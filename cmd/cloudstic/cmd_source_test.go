@@ -82,3 +82,16 @@ func TestRunSourceDiscover_JSON(t *testing.T) {
 		t.Fatalf("unexpected json output:\n%s", got)
 	}
 }
+
+func TestRunSourceDiscover_DefaultClient(t *testing.T) {
+	osArgs := os.Args
+	t.Cleanup(func() { os.Args = osArgs })
+	os.Args = []string{"cloudstic", "source", "discover", "-json"}
+
+	var out strings.Builder
+	var errOut strings.Builder
+	r := &runner{out: &out, errOut: &errOut}
+	if code := r.runSource(context.Background()); code != 0 {
+		t.Fatalf("code=%d err=%s", code, errOut.String())
+	}
+}

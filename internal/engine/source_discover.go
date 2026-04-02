@@ -2,12 +2,20 @@ package engine
 
 import (
 	"context"
+	"github.com/cloudstic/cli/internal/core"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
 
 	"github.com/cloudstic/cli/pkg/source"
+)
+
+var (
+	discoverLocalCandidatesFunc = discoverLocalCandidates
+	discoverLocalSourceInfoFunc = func(mountPoint string) core.SourceInfo {
+		return source.NewLocalSource(mountPoint).Info()
+	}
 )
 
 // DiscoveredSource describes a local source candidate that can be used for
@@ -31,7 +39,7 @@ type discoverCandidate struct {
 // DiscoverSources returns local source candidates suitable for workstation
 // onboarding and source-selection UX.
 func DiscoverSources(_ context.Context) ([]DiscoveredSource, error) {
-	candidates, err := discoverLocalCandidates()
+	candidates, err := discoverLocalCandidatesFunc()
 	if err != nil {
 		return nil, err
 	}
@@ -60,8 +68,7 @@ func DiscoverSources(_ context.Context) ([]DiscoveredSource, error) {
 	results := make([]DiscoveredSource, 0, len(mounts))
 	for _, mountPoint := range mounts {
 		candidate := byMount[mountPoint]
-		src := source.NewLocalSource(mountPoint)
-		info := src.Info()
+		info := discoverLocalSourceInfoFunc(mountPoint)
 		results = append(results, DiscoveredSource{
 			SourceURI:   "local:" + mountPoint,
 			DisplayName: discoverDisplayName(mountPoint, info.DriveName),

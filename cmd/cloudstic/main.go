@@ -78,6 +78,8 @@ func runCmd(cmd string) int {
 	case "completion":
 		runCompletion()
 		return 0
+	case "__complete":
+		return runCompletionQuery(ctx)
 	case "help", "--help", "-h":
 		printUsage()
 		return 0

@@ -13,7 +13,8 @@ import (
 
 // TestBackupManager_ResolvesPathsForOpaqueIDs verifies that when a source
 // emits FileMeta without Paths (e.g. incremental/changes sources with opaque
-// cloud IDs), the backup engine resolves Paths by walking the HAMT parent chain.
+// cloud IDs), the backup engine resolves scan-time paths by walking the HAMT
+// parent chain, but does not persist those paths in stored FileMeta objects.
 func TestBackupManager_ResolvesPathsForOpaqueIDs(t *testing.T) {
 	ctx := context.Background()
 	src := NewMockSource()
@@ -56,11 +57,11 @@ func TestBackupManager_ResolvesPathsForOpaqueIDs(t *testing.T) {
 		t.Fatalf("Backup failed: %v", err)
 	}
 
-	// Read back the stored FileMeta and verify Paths were resolved.
+	// Read back the stored FileMeta and verify Paths were not persisted.
 	readStore := store.NewCompressedStore(dest)
 	tree := hamt.NewTree(readStore)
 
-	checkPath := func(parentID, fileID, expectedPath string) {
+	checkNoStoredPath := func(parentID, fileID string) {
 		t.Helper()
 		ref, err := tree.Lookup(result.Root, parentID, fileID)
 		if err != nil || ref == "" {
@@ -74,16 +75,14 @@ func TestBackupManager_ResolvesPathsForOpaqueIDs(t *testing.T) {
 		if err := json.Unmarshal(data, &fm); err != nil {
 			t.Fatalf("Unmarshal: %v", err)
 		}
-		if len(fm.Paths) == 0 {
-			t.Errorf("%s: Paths is empty, expected %q", fileID, expectedPath)
-		} else if fm.Paths[0] != expectedPath {
-			t.Errorf("%s: Paths[0]=%q, expected %q", fileID, fm.Paths[0], expectedPath)
+		if len(fm.Paths) != 0 {
+			t.Errorf("%s: persisted Paths=%v, expected omitted paths", fileID, fm.Paths)
 		}
 	}
 
-	checkPath("", "FOLDER_A", "Documents")
-	checkPath("FOLDER_A", "FOLDER_B", "Documents/Photos")
-	checkPath("FOLDER_B", "FILE_C", "Documents/Photos/pic.jpg")
+	checkNoStoredPath("", "FOLDER_A")
+	checkNoStoredPath("FOLDER_A", "FOLDER_B")
+	checkNoStoredPath("FOLDER_B", "FILE_C")
 }
 
 func TestBackupManager_Run(t *testing.T) {

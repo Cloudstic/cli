@@ -210,7 +210,8 @@ func (bm *BackupManager) detectChange(ctx context.Context, oldRoot string, meta 
 		meta.ContentRef = oldMeta.ContentRef
 	}
 
-	newRef, _, err := meta.Ref()
+	newPersisted := persistedFileMeta(*meta)
+	newRef, _, err := newPersisted.Ref()
 	if err != nil {
 		return false, "", err
 	}
@@ -273,7 +274,8 @@ func (bm *BackupManager) insertFolder(_ context.Context, root string, meta *core
 	meta.ContentHash = ""
 	meta.Size = 0
 
-	metaRef, metaData, err := meta.Ref()
+	persisted := persistedFileMeta(*meta)
+	metaRef, metaData, err := persisted.Ref()
 	if err != nil {
 		return "", err
 	}
@@ -353,25 +355,13 @@ func (bm *BackupManager) recordRemoved(ft core.FileType) {
 // the parent chain in the HAMT tree. This is used for incremental/changes
 // sources that can't build a path map (the parent may not be in the change set).
 func (bm *BackupManager) buildPathFromTree(ctx context.Context, root string, meta *core.FileMeta) string {
-	const maxDepth = 50
-	parts := []string{meta.Name}
-	curParents := meta.Parents
-	for i := 0; i < maxDepth && len(curParents) > 0; i++ {
-		parent := bm.lookupMetaByFileID(ctx, root, curParents[0])
+	return fileMetaPath(*meta, func(parentID string) (core.FileMeta, bool) {
+		parent := bm.lookupMetaByFileID(ctx, root, parentID)
 		if parent == nil {
-			break
+			return core.FileMeta{}, false
 		}
-		// Short-circuit: if parent already has a resolved path, prepend it.
-		if len(parent.Paths) > 0 {
-			return parent.Paths[0] + "/" + strings.Join(parts, "/")
-		}
-		parts = append(parts, parent.Name)
-		curParents = parent.Parents
-	}
-	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
-		parts[i], parts[j] = parts[j], parts[i]
-	}
-	return strings.Join(parts, "/")
+		return *parent, true
+	})
 }
 
 // lookupMetaByFileID resolves a FileID to its FileMeta via the HAMT tree.

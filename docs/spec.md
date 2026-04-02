@@ -154,7 +154,6 @@ All objects are stored under a flat key namespace of the form `<type>/<hash>`.
   "name": "invoice.pdf",
   "type": "file",
   "parents": ["filemeta/<sha256>"],
-  "paths": [],
   "content_hash": "<sha256-of-raw-file-content>",
   "content_ref": "<hmac-sha256-of-content_hash>",
   "size": 21733,
@@ -177,7 +176,7 @@ All objects are stored under a flat key namespace of the form `<type>/<hash>`.
 | `parents`      | List of `filemeta/<sha256>` refs pointing to parent metadata objects |
 | `content_hash` | SHA-256 of the raw file content |
 | `content_ref`  | Opaque content reference used as `content/<content_ref>` key; HMAC of `content_hash` for encrypted repos, plain `content_hash` for unencrypted repos |
-| `paths`        | Reserved for future use (multi-path support)                        |
+| `paths`        | Optional legacy compatibility field; new snapshots typically omit it and derive display paths from `parents` + `name` |
 | `extra`        | Source-specific metadata (e.g. MIME type)                           |
 | `mode`         | POSIX file mode bits (e.g. `0755` = `493`). Omitted if zero.       |
 | `uid`          | Numeric owner user ID. Omitted if zero.                             |

@@ -65,8 +65,56 @@ func TestDiffManager_Run(t *testing.T) {
 	}
 }
 
+func TestDiffManager_DerivesPathsFromParentsWithoutPersistedPaths(t *testing.T) {
+	ctx := context.Background()
+	store := NewMockStore()
+
+	rootDir := createMetaWithID(ctx, store, core.FileMeta{
+		FileID: "dir",
+		Name:   "docs",
+		Type:   core.FileTypeFolder,
+	})
+	oldFile := createMetaWithID(ctx, store, core.FileMeta{
+		FileID:  "file",
+		Name:    "guide.txt",
+		Type:    core.FileTypeFile,
+		Parents: []string{"dir"},
+		Size:    100,
+		Paths:   []string{"docs/guide.txt"},
+	})
+	newFile := createMetaWithID(ctx, store, core.FileMeta{
+		FileID:  "file",
+		Name:    "guide.txt",
+		Type:    core.FileTypeFile,
+		Parents: []string{"dir"},
+		Size:    200,
+	})
+
+	root1 := createHamt(t, store, []string{"dir", "file"}, []string{rootDir, oldFile})
+	root2 := createHamt(t, store, []string{"dir", "file"}, []string{rootDir, newFile})
+
+	dm := NewDiffManager(store)
+	changes, err := dm.diffRoots(root1, root2)
+	if err != nil {
+		t.Fatalf("Diff failed: %v", err)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("Expected 1 change, got %d", len(changes))
+	}
+	if changes[0].Path != "docs/guide.txt" {
+		t.Fatalf("Expected derived path docs/guide.txt, got %q", changes[0].Path)
+	}
+}
+
 func createMeta(ctx context.Context, s *MockStore, name string, size int64) string {
 	m := core.FileMeta{Name: name, Size: size}
+	h, d, _ := core.ComputeJSONHash(&m)
+	ref := "filemeta/" + h
+	_ = s.Put(ctx, ref, d)
+	return ref
+}
+
+func createMetaWithID(ctx context.Context, s *MockStore, m core.FileMeta) string {
 	h, d, _ := core.ComputeJSONHash(&m)
 	ref := "filemeta/" + h
 	_ = s.Put(ctx, ref, d)

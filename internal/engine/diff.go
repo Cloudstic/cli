@@ -170,9 +170,17 @@ func (dm *DiffManager) loadSnapshot(ctx context.Context, ref string) (*core.Snap
 
 func (dm *DiffManager) diffRoots(root1, root2 string) ([]FileChange, error) {
 	var changes []FileChange
+	oldByID, err := dm.collectMetadata(root1)
+	if err != nil {
+		return nil, err
+	}
+	newByID, err := dm.collectMetadata(root2)
+	if err != nil {
+		return nil, err
+	}
 
-	err := dm.tree.Diff(root1, root2, func(d hamt.DiffEntry) error {
-		change, err := dm.toFileChange(d)
+	err = dm.tree.Diff(root1, root2, func(d hamt.DiffEntry) error {
+		change, err := dm.toFileChange(d, oldByID, newByID)
 		if err != nil {
 			return err
 		}
@@ -182,14 +190,25 @@ func (dm *DiffManager) diffRoots(root1, root2 string) ([]FileChange, error) {
 	return changes, err
 }
 
-func (dm *DiffManager) toFileChange(d hamt.DiffEntry) (FileChange, error) {
+func (dm *DiffManager) toFileChange(d hamt.DiffEntry, oldByID, newByID map[string]core.FileMeta) (FileChange, error) {
 	ct, metaRef := classifyEntry(d)
 
 	meta, err := dm.loadMeta(metaRef)
 	if err != nil {
 		return FileChange{}, err
 	}
-	return FileChange{Type: ct, Path: meta.Name, Meta: *meta}, nil
+	byID := newByID
+	if ct == ChangeRemoved {
+		byID = oldByID
+	}
+	return FileChange{
+		Type: ct,
+		Path: fileMetaPath(*meta, func(parentID string) (core.FileMeta, bool) {
+			parent, ok := byID[parentID]
+			return parent, ok
+		}),
+		Meta: *meta,
+	}, nil
 }
 
 func classifyEntry(d hamt.DiffEntry) (ChangeType, string) {
@@ -204,6 +223,9 @@ func classifyEntry(d hamt.DiffEntry) (ChangeType, string) {
 }
 
 func (dm *DiffManager) loadMeta(ref string) (*core.FileMeta, error) {
+	if dm.metaCache == nil {
+		dm.metaCache = make(map[string]core.FileMeta)
+	}
 	if fm, ok := dm.metaCache[ref]; ok {
 		return &fm, nil
 	}
@@ -215,5 +237,19 @@ func (dm *DiffManager) loadMeta(ref string) (*core.FileMeta, error) {
 	if err := json.Unmarshal(data, &fm); err != nil {
 		return nil, err
 	}
+	dm.metaCache[ref] = fm
 	return &fm, nil
+}
+
+func (dm *DiffManager) collectMetadata(root string) (map[string]core.FileMeta, error) {
+	byID := make(map[string]core.FileMeta)
+	err := dm.tree.Walk(root, func(_, valueRef string) error {
+		fm, err := dm.loadMeta(valueRef)
+		if err != nil {
+			return err
+		}
+		byID[fm.FileID] = *fm
+		return nil
+	})
+	return byID, err
 }

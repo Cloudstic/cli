@@ -6,17 +6,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cloudstic/cli/pkg/source"
+	cloudstic "github.com/cloudstic/cli"
 )
 
 func TestRunSourceDiscover(t *testing.T) {
-	oldDiscover := discoverSources
-	t.Cleanup(func() { discoverSources = oldDiscover })
-	discoverSources = func() ([]source.DiscoveredSource, error) {
-		return []source.DiscoveredSource{
+	client := &stubClient{
+		discoverResult: []cloudstic.DiscoveredSource{
 			{DisplayName: "System", SourceURI: "local:/", MountPoint: "/", Identity: "HOST-1", FsType: "apfs", Portable: false},
 			{DisplayName: "Photos", SourceURI: "local:/Volumes/Photos", MountPoint: "/Volumes/Photos", Identity: "UUID-1", FsType: "exfat", Portable: true},
-		}, nil
+		},
 	}
 
 	osArgs := os.Args
@@ -25,7 +23,7 @@ func TestRunSourceDiscover(t *testing.T) {
 
 	var out strings.Builder
 	var errOut strings.Builder
-	r := &runner{out: &out, errOut: &errOut}
+	r := &runner{out: &out, errOut: &errOut, client: client}
 	if code := r.runSource(context.Background()); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}
@@ -36,13 +34,11 @@ func TestRunSourceDiscover(t *testing.T) {
 }
 
 func TestRunSourceDiscover_PortableOnly(t *testing.T) {
-	oldDiscover := discoverSources
-	t.Cleanup(func() { discoverSources = oldDiscover })
-	discoverSources = func() ([]source.DiscoveredSource, error) {
-		return []source.DiscoveredSource{
+	client := &stubClient{
+		discoverResult: []cloudstic.DiscoveredSource{
 			{DisplayName: "System", SourceURI: "local:/", MountPoint: "/", Portable: false},
 			{DisplayName: "Photos", SourceURI: "local:/Volumes/Photos", MountPoint: "/Volumes/Photos", Portable: true},
-		}, nil
+		},
 	}
 
 	osArgs := os.Args
@@ -51,7 +47,7 @@ func TestRunSourceDiscover_PortableOnly(t *testing.T) {
 
 	var out strings.Builder
 	var errOut strings.Builder
-	r := &runner{out: &out, errOut: &errOut}
+	r := &runner{out: &out, errOut: &errOut, client: client}
 	if code := r.runSource(context.Background()); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}
@@ -65,12 +61,10 @@ func TestRunSourceDiscover_PortableOnly(t *testing.T) {
 }
 
 func TestRunSourceDiscover_JSON(t *testing.T) {
-	oldDiscover := discoverSources
-	t.Cleanup(func() { discoverSources = oldDiscover })
-	discoverSources = func() ([]source.DiscoveredSource, error) {
-		return []source.DiscoveredSource{
+	client := &stubClient{
+		discoverResult: []cloudstic.DiscoveredSource{
 			{DisplayName: "Photos", SourceURI: "local:/Volumes/Photos", MountPoint: "/Volumes/Photos", Portable: true},
-		}, nil
+		},
 	}
 
 	osArgs := os.Args
@@ -79,7 +73,7 @@ func TestRunSourceDiscover_JSON(t *testing.T) {
 
 	var out strings.Builder
 	var errOut strings.Builder
-	r := &runner{out: &out, errOut: &errOut}
+	r := &runner{out: &out, errOut: &errOut, client: client}
 	if code := r.runSource(context.Background()); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}

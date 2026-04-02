@@ -1,6 +1,6 @@
 //go:build !darwin && !linux && !windows
 
-package source
+package engine
 
 func discoverLocalCandidates() ([]discoverCandidate, error) {
 	return nil, nil

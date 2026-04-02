@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/cloudstic/cli/pkg/source"
+	cloudstic "github.com/cloudstic/cli"
 	"github.com/jedib0t/go-pretty/v6/table"
 )
-
-var discoverSources = source.DiscoverSources
 
 func (r *runner) runSource(ctx context.Context) int {
 	if len(os.Args) < 3 {
@@ -29,13 +27,16 @@ func (r *runner) runSource(ctx context.Context) int {
 }
 
 func (r *runner) runSourceDiscover(ctx context.Context) int {
-	_ = ctx
 	fs := flag.NewFlagSet("source discover", flag.ExitOnError)
 	portableOnly := fs.Bool("portable-only", false, "Only show portable/external source candidates")
 	jsonOutput := fs.Bool("json", false, "Write discovered sources as JSON")
 	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
 
-	results, err := discoverSources()
+	if r.client == nil {
+		r.client = &cloudstic.Client{}
+	}
+
+	results, err := r.client.DiscoverSources(ctx)
 	if err != nil {
 		return r.fail("Failed to discover sources: %v", err)
 	}

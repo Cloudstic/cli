@@ -1,9 +1,10 @@
 //go:build linux
 
-package source
+package engine
 
 import (
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -37,4 +38,34 @@ func parseLinuxMounts(data string) []discoverCandidate {
 		}
 	}
 	return candidates
+}
+
+func unescapeMountField(s string) string {
+	if !strings.Contains(s, "\\") {
+		return s
+	}
+
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\\' || i+3 >= len(s) {
+			out = append(out, s[i])
+			continue
+		}
+		if !isOctalDigit(s[i+1]) || !isOctalDigit(s[i+2]) || !isOctalDigit(s[i+3]) {
+			out = append(out, s[i])
+			continue
+		}
+		v, err := strconv.ParseUint(s[i+1:i+4], 8, 8)
+		if err != nil {
+			out = append(out, s[i])
+			continue
+		}
+		out = append(out, byte(v))
+		i += 3
+	}
+	return string(out)
+}
+
+func isOctalDigit(b byte) bool {
+	return b >= '0' && b <= '7'
 }

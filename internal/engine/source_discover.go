@@ -1,10 +1,13 @@
-package source
+package engine
 
 import (
+	"context"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
+
+	"github.com/cloudstic/cli/pkg/source"
 )
 
 // DiscoveredSource describes a local source candidate that can be used for
@@ -27,7 +30,7 @@ type discoverCandidate struct {
 
 // DiscoverSources returns local source candidates suitable for workstation
 // onboarding and source-selection UX.
-func DiscoverSources() ([]DiscoveredSource, error) {
+func DiscoverSources(_ context.Context) ([]DiscoveredSource, error) {
 	candidates, err := discoverLocalCandidates()
 	if err != nil {
 		return nil, err
@@ -57,7 +60,7 @@ func DiscoverSources() ([]DiscoveredSource, error) {
 	results := make([]DiscoveredSource, 0, len(mounts))
 	for _, mountPoint := range mounts {
 		candidate := byMount[mountPoint]
-		src := NewLocalSource(mountPoint)
+		src := source.NewLocalSource(mountPoint)
 		info := src.Info()
 		results = append(results, DiscoveredSource{
 			SourceURI:   "local:" + mountPoint,

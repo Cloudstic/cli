@@ -311,6 +311,7 @@ type ProfilesConfig = engine.ProfilesConfig
 type ProfileStore = engine.ProfileStore
 type ProfileAuth = engine.ProfileAuth
 type BackupProfile = engine.BackupProfile
+type DiscoveredSource = engine.DiscoveredSource
 
 var (
 	WithVerbose             = engine.WithVerbose
@@ -335,6 +336,10 @@ func (c *Client) Backup(ctx context.Context, src source.Source, opts ...BackupOp
 	result.BytesAddedRaw = rawMeter.BytesWritten()
 	result.BytesAddedStored = c.storedMeter.BytesWritten()
 	return result, nil
+}
+
+func (c *Client) DiscoverSources(ctx context.Context) ([]DiscoveredSource, error) {
+	return engine.DiscoverSources(ctx)
 }
 
 // LoadProfilesFile parses a backup profiles YAML file.

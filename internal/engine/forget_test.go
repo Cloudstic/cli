@@ -77,3 +77,44 @@ func createIndex(ref string, seq int) []byte {
 	data, _ := json.Marshal(idx)
 	return data
 }
+
+func TestForgetManager_RunPolicy_RequiresPolicyOrFilter(t *testing.T) {
+	fm := NewForgetManager(NewMockStore(), ui.NewNoOpReporter())
+
+	_, err := fm.RunPolicy(context.Background())
+	if err == nil {
+		t.Fatal("expected error for empty policy and filter")
+	}
+	if got := err.Error(); got != "empty policy: specify at least one -keep-* option or a tag/source/account/path filter" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestForgetManager_RunPolicy_FilterOnlyAllowed(t *testing.T) {
+	ctx := context.Background()
+	store := NewMockStore()
+	fm := NewForgetManager(store, ui.NewNoOpReporter())
+
+	snap := core.Snapshot{
+		Seq:     1,
+		Root:    "node/1",
+		Source:  &core.SourceInfo{Type: "local", Account: "host", Path: "/docs"},
+		Tags:    []string{"daily"},
+		Created: "2024-01-01T12:00:00Z",
+	}
+	ref := saveSnapshot(ctx, store, &snap)
+	if err := store.Put(ctx, "index/latest", createIndex(ref, 1)); err != nil {
+		t.Fatalf("put latest index: %v", err)
+	}
+
+	result, err := fm.RunPolicy(ctx, WithFilterTag("daily"))
+	if err != nil {
+		t.Fatalf("RunPolicy filter-only failed: %v", err)
+	}
+	if len(result.Groups) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(result.Groups))
+	}
+	if len(result.Groups[0].Remove) != 1 {
+		t.Fatalf("expected 1 snapshot to be removed by filter-only policy, got %d", len(result.Groups[0].Remove))
+	}
+}

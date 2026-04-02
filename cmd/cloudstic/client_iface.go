@@ -12,6 +12,7 @@ import (
 type cloudsticClient interface {
 	Backup(ctx context.Context, src source.Source, opts ...cloudstic.BackupOption) (*cloudstic.BackupResult, error)
 	DiscoverSources(ctx context.Context) ([]cloudstic.DiscoveredSource, error)
+	PlanWorkstationSetup(ctx context.Context, opts ...cloudstic.WorkstationSetupOption) (*cloudstic.WorkstationSetupPlan, error)
 	Restore(ctx context.Context, w io.Writer, snapshotRef string, opts ...cloudstic.RestoreOption) (*cloudstic.RestoreResult, error)
 	RestoreToDir(ctx context.Context, outputDir, snapshotRef string, opts ...cloudstic.RestoreOption) (*cloudstic.RestoreResult, error)
 	List(ctx context.Context, opts ...cloudstic.ListOption) (*cloudstic.ListResult, error)

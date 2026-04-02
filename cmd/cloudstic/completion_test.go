@@ -20,7 +20,7 @@ func TestCompletionBash(t *testing.T) {
 		"_cloudstic()",
 		"complete -F _cloudstic cloudstic",
 		// All commands are listed
-		"init", "backup", "auth", "profile", "store", "source", "restore", "list", "ls", "prune", "forget",
+		"init", "backup", "auth", "profile", "store", "source", "setup", "restore", "list", "ls", "prune", "forget",
 		"diff", "break-lock", "key", "cat", "completion",
 		// Key subcommands
 		"list add-recovery passwd",
@@ -32,6 +32,8 @@ func TestCompletionBash(t *testing.T) {
 		"-profile", "-all-profiles",
 		"-auth-ref",
 		"-ignore-empty-snapshot",
+		"workstation",
+		"-store-ref",
 		// Value completions
 		"local: s3: b2: sftp://",
 		"gdrive", "onedrive",
@@ -68,6 +70,8 @@ func TestCompletionZsh(t *testing.T) {
 		"completion:Generate shell completion scripts",
 		"source:Discover source candidates for onboarding",
 		"discover:Discover local source candidates",
+		"setup:Guided setup and onboarding flows",
+		"workstation:Preview workstation onboarding plan",
 		// Key subcommands
 		"list:List all encryption key slots",
 		"add-recovery:Generate a 24-word recovery key",
@@ -85,6 +89,7 @@ func TestCompletionZsh(t *testing.T) {
 		"-all-profiles[Run all enabled backup profiles]",
 		"-auth-ref[Use named auth entry from profiles.yaml]",
 		"-ignore-empty-snapshot[Skip creating a new snapshot when nothing changed]",
+		"-store-ref[Existing store reference to attach]",
 		// Value completions (source type list still present)
 		"(local: sftp:// gdrive gdrive-changes onedrive onedrive-changes)",
 		"(bash zsh fish)",
@@ -112,6 +117,7 @@ func TestCompletionFish(t *testing.T) {
 		"complete -c cloudstic -n __fish_use_subcommand -a profile",
 		"complete -c cloudstic -n __fish_use_subcommand -a auth",
 		"complete -c cloudstic -n __fish_use_subcommand -a source",
+		"complete -c cloudstic -n __fish_use_subcommand -a setup",
 		"complete -c cloudstic -n __fish_use_subcommand -a key",
 		"complete -c cloudstic -n __fish_use_subcommand -a completion",
 		// Key subcommands
@@ -134,6 +140,8 @@ func TestCompletionFish(t *testing.T) {
 		"-l all-profiles",
 		"-l auth-ref",
 		"-l ignore-empty-snapshot",
+		"-a workstation -d 'Preview workstation onboarding plan'",
+		"-l store-ref",
 		"-a show -d 'Show one profile and resolved refs'",
 		"-a new -d 'Create or update backup profile'",
 		"-a login -d 'Run OAuth login flow for auth entry'",

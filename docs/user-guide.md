@@ -16,6 +16,7 @@ Cloudstic is a content-addressable backup tool that creates encrypted, deduplica
   - [auth](#auth)
   - [profile](#profile)
   - [store](#store)
+  - [setup](#setup)
   - [restore](#restore)
   - [list](#list)
   - [ls](#ls)
@@ -537,6 +538,34 @@ This command is intended to support workstation onboarding and source
 selection flows. It emits candidate `local:` source URIs together with mount
 metadata such as identity, filesystem type, and whether the source is
 considered portable.
+
+---
+
+### setup
+
+Preview a workstation onboarding plan without writing configuration.
+
+#### setup workstation
+
+```bash
+cloudstic setup workstation -dry-run
+```
+
+Attach an existing store to the generated profile drafts:
+
+```bash
+cloudstic setup workstation -dry-run -store-ref my-s3
+```
+
+Write the onboarding plan as JSON:
+
+```bash
+cloudstic setup workstation -dry-run -json
+```
+
+The preview uses OS-aware local folder suggestions and portable-drive discovery
+to generate a review-first profile plan. At this stage only dry-run mode is
+implemented; the command does not write `profiles.yaml`.
 
 ---
 

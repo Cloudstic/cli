@@ -73,6 +73,8 @@ func runCmd(cmd string) int {
 		return r.runStore(ctx)
 	case "source":
 		return r.runSource(ctx)
+	case "setup":
+		return r.runSetup(ctx)
 	case "completion":
 		runCompletion()
 		return 0

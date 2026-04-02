@@ -41,7 +41,7 @@ _cloudstic() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="init backup auth profile store source restore list ls prune forget diff break-lock key cat completion version help"
+    local commands="init backup auth profile store source setup restore list ls prune forget diff break-lock key cat completion version help"
 
     local global_flags="-store -profile -profiles-file -s3-endpoint -s3-region -s3-profile -s3-access-key -s3-secret-key -source-sftp-password -source-sftp-key -source-sftp-known-hosts -source-sftp-insecure -store-sftp-password -store-sftp-key -store-sftp-known-hosts -store-sftp-insecure -encryption-key -password -recovery-key -kms-key-arn -kms-region -kms-endpoint -disable-packfile -prompt -no-prompt -verbose -quiet -json -debug"
 
@@ -208,6 +208,26 @@ _cloudstic() {
                     cmd_flags="" ;;
             esac
             ;;
+        setup)
+            local setup_sub=""
+            local j
+            for ((j=i+1; j < cword; j++)); do
+                case "${words[j]}" in
+                    -*) ;;
+                    *) setup_sub="${words[j]}"; break ;;
+                esac
+            done
+            if [[ -z "$setup_sub" ]]; then
+                COMPREPLY=($(compgen -W "workstation" -- "$cur"))
+                return
+            fi
+            case "$setup_sub" in
+                workstation)
+                    cmd_flags="-dry-run -yes -profiles-file -store-ref -json" ;;
+                *)
+                    cmd_flags="" ;;
+            esac
+            ;;
         check)
             cmd_flags="-read-data" ;;
         ls|diff|break-lock|version|help)
@@ -253,6 +273,7 @@ _cloudstic() {
         'auth:Manage reusable cloud auth entries'
         'profile:Manage backup profiles'
         'source:Discover source candidates for onboarding'
+        'setup:Guided setup and onboarding flows'
         'restore:Restore files from a backup snapshot'
         'list:List all backup snapshots in the repository'
         'ls:List files within a specific snapshot'
@@ -553,6 +574,38 @@ _cloudstic() {
                     ;;
             esac
             ;;
+        setup)
+            local -a setup_commands
+            setup_commands=(
+                'workstation:Preview workstation onboarding plan'
+            )
+            local setup_sub
+            local -i sui=$((i+1))
+            while (( sui < CURRENT )); do
+                case "${words[sui]}" in
+                    -*) ;;
+                    *) setup_sub="${words[sui]}"; break ;;
+                esac
+                (( sui++ ))
+            done
+            if [[ -z "$setup_sub" ]]; then
+                _describe -t setup-commands 'setup subcommand' setup_commands
+                return
+            fi
+            case "$setup_sub" in
+                workstation)
+                    _arguments \
+                        '-dry-run[Preview generated profiles without writing configuration]' \
+                        '-yes[Accept default selections without prompting]' \
+                        '-profiles-file[Path to profiles YAML file]:path:_files' \
+                        '-store-ref[Existing store reference to attach]:name:' \
+                        '-json[Write onboarding plan as JSON]'
+                    ;;
+                *)
+                    _arguments
+                    ;;
+            esac
+            ;;
         restore)
             _arguments $global_flags \
                 '-output[Output path for zip or dir restore]:path:_files' \
@@ -656,6 +709,7 @@ complete -c cloudstic -n __fish_use_subcommand -a backup -d 'Create a new backup
 complete -c cloudstic -n __fish_use_subcommand -a auth -d 'Manage reusable cloud auth entries'
 complete -c cloudstic -n __fish_use_subcommand -a profile -d 'Manage backup profiles'
 complete -c cloudstic -n __fish_use_subcommand -a source -d 'Discover source candidates for onboarding'
+complete -c cloudstic -n __fish_use_subcommand -a setup -d 'Guided setup and onboarding flows'
 complete -c cloudstic -n __fish_use_subcommand -a restore -d 'Restore files from a snapshot'
 complete -c cloudstic -n __fish_use_subcommand -a list -d 'List all backup snapshots'
 complete -c cloudstic -n __fish_use_subcommand -a ls -d 'List files within a snapshot'
@@ -776,6 +830,14 @@ complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_sub
 complete -c cloudstic -n '__fish_seen_subcommand_from source; and not __fish_seen_subcommand_from discover' -a discover -d 'Discover local source candidates'
 complete -c cloudstic -n '__fish_seen_subcommand_from source; and __fish_seen_subcommand_from discover' -l portable-only -d 'Only show portable or external source candidates'
 complete -c cloudstic -n '__fish_seen_subcommand_from source; and __fish_seen_subcommand_from discover' -l json -d 'Write discovered sources as JSON'
+
+# setup subcommands
+complete -c cloudstic -n '__fish_seen_subcommand_from setup; and not __fish_seen_subcommand_from workstation' -a workstation -d 'Preview workstation onboarding plan'
+complete -c cloudstic -n '__fish_seen_subcommand_from setup; and __fish_seen_subcommand_from workstation' -l dry-run -d 'Preview generated profiles without writing configuration'
+complete -c cloudstic -n '__fish_seen_subcommand_from setup; and __fish_seen_subcommand_from workstation' -l yes -d 'Accept default selections without prompting'
+complete -c cloudstic -n '__fish_seen_subcommand_from setup; and __fish_seen_subcommand_from workstation' -l profiles-file -r -F -d 'Path to profiles YAML file'
+complete -c cloudstic -n '__fish_seen_subcommand_from setup; and __fish_seen_subcommand_from workstation' -l store-ref -x -d 'Existing store reference to attach'
+complete -c cloudstic -n '__fish_seen_subcommand_from setup; and __fish_seen_subcommand_from workstation' -l json -d 'Write onboarding plan as JSON'
 
 # auth subcommands
 complete -c cloudstic -n '__fish_seen_subcommand_from auth; and not __fish_seen_subcommand_from list show new login' -a list -d 'List auth entries from profiles.yaml'

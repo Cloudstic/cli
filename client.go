@@ -312,6 +312,11 @@ type ProfileStore = engine.ProfileStore
 type ProfileAuth = engine.ProfileAuth
 type BackupProfile = engine.BackupProfile
 type DiscoveredSource = engine.DiscoveredSource
+type WorkstationSetupPlan = engine.WorkstationSetupPlan
+type WorkstationSetupOption = engine.WorkstationSetupOption
+type WorkstationProfileDraft = engine.WorkstationProfileDraft
+type WorkstationFolderCandidate = engine.WorkstationFolderCandidate
+type WorkstationCoverageSummary = engine.WorkstationCoverageSummary
 
 var (
 	WithVerbose             = engine.WithVerbose
@@ -321,6 +326,8 @@ var (
 	WithGenerator           = engine.WithGenerator
 	WithMeta                = engine.WithMeta
 	WithExcludeHash         = engine.WithExcludeHash
+	WithWorkstationProfiles = engine.WithWorkstationProfiles
+	WithWorkstationStoreRef = engine.WithWorkstationStoreRef
 )
 
 func (c *Client) Backup(ctx context.Context, src source.Source, opts ...BackupOption) (*BackupResult, error) {
@@ -340,6 +347,10 @@ func (c *Client) Backup(ctx context.Context, src source.Source, opts ...BackupOp
 
 func (c *Client) DiscoverSources(ctx context.Context) ([]DiscoveredSource, error) {
 	return engine.DiscoverSources(ctx)
+}
+
+func (c *Client) PlanWorkstationSetup(ctx context.Context, opts ...WorkstationSetupOption) (*WorkstationSetupPlan, error) {
+	return engine.PlanWorkstationSetup(ctx, opts...)
 }
 
 // LoadProfilesFile parses a backup profiles YAML file.

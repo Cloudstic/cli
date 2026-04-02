@@ -73,6 +73,9 @@ cloudstic backup -source local:~/Documents -dry-run
 
 # Discover local source candidates and portable drives
 cloudstic source discover -portable-only
+
+# Preview a workstation onboarding plan
+cloudstic setup workstation -dry-run
 ```
 
 ## Profiles

@@ -54,7 +54,7 @@ func detectVolumeIdentity(path string) (uuid, label, mountPoint string) {
 	mountPoint = windows.UTF16ToString(volPath[:])
 
 	label = getVolumeLabel(mountPoint)
-	uuid = getPartitionUUID(mountPoint)
+	uuid = normalizeVolumeUUID(getPartitionUUID(mountPoint))
 
 	return uuid, label, mountPoint
 }
@@ -124,7 +124,7 @@ func getPartitionUUID(mountPoint string) string {
 		return ""
 	}
 
-	return strings.ToUpper(formatGUID(info.GPT.PartitionId))
+	return formatGUID(info.GPT.PartitionId)
 }
 
 func getVolumeNameForMountPoint(mountPoint string) (string, error) {

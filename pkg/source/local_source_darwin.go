@@ -45,6 +45,7 @@ func detectVolumeIdentity(path string) (uuid, label, mountPoint string) {
 	} else {
 		uuid = getVolumeUUID(path)
 	}
+	uuid = normalizeVolumeUUID(uuid)
 	label = getVolumeLabel(path)
 	return uuid, label, mountPoint
 }

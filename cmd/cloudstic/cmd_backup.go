@@ -174,6 +174,9 @@ func (r *runner) runSingleBackup(a *backupArgs) int {
 	if err != nil {
 		return r.fail("Backup failed: %v", err)
 	}
+	if a.g.jsonEnabled() {
+		return r.writeJSON(result)
+	}
 	r.printBackupSummary(result)
 	return 0
 }

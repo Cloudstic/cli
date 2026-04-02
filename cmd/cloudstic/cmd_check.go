@@ -40,6 +40,15 @@ func (r *runner) runCheck(ctx context.Context) int {
 	if err != nil {
 		return r.fail("Check failed: %v", err)
 	}
+	if a.g.jsonEnabled() {
+		if exit := r.writeJSON(result); exit != 0 {
+			return exit
+		}
+		if len(result.Errors) > 0 {
+			return 1
+		}
+		return 0
+	}
 	if r.printCheckResult(result) {
 		return 1
 	}

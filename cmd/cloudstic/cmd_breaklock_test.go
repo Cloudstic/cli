@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -18,6 +19,28 @@ func TestRunBreakLock_NoLock(t *testing.T) {
 
 	if !strings.Contains(errOut.String(), "not locked") {
 		t.Errorf("expected 'not locked' message, got:\n%s", errOut.String())
+	}
+}
+
+func TestRunBreakLock_JSON(t *testing.T) {
+	os.Args = []string{"cloudstic", "break-lock", "-json"}
+	var out strings.Builder
+	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
+		breakLockResult: []*cloudstic.RepoLock{
+			{Operation: "backup", Holder: "worker-1"},
+		},
+	}}
+
+	if exit := r.runBreakLock(context.Background()); exit != 0 {
+		t.Fatalf("runBreakLock() exit = %d, want 0", exit)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out.String()), &got); err != nil {
+		t.Fatalf("json unmarshal: %v\noutput:\n%s", err, out.String())
+	}
+	if _, ok := got["locks"]; !ok {
+		t.Fatalf("expected locks key in JSON output, got: %v", got)
 	}
 }
 

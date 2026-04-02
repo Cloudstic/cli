@@ -42,6 +42,9 @@ func (r *runner) runDiff(ctx context.Context) int {
 	if err != nil {
 		return r.fail("Diff failed: %v", err)
 	}
+	if a.g.jsonEnabled() {
+		return r.writeJSON(result)
+	}
 	r.printDiffResult(result)
 	return 0
 }

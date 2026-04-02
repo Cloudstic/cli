@@ -222,10 +222,13 @@ These flags apply to all commands:
 |------|-------------|
 | `-verbose` | Log detailed file-level operations (files scanned, written, deleted) |
 | `-quiet` | Suppress progress bars (keeps final summary output) |
+| `-json` | Write the command result as JSON to stdout |
 | `-debug` | Log every store request (network calls, timing, sizes) |
 | `-disable-packfile` | Disable bundling small objects into 8MB packs (packfile is on by default) — env: `CLOUDSTIC_DISABLE_PACKFILE=1` |
 
 `-verbose` and `-quiet` are mutually exclusive. If both are set, `-quiet` takes precedence.
+
+`-json` is available on the operational commands that return structured results, including `init`, `backup`, `restore`, `list`, `ls`, `diff`, `forget`, `prune`, `break-lock`, `check`, `key list`, `key add-recovery`, `key passwd`, and `cat`. When `-json` is set, Cloudstic suppresses progress output and writes a single JSON document to stdout instead of the usual human-readable summary.
 
 ### init
 
@@ -1052,7 +1055,7 @@ cloudstic cat filemeta/789abc...
 # Display a HAMT node
 cloudstic cat node/def456...
 
-# Suppress non-JSON output for scripting
+# Emit a machine-readable JSON result
 cloudstic cat config -json
 
 # Output raw, unformatted data for hashing
@@ -1077,10 +1080,10 @@ cloudstic cat -raw filemeta/789abc... | sha256sum
 
 | Flag | Description |
 |------|-------------|
-| `-json` | Suppress non-JSON output (alias for `-quiet`) |
+| `-json` | Write a JSON array of fetched objects to stdout |
 | `-raw` | Output raw, unformatted data (useful for hashing) |
 
-The output is pretty-printed JSON by default. Use `-json` or `-quiet` to suppress header messages when fetching multiple objects, which is useful for piping to `jq` or other JSON processors.
+The output is pretty-printed object content by default. With `-json`, Cloudstic returns a single JSON array where each item includes the object key and decoded data. Use `-raw` when you need the exact stored bytes instead of a structured JSON document.
 
 **Examples:**
 

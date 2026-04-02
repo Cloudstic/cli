@@ -43,7 +43,7 @@ _cloudstic() {
 
     local commands="init backup auth profile store restore list ls prune forget diff break-lock key cat completion version help"
 
-    local global_flags="-store -profile -profiles-file -s3-endpoint -s3-region -s3-profile -s3-access-key -s3-secret-key -source-sftp-password -source-sftp-key -source-sftp-known-hosts -source-sftp-insecure -store-sftp-password -store-sftp-key -store-sftp-known-hosts -store-sftp-insecure -encryption-key -password -recovery-key -kms-key-arn -kms-region -kms-endpoint -disable-packfile -prompt -no-prompt -verbose -quiet -debug"
+    local global_flags="-store -profile -profiles-file -s3-endpoint -s3-region -s3-profile -s3-access-key -s3-secret-key -source-sftp-password -source-sftp-key -source-sftp-known-hosts -source-sftp-insecure -store-sftp-password -store-sftp-key -store-sftp-known-hosts -store-sftp-insecure -encryption-key -password -recovery-key -kms-key-arn -kms-region -kms-endpoint -disable-packfile -prompt -no-prompt -verbose -quiet -json -debug"
 
     # Identify the subcommand
     local cmd=""
@@ -52,7 +52,7 @@ _cloudstic() {
         case "${words[i]}" in
             -*)
                 # skip flags and their values
-					-store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-source-sftp-known-hosts|-store-sftp-password|-store-sftp-key|-store-sftp-known-hosts|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-all-profiles|-auth-ref|-google-credentials|-google-credentials-ref|-google-credentials-json|-google-token-file|-google-token-ref|-onedrive-client-id|-onedrive-token-file|-onedrive-token-ref|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account|-json|-xattr-namespaces)
+					-store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-source-sftp-known-hosts|-store|-store-sftp-password|-store-sftp-key|-store-sftp-known-hosts|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-all-profiles|-auth-ref|-google-credentials|-google-credentials-ref|-google-credentials-json|-google-token-file|-google-token-ref|-onedrive-client-id|-onedrive-token-file|-onedrive-token-ref|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account|-xattr-namespaces)
 						((i++)) ;;
 				esac
                 ;;
@@ -83,7 +83,7 @@ _cloudstic() {
         forget)
             cmd_flags="-prune -dry-run -keep-last -keep-hourly -keep-daily -keep-weekly -keep-monthly -keep-yearly -tag -source -account -group-by" ;;
         cat)
-            cmd_flags="-json -raw" ;;
+            cmd_flags="-raw" ;;
         completion)
             COMPREPLY=($(compgen -W "bash zsh fish" -- "$cur"))
             return ;;
@@ -275,6 +275,7 @@ _cloudstic() {
         '-no-prompt[Disable interactive prompts (for scripts and CI)]'
         '-verbose[Log detailed operations]'
         '-quiet[Suppress progress bars]'
+        '-json[Write command result as JSON to stdout]'
         '-debug[Log every store request]'
     )
 
@@ -579,7 +580,6 @@ _cloudstic() {
             ;;
         cat)
             _arguments $global_flags \
-                '-json[Suppress non-JSON output]' \
                 '-raw[Output raw, unformatted data]' \
                 '*:object key:'
             ;;
@@ -646,6 +646,7 @@ complete -c cloudstic -l prompt -d 'Prompt for password interactively'
 complete -c cloudstic -l no-prompt -d 'Disable interactive prompts (for scripts and CI)'
 complete -c cloudstic -l verbose -d 'Log detailed operations'
 complete -c cloudstic -l quiet -d 'Suppress progress bars'
+complete -c cloudstic -l json -d 'Write command result as JSON to stdout'
 complete -c cloudstic -l debug -d 'Log every store request'
 
 # init
@@ -770,7 +771,6 @@ complete -c cloudstic -n '__fish_seen_subcommand_from key; and not __fish_seen_s
 complete -c cloudstic -n '__fish_seen_subcommand_from key; and __fish_seen_subcommand_from passwd' -l new-password -x -d 'New repository password'
 
 # cat
-complete -c cloudstic -n '__fish_seen_subcommand_from cat' -l json -d 'Suppress non-JSON output'
 complete -c cloudstic -n '__fish_seen_subcommand_from cat' -l raw -d 'Output raw, unformatted data'
 
 # completion

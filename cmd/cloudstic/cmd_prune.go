@@ -36,6 +36,9 @@ func (r *runner) runPrune(ctx context.Context) int {
 	if err != nil {
 		return r.fail("Prune failed: %v", err)
 	}
+	if a.g.jsonEnabled() {
+		return r.writeJSON(result)
+	}
 	_, _ = fmt.Fprintln(r.out)
 	r.printPruneStats(result)
 	return 0

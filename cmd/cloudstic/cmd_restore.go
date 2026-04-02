@@ -66,6 +66,9 @@ func (r *runner) execRestore(a *restoreArgs, opts []cloudstic.RestoreOption) int
 		if err != nil {
 			return r.fail("Restore failed: %v", err)
 		}
+		if a.g.jsonEnabled() {
+			return r.writeJSON(result)
+		}
 		r.printRestoreSummary(result, "")
 		return 0
 	}
@@ -74,6 +77,9 @@ func (r *runner) execRestore(a *restoreArgs, opts []cloudstic.RestoreOption) int
 		result, err := r.client.RestoreToDir(ctx, a.output, a.snapshotRef, opts...)
 		if err != nil {
 			return r.fail("Restore failed: %v", err)
+		}
+		if a.g.jsonEnabled() {
+			return r.writeJSON(result)
 		}
 		r.printRestoreSummary(result, a.output)
 		return 0
@@ -89,6 +95,9 @@ func (r *runner) execRestore(a *restoreArgs, opts []cloudstic.RestoreOption) int
 	if err != nil {
 		_ = os.Remove(a.output)
 		return r.fail("Restore failed: %v", err)
+	}
+	if a.g.jsonEnabled() {
+		return r.writeJSON(result)
 	}
 	r.printRestoreSummary(result, a.output)
 	return 0

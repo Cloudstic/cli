@@ -58,7 +58,7 @@ func (g *globalFlags) openClient(ctx context.Context) (*cloudstic.Client, error)
 	packfileEnabled := g.disablePackfile == nil || !*g.disablePackfile
 
 	var reporter cloudstic.Reporter
-	if *g.quiet {
+	if *g.quiet || g.jsonEnabled() {
 		reporter = ui.NewNoOpReporter()
 	} else {
 		cr := ui.NewConsoleReporter()

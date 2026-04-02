@@ -14,7 +14,6 @@ import (
 type catArgs struct {
 	g    *globalFlags
 	keys []string
-	json bool
 	raw  bool
 }
 
@@ -22,7 +21,6 @@ func parseCatArgs() *catArgs {
 	fs := flag.NewFlagSet("cat", flag.ExitOnError)
 	a := &catArgs{}
 	a.g = addGlobalFlags(fs)
-	jsonFlag := fs.Bool("json", false, "Suppress non-JSON output (alias for -quiet)")
 	rawFlag := fs.Bool("raw", false, "Output raw, unformatted data (useful for hashing)")
 	mustParse(fs)
 	if fs.NArg() < 1 {
@@ -36,7 +34,6 @@ func parseCatArgs() *catArgs {
 		fmt.Fprintln(os.Stderr, "  cloudstic cat -raw filemeta/def456... | sha256sum")
 		os.Exit(1)
 	}
-	a.json = *jsonFlag
 	a.raw = *rawFlag
 	a.keys = fs.Args()
 	return a
@@ -48,13 +45,20 @@ func (r *runner) runCat(ctx context.Context) int {
 		return r.fail("Failed to init store: %v", err)
 	}
 
-	quiet := *a.g.quiet || a.json
+	if a.g.jsonEnabled() && a.raw {
+		return r.failJSONFlagConflict("-json", "-raw")
+	}
+
+	quiet := *a.g.quiet || a.g.jsonEnabled()
 
 	results, err := r.client.Cat(context.Background(), a.keys...)
 	if err != nil {
 		return r.fail("Failed to fetch objects: %v", err)
 	}
 
+	if a.g.jsonEnabled() {
+		return r.writeJSON(makeCatJSONResults(results))
+	}
 	r.printCatResult(results, quiet, a.raw)
 	return 0
 }

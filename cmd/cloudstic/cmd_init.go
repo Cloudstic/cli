@@ -70,6 +70,9 @@ func (r *runner) runInit(ctx context.Context) int {
 		return r.fail("Init failed: %v", err)
 	}
 
+	if a.g.jsonEnabled() {
+		return r.writeJSON(result)
+	}
 	r.printInitResult(result)
 	return 0
 }

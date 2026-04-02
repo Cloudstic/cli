@@ -35,6 +35,9 @@ func (r *runner) runList(ctx context.Context) int {
 	if err != nil {
 		return r.fail("List failed: %v", err)
 	}
+	if a.g.jsonEnabled() {
+		return r.writeJSON(result)
+	}
 	r.printListResult(result, *a.group)
 	return 0
 }

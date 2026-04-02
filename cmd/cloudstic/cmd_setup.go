@@ -127,6 +127,25 @@ func (r *runner) runSetupWorkstation(ctx context.Context) int {
 		return r.writeJSON(plan)
 	}
 
+	if !args.dryRun && !args.yes {
+		if !r.canPrompt() {
+			return r.fail("setup workstation requires an interactive terminal or -yes")
+		}
+		if err := reviewWorkstationPlan(ctx, cfg, (*engine.WorkstationSetupPlan)(plan), workstationReviewPrompts{
+			confirm: func(ctx context.Context, label string, defaultYes bool) (bool, error) {
+				return r.promptConfirm(ctx, label, defaultYes)
+			},
+			selectOne: func(ctx context.Context, label string, options []string) (string, error) {
+				return r.promptSelect(ctx, label, options)
+			},
+			input: func(ctx context.Context, label, defaultValue string, validate func(string) error) (string, error) {
+				return r.promptValidatedLine(ctx, label, defaultValue, validate)
+			},
+		}); err != nil {
+			return r.fail("Failed to review workstation setup: %v", err)
+		}
+	}
+
 	printWorkstationSetupPlan(r.out, plan, args.dryRun)
 	if args.dryRun {
 		return 0
@@ -135,14 +154,11 @@ func (r *runner) runSetupWorkstation(ctx context.Context) int {
 	if plan.StoreRef == "" {
 		return r.fail("Store selection is still unresolved; pass -store-ref or rerun interactively")
 	}
-	if len(plan.Profiles) == 0 {
+	if countSelectedWorkstationProfiles(plan) == 0 {
 		_, _ = fmt.Fprintln(r.out, "\nNothing to save.")
 		return 0
 	}
 	if !args.yes {
-		if !r.canPrompt() {
-			return r.fail("setup workstation requires an interactive terminal or -yes")
-		}
 		ok, err := r.promptConfirm(ctx, "Save workstation setup?", true)
 		if err != nil {
 			return r.fail("Failed to confirm workstation setup: %v", err)
@@ -192,7 +208,7 @@ func printWorkstationSetupPlan(out io.Writer, plan *cloudstic.WorkstationSetupPl
 				profile.SourceURI,
 				firstNonEmptyCLI(profile.StoreRef, "(none)"),
 				strings.Join(profile.Tags, ","),
-				profile.Action,
+				workstationDraftDecisionLabel(profile),
 			})
 		}
 		t.Render()
@@ -227,4 +243,213 @@ func firstNonEmptyCLI(values ...string) string {
 		}
 	}
 	return ""
+}
+
+type workstationReviewPrompts struct {
+	confirm   func(context.Context, string, bool) (bool, error)
+	selectOne func(context.Context, string, []string) (string, error)
+	input     func(context.Context, string, string, func(string) error) (string, error)
+}
+
+func reviewWorkstationPlan(ctx context.Context, cfg *cloudstic.ProfilesConfig, plan *engine.WorkstationSetupPlan, prompts workstationReviewPrompts) error {
+	if plan == nil {
+		return nil
+	}
+	for i := range plan.Profiles {
+		draft := &plan.Profiles[i]
+		switch draft.Action {
+		case "create":
+			ok, err := prompts.confirm(ctx, fmt.Sprintf("Create profile %q for %s?", draft.Name, draft.DisplayLabel), true)
+			if err != nil {
+				return err
+			}
+			draft.Selected = ok
+		case "update":
+			choice, err := prompts.selectOne(ctx,
+				fmt.Sprintf("Profile %q already exists for %s", draft.Name, draft.DisplayLabel),
+				[]string{
+					fmt.Sprintf("Update existing profile %q", draft.Name),
+					"Create renamed profile",
+					"Skip this source",
+				},
+			)
+			if err != nil {
+				return err
+			}
+			switch choice {
+			case fmt.Sprintf("Update existing profile %q", draft.Name):
+				draft.Selected = true
+			case "Create renamed profile":
+				name, err := promptWorkstationProfileName(ctx, prompts, cfg, plan, i, nextAvailableWorkstationProfileName(cfg, plan, draft.Name))
+				if err != nil {
+					return err
+				}
+				draft.Name = name
+				draft.Action = "rename"
+				draft.Selected = true
+			default:
+				draft.Selected = false
+				draft.Action = "skip"
+			}
+		case "rename":
+			choice, err := prompts.selectOne(ctx,
+				fmt.Sprintf("Profile name collision for %s", draft.DisplayLabel),
+				[]string{
+					fmt.Sprintf("Create renamed profile %q", draft.Name),
+					"Use a different name",
+					"Skip this source",
+				},
+			)
+			if err != nil {
+				return err
+			}
+			switch choice {
+			case fmt.Sprintf("Create renamed profile %q", draft.Name):
+				draft.Selected = true
+			case "Use a different name":
+				name, err := promptWorkstationProfileName(ctx, prompts, cfg, plan, i, draft.Name)
+				if err != nil {
+					return err
+				}
+				draft.Name = name
+				draft.Selected = true
+			default:
+				draft.Selected = false
+				draft.Action = "skip"
+			}
+		default:
+			draft.Selected = true
+		}
+	}
+	refreshWorkstationCoverage(plan)
+	return nil
+}
+
+func promptWorkstationProfileName(ctx context.Context, prompts workstationReviewPrompts, cfg *cloudstic.ProfilesConfig, plan *engine.WorkstationSetupPlan, index int, defaultName string) (string, error) {
+	return prompts.input(ctx, "Profile name", defaultName, func(v string) error {
+		if v == "" {
+			return fmt.Errorf("profile name is required")
+		}
+		if err := validateRefName("profile", v); err != nil {
+			return err
+		}
+		if nameTakenInWorkstationPlan(cfg, plan, index, v) {
+			return fmt.Errorf("profile %q already exists", v)
+		}
+		return nil
+	})
+}
+
+func nameTakenInWorkstationPlan(cfg *cloudstic.ProfilesConfig, plan *engine.WorkstationSetupPlan, index int, name string) bool {
+	if existing, ok := cfg.Profiles[name]; ok {
+		if index >= 0 {
+			current := plan.Profiles[index]
+			if current.Action == "update" && current.Name == name && existing.Source == current.SourceURI {
+				return false
+			}
+		}
+		return true
+	}
+	for i, draft := range plan.Profiles {
+		if i == index || !draft.Selected {
+			continue
+		}
+		if draft.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func nextAvailableWorkstationProfileName(cfg *cloudstic.ProfilesConfig, plan *engine.WorkstationSetupPlan, base string) string {
+	base = sanitizeWorkstationProfileName(base)
+	if base == "" {
+		base = "workstation"
+	}
+	candidate := base
+	for i := 2; ; i++ {
+		if !nameTakenInWorkstationPlan(cfg, plan, -1, candidate) {
+			return candidate
+		}
+		candidate = fmt.Sprintf("%s-%d", base, i)
+	}
+}
+
+func refreshWorkstationCoverage(plan *engine.WorkstationSetupPlan) {
+	if plan == nil {
+		return
+	}
+	profileLabels := map[string]struct{}{}
+	for _, draft := range plan.Profiles {
+		if draft.DisplayLabel != "" {
+			profileLabels[draft.DisplayLabel] = struct{}{}
+		}
+	}
+
+	preservedSkipped := make([]string, 0, len(plan.Coverage.SkippedIntentionally))
+	for _, item := range plan.Coverage.SkippedIntentionally {
+		if _, ok := profileLabels[item]; !ok {
+			preservedSkipped = append(preservedSkipped, item)
+		}
+	}
+
+	plan.Coverage.ProtectedNow = nil
+	plan.Coverage.SkippedIntentionally = preservedSkipped
+	for _, draft := range plan.Profiles {
+		label := firstNonEmptyCLI(draft.DisplayLabel, draft.SourceURI)
+		if draft.Selected {
+			plan.Coverage.ProtectedNow = append(plan.Coverage.ProtectedNow, label)
+		} else {
+			plan.Coverage.SkippedIntentionally = append(plan.Coverage.SkippedIntentionally, label)
+		}
+	}
+}
+
+func workstationDraftDecisionLabel(draft cloudstic.WorkstationProfileDraft) string {
+	if !draft.Selected {
+		return "skip"
+	}
+	return draft.Action
+}
+
+func countSelectedWorkstationProfiles(plan *cloudstic.WorkstationSetupPlan) int {
+	if plan == nil {
+		return 0
+	}
+	count := 0
+	for _, draft := range plan.Profiles {
+		if draft.Selected {
+			count++
+		}
+	}
+	return count
+}
+
+func sanitizeWorkstationProfileName(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		return ""
+	}
+	var b strings.Builder
+	prevDash := false
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			prevDash = false
+		case r == '.', r == '_', r == '-':
+			if b.Len() == 0 || prevDash {
+				continue
+			}
+			b.WriteRune(r)
+			prevDash = r == '-'
+		default:
+			if b.Len() == 0 || prevDash {
+				continue
+			}
+			b.WriteRune('-')
+			prevDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-._")
 }

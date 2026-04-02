@@ -46,11 +46,13 @@ type WorkstationFolderCandidate struct {
 }
 
 type WorkstationProfileDraft struct {
-	Name      string   `json:"name"`
-	SourceURI string   `json:"source_uri"`
-	StoreRef  string   `json:"store_ref,omitempty"`
-	Tags      []string `json:"tags,omitempty"`
-	Action    string   `json:"action"`
+	Name         string   `json:"name"`
+	SourceURI    string   `json:"source_uri"`
+	StoreRef     string   `json:"store_ref,omitempty"`
+	Tags         []string `json:"tags,omitempty"`
+	Action       string   `json:"action"`
+	DisplayLabel string   `json:"display_label,omitempty"`
+	Selected     bool     `json:"selected"`
 }
 
 type WorkstationCoverageSummary struct {
@@ -136,11 +138,13 @@ func PlanWorkstationSetup(ctx context.Context, opts ...WorkstationSetupOption) (
 		}
 		name, action := nextWorkstationProfileName(cfg, usedNames, folder.Key, hostname, "local:"+folder.Path)
 		plan.Profiles = append(plan.Profiles, WorkstationProfileDraft{
-			Name:      name,
-			SourceURI: "local:" + folder.Path,
-			StoreRef:  storeRef,
-			Tags:      []string{"workstation"},
-			Action:    action,
+			Name:         name,
+			SourceURI:    "local:" + folder.Path,
+			StoreRef:     storeRef,
+			Tags:         []string{"workstation"},
+			Action:       action,
+			DisplayLabel: folder.Label + " (" + folder.Path + ")",
+			Selected:     true,
 		})
 		plan.Coverage.ProtectedNow = append(plan.Coverage.ProtectedNow, folder.Label+" ("+folder.Path+")")
 	}
@@ -149,11 +153,13 @@ func PlanWorkstationSetup(ctx context.Context, opts ...WorkstationSetupOption) (
 		base := sanitizeWorkstationName(firstNonEmpty(src.DriveName, src.DisplayName, filepath.Base(src.MountPoint), "portable"))
 		name, action := nextWorkstationProfileName(cfg, usedNames, base, hostname, src.SourceURI)
 		plan.Profiles = append(plan.Profiles, WorkstationProfileDraft{
-			Name:      name,
-			SourceURI: src.SourceURI,
-			StoreRef:  storeRef,
-			Tags:      []string{"portable", "workstation"},
-			Action:    action,
+			Name:         name,
+			SourceURI:    src.SourceURI,
+			StoreRef:     storeRef,
+			Tags:         []string{"portable", "workstation"},
+			Action:       action,
+			DisplayLabel: src.DisplayName + " (" + src.MountPoint + ")",
+			Selected:     true,
 		})
 		plan.Coverage.ProtectedNow = append(plan.Coverage.ProtectedNow, src.DisplayName+" ("+src.MountPoint+")")
 	}
@@ -174,6 +180,9 @@ func ApplyWorkstationSetupPlan(cfg *ProfilesConfig, plan *WorkstationSetupPlan) 
 	}
 
 	for _, draft := range plan.Profiles {
+		if !draft.Selected {
+			continue
+		}
 		if strings.TrimSpace(draft.Name) == "" {
 			return nil, fmt.Errorf("workstation setup plan contains a draft with no profile name")
 		}

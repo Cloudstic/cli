@@ -18,6 +18,7 @@ func TestCompletionBash(t *testing.T) {
 	// Verify it's a valid bash completion script
 	for _, marker := range []string{
 		"_cloudstic()",
+		"_cloudstic_query()",
 		"complete -F _cloudstic cloudstic",
 		// All commands are listed
 		"init", "backup", "auth", "profile", "store", "source", "setup", "restore", "list", "ls", "prune", "forget",
@@ -31,6 +32,8 @@ func TestCompletionBash(t *testing.T) {
 		"-profiles-file",
 		"-profile", "-all-profiles",
 		"-auth-ref",
+		"profile-names",
+		"auth-names",
 		"-ignore-empty-snapshot",
 		"workstation",
 		"-store-ref",
@@ -56,6 +59,9 @@ func TestCompletionZsh(t *testing.T) {
 	for _, marker := range []string{
 		"#compdef cloudstic",
 		"_cloudstic()",
+		"_cloudstic_query()",
+		"_cloudstic_profile_names",
+		"_cloudstic_auth_names",
 		"_cloudstic_store_prefixes()",
 		"compdef _cloudstic cloudstic",
 		// Commands with descriptions
@@ -112,6 +118,7 @@ func TestCompletionFish(t *testing.T) {
 
 	for _, marker := range []string{
 		"complete -c cloudstic -f",
+		"function __fish_cloudstic_query",
 		// Subcommands
 		"complete -c cloudstic -n __fish_use_subcommand -a init",
 		"complete -c cloudstic -n __fish_use_subcommand -a backup",
@@ -140,6 +147,8 @@ func TestCompletionFish(t *testing.T) {
 		"-l profile",
 		"-l all-profiles",
 		"-l auth-ref",
+		"(__fish_cloudstic_query profile-names)",
+		"(__fish_cloudstic_query auth-names)",
 		"-l ignore-empty-snapshot",
 		"-a workstation -d 'Preview workstation onboarding plan'",
 		"-l store-ref",

@@ -37,6 +37,13 @@ func runCompletion() {
 func completionBash(w io.Writer) {
 	_, _ = fmt.Fprint(w, `# bash completion for cloudstic
 
+_cloudstic_query() {
+    local kind="$1"
+    local cur="$2"
+    shift 2
+    cloudstic __complete "$kind" "$cur" "$@" 2>/dev/null
+}
+
 _cloudstic() {
     local cur prev words cword
     _init_completion || return
@@ -241,6 +248,12 @@ _cloudstic() {
 
     # Value completions for specific flags
     case "$prev" in
+        -profile)
+            COMPREPLY=($(compgen -W "$(_cloudstic_query profile-names "$cur" "${words[@]:1:$((cword-1))}")" -- "$cur"))
+            return ;;
+        -auth-ref)
+            COMPREPLY=($(compgen -W "$(_cloudstic_query auth-names "$cur" "${words[@]:1:$((cword-1))}")" -- "$cur"))
+            return ;;
         -store)
             # URI completion hint: show scheme prefixes
             COMPREPLY=($(compgen -W "local: s3: b2: sftp://" -- "$cur"))
@@ -264,6 +277,30 @@ func completionZsh(w io.Writer) {
 	_, _ = fmt.Fprint(w, `#compdef cloudstic
 
 # zsh completion for cloudstic
+
+_cloudstic_query() {
+    local kind="$1"
+    shift
+    local -a prior_words
+    prior_words=("${words[@]:2:$(( CURRENT - 2 ))}")
+    cloudstic __complete "$kind" "$PREFIX" "${prior_words[@]}" 2>/dev/null
+}
+
+_cloudstic_dynamic_values() {
+    local kind="$1"
+    local label="$2"
+    local -a values
+    values=(${(f)"$(_cloudstic_query "$kind")"})
+    _describe -t "$kind" "$label" values
+}
+
+_cloudstic_profile_names() {
+    _cloudstic_dynamic_values profile-names 'profile'
+}
+
+_cloudstic_auth_names() {
+    _cloudstic_dynamic_values auth-names 'auth entry'
+}
 
 _cloudstic_store_prefixes() {
     local -a values
@@ -294,10 +331,12 @@ _cloudstic() {
         'help:Show usage information'
     )
 
+    local prev_word="${words[CURRENT-1]}"
+
     local -a global_flags
     global_flags=(
         '-store[Storage backend URI]:uri:_cloudstic_store_prefixes'
-        '-profile[Profile name from profiles.yaml]:name:'
+        '-profile[Profile name from profiles.yaml]:name:_cloudstic_profile_names'
         '-profiles-file[Path to profiles YAML file]:path:_files'
         '-s3-endpoint[S3 compatible endpoint URL]:url:'
         '-s3-region[S3 region]:region:'
@@ -347,6 +386,12 @@ _cloudstic() {
     done
 
     if [[ -z "$cmd" ]]; then
+        case "$prev_word" in
+            -store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-source-sftp-known-hosts|-store-sftp-password|-store-sftp-key|-store-sftp-known-hosts|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint)
+                _arguments $global_flags
+                return
+                ;;
+        esac
         _describe -t commands 'cloudstic command' commands
         _arguments $global_flags
         return
@@ -364,7 +409,7 @@ _cloudstic() {
                 '-source[Source URI]:uri:(local: sftp:// gdrive gdrive-changes onedrive onedrive-changes)' \
                 '-profile[Backup profile name]:name:' \
                 '-all-profiles[Run all enabled backup profiles]' \
-                '-auth-ref[Use named auth entry from profiles.yaml]:name:' \
+                '-auth-ref[Use named auth entry from profiles.yaml]:name:_cloudstic_auth_names' \
                 '-profiles-file[Path to profiles YAML file]:path:_files' \
                 '-skip-native-files[Exclude Google-native files]' \
                 '-google-credentials[Google service account credentials JSON]:path:_files' \
@@ -417,7 +462,7 @@ _cloudstic() {
                         '-source[Source URI]:uri:(local: sftp:// gdrive gdrive-changes onedrive onedrive-changes)' \
                         '-store-ref[Store reference name]:name:' \
                         '-store[Store URI]:uri:' \
-                        '-auth-ref[Auth reference name]:name:' \
+                        '-auth-ref[Auth reference name]:name:_cloudstic_auth_names' \
                         '*-tag[Tag for snapshots]:tag:' \
                         '*-exclude[Exclude pattern]:pattern:' \
                         '-exclude-file[Path to exclude file]:path:_files' \
@@ -705,6 +750,11 @@ compdef _cloudstic cloudstic
 func completionFish(w io.Writer) {
 	_, _ = fmt.Fprint(w, `# fish completion for cloudstic
 
+function __fish_cloudstic_query
+    set -l kind $argv[1]
+    cloudstic __complete $kind (commandline -ct) (commandline -opc) 2>/dev/null
+end
+
 # Disable file completions by default
 complete -c cloudstic -f
 
@@ -730,7 +780,7 @@ complete -c cloudstic -n __fish_use_subcommand -a help -d 'Show usage informatio
 
 # Global flags (available for all subcommands)
 complete -c cloudstic -l store -x -d 'Storage backend URI (local:<path>, s3:<bucket>[/<prefix>], b2:<bucket>[/<prefix>], sftp://[user@]host[:port]/<path>)'
-complete -c cloudstic -l profile -x -d 'Profile name from profiles.yaml'
+complete -c cloudstic -l profile -x -a '(__fish_cloudstic_query profile-names)' -d 'Profile name from profiles.yaml'
 complete -c cloudstic -l profiles-file -r -F -d 'Path to profiles YAML file'
 complete -c cloudstic -l s3-endpoint -x -d 'S3 compatible endpoint URL'
 complete -c cloudstic -l s3-region -x -d 'S3 region'
@@ -768,7 +818,7 @@ complete -c cloudstic -n '__fish_seen_subcommand_from init' -l adopt-slots -d 'A
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l source -x -a 'local: sftp:// gdrive gdrive-changes onedrive onedrive-changes' -d 'Source URI'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l profile -x -d 'Backup profile name'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l all-profiles -d 'Run all enabled backup profiles'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l auth-ref -x -d 'Use named auth entry from profiles.yaml'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l auth-ref -x -a '(__fish_cloudstic_query auth-names)' -d 'Use named auth entry from profiles.yaml'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l profiles-file -r -F -d 'Path to profiles YAML file'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-native-files -d 'Exclude Google-native files'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l google-credentials -r -F -d 'Google service account credentials JSON'
@@ -798,7 +848,7 @@ complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_s
 complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l source -x -a 'local: sftp:// gdrive gdrive-changes onedrive onedrive-changes' -d 'Source URI'
 complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l store-ref -x -d 'Store reference name'
 complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l store -x -d 'Store URI'
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l auth-ref -x -d 'Auth reference name'
+complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l auth-ref -x -a '(__fish_cloudstic_query auth-names)' -d 'Auth reference name'
 complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l tag -x -d 'Tag for snapshots'
 complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l exclude -x -d 'Exclude pattern'
 complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l exclude-file -r -F -d 'Path to exclude file'

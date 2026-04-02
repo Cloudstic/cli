@@ -94,10 +94,10 @@ func parseForgetArgs() *forgetArgs {
 }
 
 func printForgetUsage(w *os.File) {
-	fmt.Fprintln(w, "Usage: cloudstic forget [options] <snapshot_id>")
-	fmt.Fprintln(w, "       cloudstic forget --keep-last n [--tag X] [--source SRC] [--account NAME] [--prune] [--dry-run]")
-	fmt.Fprintln(w, "       cloudstic forget --tag X [--tag Y] [--source SRC] [--account NAME] [--prune] [--dry-run]")
-	fmt.Fprintln(w, "       cloudstic forget --source local:./docs [--tag X] [--prune] [--dry-run]")
+	_, _ = fmt.Fprintln(w, "Usage: cloudstic forget [options] <snapshot_id>")
+	_, _ = fmt.Fprintln(w, "       cloudstic forget --keep-last n [--tag X] [--source SRC] [--account NAME] [--prune] [--dry-run]")
+	_, _ = fmt.Fprintln(w, "       cloudstic forget --tag X [--tag Y] [--source SRC] [--account NAME] [--prune] [--dry-run]")
+	_, _ = fmt.Fprintln(w, "       cloudstic forget --source local:./docs [--tag X] [--prune] [--dry-run]")
 }
 
 func validateForgetArgs(a *forgetArgs) error {

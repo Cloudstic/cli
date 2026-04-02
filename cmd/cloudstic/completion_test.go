@@ -56,7 +56,8 @@ func TestCompletionZsh(t *testing.T) {
 	for _, marker := range []string{
 		"#compdef cloudstic",
 		"_cloudstic()",
-		`_cloudstic "$@"`,
+		"_cloudstic_store_prefixes()",
+		"compdef _cloudstic cloudstic",
 		// Commands with descriptions
 		"init:Initialize a new repository",
 		"backup:Create a new backup snapshot",
@@ -78,7 +79,7 @@ func TestCompletionZsh(t *testing.T) {
 		"passwd:Change the repository password",
 		"-new-password[New repository password]",
 		// Global flags with descriptions
-		"-store[Storage backend URI",
+		"-store[Storage backend URI]:uri:_cloudstic_store_prefixes",
 		"-verbose[Log detailed operations]",
 		// Subcommand-specific flags
 		"-add-recovery-key[Generate a 24-word recovery key]",

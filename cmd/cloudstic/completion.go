@@ -265,6 +265,12 @@ func completionZsh(w io.Writer) {
 
 # zsh completion for cloudstic
 
+_cloudstic_store_prefixes() {
+    local -a values
+    values=('local:' 's3:' 'b2:' 'sftp://')
+    compadd -Q -S '' -X 'store URI prefix' -- "${values[@]}"
+}
+
 _cloudstic() {
     local -a commands
     commands=(
@@ -290,7 +296,7 @@ _cloudstic() {
 
     local -a global_flags
     global_flags=(
-        '-store[Storage backend URI (local:<path>, s3:<bucket>[/<prefix>], b2:<bucket>[/<prefix>], sftp://[user@]host[:port]/<path>)]:uri:'
+        '-store[Storage backend URI]:uri:_cloudstic_store_prefixes'
         '-profile[Profile name from profiles.yaml]:name:'
         '-profiles-file[Path to profiles YAML file]:path:_files'
         '-s3-endpoint[S3 compatible endpoint URL]:url:'
@@ -320,7 +326,6 @@ _cloudstic() {
         '-json[Write command result as JSON to stdout]'
         '-debug[Log every store request]'
     )
-
     # Check if a subcommand has been given
     local cmd
     local -i i=2
@@ -692,7 +697,7 @@ _cloudstic() {
     esac
 }
 
-_cloudstic "$@"
+compdef _cloudstic cloudstic
 `)
 }
 

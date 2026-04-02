@@ -223,6 +223,13 @@ func TestClientDiscoverSources(t *testing.T) {
 	}
 }
 
+func TestClientPlanWorkstationSetup(t *testing.T) {
+	c := &Client{}
+	if _, err := c.PlanWorkstationSetup(context.Background()); err != nil {
+		t.Fatalf("PlanWorkstationSetup: %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Cat
 // ---------------------------------------------------------------------------

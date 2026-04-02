@@ -15,6 +15,8 @@ type stubClient struct {
 	backupErr       error
 	discoverResult  []cloudstic.DiscoveredSource
 	discoverErr     error
+	setupPlan       *cloudstic.WorkstationSetupPlan
+	setupPlanErr    error
 	restoreResult   *cloudstic.RestoreResult
 	restoreErr      error
 	listResult      *cloudstic.ListResult
@@ -43,6 +45,10 @@ func (s *stubClient) Backup(_ context.Context, _ source.Source, _ ...cloudstic.B
 
 func (s *stubClient) DiscoverSources(_ context.Context) ([]cloudstic.DiscoveredSource, error) {
 	return s.discoverResult, s.discoverErr
+}
+
+func (s *stubClient) PlanWorkstationSetup(_ context.Context, _ ...cloudstic.WorkstationSetupOption) (*cloudstic.WorkstationSetupPlan, error) {
+	return s.setupPlan, s.setupPlanErr
 }
 
 func (s *stubClient) Restore(_ context.Context, _ io.Writer, _ string, _ ...cloudstic.RestoreOption) (*cloudstic.RestoreResult, error) {

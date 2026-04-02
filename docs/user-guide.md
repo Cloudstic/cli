@@ -543,9 +543,23 @@ considered portable.
 
 ### setup
 
-Preview a workstation onboarding plan without writing configuration.
+Guide workstation onboarding and profile scaffolding.
 
 #### setup workstation
+
+Interactive onboarding flow:
+
+```bash
+cloudstic setup workstation
+```
+
+Accept the proposed plan without confirmation:
+
+```bash
+cloudstic setup workstation -yes -store-ref my-s3
+```
+
+Preview only:
 
 ```bash
 cloudstic setup workstation -dry-run
@@ -564,8 +578,9 @@ cloudstic setup workstation -dry-run -json
 ```
 
 The preview uses OS-aware local folder suggestions and portable-drive discovery
-to generate a review-first profile plan. At this stage only dry-run mode is
-implemented; the command does not write `profiles.yaml`.
+to generate a review-first profile plan. The command is interactive by default.
+Use `-dry-run` for a side-effect-free preview or `-yes` to accept the proposed
+plan without a confirmation prompt.
 
 ---
 

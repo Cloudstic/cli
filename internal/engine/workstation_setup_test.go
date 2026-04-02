@@ -121,6 +121,48 @@ func TestPlanWorkstationSetup_ErrorPaths(t *testing.T) {
 	}
 }
 
+func TestApplyWorkstationSetupPlan(t *testing.T) {
+	cfg := &ProfilesConfig{
+		Profiles: map[string]BackupProfile{
+			"documents": {Source: "local:/old"},
+		},
+	}
+	result, err := ApplyWorkstationSetupPlan(cfg, &WorkstationSetupPlan{
+		Profiles: []WorkstationProfileDraft{
+			{Name: "documents", SourceURI: "local:/Users/test/Documents", StoreRef: "primary", Tags: []string{"workstation"}},
+			{Name: "archive", SourceURI: "local:/Volumes/Archive", StoreRef: "primary", Tags: []string{"portable", "workstation"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ApplyWorkstationSetupPlan: %v", err)
+	}
+	if result.ProfilesCreated != 1 || result.ProfilesUpdated != 1 {
+		t.Fatalf("unexpected counts: %#v", result)
+	}
+	if got := cfg.Profiles["archive"].Store; got != "primary" {
+		t.Fatalf("archive store = %q, want primary", got)
+	}
+	if got := cfg.Profiles["documents"].Source; got != "local:/Users/test/Documents" {
+		t.Fatalf("documents source = %q", got)
+	}
+}
+
+func TestApplyWorkstationSetupPlan_Errors(t *testing.T) {
+	if _, err := ApplyWorkstationSetupPlan(nil, nil); err == nil {
+		t.Fatal("expected nil plan error")
+	}
+	if _, err := ApplyWorkstationSetupPlan(nil, &WorkstationSetupPlan{
+		Profiles: []WorkstationProfileDraft{{Name: "", SourceURI: "local:/tmp"}},
+	}); err == nil {
+		t.Fatal("expected missing name error")
+	}
+	if _, err := ApplyWorkstationSetupPlan(nil, &WorkstationSetupPlan{
+		Profiles: []WorkstationProfileDraft{{Name: "docs", SourceURI: ""}},
+	}); err == nil {
+		t.Fatal("expected missing source error")
+	}
+}
+
 func stubWorkstationSetupEnv(t *testing.T) func() {
 	t.Helper()
 	oldDiscover := workstationDiscoverSourcesFunc

@@ -317,6 +317,7 @@ type WorkstationSetupOption = engine.WorkstationSetupOption
 type WorkstationProfileDraft = engine.WorkstationProfileDraft
 type WorkstationFolderCandidate = engine.WorkstationFolderCandidate
 type WorkstationCoverageSummary = engine.WorkstationCoverageSummary
+type WorkstationApplyResult = engine.WorkstationApplyResult
 
 var (
 	WithVerbose             = engine.WithVerbose
@@ -351,6 +352,10 @@ func (c *Client) DiscoverSources(ctx context.Context) ([]DiscoveredSource, error
 
 func (c *Client) PlanWorkstationSetup(ctx context.Context, opts ...WorkstationSetupOption) (*WorkstationSetupPlan, error) {
 	return engine.PlanWorkstationSetup(ctx, opts...)
+}
+
+func ApplyWorkstationSetupPlan(cfg *ProfilesConfig, plan *WorkstationSetupPlan) (*WorkstationApplyResult, error) {
+	return engine.ApplyWorkstationSetupPlan(cfg, plan)
 }
 
 // LoadProfilesFile parses a backup profiles YAML file.

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	cloudstic "github.com/cloudstic/cli"
+	"github.com/cloudstic/cli/internal/engine"
 	"github.com/jedib0t/go-pretty/v6/table"
 )
 
@@ -152,7 +153,7 @@ func (r *runner) runSetupWorkstation(ctx context.Context) int {
 		}
 	}
 
-	result, err := cloudstic.ApplyWorkstationSetupPlan(cfg, plan)
+	result, err := engine.ApplyWorkstationSetupPlan(cfg, (*engine.WorkstationSetupPlan)(plan))
 	if err != nil {
 		return r.fail("Failed to apply workstation setup plan: %v", err)
 	}

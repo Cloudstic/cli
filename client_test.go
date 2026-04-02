@@ -230,21 +230,6 @@ func TestClientPlanWorkstationSetup(t *testing.T) {
 	}
 }
 
-func TestApplyWorkstationSetupPlan(t *testing.T) {
-	cfg := &ProfilesConfig{}
-	result, err := ApplyWorkstationSetupPlan(cfg, &WorkstationSetupPlan{
-		Profiles: []WorkstationProfileDraft{
-			{Name: "documents", SourceURI: "local:/Users/test/Documents", StoreRef: "primary", Tags: []string{"workstation"}},
-		},
-	})
-	if err != nil {
-		t.Fatalf("ApplyWorkstationSetupPlan: %v", err)
-	}
-	if result.ProfilesCreated != 1 || cfg.Profiles["documents"].Store != "primary" {
-		t.Fatalf("unexpected apply result: %#v %#v", result, cfg)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Cat
 // ---------------------------------------------------------------------------

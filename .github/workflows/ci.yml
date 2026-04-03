@@ -73,15 +73,21 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           echo "## Code Coverage" >> $GITHUB_STEP_SUMMARY
-          echo "### Unit Tests" >> $GITHUB_STEP_SUMMARY
+          echo "<details>" >> $GITHUB_STEP_SUMMARY
+          echo "<summary>Unit Tests</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo '```text' >> $GITHUB_STEP_SUMMARY
           go tool cover -func=unit.out >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
           if [ -f e2e_coverage.out ]; then
-            echo "### E2E Tests" >> $GITHUB_STEP_SUMMARY
+            echo "<details>" >> $GITHUB_STEP_SUMMARY
+            echo "<summary>E2E Tests</summary>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
             echo '```text' >> $GITHUB_STEP_SUMMARY
             go tool cover -func=e2e_coverage.out >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "</details>" >> $GITHUB_STEP_SUMMARY
           fi
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v6

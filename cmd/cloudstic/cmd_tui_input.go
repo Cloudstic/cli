@@ -142,6 +142,9 @@ func runSelectedTUIAction(ctx context.Context, r *runner, profilesFile string, d
 	if !ok {
 		return fmt.Errorf("no profile selected")
 	}
+	if action, ok := profileAction(profile, "b"); !ok || !action.Enabled {
+		return fmt.Errorf("backup action is not available")
+	}
 	return tuiRunProfileAction(ctx, r, profilesFile, profile, log)
 }
 
@@ -149,6 +152,9 @@ func runSelectedTUICheck(ctx context.Context, r *runner, profilesFile string, da
 	profile, ok := selectedTUIProfile(dashboard)
 	if !ok {
 		return fmt.Errorf("no profile selected")
+	}
+	if action, ok := profileAction(profile, "c"); !ok || !action.Enabled {
+		return fmt.Errorf("check action is not available")
 	}
 	return tuiRunProfileCheck(ctx, r, profilesFile, profile, log)
 }
@@ -167,4 +173,13 @@ func selectedTUIProfile(d tui.Dashboard) (tui.ProfileCard, bool) {
 
 func profileNeedsInit(profile tui.ProfileCard) bool {
 	return profile.StoreHealth == tui.StoreHealthNotInitialized
+}
+
+func profileAction(profile tui.ProfileCard, key string) (tui.ProfileAction, bool) {
+	for _, action := range profile.Actions {
+		if action.Key == key {
+			return action, true
+		}
+	}
+	return tui.ProfileAction{}, false
 }

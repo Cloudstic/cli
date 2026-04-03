@@ -76,8 +76,14 @@ func TestBuildDashboard_SortsProfilesAndCountsSections(t *testing.T) {
 	if got.Profiles[0].BackupState != BackupFreshnessRecent {
 		t.Fatalf("backup state = %q want recent", got.Profiles[0].BackupState)
 	}
+	if len(got.Profiles[0].Actions) != 2 || got.Profiles[0].Actions[0].Kind != ActionKindBackup || !got.Profiles[0].Actions[0].Enabled {
+		t.Fatalf("unexpected actions: %+v", got.Profiles[0].Actions)
+	}
 	if got.Profiles[1].Status != ProfileStatusDisabled {
 		t.Fatalf("status = %q want disabled", got.Profiles[1].Status)
+	}
+	if len(got.Profiles[1].Actions) != 1 || got.Profiles[1].Actions[0].Enabled {
+		t.Fatalf("unexpected disabled actions: %+v", got.Profiles[1].Actions)
 	}
 }
 
@@ -111,6 +117,12 @@ func TestBuildDashboard_NormalizesStoreProbeErrors(t *testing.T) {
 	}
 	if got.Profiles[0].StoreHealth != StoreHealthNotInitialized {
 		t.Fatalf("store health=%q want repository not initialized", got.Profiles[0].StoreHealth)
+	}
+	if len(got.Profiles[0].Actions) != 2 || got.Profiles[0].Actions[0].Kind != ActionKindInit || !got.Profiles[0].Actions[0].Enabled {
+		t.Fatalf("unexpected actions: %+v", got.Profiles[0].Actions)
+	}
+	if got.Profiles[0].Actions[1].Enabled {
+		t.Fatalf("check should be disabled until init: %+v", got.Profiles[0].Actions)
 	}
 }
 

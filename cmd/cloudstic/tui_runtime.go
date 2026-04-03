@@ -279,26 +279,24 @@ func (s *tuiSession) handleAction(ctx context.Context, action tuiAction) (int, e
 	case tuiActionDown:
 		s.dashboard = moveTUISelection(s.dashboard, 1)
 	case tuiActionRun:
-		if err := s.suspendRaw(); err != nil {
-			return -1, fmt.Errorf("failed to configure terminal: %v", err)
-		}
-		s.dashboard = runTUIActionIntoDashboard(ctx, s.r, s.profilesFile, s.dashboard)
-		if err := s.refresh(ctx); err != nil {
-			return -1, fmt.Errorf("failed to refresh TUI dashboard: %v", err)
-		}
-		if err := s.resumeRaw(); err != nil {
-			return -1, fmt.Errorf("failed to configure terminal: %v", err)
+		if err := s.runSuspended(ctx, func(ctx context.Context) error {
+			s.dashboard = runTUIActionIntoDashboard(ctx, s.r, s.profilesFile, s.dashboard)
+			if err := s.refresh(ctx); err != nil {
+				return fmt.Errorf("failed to refresh TUI dashboard: %v", err)
+			}
+			return nil
+		}); err != nil {
+			return -1, err
 		}
 	case tuiActionCheck:
-		if err := s.suspendRaw(); err != nil {
-			return -1, fmt.Errorf("failed to configure terminal: %v", err)
-		}
-		s.dashboard = runTUICheckIntoDashboard(ctx, s.r, s.profilesFile, s.dashboard)
-		if err := s.refresh(ctx); err != nil {
-			return -1, fmt.Errorf("failed to refresh TUI dashboard: %v", err)
-		}
-		if err := s.resumeRaw(); err != nil {
-			return -1, fmt.Errorf("failed to configure terminal: %v", err)
+		if err := s.runSuspended(ctx, func(ctx context.Context) error {
+			s.dashboard = runTUICheckIntoDashboard(ctx, s.r, s.profilesFile, s.dashboard)
+			if err := s.refresh(ctx); err != nil {
+				return fmt.Errorf("failed to refresh TUI dashboard: %v", err)
+			}
+			return nil
+		}); err != nil {
+			return -1, err
 		}
 	case tuiActionCreate:
 		if err := s.runProfileModal(ctx, "", false); err != nil {
@@ -326,6 +324,18 @@ func (s *tuiSession) handleAction(ctx context.Context, action tuiAction) (int, e
 		return -1, nil
 	}
 	return -1, s.render()
+}
+
+func (s *tuiSession) runSuspended(ctx context.Context, fn func(context.Context) error) (err error) {
+	if err := s.suspendRaw(); err != nil {
+		return fmt.Errorf("failed to configure terminal: %v", err)
+	}
+	defer func() {
+		if resumeErr := s.resumeRaw(); err == nil && resumeErr != nil {
+			err = fmt.Errorf("failed to configure terminal: %v", resumeErr)
+		}
+	}()
+	return fn(ctx)
 }
 
 func (s *tuiSession) refresh(ctx context.Context) error {

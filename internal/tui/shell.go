@@ -103,7 +103,11 @@ func dashboardLinesWidth(d Dashboard, width int) []string {
 	)...)
 
 	lines = append(lines, boxLinesExact("Activity", renderActivityPanel(d.Activity), panelWidth(width))...)
-	lines = append(lines, "", fmt.Sprintf("%sUse ↑/↓ to select a profile. Press b to backup/init, c to check, n to create, e to edit, d to delete, q to quit.%s", ui.Dim, ui.Reset))
+	footer := fmt.Sprintf("%sUse ↑/↓ to select a profile. Press b to backup/init, c to check, n to create, e to edit, d to delete, q to quit.%s", ui.Dim, ui.Reset)
+	if width > 0 {
+		footer = truncateVisible(footer, width)
+	}
+	lines = append(lines, "", footer)
 	return lines
 }
 

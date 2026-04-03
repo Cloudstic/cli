@@ -61,7 +61,7 @@ jobs:
       - name: Run E2E Tests
         run: |
           set -o pipefail
-          E2E_COVERAGE_OUT=e2e_coverage.out go test -v -json -count=1 ./e2e/ | tee -a test-output.json
+          E2E_COVERAGE_OUT="$PWD/e2e_coverage.out" go test -v -json -count=1 ./e2e/ | tee -a test-output.json
       - name: Test Report
         uses: dorny/test-reporter@v3
         if: always()

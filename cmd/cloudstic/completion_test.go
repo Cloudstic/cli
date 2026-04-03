@@ -134,7 +134,7 @@ func TestCompletionFish(t *testing.T) {
 		"-a passwd -d 'Change the repository password'",
 		"-l new-password",
 		// Global flags
-		"complete -c cloudstic -l store -x",
+		"complete -c cloudstic -o store -l store -x",
 		"complete -c cloudstic -l verbose",
 		// Command-specific flags
 		"__fish_seen_subcommand_from init",

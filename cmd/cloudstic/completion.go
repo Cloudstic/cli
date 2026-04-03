@@ -59,6 +59,7 @@ _cloudstic() {
         case "${words[i]}" in
             -*)
                 # skip flags and their values
+                case "${words[i]}" in
 					-store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-source-sftp-known-hosts|-store|-store-sftp-password|-store-sftp-key|-store-sftp-known-hosts|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-all-profiles|-auth-ref|-google-credentials|-google-credentials-ref|-google-credentials-json|-google-token-file|-google-token-ref|-onedrive-client-id|-onedrive-token-file|-onedrive-token-ref|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account|-xattr-namespaces)
 						((i++)) ;;
 				esac
@@ -72,6 +73,17 @@ _cloudstic() {
 
     # Complete subcommand
     if [[ -z "$cmd" ]]; then
+        case "$prev" in
+            -profile)
+                COMPREPLY=($(compgen -W "$(_cloudstic_query profile-names "$cur" "${words[@]:1:$((cword-1))}")" -- "$cur"))
+                return ;;
+            -store)
+                COMPREPLY=($(compgen -W "local: s3: b2: sftp://" -- "$cur"))
+                return ;;
+            -source-sftp-key|-store-sftp-key|-output|-profiles-file)
+                _filedir
+                return ;;
+        esac
         COMPREPLY=($(compgen -W "$commands" -- "$cur"))
         return
     fi
@@ -241,12 +253,6 @@ _cloudstic() {
             cmd_flags="" ;;
     esac
 
-    if [[ "$cur" == -* ]]; then
-        COMPREPLY=($(compgen -W "$cmd_flags $global_flags" -- "$cur"))
-        return
-    fi
-
-    # Value completions for specific flags
     case "$prev" in
         -profile)
             COMPREPLY=($(compgen -W "$(_cloudstic_query profile-names "$cur" "${words[@]:1:$((cword-1))}")" -- "$cur"))
@@ -266,6 +272,11 @@ _cloudstic() {
             _filedir
             return ;;
     esac
+
+    if [[ -z "$cur" || "$cur" == -* ]]; then
+        COMPREPLY=($(compgen -W "$cmd_flags $global_flags" -- "$cur"))
+        return
+    fi
 }
 
 complete -F _cloudstic cloudstic
@@ -779,9 +790,9 @@ complete -c cloudstic -n __fish_use_subcommand -a version -d 'Print version info
 complete -c cloudstic -n __fish_use_subcommand -a help -d 'Show usage information'
 
 # Global flags (available for all subcommands)
-complete -c cloudstic -l store -x -d 'Storage backend URI (local:<path>, s3:<bucket>[/<prefix>], b2:<bucket>[/<prefix>], sftp://[user@]host[:port]/<path>)'
-complete -c cloudstic -l profile -x -a '(__fish_cloudstic_query profile-names)' -d 'Profile name from profiles.yaml'
-complete -c cloudstic -l profiles-file -r -F -d 'Path to profiles YAML file'
+complete -c cloudstic -o store -l store -x -a 'local: s3: b2: sftp://' -d 'Storage backend URI (local:<path>, s3:<bucket>[/<prefix>], b2:<bucket>[/<prefix>], sftp://[user@]host[:port]/<path>)'
+complete -c cloudstic -o profile -l profile -x -a '(__fish_cloudstic_query profile-names)' -d 'Profile name from profiles.yaml'
+complete -c cloudstic -o profiles-file -l profiles-file -r -F -d 'Path to profiles YAML file'
 complete -c cloudstic -l s3-endpoint -x -d 'S3 compatible endpoint URL'
 complete -c cloudstic -l s3-region -x -d 'S3 region'
 complete -c cloudstic -l s3-profile -x -d 'AWS shared config profile for S3 auth'
@@ -815,11 +826,11 @@ complete -c cloudstic -n '__fish_seen_subcommand_from init' -l no-encryption -d 
 complete -c cloudstic -n '__fish_seen_subcommand_from init' -l adopt-slots -d 'Adopt existing key slots'
 
 # backup
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l source -x -a 'local: sftp:// gdrive gdrive-changes onedrive onedrive-changes' -d 'Source URI'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l profile -x -d 'Backup profile name'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l all-profiles -d 'Run all enabled backup profiles'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l auth-ref -x -a '(__fish_cloudstic_query auth-names)' -d 'Use named auth entry from profiles.yaml'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l profiles-file -r -F -d 'Path to profiles YAML file'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -o source -l source -x -a 'local: sftp:// gdrive gdrive-changes onedrive onedrive-changes' -d 'Source URI'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -o profile -l profile -x -a '(__fish_cloudstic_query profile-names)' -d 'Backup profile name'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -o all-profiles -l all-profiles -d 'Run all enabled backup profiles'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -o auth-ref -l auth-ref -x -a '(__fish_cloudstic_query auth-names)' -d 'Use named auth entry from profiles.yaml'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -o profiles-file -l profiles-file -r -F -d 'Path to profiles YAML file'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-native-files -d 'Exclude Google-native files'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l google-credentials -r -F -d 'Google service account credentials JSON'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l google-credentials-ref -x -d 'Secret reference to Google credentials'
@@ -831,7 +842,7 @@ complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l onedrive-token-
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l onedrive-token-ref -x -d 'Secret reference to OneDrive OAuth token'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l tag -x -d 'Tag for the snapshot'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l ignore-empty-snapshot -d 'Skip creating a new snapshot when nothing changed'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l dry-run -d 'Scan without writing'
+complete -c cloudstic -n '__fish_seen_subcommand_from backup' -o dry-run -l dry-run -d 'Scan without writing'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-mode -d 'Skip POSIX mode/uid/gid/btime/flags'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-flags -d 'Skip file flags collection'
 complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-xattrs -d 'Skip extended attribute collection'

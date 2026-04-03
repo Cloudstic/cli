@@ -17,7 +17,46 @@ type Dashboard struct {
 	AuthCount       int
 	SelectedProfile string
 	Activity        ActivityPanel
+	Modal           *Modal
 	Profiles        []ProfileCard
+}
+
+type ModalKind string
+
+const (
+	ModalKindProfileForm ModalKind = "profile_form"
+	ModalKindConfirm     ModalKind = "confirm"
+)
+
+type ModalFieldKind string
+
+const (
+	ModalFieldText   ModalFieldKind = "text"
+	ModalFieldSelect ModalFieldKind = "select"
+)
+
+type Modal struct {
+	Kind        ModalKind
+	Title       string
+	Subtitle    string
+	Error       string
+	ErrorField  string
+	Hint        string
+	Message     []string
+	Fields      []ModalField
+	Selected    int
+	SubmitLabel string
+	CancelLabel string
+}
+
+type ModalField struct {
+	Key      string
+	Label    string
+	Kind     ModalFieldKind
+	Value    string
+	Options  []string
+	Required bool
+	Disabled bool
 }
 
 type ActivityStatus string

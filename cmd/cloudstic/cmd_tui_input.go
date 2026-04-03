@@ -17,6 +17,9 @@ const (
 	tuiActionDown
 	tuiActionRun
 	tuiActionCheck
+	tuiActionCreate
+	tuiActionEdit
+	tuiActionDelete
 	tuiActionQuit
 )
 
@@ -81,6 +84,12 @@ func readTUIAction(r io.ByteReader) (tuiAction, error) {
 		return tuiActionRun, nil
 	case 'c', 'C':
 		return tuiActionCheck, nil
+	case 'n', 'N':
+		return tuiActionCreate, nil
+	case 'e', 'E':
+		return tuiActionEdit, nil
+	case 'd', 'D':
+		return tuiActionDelete, nil
 	case 0x1b:
 		next, err := r.ReadByte()
 		if err != nil {

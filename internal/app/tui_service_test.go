@@ -183,3 +183,63 @@ func TestTUIServiceRunProfileCheckRejectsUninitializedRepo(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestTUIServiceSaveProfilePersistsConfig(t *testing.T) {
+	svc := NewTUIService(nil)
+	svc.loadProfiles = func(string) (*cloudstic.ProfilesConfig, error) {
+		return &cloudstic.ProfilesConfig{
+			Version: 1,
+			Stores: map[string]cloudstic.ProfileStore{
+				"remote": {URI: "s3:bucket"},
+			},
+			Profiles: map[string]cloudstic.BackupProfile{},
+		}, nil
+	}
+	var saved *cloudstic.ProfilesConfig
+	svc.saveProfiles = func(_ string, cfg *cloudstic.ProfilesConfig) error {
+		saved = cfg
+		return nil
+	}
+
+	err := svc.SaveProfile("profiles.yaml", "docs", cloudstic.BackupProfile{
+		Source: "local:/docs",
+		Store:  "remote",
+	})
+	if err != nil {
+		t.Fatalf("SaveProfile: %v", err)
+	}
+	if saved == nil {
+		t.Fatalf("saveProfiles was not called")
+	}
+	if got := saved.Profiles["docs"].Source; got != "local:/docs" {
+		t.Fatalf("saved profile source=%q want local:/docs", got)
+	}
+}
+
+func TestTUIServiceDeleteProfileRemovesProfile(t *testing.T) {
+	svc := NewTUIService(nil)
+	svc.loadProfiles = func(string) (*cloudstic.ProfilesConfig, error) {
+		return &cloudstic.ProfilesConfig{
+			Version: 1,
+			Profiles: map[string]cloudstic.BackupProfile{
+				"docs": {Source: "local:/docs", Store: "remote"},
+			},
+		}, nil
+	}
+	var saved *cloudstic.ProfilesConfig
+	svc.saveProfiles = func(_ string, cfg *cloudstic.ProfilesConfig) error {
+		saved = cfg
+		return nil
+	}
+
+	err := svc.DeleteProfile("profiles.yaml", "docs")
+	if err != nil {
+		t.Fatalf("DeleteProfile: %v", err)
+	}
+	if saved == nil {
+		t.Fatalf("saveProfiles was not called")
+	}
+	if _, ok := saved.Profiles["docs"]; ok {
+		t.Fatalf("profile docs still present after delete")
+	}
+}

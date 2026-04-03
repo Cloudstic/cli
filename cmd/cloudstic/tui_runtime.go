@@ -166,8 +166,10 @@ func (s *tuiSession) run(ctx context.Context) int {
 	}
 
 	eventCh := make(chan tuiAction, 32)
+	readPermitCh := make(chan struct{}, 1)
 	readErrCh := make(chan error, 1)
-	go s.readInput(eventCh, readErrCh)
+	go s.readInput(readPermitCh, eventCh, readErrCh)
+	readPermitCh <- struct{}{}
 
 	resizeCh := make(chan os.Signal, 1)
 	tuiNotifyResize(resizeCh)
@@ -196,6 +198,7 @@ func (s *tuiSession) run(ctx context.Context) int {
 			if code >= 0 {
 				return code
 			}
+			readPermitCh <- struct{}{}
 		}
 	}
 }
@@ -253,9 +256,9 @@ func (s *tuiSession) render() error {
 	return renderTUIScreenWidth(s.r.out, s.dashboard, tuiWidth(s.r))
 }
 
-func (s *tuiSession) readInput(eventCh chan<- tuiAction, readErrCh chan<- error) {
+func (s *tuiSession) readInput(readPermitCh <-chan struct{}, eventCh chan<- tuiAction, readErrCh chan<- error) {
 	defer close(eventCh)
-	for {
+	for range readPermitCh {
 		event, err := readTUIAction(s.r.lineReader())
 		if err != nil {
 			if err != io.EOF {
@@ -296,6 +299,28 @@ func (s *tuiSession) handleAction(ctx context.Context, action tuiAction) (int, e
 		}
 		if err := s.resumeRaw(); err != nil {
 			return -1, fmt.Errorf("failed to configure terminal: %v", err)
+		}
+	case tuiActionCreate:
+		if err := s.runProfileModal(ctx, "", false); err != nil {
+			s.dashboard.Activity = managementActivity(tui.ActivityStatusError, "Create profile", err.Error())
+		}
+	case tuiActionEdit:
+		profile, ok := selectedTUIProfile(s.dashboard)
+		if !ok {
+			s.dashboard.Activity = managementActivity(tui.ActivityStatusError, "Edit profile", "no profile selected")
+		} else {
+			if err := s.runProfileModal(ctx, profile.Name, true); err != nil {
+				s.dashboard.Activity = managementActivity(tui.ActivityStatusError, "Edit profile", err.Error())
+			}
+		}
+	case tuiActionDelete:
+		profile, ok := selectedTUIProfile(s.dashboard)
+		if !ok {
+			s.dashboard.Activity = managementActivity(tui.ActivityStatusError, "Delete profile", "no profile selected")
+		} else {
+			if err := s.runDeleteModal(ctx, profile); err != nil {
+				s.dashboard.Activity = managementActivity(tui.ActivityStatusError, "Delete profile", err.Error())
+			}
 		}
 	default:
 		return -1, nil

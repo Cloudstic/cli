@@ -20,12 +20,14 @@ type TUIBackend interface {
 
 type TUIService struct {
 	loadProfiles func(string) (*cloudstic.ProfilesConfig, error)
+	saveProfiles func(string, *cloudstic.ProfilesConfig) error
 	backend      TUIBackend
 }
 
 func NewTUIService(backend TUIBackend) *TUIService {
 	return &TUIService{
 		loadProfiles: loadProfilesConfig,
+		saveProfiles: cloudstic.SaveProfilesFile,
 		backend:      backend,
 	}
 }
@@ -85,6 +87,41 @@ func (s *TUIService) RunProfileCheck(ctx context.Context, profilesFile string, p
 		return fmt.Errorf("check action is not configured")
 	}
 	return s.backend.CheckProfile(ctx, profilesFile, profile.Name, profileCfg, cfg, reporter)
+}
+
+func (s *TUIService) SaveProfile(profilesFile, name string, profile cloudstic.BackupProfile) error {
+	cfg, err := s.loadConfig(profilesFile)
+	if err != nil {
+		return fmt.Errorf("load profiles: %w", err)
+	}
+	cfg.Profiles[name] = profile
+	save := s.saveProfiles
+	if save == nil {
+		save = cloudstic.SaveProfilesFile
+	}
+	if err := save(profilesFile, cfg); err != nil {
+		return fmt.Errorf("save profiles: %w", err)
+	}
+	return nil
+}
+
+func (s *TUIService) DeleteProfile(profilesFile, name string) error {
+	cfg, err := s.loadConfig(profilesFile)
+	if err != nil {
+		return fmt.Errorf("load profiles: %w", err)
+	}
+	if _, ok := cfg.Profiles[name]; !ok {
+		return fmt.Errorf("unknown profile %q", name)
+	}
+	delete(cfg.Profiles, name)
+	save := s.saveProfiles
+	if save == nil {
+		save = cloudstic.SaveProfilesFile
+	}
+	if err := save(profilesFile, cfg); err != nil {
+		return fmt.Errorf("save profiles: %w", err)
+	}
+	return nil
 }
 
 func (s *TUIService) loadConfig(profilesFile string) (*cloudstic.ProfilesConfig, error) {

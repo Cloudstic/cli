@@ -12,6 +12,7 @@ import (
 type runner struct {
 	out               io.Writer
 	errOut            io.Writer
+	stdoutFile        *os.File
 	client            cloudsticClient
 	noPrompt          bool
 	stdin             *os.File
@@ -23,6 +24,7 @@ func newRunner() *runner {
 	return &runner{
 		out:               os.Stdout,
 		errOut:            os.Stderr,
+		stdoutFile:        os.Stdout,
 		noPrompt:          hasGlobalFlag("no-prompt"),
 		stdin:             os.Stdin,
 		runInteractiveCmd: defaultRunInteractiveCmd,

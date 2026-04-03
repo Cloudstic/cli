@@ -11,12 +11,21 @@ import (
 	xterm "golang.org/x/term"
 )
 
+var isTerminalFunc = term.IsTerminal
+
 func (r *runner) canPrompt() bool {
 	stdin := r.stdin
 	if stdin == nil {
-		stdin = os.Stdin
+		return false
 	}
-	return !r.noPrompt && term.IsTerminal(stdin.Fd()) && term.IsTerminal(os.Stdout.Fd())
+	stdout := r.stdoutFile
+	if stdout == nil {
+		return false
+	}
+	if isTerminalFunc == nil {
+		return !r.noPrompt
+	}
+	return !r.noPrompt && isTerminalFunc(stdin.Fd()) && isTerminalFunc(stdout.Fd())
 }
 
 func (r *runner) promptLine(ctx context.Context, label, defaultValue string) (string, error) {

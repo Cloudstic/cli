@@ -17,6 +17,7 @@ Cloudstic is a content-addressable backup tool that creates encrypted, deduplica
   - [profile](#profile)
   - [store](#store)
   - [setup](#setup)
+  - [tui](#tui)
   - [restore](#restore)
   - [list](#list)
   - [ls](#ls)
@@ -581,6 +582,34 @@ The preview uses OS-aware local folder suggestions and portable-drive discovery
 to generate a review-first profile plan. The command is interactive by default.
 Use `-dry-run` for a side-effect-free preview or `-yes` to accept the proposed
 plan without a confirmation prompt.
+
+---
+
+### tui
+
+Launch the interactive terminal dashboard for configured profiles.
+
+```bash
+# Launch the dashboard
+cloudstic tui
+
+# Use a specific profiles file
+cloudstic tui -profiles-file ~/.config/cloudstic/profiles.yaml
+```
+
+The TUI is intended for interactive operator workflows. It shows:
+
+- configured profiles and their current readiness
+- the selected profile's source, store, auth, and latest backup metadata
+- recent activity for in-TUI actions
+
+Current controls:
+
+- `↑` / `↓` or `j` / `k`: move selection
+- `b`: run `backup` for the selected profile, or `init` if its store is not initialized
+- `q`: quit
+
+`cloudstic tui` requires an interactive terminal. It is not intended for scripts or CI.
 
 ---
 

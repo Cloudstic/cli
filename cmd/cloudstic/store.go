@@ -46,6 +46,10 @@ func (g *globalFlags) applyDebug(s store.ObjectStore) store.ObjectStore {
 }
 
 func (g *globalFlags) openClient(ctx context.Context) (*cloudstic.Client, error) {
+	return g.openClientWithReporter(ctx, nil)
+}
+
+func (g *globalFlags) openClientWithReporter(ctx context.Context, reporterOverride cloudstic.Reporter) (*cloudstic.Client, error) {
 	if err := g.applyProfileStoreOverrides(); err != nil {
 		return nil, err
 	}
@@ -57,15 +61,17 @@ func (g *globalFlags) openClient(ctx context.Context) (*cloudstic.Client, error)
 
 	packfileEnabled := g.disablePackfile == nil || !*g.disablePackfile
 
-	var reporter cloudstic.Reporter
-	if *g.quiet || g.jsonEnabled() {
-		reporter = ui.NewNoOpReporter()
-	} else {
-		cr := ui.NewConsoleReporter()
-		if g.debugLog != nil {
-			cr.SetLogWriter(g.debugLog)
+	reporter := reporterOverride
+	if reporter == nil {
+		if *g.quiet || g.jsonEnabled() {
+			reporter = ui.NewNoOpReporter()
+		} else {
+			cr := ui.NewConsoleReporter()
+			if g.debugLog != nil {
+				cr.SetLogWriter(g.debugLog)
+			}
+			reporter = cr
 		}
-		reporter = cr
 	}
 
 	kc, err := g.buildKeychain(ctx)

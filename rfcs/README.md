@@ -16,3 +16,4 @@
 - [RFC 0014: Workstation Onboarding and Profile Scaffolding](0014-workstation-onboarding-and-profile-scaffolding.md)
 - [RFC 0015: FileMeta Path Normalization](0015-filemeta-path-normalization.md)
 - [RFC 0016: Secure Auth Material Storage](0016-secure-auth-material-storage.md)
+- [RFC 0017: Snapshot Copy Between Repositories](0017-snapshot-copy-between-repositories.md)

@@ -1,6 +1,6 @@
 # RFC 0011: Profile Credential Storage Backends
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Date:** 2026-03-15
 - **Affects:** `internal/engine/profiles`, `cmd/cloudstic/{backup,store,profile,auth}`, docs
 

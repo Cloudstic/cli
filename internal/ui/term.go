@@ -8,11 +8,13 @@ import (
 )
 
 const (
-	Bold  = logger.ColorBold
-	Dim   = logger.ColorDim
-	Cyan  = logger.ColorCyan
-	Green = logger.ColorGreen
-	Reset = logger.ColorReset
+	Bold   = logger.ColorBold
+	Dim    = logger.ColorDim
+	Red    = logger.ColorRed
+	Cyan   = logger.ColorCyan
+	Green  = logger.ColorGreen
+	Yellow = logger.ColorYellow
+	Reset  = logger.ColorReset
 )
 
 // TermWriter provides helpers for styled terminal output.

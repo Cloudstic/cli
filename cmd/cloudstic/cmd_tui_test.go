@@ -362,6 +362,65 @@ func TestRunTUI_CheckActionRunsSelectedProfileCheck(t *testing.T) {
 	}
 }
 
+func TestRunTUI_CreateActionUsesModalAndSavesProfile(t *testing.T) {
+	stubTUITestHooks(t)
+
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"cloudstic", "tui"}
+
+	dir := t.TempDir()
+	profilesPath := dir + "/profiles.yaml"
+	if err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
+		Version: 1,
+		Stores: map[string]cloudstic.ProfileStore{
+			"remote": {URI: "s3:bucket/test"},
+		},
+		Profiles: map[string]cloudstic.BackupProfile{
+			"docs": {Source: "local:/docs", Store: "remote"},
+		},
+	}); err != nil {
+		t.Fatalf("SaveProfilesFile: %v", err)
+	}
+
+	readEnd, writeEnd, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer func() { _ = readEnd.Close() }()
+	if _, err := writeEnd.WriteString("nphotos\t\t/photos\rq"); err != nil {
+		t.Fatalf("WriteString: %v", err)
+	}
+	_ = writeEnd.Close()
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	r := &runner{
+		out:        &out,
+		errOut:     &errOut,
+		stdoutFile: os.Stdout,
+		stdin:      readEnd,
+		lineIn:     bufio.NewReader(readEnd),
+	}
+	oldEnv := os.Getenv("CLOUDSTIC_PROFILES_FILE")
+	t.Cleanup(func() { _ = os.Setenv("CLOUDSTIC_PROFILES_FILE", oldEnv) })
+	_ = os.Setenv("CLOUDSTIC_PROFILES_FILE", profilesPath)
+	if code := r.runTUI(context.Background()); code != 0 {
+		t.Fatalf("code=%d err=%s", code, errOut.String())
+	}
+	cfg, err := cloudstic.LoadProfilesFile(profilesPath)
+	if err != nil {
+		t.Fatalf("LoadProfilesFile: %v", err)
+	}
+	if got := cfg.Profiles["photos"].Source; got != "local:/photos" {
+		t.Fatalf("saved profile source=%q want local:/photos", got)
+	}
+	if !strings.Contains(out.String(), "saved \"photos\"") {
+		t.Fatalf("expected create activity in output, got:\n%s", out.String())
+	}
+}
+
 func TestReadTUIAction_ParsesCSIArrowKeys(t *testing.T) {
 	ev, err := readTUIAction(bufio.NewReader(bytes.NewBufferString("\x1b[A")))
 	if err != nil {
@@ -423,6 +482,42 @@ func TestReadTUIAction_ParsesCheckShortcut(t *testing.T) {
 	}
 	if ev != tuiActionCheck {
 		t.Fatalf("check action=%v want %v", ev, tuiActionCheck)
+	}
+}
+
+func TestReadTUIAction_ParsesManagementShortcuts(t *testing.T) {
+	ev, err := readTUIAction(bufio.NewReader(bytes.NewBufferString("n")))
+	if err != nil {
+		t.Fatalf("readTUIAction create: %v", err)
+	}
+	if ev != tuiActionCreate {
+		t.Fatalf("create action=%v want %v", ev, tuiActionCreate)
+	}
+
+	ev, err = readTUIAction(bufio.NewReader(bytes.NewBufferString("e")))
+	if err != nil {
+		t.Fatalf("readTUIAction edit: %v", err)
+	}
+	if ev != tuiActionEdit {
+		t.Fatalf("edit action=%v want %v", ev, tuiActionEdit)
+	}
+
+	ev, err = readTUIAction(bufio.NewReader(bytes.NewBufferString("d")))
+	if err != nil {
+		t.Fatalf("readTUIAction delete: %v", err)
+	}
+	if ev != tuiActionDelete {
+		t.Fatalf("delete action=%v want %v", ev, tuiActionDelete)
+	}
+}
+
+func TestReadTUIModalInput_ParsesStandaloneEscape(t *testing.T) {
+	ev, err := readTUIModalInput(bufio.NewReader(bytes.NewBufferString("\x1b")))
+	if err != nil {
+		t.Fatalf("readTUIModalInput escape: %v", err)
+	}
+	if ev.Kind != tuiModalInputEscape {
+		t.Fatalf("escape kind=%v want %v", ev.Kind, tuiModalInputEscape)
 	}
 }
 
@@ -541,6 +636,104 @@ func TestTUISession_HandleActionRunRefreshesDashboard(t *testing.T) {
 	}
 }
 
+func TestTUISession_HandleActionCreateRefreshesDashboard(t *testing.T) {
+	stubTUITestHooks(t)
+
+	oldBuild := tuiBuildDashboard
+	t.Cleanup(func() { tuiBuildDashboard = oldBuild })
+
+	dir := t.TempDir()
+	profilesPath := dir + "/profiles.yaml"
+	if err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
+		Version: 1,
+		Stores: map[string]cloudstic.ProfileStore{
+			"remote": {URI: "s3:bucket/test"},
+		},
+		Profiles: map[string]cloudstic.BackupProfile{
+			"docs": {Source: "local:/docs", Store: "remote"},
+		},
+	}); err != nil {
+		t.Fatalf("SaveProfilesFile: %v", err)
+	}
+	tuiBuildDashboard = func(context.Context, string) (tui.Dashboard, error) {
+		return defaultBuildTUIDashboard(context.Background(), profilesPath)
+	}
+
+	readEnd, writeEnd, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer func() { _ = readEnd.Close() }()
+	if _, err := writeEnd.WriteString("photos\t\t/photos\r"); err != nil {
+		t.Fatalf("WriteString: %v", err)
+	}
+	_ = writeEnd.Close()
+
+	var out strings.Builder
+	s := newTUISession(&runner{out: &out, stdoutFile: os.Stdout, stdin: readEnd, lineIn: bufio.NewReader(readEnd)}, profilesPath, tui.Dashboard{})
+	if _, err := s.handleAction(context.Background(), tuiActionCreate); err != nil {
+		t.Fatalf("handleAction(create): %v", err)
+	}
+	if s.dashboard.SelectedProfile != "photos" {
+		t.Fatalf("selected profile=%q want photos", s.dashboard.SelectedProfile)
+	}
+	if s.dashboard.Activity.Status != tui.ActivityStatusSuccess {
+		t.Fatalf("unexpected activity: %+v", s.dashboard.Activity)
+	}
+}
+
+func TestTUISession_HandleActionDeleteRefreshesDashboard(t *testing.T) {
+	stubTUITestHooks(t)
+
+	oldBuild := tuiBuildDashboard
+	t.Cleanup(func() { tuiBuildDashboard = oldBuild })
+
+	dir := t.TempDir()
+	profilesPath := dir + "/profiles.yaml"
+	if err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
+		Version: 1,
+		Stores: map[string]cloudstic.ProfileStore{
+			"remote": {URI: "s3:bucket/test"},
+		},
+		Profiles: map[string]cloudstic.BackupProfile{
+			"docs":   {Source: "local:/docs", Store: "remote"},
+			"photos": {Source: "local:/photos", Store: "remote"},
+		},
+	}); err != nil {
+		t.Fatalf("SaveProfilesFile: %v", err)
+	}
+	tuiBuildDashboard = func(context.Context, string) (tui.Dashboard, error) {
+		return defaultBuildTUIDashboard(context.Background(), profilesPath)
+	}
+
+	readEnd, writeEnd, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer func() { _ = readEnd.Close() }()
+	if _, err := writeEnd.WriteString("\r"); err != nil {
+		t.Fatalf("WriteString: %v", err)
+	}
+	_ = writeEnd.Close()
+
+	s := newTUISession(&runner{out: io.Discard, stdoutFile: os.Stdout, stdin: os.Stdin}, "profiles.yaml", tui.Dashboard{
+		SelectedProfile: "docs",
+		Profiles:        []tui.ProfileCard{{Name: "docs", Source: "local:/docs", StoreRef: "remote", Enabled: true, Status: tui.ProfileStatusReady}},
+	})
+	s.r.stdin = readEnd
+	s.r.lineIn = bufio.NewReader(readEnd)
+	s.profilesFile = profilesPath
+	if _, err := s.handleAction(context.Background(), tuiActionDelete); err != nil {
+		t.Fatalf("handleAction(delete): %v", err)
+	}
+	if s.dashboard.SelectedProfile != "photos" {
+		t.Fatalf("selected profile=%q want photos", s.dashboard.SelectedProfile)
+	}
+	if s.dashboard.Activity.Status != tui.ActivityStatusSuccess {
+		t.Fatalf("unexpected activity: %+v", s.dashboard.Activity)
+	}
+}
+
 func TestTUISession_RefreshPreservesSelectionAndActivity(t *testing.T) {
 	oldBuild := tuiBuildDashboard
 	t.Cleanup(func() { tuiBuildDashboard = oldBuild })
@@ -597,9 +790,11 @@ func TestReadInput_ClosesChannelOnEOF(t *testing.T) {
 	_ = writeEnd.Close()
 
 	s := newTUISession(&runner{stdin: readEnd, lineIn: bufio.NewReader(readEnd)}, "", tui.Dashboard{})
+	readPermitCh := make(chan struct{}, 1)
 	eventCh := make(chan tuiAction, 2)
 	errCh := make(chan error, 1)
-	s.readInput(eventCh, errCh)
+	close(readPermitCh)
+	s.readInput(readPermitCh, eventCh, errCh)
 
 	if _, ok := <-eventCh; ok {
 		t.Fatalf("expected event channel to be closed")

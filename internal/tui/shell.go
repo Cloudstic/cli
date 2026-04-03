@@ -26,43 +26,26 @@ func RenderDashboard(w io.Writer, d Dashboard) error {
 }
 
 func RenderDashboardWidth(w io.Writer, d Dashboard, width int) error {
-	if _, err := fmt.Fprintf(w, "%s%s%s\n", ui.Bold, "Cloudstic TUI", ui.Reset); err != nil {
-		return err
+	lines := dashboardLinesWidth(d, width)
+	dimBackground := d.Modal != nil
+	for _, line := range lines {
+		if dimBackground {
+			line = dimmedLine(line)
+		}
+		if _, err := fmt.Fprintln(w, line); err != nil {
+			return err
+		}
 	}
-	if _, err := fmt.Fprintf(w, "%sOperator dashboard for profiles, stores, and auth.%s\n", ui.Dim, ui.Reset); err != nil {
-		return err
+	if d.Modal != nil {
+		if err := renderModalOverlay(w, *d.Modal, width, len(lines)); err != nil {
+			return err
+		}
 	}
-	if _, err := fmt.Fprintln(w); err != nil {
-		return err
-	}
+	return nil
+}
 
-	stats := []string{
-		fmt.Sprintf("%sProfiles%s %d", ui.Cyan, ui.Reset, d.ProfileCount),
-		fmt.Sprintf("%sStores%s %d", ui.Cyan, ui.Reset, d.StoreCount),
-		fmt.Sprintf("%sAuth%s %d", ui.Cyan, ui.Reset, d.AuthCount),
-	}
-	if err := renderBoxExact(w, "Overview", []string{strings.Join(stats, "   ")}, panelWidth(width)); err != nil {
-		return err
-	}
-
-	profilesWidth, detailWidth := splitPaneWidths(width)
-	leftLines := renderProfileList(d)
-	rightLines := renderSelectedProfile(d)
-	leftLines, rightLines = equalizePaneHeights(leftLines, rightLines)
-	if err := renderColumns(w,
-		boxLinesExact("Profiles", leftLines, profilesWidth),
-		boxLinesExact("Selection", rightLines, detailWidth),
-		width,
-	); err != nil {
-		return err
-	}
-
-	if err := renderBoxExact(w, "Activity", renderActivityPanel(d.Activity), panelWidth(width)); err != nil {
-		return err
-	}
-
-	_, err := fmt.Fprintf(w, "\n%sUse ↑/↓ to select a profile. Press b to backup/init, c to check, q to quit.%s\n", ui.Dim, ui.Reset)
-	return err
+func dimmedLine(line string) string {
+	return ui.Dim + strings.ReplaceAll(line, ui.Reset, ui.Reset+ui.Dim) + ui.Reset
 }
 
 func LayoutDashboardWidth(d Dashboard, width int) DashboardLayout {
@@ -96,13 +79,32 @@ func LayoutDashboardWidth(d Dashboard, width int) DashboardLayout {
 	return layout
 }
 
-func renderBoxExact(w io.Writer, title string, lines []string, width int) error {
-	for _, line := range boxLinesExact(title, lines, width) {
-		if _, err := fmt.Fprintln(w, line); err != nil {
-			return err
-		}
+func dashboardLinesWidth(d Dashboard, width int) []string {
+	lines := []string{
+		fmt.Sprintf("%s%s%s", ui.Bold, "Cloudstic TUI", ui.Reset),
+		fmt.Sprintf("%sOperator dashboard for profiles, stores, and auth.%s", ui.Dim, ui.Reset),
+		"",
 	}
-	return nil
+
+	stats := []string{
+		fmt.Sprintf("%sProfiles%s %d", ui.Cyan, ui.Reset, d.ProfileCount),
+		fmt.Sprintf("%sStores%s %d", ui.Cyan, ui.Reset, d.StoreCount),
+		fmt.Sprintf("%sAuth%s %d", ui.Cyan, ui.Reset, d.AuthCount),
+	}
+	lines = append(lines, boxLinesExact("Overview", []string{strings.Join(stats, "   ")}, panelWidth(width))...)
+
+	profilesWidth, detailWidth := splitPaneWidths(width)
+	leftLines := renderProfileList(d)
+	rightLines := renderSelectedProfile(d)
+	leftLines, rightLines = equalizePaneHeights(leftLines, rightLines)
+	lines = append(lines, renderColumnLines(
+		boxLinesExact("Profiles", leftLines, profilesWidth),
+		boxLinesExact("Selection", rightLines, detailWidth),
+	)...)
+
+	lines = append(lines, boxLinesExact("Activity", renderActivityPanel(d.Activity), panelWidth(width))...)
+	lines = append(lines, "", fmt.Sprintf("%sUse ↑/↓ to select a profile. Press b to backup/init, c to check, n to create, e to edit, d to delete, q to quit.%s", ui.Dim, ui.Reset))
+	return lines
 }
 
 func boxLinesExact(title string, lines []string, width int) []string {
@@ -134,21 +136,20 @@ func boxLinesExact(title string, lines []string, width int) []string {
 	return out
 }
 
-func renderColumns(w io.Writer, left, right []string, maxWidth int) error {
+func renderColumnLines(left, right []string) []string {
 	leftWidth := longestVisible(left)
 	rightWidth := longestVisible(right)
 	height := len(left)
 	if len(right) > height {
 		height = len(right)
 	}
+	lines := make([]string, 0, height)
 	for i := 0; i < height; i++ {
 		leftLine := paddedLine(left, i, leftWidth)
 		rightLine := paddedLine(right, i, rightWidth)
-		if _, err := fmt.Fprintf(w, "%s  %s\n", leftLine, rightLine); err != nil {
-			return err
-		}
+		lines = append(lines, fmt.Sprintf("%s  %s", leftLine, rightLine))
 	}
-	return nil
+	return lines
 }
 
 func renderProfileList(d Dashboard) []string {
@@ -227,7 +228,151 @@ func renderSelectedProfile(d Dashboard) []string {
 	for _, action := range profile.Actions {
 		lines = append(lines, fmt.Sprintf("%sAction%s  %s", ui.Dim, ui.Reset, actionLabel(action)))
 	}
+	lines = append(lines, fmt.Sprintf("%sAction%s  Press e to edit this profile", ui.Dim, ui.Reset))
+	lines = append(lines, fmt.Sprintf("%sAction%s  Press d to delete this profile", ui.Dim, ui.Reset))
 	return lines
+}
+
+func renderModalOverlay(w io.Writer, modal Modal, screenWidth, screenHeight int) error {
+	startX, width := modalLayout(screenWidth)
+	lines := modalLines(modal, width)
+	startY := 4
+	if screenHeight > 0 {
+		startY = ((screenHeight - len(lines)) / 2) + 1
+		if startY < 4 {
+			startY = 4
+		}
+	}
+	for i, line := range lines {
+		if _, err := fmt.Fprintf(w, "\x1b[%d;%dH%s", startY+i, startX, line); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintf(w, "\x1b[%d;%dH", startY+len(lines), 1)
+	return err
+}
+
+func modalLines(modal Modal, width int) []string {
+	lines := []string{}
+	if modal.Subtitle != "" {
+		lines = append(lines, fmt.Sprintf("%s%s%s", ui.Dim, modal.Subtitle, ui.Reset), "")
+	}
+	labelWidth := modalLabelWidth(modal)
+	for i, field := range modal.Fields {
+		selected := i == modal.Selected
+		hasError := modal.ErrorField == field.Key && modal.Error != ""
+		prefix := "  "
+		if selected {
+			prefix = fmt.Sprintf("%s› %s", ui.Cyan, ui.Reset)
+		}
+		labelText := field.Label
+		if field.Required && !field.Disabled {
+			labelText += " " + ui.Yellow + "*" + ui.Reset
+		}
+		label := fmt.Sprintf("%s%s%s", ui.Dim, labelText, ui.Reset)
+		if selected {
+			label = fmt.Sprintf("%s%s%s", ui.Cyan, labelText, ui.Reset)
+		}
+		if hasError {
+			label = labelText
+		}
+		padding := labelWidth - visibleLen(label)
+		if padding < 0 {
+			padding = 0
+		}
+		lines = append(lines, fmt.Sprintf("%s%s%s  %s", prefix, label, strings.Repeat(" ", padding), modalFieldValue(field, selected)))
+		if hasError {
+			lines = append(lines, fmt.Sprintf("  %s%s%s", ui.Red, modal.Error, ui.Reset))
+		}
+	}
+	if len(modal.Message) > 0 {
+		if len(lines) > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, modal.Message...)
+	}
+	if modal.Error != "" && modal.ErrorField == "" {
+		if len(lines) > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, fmt.Sprintf("%s%s%s", ui.Red, modal.Error, ui.Reset))
+	}
+	if modal.Hint != "" {
+		if len(lines) > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, fmt.Sprintf("%sFields marked * are required.%s", ui.Dim, ui.Reset))
+		lines = append(lines, fmt.Sprintf("%s%s%s", ui.Dim, modal.Hint, ui.Reset))
+	}
+	return boxLinesExact(modal.Title, lines, width)
+}
+
+func modalLabelWidth(modal Modal) int {
+	width := 0
+	for _, field := range modal.Fields {
+		label := field.Label
+		if field.Required && !field.Disabled {
+			label += " *"
+		}
+		if l := len(label); l > width {
+			width = l
+		}
+	}
+	return width
+}
+
+func modalFieldValue(field ModalField, selected bool) string {
+	if field.Disabled {
+		return fmt.Sprintf("%snot required%s", ui.Dim, ui.Reset)
+	}
+	switch field.Kind {
+	case ModalFieldSelect:
+		value := field.Value
+		if value == "" {
+			value = "none"
+		}
+		if selected {
+			return fmt.Sprintf("%s<%s>%s  %s←/→%s", ui.Cyan, value, ui.Reset, ui.Dim, ui.Reset)
+		}
+		return fmt.Sprintf("[%s]", value)
+	default:
+		value := field.Value
+		if value == "" {
+			value = fmt.Sprintf("%s<empty>%s", ui.Dim, ui.Reset)
+		}
+		if selected {
+			cursor := fmt.Sprintf("%s_%s", ui.Cyan, ui.Reset)
+			return fmt.Sprintf("%s%s%s", value, cursor, "")
+		}
+		return value
+	}
+}
+
+func modalLayout(screenWidth int) (startX int, width int) {
+	if screenWidth <= 0 {
+		return 1, 60
+	}
+	leftWidth, rightWidth := splitPaneWidths(screenWidth)
+	startX = leftWidth + 7
+	width = rightWidth
+	if width < 40 {
+		width = 40
+	}
+	maxWidth := screenWidth - startX - 4
+	if maxWidth < width {
+		width = maxWidth
+	}
+	if width < 40 {
+		width = screenWidth - 12
+		if width < 40 {
+			width = 40
+		}
+		startX = ((screenWidth - (width + 4)) / 2) + 1
+		if startX < 1 {
+			startX = 1
+		}
+	}
+	return startX, width
 }
 
 func profileHeaderLine(profile ProfileCard, selected bool) string {

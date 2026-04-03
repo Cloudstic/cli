@@ -75,10 +75,60 @@ func TestRenderDashboard(t *testing.T) {
 		"2026-04-03 15:05:00",
 		"Snapshot abc123 saved",
 		"Press c to run repository check",
-		"Use ↑/↓ to select a profile. Press b to backup/init, c to check, q to quit.",
+		"Press e to edit this profile",
+		"Press d to delete this profile",
+		"Use ↑/↓ to select a profile. Press b to backup/init, c to check, n to create, e to edit, d to delete, q to quit.",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q in output:\n%s", want, got)
 		}
+	}
+}
+
+func TestRenderDashboardWithModal(t *testing.T) {
+	d := Dashboard{
+		ProfileCount: 1,
+		StoreCount:   1,
+		Profiles: []ProfileCard{{
+			Name:     "documents",
+			Source:   "local:/docs",
+			StoreRef: "remote",
+			Enabled:  true,
+			Status:   ProfileStatusReady,
+		}},
+		Modal: &Modal{
+			Title:    "Create Profile",
+			Subtitle: "Configure the profile fields.",
+			Hint:     "Enter to save, Esc to cancel.",
+			Selected: 0,
+			Fields: []ModalField{
+				{Key: "name", Label: "Name", Kind: ModalFieldText, Value: "photos", Required: true},
+				{Key: "source", Label: "Source", Kind: ModalFieldText, Value: "local:/photos", Required: true},
+			},
+		},
+	}
+
+	var out strings.Builder
+	if err := RenderDashboardWidth(&out, d, 100); err != nil {
+		t.Fatalf("RenderDashboardWidth: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		"Create Profile",
+		"Configure the profile fields.",
+		"Name",
+		"Source",
+		"photos",
+		"local:/photos",
+		"_",
+		"Enter to save, Esc to cancel.",
+		"Fields marked * are required.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in output:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Example:") {
+		t.Fatalf("did not expect example when source field is not active:\n%s", got)
 	}
 }

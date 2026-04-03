@@ -76,6 +76,9 @@ cloudstic source discover -portable-only
 
 # Preview a workstation onboarding plan
 cloudstic setup workstation -dry-run
+
+# Launch the interactive dashboard for configured profiles
+cloudstic tui
 ```
 
 ## Profiles

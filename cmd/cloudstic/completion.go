@@ -48,7 +48,7 @@ _cloudstic() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="init backup auth profile store source setup restore list ls prune forget diff break-lock key cat completion version help"
+    local commands="init backup auth profile store source setup tui restore list ls prune forget diff break-lock key cat completion version help"
 
     local global_flags="-store -profile -profiles-file -s3-endpoint -s3-region -s3-profile -s3-access-key -s3-secret-key -source-sftp-password -source-sftp-key -source-sftp-known-hosts -source-sftp-insecure -store-sftp-password -store-sftp-key -store-sftp-known-hosts -store-sftp-insecure -encryption-key -password -recovery-key -kms-key-arn -kms-region -kms-endpoint -disable-packfile -prompt -no-prompt -verbose -quiet -json -debug"
 
@@ -328,6 +328,7 @@ _cloudstic() {
         'profile:Manage backup profiles'
         'source:Discover source candidates for onboarding'
         'setup:Guided setup and onboarding flows'
+        'tui:Launch the interactive terminal dashboard'
         'restore:Restore files from a backup snapshot'
         'list:List all backup snapshots in the repository'
         'ls:List files within a specific snapshot'
@@ -776,6 +777,7 @@ complete -c cloudstic -n __fish_use_subcommand -a auth -d 'Manage reusable cloud
 complete -c cloudstic -n __fish_use_subcommand -a profile -d 'Manage backup profiles'
 complete -c cloudstic -n __fish_use_subcommand -a source -d 'Discover source candidates for onboarding'
 complete -c cloudstic -n __fish_use_subcommand -a setup -d 'Guided setup and onboarding flows'
+complete -c cloudstic -n __fish_use_subcommand -a tui -d 'Launch the interactive terminal dashboard'
 complete -c cloudstic -n __fish_use_subcommand -a restore -d 'Restore files from a snapshot'
 complete -c cloudstic -n __fish_use_subcommand -a list -d 'List all backup snapshots'
 complete -c cloudstic -n __fish_use_subcommand -a ls -d 'List files within a snapshot'

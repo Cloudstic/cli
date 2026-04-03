@@ -29,6 +29,7 @@ func printUsage() {
 		{"store verify", "Verify one store's credentials and connectivity"},
 		{"source discover", "Discover local source candidates for onboarding"},
 		{"setup workstation", "Guide workstation onboarding and profile scaffolding"},
+		{"tui", "Launch the interactive terminal dashboard"},
 		{"profile new", "Create or update a backup profile in profiles.yaml"},
 		{"profile list", "List stores, auth entries, and backup profiles"},
 		{"profile show", "Show one profile and resolved store/auth references"},

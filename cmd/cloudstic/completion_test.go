@@ -21,7 +21,7 @@ func TestCompletionBash(t *testing.T) {
 		"_cloudstic_query()",
 		"complete -F _cloudstic cloudstic",
 		// All commands are listed
-		"init", "backup", "auth", "profile", "store", "source", "setup", "restore", "list", "ls", "prune", "forget",
+		"init", "backup", "auth", "profile", "store", "source", "setup", "tui", "restore", "list", "ls", "prune", "forget",
 		"diff", "break-lock", "key", "cat", "completion",
 		// Key subcommands
 		"list add-recovery passwd",
@@ -69,6 +69,7 @@ func TestCompletionZsh(t *testing.T) {
 		"backup:Create a new backup snapshot",
 		"auth:Manage reusable cloud auth entries",
 		"profile:Manage backup profiles",
+		"tui:Launch the interactive terminal dashboard",
 		"new:Create or update a backup profile",
 		"show:Show one profile and resolved store/auth references",
 		"new:Create or update a reusable cloud auth entry",
@@ -126,6 +127,7 @@ func TestCompletionFish(t *testing.T) {
 		"complete -c cloudstic -n __fish_use_subcommand -a auth",
 		"complete -c cloudstic -n __fish_use_subcommand -a source",
 		"complete -c cloudstic -n __fish_use_subcommand -a setup",
+		"complete -c cloudstic -n __fish_use_subcommand -a tui",
 		"complete -c cloudstic -n __fish_use_subcommand -a key",
 		"complete -c cloudstic -n __fish_use_subcommand -a completion",
 		// Key subcommands

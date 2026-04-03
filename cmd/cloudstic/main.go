@@ -75,6 +75,8 @@ func runCmd(cmd string) int {
 		return r.runSource(ctx)
 	case "setup":
 		return r.runSetup(ctx)
+	case "tui":
+		return r.runTUI(ctx)
 	case "completion":
 		runCompletion()
 		return 0

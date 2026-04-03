@@ -35,7 +35,10 @@ func parseInitArgs() *initArgs {
 
 func (r *runner) runInit(ctx context.Context) int {
 	a := parseInitArgs()
+	return r.runInitWithArgs(ctx, a)
+}
 
+func (r *runner) runInitWithArgs(ctx context.Context, a *initArgs) int {
 	raw, err := a.g.openStore()
 	if err != nil {
 		return r.fail("Failed to init store: %v", err)

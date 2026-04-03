@@ -242,7 +242,17 @@ func TestRunTUI_BackupActionRunsSelectedProfileAction(t *testing.T) {
 			StoreCount:      1,
 			SelectedProfile: "documents",
 			Profiles: []tui.ProfileCard{
-				{Name: "documents", Source: "local:/tmp/Documents", StoreRef: "remote", Enabled: true, Status: tui.ProfileStatusReady},
+				{
+					Name:     "documents",
+					Source:   "local:/tmp/Documents",
+					StoreRef: "remote",
+					Enabled:  true,
+					Status:   tui.ProfileStatusReady,
+					Actions: []tui.ProfileAction{
+						{Kind: tui.ActionKindBackup, Key: "b", Label: "Press b to run backup", Enabled: true},
+						{Kind: tui.ActionKindCheck, Key: "c", Label: "Press c to run repository check", Enabled: true},
+					},
+				},
 			},
 		}, nil
 	}
@@ -308,7 +318,18 @@ func TestRunTUI_CheckActionRunsSelectedProfileCheck(t *testing.T) {
 			StoreCount:      1,
 			SelectedProfile: "documents",
 			Profiles: []tui.ProfileCard{
-				{Name: "documents", Source: "local:/tmp/Documents", StoreRef: "remote", Enabled: true, Status: tui.ProfileStatusReady, StoreHealth: tui.StoreHealthReady},
+				{
+					Name:        "documents",
+					Source:      "local:/tmp/Documents",
+					StoreRef:    "remote",
+					Enabled:     true,
+					Status:      tui.ProfileStatusReady,
+					StoreHealth: tui.StoreHealthReady,
+					Actions: []tui.ProfileAction{
+						{Kind: tui.ActionKindBackup, Key: "b", Label: "Press b to run backup", Enabled: true},
+						{Kind: tui.ActionKindCheck, Key: "c", Label: "Press c to run repository check", Enabled: true},
+					},
+				},
 			},
 		}, nil
 	}
@@ -465,7 +486,18 @@ func TestTUISession_HandleActionRunRefreshesDashboard(t *testing.T) {
 			StoreCount:      1,
 			SelectedProfile: "docs",
 			Profiles: []tui.ProfileCard{
-				{Name: "docs", Source: "local:/docs", StoreRef: "remote", Enabled: true, Status: tui.ProfileStatusReady, LastBackup: "2026-04-03 12:00"},
+				{
+					Name:       "docs",
+					Source:     "local:/docs",
+					StoreRef:   "remote",
+					Enabled:    true,
+					Status:     tui.ProfileStatusReady,
+					LastBackup: "2026-04-03 12:00",
+					Actions: []tui.ProfileAction{
+						{Kind: tui.ActionKindBackup, Key: "b", Label: "Press b to run backup", Enabled: true},
+						{Kind: tui.ActionKindCheck, Key: "c", Label: "Press c to run repository check", Enabled: true},
+					},
+				},
 			},
 		}, nil
 	}
@@ -478,7 +510,17 @@ func TestTUISession_HandleActionRunRefreshesDashboard(t *testing.T) {
 	s := newTUISession(&runner{out: &out, stdoutFile: os.Stdout, stdin: os.Stdin}, "profiles.yaml", tui.Dashboard{
 		SelectedProfile: "docs",
 		Profiles: []tui.ProfileCard{
-			{Name: "docs", Source: "local:/docs", StoreRef: "remote", Enabled: true, Status: tui.ProfileStatusReady},
+			{
+				Name:     "docs",
+				Source:   "local:/docs",
+				StoreRef: "remote",
+				Enabled:  true,
+				Status:   tui.ProfileStatusReady,
+				Actions: []tui.ProfileAction{
+					{Kind: tui.ActionKindBackup, Key: "b", Label: "Press b to run backup", Enabled: true},
+					{Kind: tui.ActionKindCheck, Key: "c", Label: "Press c to run repository check", Enabled: true},
+				},
+			},
 		},
 	})
 

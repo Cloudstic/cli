@@ -22,6 +22,10 @@ func TestRenderDashboard(t *testing.T) {
 				BackupState: BackupFreshnessRecent,
 				LastBackup:  "2026-04-03 11:05",
 				LastRef:     "snapshot/abc123",
+				Actions: []ProfileAction{
+					{Kind: ActionKindBackup, Key: "b", Label: "Press b to run backup", Enabled: true},
+					{Kind: ActionKindCheck, Key: "c", Label: "Press c to run repository check", Enabled: true},
+				},
 			},
 		},
 	}

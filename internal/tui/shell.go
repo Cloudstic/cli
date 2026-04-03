@@ -198,8 +198,8 @@ func renderSelectedProfile(d Dashboard) []string {
 		lines = append(lines, profileDetailLine("Status", profile.StatusNote))
 	}
 	lines = append(lines, "")
-	for _, action := range selectedActionLines(profile) {
-		lines = append(lines, fmt.Sprintf("%sAction%s  %s", ui.Dim, ui.Reset, action))
+	for _, action := range profile.Actions {
+		lines = append(lines, fmt.Sprintf("%sAction%s  %s", ui.Dim, ui.Reset, actionLabel(action)))
 	}
 	return lines
 }
@@ -428,17 +428,11 @@ func selectedProfileCard(d Dashboard) (ProfileCard, bool) {
 	return d.Profiles[0], true
 }
 
-func selectedActionLines(profile ProfileCard) []string {
-	if profile.StoreHealth == StoreHealthNotInitialized {
-		return []string{"Press b to initialize the repository"}
+func actionLabel(action ProfileAction) string {
+	if action.Enabled {
+		return action.Label
 	}
-	if profile.Status == ProfileStatusDisabled {
-		return []string{"No actions available for disabled profiles"}
-	}
-	if profile.Status == ProfileStatusError {
-		return []string{"Fix profile configuration before running actions"}
-	}
-	return []string{"Press b to run backup", "Press c to run repository check"}
+	return fmt.Sprintf("%s%s%s", ui.Dim, action.Label, ui.Reset)
 }
 
 func trimSnapshotRef(ref string) string {

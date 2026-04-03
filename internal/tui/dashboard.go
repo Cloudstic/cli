@@ -20,6 +20,22 @@ type Dashboard struct {
 	Profiles        []ProfileCard
 }
 
+type ActionKind string
+
+const (
+	ActionKindInit   ActionKind = "init"
+	ActionKindBackup ActionKind = "backup"
+	ActionKindCheck  ActionKind = "check"
+)
+
+type ProfileAction struct {
+	Kind    ActionKind
+	Key     string
+	Label   string
+	Enabled bool
+	Reason  string
+}
+
 type ProfileStatus string
 
 const (
@@ -64,6 +80,7 @@ type ProfileCard struct {
 	BackupState BackupFreshness
 	LastBackup  string
 	LastRef     string
+	Actions     []ProfileAction
 }
 
 type StoreProbe struct {
@@ -141,9 +158,56 @@ func BuildDashboard(cfg *engine.ProfilesConfig, probes map[string]StoreProbe) Da
 			BackupState: backupState,
 			LastBackup:  lastBackup,
 			LastRef:     lastRef,
+			Actions:     deriveProfileActions(status, storeHealth),
 		})
 	}
 	return d
+}
+
+func deriveProfileActions(status ProfileStatus, storeHealth StoreHealth) []ProfileAction {
+	switch {
+	case status == ProfileStatusDisabled:
+		return []ProfileAction{{
+			Kind:    ActionKindBackup,
+			Key:     "b",
+			Label:   "No actions available for disabled profiles",
+			Enabled: false,
+			Reason:  "profile disabled",
+		}}
+	case status == ProfileStatusError:
+		return []ProfileAction{{
+			Kind:    ActionKindBackup,
+			Key:     "b",
+			Label:   "Fix profile configuration before running actions",
+			Enabled: false,
+			Reason:  "profile configuration error",
+		}}
+	case storeHealth == StoreHealthNotInitialized:
+		return []ProfileAction{{
+			Kind:    ActionKindInit,
+			Key:     "b",
+			Label:   "Press b to initialize the repository",
+			Enabled: true,
+		}, {
+			Kind:    ActionKindCheck,
+			Key:     "c",
+			Label:   "Repository check unavailable until initialization",
+			Enabled: false,
+			Reason:  "repository not initialized",
+		}}
+	default:
+		return []ProfileAction{{
+			Kind:    ActionKindBackup,
+			Key:     "b",
+			Label:   "Press b to run backup",
+			Enabled: true,
+		}, {
+			Kind:    ActionKindCheck,
+			Key:     "c",
+			Label:   "Press c to run repository check",
+			Enabled: true,
+		}}
+	}
 }
 
 func profileStatus(cfg *engine.ProfilesConfig, p engine.BackupProfile, probe StoreProbe) (ProfileStatus, string) {

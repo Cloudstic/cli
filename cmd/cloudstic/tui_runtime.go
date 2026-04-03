@@ -305,13 +305,13 @@ func (s *tuiSession) handleAction(ctx context.Context, action tuiAction) (int, e
 
 func (s *tuiSession) refresh(ctx context.Context) error {
 	selected := s.dashboard.SelectedProfile
-	activity := append([]string{}, s.dashboard.ActivityLines...)
+	activity := s.dashboard.Activity
 	dashboard, err := tuiBuildDashboard(ctx, s.profilesFile)
 	if err != nil {
 		return err
 	}
 	dashboard.SelectedProfile = selected
-	dashboard.ActivityLines = activity
+	dashboard.Activity = activity
 	s.dashboard = ensureSelectedProfile(dashboard)
 	return nil
 }

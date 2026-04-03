@@ -530,11 +530,14 @@ func TestTUISession_HandleActionRunRefreshesDashboard(t *testing.T) {
 	if s.dashboard.SelectedProfile != "docs" {
 		t.Fatalf("selected profile lost after refresh: %+v", s.dashboard)
 	}
-	if len(s.dashboard.ActivityLines) == 0 {
+	if len(s.dashboard.Activity.Lines) == 0 {
 		t.Fatalf("expected activity lines after action")
 	}
-	if !strings.Contains(strings.Join(s.dashboard.ActivityLines, "\n"), "Action completed successfully") {
-		t.Fatalf("missing completion activity: %+v", s.dashboard.ActivityLines)
+	if s.dashboard.Activity.Status != tui.ActivityStatusSuccess {
+		t.Fatalf("unexpected activity status: %+v", s.dashboard.Activity)
+	}
+	if !strings.Contains(strings.Join(s.dashboard.Activity.Lines, "\n"), "Action completed successfully") {
+		t.Fatalf("missing completion activity: %+v", s.dashboard.Activity)
 	}
 }
 
@@ -551,7 +554,7 @@ func TestTUISession_RefreshPreservesSelectionAndActivity(t *testing.T) {
 
 	s := newTUISession(&runner{}, "profiles.yaml", tui.Dashboard{
 		SelectedProfile: "docs",
-		ActivityLines:   []string{"running"},
+		Activity:        tui.ActivityPanel{Status: tui.ActivityStatusRunning, Lines: []string{"running"}},
 		Profiles:        []tui.ProfileCard{{Name: "docs"}},
 	})
 	if err := s.refresh(context.Background()); err != nil {
@@ -560,8 +563,8 @@ func TestTUISession_RefreshPreservesSelectionAndActivity(t *testing.T) {
 	if s.dashboard.SelectedProfile != "docs" {
 		t.Fatalf("selection not preserved: %+v", s.dashboard)
 	}
-	if len(s.dashboard.ActivityLines) != 1 || s.dashboard.ActivityLines[0] != "running" {
-		t.Fatalf("activity not preserved: %+v", s.dashboard.ActivityLines)
+	if len(s.dashboard.Activity.Lines) != 1 || s.dashboard.Activity.Lines[0] != "running" {
+		t.Fatalf("activity not preserved: %+v", s.dashboard.Activity)
 	}
 }
 

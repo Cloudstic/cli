@@ -11,6 +11,17 @@ func TestRenderDashboard(t *testing.T) {
 		StoreCount:      1,
 		AuthCount:       0,
 		SelectedProfile: "documents",
+		Activity: ActivityPanel{
+			Status:    ActivityStatusSuccess,
+			Action:    "Run backup (profile documents)",
+			Phase:     "Scanning",
+			Current:   512,
+			Total:     1024,
+			IsBytes:   true,
+			Summary:   "completed successfully",
+			UpdatedAt: "2026-04-03 15:05:00",
+			Lines:     []string{"Snapshot abc123 saved"},
+		},
 		Profiles: []ProfileCard{
 			{
 				Name:        "documents",
@@ -56,7 +67,13 @@ func TestRenderDashboard(t *testing.T) {
 		"2026-04-03 11:05 (recent)",
 		"Ref",
 		"abc123",
-		"No recent activity.",
+		"success",
+		"Run backup (profile documents)",
+		"Scanning",
+		"[==============--------------] 512 B / 1.0 KiB",
+		"completed successfully",
+		"2026-04-03 15:05:00",
+		"Snapshot abc123 saved",
 		"Press c to run repository check",
 		"Use ↑/↓ to select a profile. Press b to backup/init, c to check, q to quit.",
 	} {

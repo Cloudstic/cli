@@ -57,11 +57,7 @@ func RenderDashboardWidth(w io.Writer, d Dashboard, width int) error {
 		return err
 	}
 
-	activity := d.ActivityLines
-	if len(activity) == 0 {
-		activity = []string{fmt.Sprintf("%sNo recent activity.%s", ui.Dim, ui.Reset)}
-	}
-	if err := renderBoxExact(w, "Activity", activity, panelWidth(width)); err != nil {
+	if err := renderBoxExact(w, "Activity", renderActivityPanel(d.Activity), panelWidth(width)); err != nil {
 		return err
 	}
 
@@ -162,6 +158,36 @@ func renderProfileList(d Dashboard) []string {
 	lines := make([]string, 0, len(d.Profiles))
 	for _, profile := range d.Profiles {
 		lines = append(lines, profileHeaderLine(profile, profile.Name == d.SelectedProfile))
+	}
+	return lines
+}
+
+func renderActivityPanel(activity ActivityPanel) []string {
+	lines := []string{}
+	if activity.Status != ActivityStatusIdle {
+		lines = append(lines, profileDetailLine("Status", activityStatusLabel(activity.Status)))
+	}
+	if activity.Action != "" {
+		lines = append(lines, profileDetailLine("Action", activity.Action))
+	}
+	if activity.Phase != "" {
+		lines = append(lines, profileDetailLine("Phase", activity.Phase))
+	}
+	if bar := progressBarLine(activity, 28); bar != "" {
+		lines = append(lines, profileDetailLine("Progress", bar))
+	}
+	if activity.Summary != "" {
+		lines = append(lines, profileDetailLine("Result", activity.Summary))
+	}
+	if activity.UpdatedAt != "" {
+		lines = append(lines, profileDetailLine("Updated", activity.UpdatedAt))
+	}
+	if len(lines) > 0 && len(activity.Lines) > 0 {
+		lines = append(lines, "")
+	}
+	lines = append(lines, activity.Lines...)
+	if len(lines) == 0 {
+		return []string{fmt.Sprintf("%sNo recent activity.%s", ui.Dim, ui.Reset)}
 	}
 	return lines
 }
@@ -322,6 +348,63 @@ func backupFreshnessLabel(state BackupFreshness) string {
 		return "never"
 	default:
 		return ""
+	}
+}
+
+func activityStatusLabel(status ActivityStatus) string {
+	switch status {
+	case ActivityStatusRunning:
+		return "running"
+	case ActivityStatusSuccess:
+		return "success"
+	case ActivityStatusError:
+		return "failed"
+	default:
+		return ""
+	}
+}
+
+func progressBarLine(activity ActivityPanel, width int) string {
+	if activity.Total <= 0 || activity.Current < 0 || width <= 0 {
+		return ""
+	}
+	current := activity.Current
+	if current > activity.Total {
+		current = activity.Total
+	}
+	ratio := float64(current) / float64(activity.Total)
+	filled := int(ratio * float64(width))
+	if filled > width {
+		filled = width
+	}
+	if filled < 0 {
+		filled = 0
+	}
+	bar := strings.Repeat("=", filled) + strings.Repeat("-", width-filled)
+	if activity.IsBytes {
+		return fmt.Sprintf("[%s] %s / %s", bar, formatBytesLabel(current), formatBytesLabel(activity.Total))
+	}
+	return fmt.Sprintf("[%s] %d / %d", bar, current, activity.Total)
+}
+
+func formatBytesLabel(b int64) string {
+	const (
+		kb = 1024
+		mb = 1024 * kb
+		gb = 1024 * mb
+		tb = 1024 * gb
+	)
+	switch {
+	case b >= tb:
+		return fmt.Sprintf("%.1f TiB", float64(b)/float64(tb))
+	case b >= gb:
+		return fmt.Sprintf("%.1f GiB", float64(b)/float64(gb))
+	case b >= mb:
+		return fmt.Sprintf("%.1f MiB", float64(b)/float64(mb))
+	case b >= kb:
+		return fmt.Sprintf("%.1f KiB", float64(b)/float64(kb))
+	default:
+		return fmt.Sprintf("%d B", b)
 	}
 }
 

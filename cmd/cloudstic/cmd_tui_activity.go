@@ -26,8 +26,10 @@ func runTUIActionIntoDashboard(ctx context.Context, r *runner, profilesFile stri
 	screen := r.out
 	if profile, ok := selectedTUIProfile(dashboard); ok {
 		if profileNeedsInit(profile) {
+			log.Start("Initialize store", fmt.Sprintf("profile %s", profile.Name))
 			log.Printf("Initializing store for profile %s", profile.Name)
 		} else {
+			log.Start("Run backup", fmt.Sprintf("profile %s", profile.Name))
 			log.Printf("Running backup for profile %s", profile.Name)
 		}
 	}
@@ -44,21 +46,23 @@ func runTUIActionIntoDashboard(ctx context.Context, r *runner, profilesFile stri
 				return
 			case <-ticker.C:
 				live := dashboard
-				live.ActivityLines = log.Lines()
+				live.Activity = log.Snapshot()
 				_ = renderTUIScreenWidth(screen, live, tuiWidth(r))
 			}
 		}
 	}()
 
 	if err := runSelectedTUIAction(ctx, r, profilesFile, dashboard, log); err != nil {
+		log.Fail(err.Error())
 		log.Printf("Action failed: %v", err)
 	} else {
+		log.Succeed("completed successfully")
 		log.Printf("Action completed successfully")
 	}
 	close(stop)
 	<-done
 
-	dashboard.ActivityLines = mergeTUIActivityLines(dashboard.ActivityLines, log.Lines())
+	dashboard.Activity = log.Snapshot()
 	return dashboard
 }
 
@@ -66,6 +70,7 @@ func runTUICheckIntoDashboard(ctx context.Context, r *runner, profilesFile strin
 	log := newTUIActionState(10)
 	screen := r.out
 	if profile, ok := selectedTUIProfile(dashboard); ok {
+		log.Start("Run repository check", fmt.Sprintf("profile %s", profile.Name))
 		log.Printf("Running repository check for profile %s", profile.Name)
 	}
 
@@ -81,31 +86,24 @@ func runTUICheckIntoDashboard(ctx context.Context, r *runner, profilesFile strin
 				return
 			case <-ticker.C:
 				live := dashboard
-				live.ActivityLines = log.Lines()
+				live.Activity = log.Snapshot()
 				_ = renderTUIScreenWidth(screen, live, tuiWidth(r))
 			}
 		}
 	}()
 
 	if err := runSelectedTUICheck(ctx, r, profilesFile, dashboard, log); err != nil {
+		log.Fail(err.Error())
 		log.Printf("Check failed: %v", err)
 	} else {
+		log.Succeed("completed successfully")
 		log.Printf("Check completed successfully")
 	}
 	close(stop)
 	<-done
 
-	dashboard.ActivityLines = mergeTUIActivityLines(dashboard.ActivityLines, log.Lines())
+	dashboard.Activity = log.Snapshot()
 	return dashboard
-}
-
-func mergeTUIActivityLines(existing, recent []string) []string {
-	merged := append([]string{}, recent...)
-	merged = append(merged, existing...)
-	if len(merged) > 10 {
-		merged = merged[:10]
-	}
-	return merged
 }
 
 type crlfWriter struct {
@@ -144,6 +142,7 @@ type tuiActionState struct {
 	limit int
 	buf   bytes.Buffer
 	phase *tuiPhaseState
+	panel tui.ActivityPanel
 }
 
 type tuiPhaseState struct {
@@ -164,6 +163,35 @@ func (l *tuiActionState) Writer() io.Writer {
 
 func (l *tuiActionState) Reporter() cloudstic.Reporter {
 	return tuiReporter{state: l}
+}
+
+func (l *tuiActionState) Start(action, target string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.panel.Status = tui.ActivityStatusRunning
+	if target != "" {
+		l.panel.Action = fmt.Sprintf("%s (%s)", action, target)
+	} else {
+		l.panel.Action = action
+	}
+	l.panel.Summary = ""
+	l.panel.UpdatedAt = ""
+}
+
+func (l *tuiActionState) Succeed(summary string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.panel.Status = tui.ActivityStatusSuccess
+	l.panel.Summary = summary
+	l.panel.UpdatedAt = time.Now().Local().Format("2006-01-02 15:04:05")
+}
+
+func (l *tuiActionState) Fail(summary string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.panel.Status = tui.ActivityStatusError
+	l.panel.Summary = summary
+	l.panel.UpdatedAt = time.Now().Local().Format("2006-01-02 15:04:05")
 }
 
 func (l *tuiActionState) Write(p []byte) (int, error) {
@@ -194,11 +222,25 @@ func (l *tuiActionState) Lines() []string {
 		l.append(tail)
 		l.buf.Reset()
 	}
-	lines := append([]string{}, l.lines...)
-	if summary := l.phaseSummary(); summary != "" {
-		lines = append([]string{summary}, lines...)
+	return append([]string{}, l.lines...)
+}
+
+func (l *tuiActionState) Snapshot() tui.ActivityPanel {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if tail := strings.TrimSpace(l.buf.String()); tail != "" {
+		l.append(tail)
+		l.buf.Reset()
 	}
-	return lines
+	panel := l.panel
+	panel.Lines = append([]string{}, l.lines...)
+	panel.Phase = l.phaseName()
+	if l.phase != nil {
+		panel.Current = l.phase.current
+		panel.Total = l.phase.total
+		panel.IsBytes = l.phase.isBytes
+	}
+	return panel
 }
 
 func (l *tuiActionState) append(line string) {
@@ -212,18 +254,11 @@ func (l *tuiActionState) append(line string) {
 	}
 }
 
-func (l *tuiActionState) phaseSummary() string {
+func (l *tuiActionState) phaseName() string {
 	if l.phase == nil || l.phase.name == "" {
 		return ""
 	}
-	switch {
-	case l.phase.total > 0 && l.phase.isBytes:
-		return fmt.Sprintf("%s %s / %s", l.phase.name, formatBytes(l.phase.current), formatBytes(l.phase.total))
-	case l.phase.total > 0:
-		return fmt.Sprintf("%s %d / %d", l.phase.name, l.phase.current, l.phase.total)
-	default:
-		return l.phase.name
-	}
+	return l.phase.name
 }
 
 type tuiReporter struct {

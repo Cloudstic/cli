@@ -16,8 +16,29 @@ type Dashboard struct {
 	StoreCount      int
 	AuthCount       int
 	SelectedProfile string
-	ActivityLines   []string
+	Activity        ActivityPanel
 	Profiles        []ProfileCard
+}
+
+type ActivityStatus string
+
+const (
+	ActivityStatusIdle    ActivityStatus = ""
+	ActivityStatusRunning ActivityStatus = "running"
+	ActivityStatusSuccess ActivityStatus = "success"
+	ActivityStatusError   ActivityStatus = "error"
+)
+
+type ActivityPanel struct {
+	Status    ActivityStatus
+	Action    string
+	Phase     string
+	Current   int64
+	Total     int64
+	IsBytes   bool
+	Summary   string
+	UpdatedAt string
+	Lines     []string
 }
 
 type ActionKind string

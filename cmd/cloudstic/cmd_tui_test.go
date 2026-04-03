@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/tui"
@@ -713,6 +714,74 @@ func TestTUISession_HandleActionRunRefreshesDashboard(t *testing.T) {
 	}
 }
 
+func TestTUISession_HandleActionRunRefreshFailureRestoresRawMode(t *testing.T) {
+	readEnd, writeEnd, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer func() {
+		_ = readEnd.Close()
+		_ = writeEnd.Close()
+	}()
+
+	oldBuild := tuiBuildDashboard
+	oldAction := tuiRunProfileAction
+	oldMakeRaw := tuiMakeRaw
+	oldRestore := tuiRestoreTerminal
+	oldEnterAlt := tuiEnterAltScreen
+	oldLeaveAlt := tuiLeaveAltScreen
+	t.Cleanup(func() {
+		tuiBuildDashboard = oldBuild
+		tuiRunProfileAction = oldAction
+		tuiMakeRaw = oldMakeRaw
+		tuiRestoreTerminal = oldRestore
+		tuiEnterAltScreen = oldEnterAlt
+		tuiLeaveAltScreen = oldLeaveAlt
+	})
+
+	var madeRaw, restored int
+	state := &xterm.State{}
+	tuiMakeRaw = func(int) (*xterm.State, error) { madeRaw++; return state, nil }
+	tuiRestoreTerminal = func(int, *xterm.State) error { restored++; return nil }
+	tuiEnterAltScreen = func(io.Writer) error { return nil }
+	tuiLeaveAltScreen = func(io.Writer) error { return nil }
+
+	tuiBuildDashboard = func(context.Context, string) (tui.Dashboard, error) {
+		return tui.Dashboard{}, errors.New("boom")
+	}
+	tuiRunProfileAction = func(_ context.Context, _ *runner, _ string, _ tui.ProfileCard, log *tuiActionState) error {
+		log.Printf("backup complete")
+		return nil
+	}
+
+	s := newTUISession(&runner{out: io.Discard, stdoutFile: os.Stdout, stdin: readEnd}, "profiles.yaml", tui.Dashboard{
+		SelectedProfile: "docs",
+		Profiles: []tui.ProfileCard{
+			{
+				Name:     "docs",
+				Source:   "local:/docs",
+				StoreRef: "remote",
+				Enabled:  true,
+				Status:   tui.ProfileStatusReady,
+				Actions: []tui.ProfileAction{
+					{Kind: tui.ActionKindBackup, Key: "b", Label: "Press b to run backup", Enabled: true},
+				},
+			},
+		},
+	})
+	s.rawState = state
+
+	if _, err := s.handleAction(context.Background(), tuiActionRun); err == nil {
+		t.Fatalf("expected refresh failure")
+	}
+	if madeRaw != 1 || restored != 1 {
+		t.Fatalf("unexpected raw lifecycle counts: make=%d restore=%d", madeRaw, restored)
+	}
+	if s.rawState != state {
+		t.Fatalf("raw state not restored after refresh failure")
+	}
+}
+
 func TestTUISession_HandleActionCreateRefreshesDashboard(t *testing.T) {
 	stubTUITestHooks(t)
 
@@ -835,6 +904,62 @@ func TestTUISession_RefreshPreservesSelectionAndActivity(t *testing.T) {
 	}
 	if len(s.dashboard.Activity.Lines) != 1 || s.dashboard.Activity.Lines[0] != "running" {
 		t.Fatalf("activity not preserved: %+v", s.dashboard.Activity)
+	}
+}
+
+func TestRunTUIActionIntoDashboard_RedrawsUsingCurrentWidthDuringLongAction(t *testing.T) {
+	stubTUITestHooks(t)
+
+	oldWidth := tuiGetTerminalSize
+	oldAction := tuiRunProfileAction
+	t.Cleanup(func() {
+		tuiGetTerminalSize = oldWidth
+		tuiRunProfileAction = oldAction
+	})
+
+	var widthCalls int
+	tuiGetTerminalSize = func(int) (int, int, error) {
+		widthCalls++
+		if widthCalls == 1 {
+			return 120, 40, nil
+		}
+		return 72, 40, nil
+	}
+	tuiRunProfileAction = func(_ context.Context, _ *runner, _ string, _ tui.ProfileCard, log *tuiActionState) error {
+		phase := log.Reporter().StartPhase("Uploading", 4, false)
+		time.Sleep(120 * time.Millisecond)
+		phase.Increment(2)
+		time.Sleep(120 * time.Millisecond)
+		phase.Increment(2)
+		phase.Done()
+		return nil
+	}
+
+	var out strings.Builder
+	dashboard := tui.Dashboard{
+		SelectedProfile: "docs",
+		Profiles: []tui.ProfileCard{
+			{
+				Name:     "docs",
+				Source:   "local:/docs",
+				StoreRef: "remote",
+				Enabled:  true,
+				Status:   tui.ProfileStatusReady,
+				Actions: []tui.ProfileAction{
+					{Kind: tui.ActionKindBackup, Key: "b", Label: "Press b to run backup", Enabled: true},
+				},
+			},
+		},
+	}
+	result := runTUIActionIntoDashboard(context.Background(), &runner{out: &out, stdoutFile: os.Stdout}, "profiles.yaml", dashboard)
+	if widthCalls < 2 {
+		t.Fatalf("expected multiple width polls during long action, got %d", widthCalls)
+	}
+	if result.Activity.Status != tui.ActivityStatusSuccess {
+		t.Fatalf("unexpected activity status: %+v", result.Activity)
+	}
+	if !strings.Contains(out.String(), "Progress") {
+		t.Fatalf("expected live renders with progress, got:\n%s", out.String())
 	}
 }
 

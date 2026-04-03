@@ -132,3 +132,89 @@ func TestRenderDashboardWithModal(t *testing.T) {
 		t.Fatalf("did not expect example when source field is not active:\n%s", got)
 	}
 }
+
+func TestDashboardLinesWidth_TruncatesForNarrowTerminals(t *testing.T) {
+	d := Dashboard{
+		ProfileCount:    1,
+		StoreCount:      1,
+		SelectedProfile: "google-test",
+		Activity: ActivityPanel{
+			Status:  ActivityStatusSuccess,
+			Action:  "Run backup (profile google-test)",
+			Summary: "completed successfully",
+			Lines:   []string{"Snapshot c9a98d85cd65e691c427554664c612c4014ff25572644e4ce4a158ecd593a773 saved"},
+		},
+		Profiles: []ProfileCard{
+			{
+				Name:        "google-test",
+				Source:      "gdrive-changes:/Very Long Shared Drive Name/Extremely Long Folder Name",
+				StoreRef:    "default-store",
+				AuthRef:     "google-google-test",
+				Enabled:     true,
+				Status:      ProfileStatusReady,
+				StoreHealth: StoreHealthReady,
+				BackupState: BackupFreshnessRecent,
+				LastBackup:  "2026-04-03 14:53",
+				LastRef:     "snapshot/c9a98d85cd65e691c427554664c612c4014ff25572644e4ce4a158ecd593a773",
+				Actions: []ProfileAction{
+					{Kind: ActionKindBackup, Key: "b", Label: "Press b to run backup", Enabled: true},
+					{Kind: ActionKindCheck, Key: "c", Label: "Press c to run repository check", Enabled: true},
+				},
+			},
+		},
+	}
+
+	lines := dashboardLinesWidth(d, 72)
+	for _, line := range lines {
+		if got := visibleLen(line); got > 72 {
+			t.Fatalf("line width=%d exceeds terminal width: %q", got, line)
+		}
+	}
+	got := strings.Join(lines, "\n")
+	if !strings.Contains(got, "…") {
+		t.Fatalf("expected truncated content in narrow layout:\n%s", got)
+	}
+}
+
+func TestLayoutDashboardWidth_TracksProfileRowsAndActionRect(t *testing.T) {
+	d := Dashboard{
+		ProfileCount:    2,
+		StoreCount:      1,
+		SelectedProfile: "photos",
+		Profiles: []ProfileCard{
+			{Name: "docs", Enabled: true, Status: ProfileStatusReady},
+			{
+				Name:     "photos",
+				Enabled:  true,
+				Status:   ProfileStatusReady,
+				Actions:  []ProfileAction{{Kind: ActionKindBackup, Key: "b", Label: "Press b to run backup", Enabled: true}},
+				StoreRef: "remote",
+				Source:   "local:/photos",
+			},
+		},
+	}
+
+	layout := LayoutDashboardWidth(d, 100)
+	if len(layout.ProfileRows) != 2 {
+		t.Fatalf("profile rows=%d want 2", len(layout.ProfileRows))
+	}
+	foundDocs := false
+	foundPhotos := false
+	for _, name := range layout.ProfileRows {
+		if name == "docs" {
+			foundDocs = true
+		}
+		if name == "photos" {
+			foundPhotos = true
+		}
+	}
+	if !foundDocs || !foundPhotos {
+		t.Fatalf("unexpected profile row mapping: %+v", layout.ProfileRows)
+	}
+	if layout.ActionRect.W <= 0 || layout.ActionRect.H != 1 {
+		t.Fatalf("unexpected action rect: %+v", layout.ActionRect)
+	}
+	if layout.ActionRect.X <= 0 || layout.ActionRect.Y <= 0 {
+		t.Fatalf("unexpected action rect origin: %+v", layout.ActionRect)
+	}
+}

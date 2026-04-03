@@ -67,10 +67,16 @@ func TestBuildDashboard_SortsProfilesAndCountsSections(t *testing.T) {
 	if got.Profiles[0].LastRef != "snapshot/abc" {
 		t.Fatalf("last ref = %q want snapshot/abc", got.Profiles[0].LastRef)
 	}
-	if got.Profiles[0].Status != "ready" {
+	if got.Profiles[0].Status != ProfileStatusReady {
 		t.Fatalf("status = %q want ready", got.Profiles[0].Status)
 	}
-	if got.Profiles[1].Status != "disabled" {
+	if got.Profiles[0].StoreHealth != StoreHealthReady {
+		t.Fatalf("store health = %q want ready", got.Profiles[0].StoreHealth)
+	}
+	if got.Profiles[0].BackupState != BackupFreshnessRecent {
+		t.Fatalf("backup state = %q want recent", got.Profiles[0].BackupState)
+	}
+	if got.Profiles[1].Status != ProfileStatusDisabled {
 		t.Fatalf("status = %q want disabled", got.Profiles[1].Status)
 	}
 }
@@ -97,11 +103,14 @@ func TestBuildDashboard_NormalizesStoreProbeErrors(t *testing.T) {
 	if len(got.Profiles) != 1 {
 		t.Fatalf("profiles=%d want 1", len(got.Profiles))
 	}
-	if got.Profiles[0].Status != "warning" {
+	if got.Profiles[0].Status != ProfileStatusWarning {
 		t.Fatalf("status=%q want warning", got.Profiles[0].Status)
 	}
 	if got.Profiles[0].StatusNote != "repository not initialized" {
 		t.Fatalf("status note=%q want repository not initialized", got.Profiles[0].StatusNote)
+	}
+	if got.Profiles[0].StoreHealth != StoreHealthNotInitialized {
+		t.Fatalf("store health=%q want repository not initialized", got.Profiles[0].StoreHealth)
 	}
 }
 
@@ -145,7 +154,7 @@ func TestBuildDashboardFromConfig_StoreErrorBecomesWarning(t *testing.T) {
 	got := BuildDashboardFromConfig(context.Background(), cfg, func(context.Context, string, engine.ProfileStore) ([]engine.SnapshotEntry, error) {
 		return nil, errors.New("unlock failed")
 	})
-	if got.Profiles[0].Status != "warning" || got.Profiles[0].StatusNote != "unlock failed" {
+	if got.Profiles[0].Status != ProfileStatusWarning || got.Profiles[0].StatusNote != "unlock failed" {
 		t.Fatalf("unexpected profile status: %+v", got.Profiles[0])
 	}
 }

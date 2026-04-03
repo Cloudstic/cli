@@ -20,16 +20,50 @@ type Dashboard struct {
 	Profiles        []ProfileCard
 }
 
+type ProfileStatus string
+
+const (
+	ProfileStatusReady    ProfileStatus = "ready"
+	ProfileStatusDisabled ProfileStatus = "disabled"
+	ProfileStatusWarning  ProfileStatus = "warning"
+	ProfileStatusError    ProfileStatus = "error"
+)
+
+type StoreHealth string
+
+const (
+	StoreHealthReady            StoreHealth = "ready"
+	StoreHealthPending          StoreHealth = "pending"
+	StoreHealthDisabled         StoreHealth = "disabled"
+	StoreHealthMissingStore     StoreHealth = "missing_store"
+	StoreHealthMissingAuth      StoreHealth = "missing_auth"
+	StoreHealthProviderMismatch StoreHealth = "provider_mismatch"
+	StoreHealthUnavailable      StoreHealth = "unavailable"
+	StoreHealthNotInitialized   StoreHealth = "not_initialized"
+	StoreHealthUnknown          StoreHealth = "unknown"
+)
+
+type BackupFreshness string
+
+const (
+	BackupFreshnessUnknown BackupFreshness = ""
+	BackupFreshnessNever   BackupFreshness = "never"
+	BackupFreshnessRecent  BackupFreshness = "recent"
+	BackupFreshnessStale   BackupFreshness = "stale"
+)
+
 type ProfileCard struct {
-	Name       string
-	Source     string
-	StoreRef   string
-	AuthRef    string
-	Enabled    bool
-	Status     string
-	StatusNote string
-	LastBackup string
-	LastRef    string
+	Name        string
+	Source      string
+	StoreRef    string
+	AuthRef     string
+	Enabled     bool
+	Status      ProfileStatus
+	StatusNote  string
+	StoreHealth StoreHealth
+	BackupState BackupFreshness
+	LastBackup  string
+	LastRef     string
 }
 
 type StoreProbe struct {
@@ -89,72 +123,129 @@ func BuildDashboard(cfg *engine.ProfilesConfig, probes map[string]StoreProbe) Da
 	for _, name := range names {
 		profile := cfg.Profiles[name]
 		status, note := profileStatus(cfg, profile, probes[profile.Store])
-		lastBackup, lastRef := latestBackup(profile.Source, probes[profile.Store].Snapshots)
+		lastBackup, lastRef, lastCreated := latestBackup(profile.Source, probes[profile.Store].Snapshots)
+		storeHealth := deriveStoreHealth(cfg, profile, probes[profile.Store])
+		backupState := deriveBackupState(lastCreated)
+		if lastBackup == "" {
+			backupState = BackupFreshnessNever
+		}
 		d.Profiles = append(d.Profiles, ProfileCard{
-			Name:       name,
-			Source:     profile.Source,
-			StoreRef:   profile.Store,
-			AuthRef:    profile.AuthRef,
-			Enabled:    profile.IsEnabled(),
-			Status:     status,
-			StatusNote: note,
-			LastBackup: lastBackup,
-			LastRef:    lastRef,
+			Name:        name,
+			Source:      profile.Source,
+			StoreRef:    profile.Store,
+			AuthRef:     profile.AuthRef,
+			Enabled:     profile.IsEnabled(),
+			Status:      status,
+			StatusNote:  note,
+			StoreHealth: storeHealth,
+			BackupState: backupState,
+			LastBackup:  lastBackup,
+			LastRef:     lastRef,
 		})
 	}
 	return d
 }
 
-func profileStatus(cfg *engine.ProfilesConfig, p engine.BackupProfile, probe StoreProbe) (string, string) {
+func profileStatus(cfg *engine.ProfilesConfig, p engine.BackupProfile, probe StoreProbe) (ProfileStatus, string) {
 	if !p.IsEnabled() {
-		return "disabled", "profile disabled"
+		return ProfileStatusDisabled, "profile disabled"
 	}
 	if p.Store == "" {
-		return "error", "no store ref"
+		return ProfileStatusError, "no store ref"
 	}
 	if _, ok := cfg.Stores[p.Store]; !ok {
-		return "error", "missing store"
+		return ProfileStatusError, "missing store"
 	}
 	if p.AuthRef != "" {
 		auth, ok := cfg.Auth[p.AuthRef]
 		if !ok {
-			return "error", "missing auth ref"
+			return ProfileStatusError, "missing auth ref"
 		}
 		if provider := profileProviderFromSource(p.Source); provider != "" && auth.Provider != "" && auth.Provider != provider {
-			return "error", "provider mismatch"
+			return ProfileStatusError, "provider mismatch"
 		}
 	}
 	if provider := profileProviderFromSource(p.Source); provider != "" && p.AuthRef == "" {
-		return "error", "missing auth"
+		return ProfileStatusError, "missing auth"
 	}
 	switch probe.Status {
 	case "error":
 		if probe.Error != "" {
-			return "warning", normalizeProbeError(probe.Error)
+			return ProfileStatusWarning, normalizeProbeError(probe.Error)
 		}
-		return "warning", "store unavailable"
+		return ProfileStatusWarning, "store unavailable"
 	case "ok":
-		if latest, _ := latestBackup(p.Source, probe.Snapshots); latest == "" {
-			return "ready", "never backed up"
+		if latest, _, _ := latestBackup(p.Source, probe.Snapshots); latest == "" {
+			return ProfileStatusReady, "never backed up"
 		}
 	}
-	return "ready", ""
+	return ProfileStatusReady, ""
 }
 
-func latestBackup(sourceURI string, entries []engine.SnapshotEntry) (string, string) {
+func latestBackup(sourceURI string, entries []engine.SnapshotEntry) (string, string, time.Time) {
 	want := sourceKeyFromURI(sourceURI)
 	if want.Type == "" {
-		return "", ""
+		return "", "", time.Time{}
 	}
 	for _, entry := range entries {
 		if snapshotMatchesSource(entry.Snap.Source, want) {
 			if entry.Created.IsZero() {
-				return "unknown time", entry.Ref
+				return "unknown time", entry.Ref, time.Time{}
 			}
-			return entry.Created.Local().Format("2006-01-02 15:04"), entry.Ref
+			return entry.Created.Local().Format("2006-01-02 15:04"), entry.Ref, entry.Created
 		}
 	}
-	return "", ""
+	return "", "", time.Time{}
+}
+
+func deriveStoreHealth(cfg *engine.ProfilesConfig, p engine.BackupProfile, probe StoreProbe) StoreHealth {
+	if !p.IsEnabled() {
+		return StoreHealthDisabled
+	}
+	if p.Store == "" {
+		return StoreHealthMissingStore
+	}
+	if _, ok := cfg.Stores[p.Store]; !ok {
+		return StoreHealthMissingStore
+	}
+	if provider := profileProviderFromSource(p.Source); provider != "" && p.AuthRef == "" {
+		return StoreHealthMissingAuth
+	}
+	if p.AuthRef != "" {
+		auth, ok := cfg.Auth[p.AuthRef]
+		if !ok {
+			return StoreHealthMissingAuth
+		}
+		if provider := profileProviderFromSource(p.Source); provider != "" && auth.Provider != "" && auth.Provider != provider {
+			return StoreHealthProviderMismatch
+		}
+	}
+	switch probe.Status {
+	case "error":
+		switch normalizeProbeError(probe.Error) {
+		case "repository not initialized":
+			return StoreHealthNotInitialized
+		case "":
+			return StoreHealthUnavailable
+		default:
+			return StoreHealthUnavailable
+		}
+	case "ok":
+		return StoreHealthReady
+	default:
+		return StoreHealthPending
+	}
+}
+
+func deriveBackupState(created time.Time) BackupFreshness {
+	if created.IsZero() {
+		return BackupFreshnessUnknown
+	}
+	age := time.Since(created)
+	if age <= 7*24*time.Hour {
+		return BackupFreshnessRecent
+	}
+	return BackupFreshnessStale
 }
 
 type sourceKey struct {

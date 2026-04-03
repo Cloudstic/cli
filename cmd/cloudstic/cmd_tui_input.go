@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	"github.com/cloudstic/cli/internal/tui"
 )
@@ -17,6 +16,7 @@ const (
 	tuiActionUp
 	tuiActionDown
 	tuiActionRun
+	tuiActionCheck
 	tuiActionQuit
 )
 
@@ -79,6 +79,8 @@ func readTUIAction(r io.ByteReader) (tuiAction, error) {
 		return tuiActionUp, nil
 	case 'b', 'B':
 		return tuiActionRun, nil
+	case 'c', 'C':
+		return tuiActionCheck, nil
 	case 0x1b:
 		next, err := r.ReadByte()
 		if err != nil {
@@ -143,6 +145,14 @@ func runSelectedTUIAction(ctx context.Context, r *runner, profilesFile string, d
 	return tuiRunProfileAction(ctx, r, profilesFile, profile, log)
 }
 
+func runSelectedTUICheck(ctx context.Context, r *runner, profilesFile string, dashboard tui.Dashboard, log *tuiActionState) error {
+	profile, ok := selectedTUIProfile(dashboard)
+	if !ok {
+		return fmt.Errorf("no profile selected")
+	}
+	return tuiRunProfileCheck(ctx, r, profilesFile, profile, log)
+}
+
 func selectedTUIProfile(d tui.Dashboard) (tui.ProfileCard, bool) {
 	for _, profile := range d.Profiles {
 		if profile.Name == d.SelectedProfile {
@@ -156,5 +166,5 @@ func selectedTUIProfile(d tui.Dashboard) (tui.ProfileCard, bool) {
 }
 
 func profileNeedsInit(profile tui.ProfileCard) bool {
-	return strings.Contains(profile.StatusNote, "repository not initialized")
+	return profile.StoreHealth == tui.StoreHealthNotInitialized
 }

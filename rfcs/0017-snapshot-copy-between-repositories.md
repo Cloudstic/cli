@@ -81,7 +81,7 @@ So "copy snapshot history" must be an engine-level operation.
 Introduce a new top-level command:
 
 ```bash
-cloudstic copy --from-store <uri-or-ref> [snapshot selectors...]
+cloudstic copy -from-store <uri-or-ref> [snapshot selectors...]
 ```
 
 Examples:
@@ -300,9 +300,10 @@ The remaining caveat is about storage-layout parity, not logical dedup:
   repository
 - indexes and catalogs are destination-local implementation details
 
-So v1 should promise destination-side logical deduplication where content
-matches, but should not promise identical storage footprint or object naming
-between source and destination repositories.
+So v1 should aim to enable destination-side logical deduplication where
+content matches, but should not guarantee identical storage footprint, object
+naming, or any source-to-destination object-identity equivalence between the
+two repositories.
 
 ### 8. Resume and interruption behavior
 

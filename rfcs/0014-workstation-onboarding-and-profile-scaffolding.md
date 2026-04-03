@@ -1,6 +1,6 @@
 # RFC 0014: Workstation Onboarding and Profile Scaffolding
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Date:** 2026-03-15
 - **Affects:** `cmd/cloudstic`, `internal/paths`, `internal/engine/profiles`, docs
 

@@ -62,6 +62,43 @@ func runTUIActionIntoDashboard(ctx context.Context, r *runner, profilesFile stri
 	return dashboard
 }
 
+func runTUICheckIntoDashboard(ctx context.Context, r *runner, profilesFile string, dashboard tui.Dashboard) tui.Dashboard {
+	log := newTUIActionState(10)
+	screen := r.out
+	if profile, ok := selectedTUIProfile(dashboard); ok {
+		log.Printf("Running repository check for profile %s", profile.Name)
+	}
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				live := dashboard
+				live.ActivityLines = log.Lines()
+				_ = renderTUIScreenWidth(screen, live, tuiWidth(r))
+			}
+		}
+	}()
+
+	if err := runSelectedTUICheck(ctx, r, profilesFile, dashboard, log); err != nil {
+		log.Printf("Check failed: %v", err)
+	} else {
+		log.Printf("Check completed successfully")
+	}
+	close(stop)
+	<-done
+
+	dashboard.ActivityLines = mergeTUIActivityLines(dashboard.ActivityLines, log.Lines())
+	return dashboard
+}
+
 func mergeTUIActivityLines(existing, recent []string) []string {
 	merged := append([]string{}, recent...)
 	merged = append(merged, existing...)

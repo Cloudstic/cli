@@ -13,13 +13,15 @@ func TestRenderDashboard(t *testing.T) {
 		SelectedProfile: "documents",
 		Profiles: []ProfileCard{
 			{
-				Name:       "documents",
-				Source:     "local:/Users/test/Documents",
-				StoreRef:   "remote",
-				Enabled:    true,
-				Status:     "ready",
-				LastBackup: "2026-04-03 11:05",
-				LastRef:    "snapshot/abc123",
+				Name:        "documents",
+				Source:      "local:/Users/test/Documents",
+				StoreRef:    "remote",
+				Enabled:     true,
+				Status:      ProfileStatusReady,
+				StoreHealth: StoreHealthReady,
+				BackupState: BackupFreshnessRecent,
+				LastBackup:  "2026-04-03 11:05",
+				LastRef:     "snapshot/abc123",
 			},
 		},
 	}
@@ -44,12 +46,15 @@ func TestRenderDashboard(t *testing.T) {
 		"local:/Users/test/Documents",
 		"Store",
 		"remote",
+		"Health",
+		"ready",
 		"Backup",
-		"2026-04-03 11:05",
+		"2026-04-03 11:05 (recent)",
 		"Ref",
 		"abc123",
 		"No recent activity.",
-		"Use ↑/↓ to select a profile. Press b to backup or init. Press q to quit.",
+		"Press c to run repository check",
+		"Use ↑/↓ to select a profile. Press b to backup/init, c to check, q to quit.",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q in output:\n%s", want, got)

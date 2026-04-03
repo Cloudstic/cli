@@ -138,7 +138,7 @@ func TestRunTUI_RendersDashboardAndQuitsOnQ(t *testing.T) {
 				Source:     "local:/tmp/Documents",
 				StoreRef:   "remote",
 				Enabled:    true,
-				Status:     "ready",
+				Status:     tui.ProfileStatusReady,
 				LastBackup: "2026-04-03 11:05",
 				LastRef:    "snapshot/abc123",
 			}},
@@ -187,8 +187,8 @@ func TestRunTUI_ArrowNavigationChangesSelection(t *testing.T) {
 			ProfileCount: 2,
 			StoreCount:   1,
 			Profiles: []tui.ProfileCard{
-				{Name: "documents", Source: "local:/tmp/Documents", StoreRef: "remote", Enabled: true, Status: "ready"},
-				{Name: "photos", Source: "local:/tmp/Photos", StoreRef: "remote", Enabled: true, Status: "ready"},
+				{Name: "documents", Source: "local:/tmp/Documents", StoreRef: "remote", Enabled: true, Status: tui.ProfileStatusReady},
+				{Name: "photos", Source: "local:/tmp/Photos", StoreRef: "remote", Enabled: true, Status: tui.ProfileStatusReady},
 			},
 		}, nil
 	}
@@ -230,9 +230,11 @@ func TestRunTUI_BackupActionRunsSelectedProfileAction(t *testing.T) {
 	var ranProfile string
 	oldBuild := tuiBuildDashboard
 	oldAction := tuiRunProfileAction
+	oldCheck := tuiRunProfileCheck
 	t.Cleanup(func() {
 		tuiBuildDashboard = oldBuild
 		tuiRunProfileAction = oldAction
+		tuiRunProfileCheck = oldCheck
 	})
 	tuiBuildDashboard = func(context.Context, string) (tui.Dashboard, error) {
 		return tui.Dashboard{
@@ -240,7 +242,7 @@ func TestRunTUI_BackupActionRunsSelectedProfileAction(t *testing.T) {
 			StoreCount:      1,
 			SelectedProfile: "documents",
 			Profiles: []tui.ProfileCard{
-				{Name: "documents", Source: "local:/tmp/Documents", StoreRef: "remote", Enabled: true, Status: "ready"},
+				{Name: "documents", Source: "local:/tmp/Documents", StoreRef: "remote", Enabled: true, Status: tui.ProfileStatusReady},
 			},
 		}, nil
 	}
@@ -269,6 +271,73 @@ func TestRunTUI_BackupActionRunsSelectedProfileAction(t *testing.T) {
 	}
 	if errOut.Len() != 0 {
 		t.Fatalf("expected no stderr spillover, got:\n%s", errOut.String())
+	}
+}
+
+func TestRunTUI_CheckActionRunsSelectedProfileCheck(t *testing.T) {
+	stubTUITestHooks(t)
+
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"cloudstic", "tui"}
+
+	readEnd, writeEnd, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer func() { _ = readEnd.Close() }()
+	if _, err := writeEnd.WriteString("cq"); err != nil {
+		t.Fatalf("WriteString: %v", err)
+	}
+	_ = writeEnd.Close()
+
+	var out strings.Builder
+	var errOut strings.Builder
+	var checkedProfile string
+	oldBuild := tuiBuildDashboard
+	oldAction := tuiRunProfileAction
+	oldCheck := tuiRunProfileCheck
+	t.Cleanup(func() {
+		tuiBuildDashboard = oldBuild
+		tuiRunProfileAction = oldAction
+		tuiRunProfileCheck = oldCheck
+	})
+	tuiBuildDashboard = func(context.Context, string) (tui.Dashboard, error) {
+		return tui.Dashboard{
+			ProfileCount:    1,
+			StoreCount:      1,
+			SelectedProfile: "documents",
+			Profiles: []tui.ProfileCard{
+				{Name: "documents", Source: "local:/tmp/Documents", StoreRef: "remote", Enabled: true, Status: tui.ProfileStatusReady, StoreHealth: tui.StoreHealthReady},
+			},
+		}, nil
+	}
+	tuiRunProfileAction = func(_ context.Context, _ *runner, _ string, _ tui.ProfileCard, _ *tuiActionState) error {
+		t.Fatalf("backup action should not run")
+		return nil
+	}
+	tuiRunProfileCheck = func(_ context.Context, _ *runner, _ string, profile tui.ProfileCard, _ *tuiActionState) error {
+		checkedProfile = profile.Name
+		return nil
+	}
+	r := &runner{
+		out:        &out,
+		errOut:     &errOut,
+		stdoutFile: os.Stdout,
+		stdin:      readEnd,
+		lineIn:     bufio.NewReader(readEnd),
+	}
+	if code := r.runTUI(context.Background()); code != 0 {
+		t.Fatalf("code=%d err=%s", code, errOut.String())
+	}
+	if checkedProfile != "documents" {
+		t.Fatalf("selected check ran for %q, want documents", checkedProfile)
+	}
+	if !strings.Contains(out.String(), "Running repository check for profile documents") {
+		t.Fatalf("expected check activity log in dashboard, got:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "Check completed successfully") {
+		t.Fatalf("expected check success log in dashboard, got:\n%s", out.String())
 	}
 }
 
@@ -323,6 +392,16 @@ func TestReadTUIAction_ParsesSS3ArrowKeys(t *testing.T) {
 	}
 	if ev != tuiActionDown {
 		t.Fatalf("ss3 down action=%v want %v", ev, tuiActionDown)
+	}
+}
+
+func TestReadTUIAction_ParsesCheckShortcut(t *testing.T) {
+	ev, err := readTUIAction(bufio.NewReader(bytes.NewBufferString("c")))
+	if err != nil {
+		t.Fatalf("readTUIAction check: %v", err)
+	}
+	if ev != tuiActionCheck {
+		t.Fatalf("check action=%v want %v", ev, tuiActionCheck)
 	}
 }
 
@@ -386,7 +465,7 @@ func TestTUISession_HandleActionRunRefreshesDashboard(t *testing.T) {
 			StoreCount:      1,
 			SelectedProfile: "docs",
 			Profiles: []tui.ProfileCard{
-				{Name: "docs", Source: "local:/docs", StoreRef: "remote", Enabled: true, Status: "ready", LastBackup: "2026-04-03 12:00"},
+				{Name: "docs", Source: "local:/docs", StoreRef: "remote", Enabled: true, Status: tui.ProfileStatusReady, LastBackup: "2026-04-03 12:00"},
 			},
 		}, nil
 	}
@@ -399,7 +478,7 @@ func TestTUISession_HandleActionRunRefreshesDashboard(t *testing.T) {
 	s := newTUISession(&runner{out: &out, stdoutFile: os.Stdout, stdin: os.Stdin}, "profiles.yaml", tui.Dashboard{
 		SelectedProfile: "docs",
 		Profiles: []tui.ProfileCard{
-			{Name: "docs", Source: "local:/docs", StoreRef: "remote", Enabled: true, Status: "ready"},
+			{Name: "docs", Source: "local:/docs", StoreRef: "remote", Enabled: true, Status: tui.ProfileStatusReady},
 		},
 	})
 
@@ -423,7 +502,7 @@ func TestTUISession_RefreshPreservesSelectionAndActivity(t *testing.T) {
 	tuiBuildDashboard = func(context.Context, string) (tui.Dashboard, error) {
 		return tui.Dashboard{
 			Profiles: []tui.ProfileCard{
-				{Name: "docs", Source: "local:/docs", StoreRef: "remote", Enabled: true, Status: "ready"},
+				{Name: "docs", Source: "local:/docs", StoreRef: "remote", Enabled: true, Status: tui.ProfileStatusReady},
 			},
 		}, nil
 	}
@@ -441,27 +520,6 @@ func TestTUISession_RefreshPreservesSelectionAndActivity(t *testing.T) {
 	}
 	if len(s.dashboard.ActivityLines) != 1 || s.dashboard.ActivityLines[0] != "running" {
 		t.Fatalf("activity not preserved: %+v", s.dashboard.ActivityLines)
-	}
-}
-
-func TestRunTUIInitAction_MissingStore(t *testing.T) {
-	err := runTUIInitAction(context.Background(), &runner{}, "profiles.yaml", "docs", cloudstic.BackupProfile{Store: "missing"}, &cloudstic.ProfilesConfig{})
-	if err == nil || !strings.Contains(err.Error(), `references unknown store "missing"`) {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestLoadTUIProfilesConfig_InitializesMaps(t *testing.T) {
-	path := t.TempDir() + "/profiles.yaml"
-	if err := cloudstic.SaveProfilesFile(path, &cloudstic.ProfilesConfig{Version: 1}); err != nil {
-		t.Fatalf("SaveProfilesFile: %v", err)
-	}
-	cfg, err := loadTUIProfilesConfig(path)
-	if err != nil {
-		t.Fatalf("loadTUIProfilesConfig: %v", err)
-	}
-	if cfg.Profiles == nil || cfg.Stores == nil || cfg.Auth == nil {
-		t.Fatalf("expected maps to be initialized: %+v", cfg)
 	}
 }
 

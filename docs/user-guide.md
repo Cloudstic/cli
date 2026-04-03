@@ -607,6 +607,7 @@ Current controls:
 
 - `↑` / `↓` or `j` / `k`: move selection
 - `b`: run `backup` for the selected profile, or `init` if its store is not initialized
+- `c`: run `check` for the selected profile's repository
 - `q`: quit
 
 `cloudstic tui` requires an interactive terminal. It is not intended for scripts or CI.

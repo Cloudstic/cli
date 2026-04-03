@@ -65,7 +65,7 @@ func RenderDashboardWidth(w io.Writer, d Dashboard, width int) error {
 		return err
 	}
 
-	_, err := fmt.Fprintf(w, "\n%sUse ↑/↓ to select a profile. Press b to backup or init. Press q to quit.%s\n", ui.Dim, ui.Reset)
+	_, err := fmt.Fprintf(w, "\n%sUse ↑/↓ to select a profile. Press b to backup/init, c to check, q to quit.%s\n", ui.Dim, ui.Reset)
 	return err
 }
 
@@ -176,24 +176,31 @@ func renderSelectedProfile(d Dashboard) []string {
 		profileDetailLine("State", plainProfileStateLabel(profile)),
 		profileDetailLine("Source", profile.Source),
 		profileDetailLine("Store", profile.StoreRef),
+		profileDetailLine("Health", storeHealthLabel(profile.StoreHealth)),
 	}
 	if profile.AuthRef != "" {
 		lines = append(lines, profileDetailLine("Auth", profile.AuthRef))
 	}
 	switch {
 	case profile.LastBackup != "":
-		lines = append(lines, profileDetailLine("Backup", profile.LastBackup))
-	case profile.Status == "ready" && profile.StatusNote == "never backed up":
+		backupValue := profile.LastBackup
+		if label := backupFreshnessLabel(profile.BackupState); label != "" {
+			backupValue = fmt.Sprintf("%s (%s)", backupValue, label)
+		}
+		lines = append(lines, profileDetailLine("Backup", backupValue))
+	case profile.Status == ProfileStatusReady && profile.BackupState == BackupFreshnessNever:
 		lines = append(lines, profileDetailLine("Backup", "never backed up"))
 	}
 	if profile.LastRef != "" {
 		lines = append(lines, profileDetailLine("Ref", trimSnapshotRef(profile.LastRef)))
 	}
-	if profile.StatusNote != "" && (profile.Status != "ready" || profile.StatusNote != "never backed up") {
+	if profile.StatusNote != "" && (profile.Status != ProfileStatusReady || profile.BackupState != BackupFreshnessNever) {
 		lines = append(lines, profileDetailLine("Status", profile.StatusNote))
 	}
 	lines = append(lines, "")
-	lines = append(lines, fmt.Sprintf("%sAction%s  %s", ui.Dim, ui.Reset, selectedActionLabel(profile)))
+	for _, action := range selectedActionLines(profile) {
+		lines = append(lines, fmt.Sprintf("%sAction%s  %s", ui.Dim, ui.Reset, action))
+	}
 	return lines
 }
 
@@ -282,6 +289,42 @@ func equalizePaneHeights(left, right []string) ([]string, []string) {
 	return left, right
 }
 
+func storeHealthLabel(health StoreHealth) string {
+	switch health {
+	case StoreHealthReady:
+		return "ready"
+	case StoreHealthPending:
+		return "pending"
+	case StoreHealthDisabled:
+		return "disabled"
+	case StoreHealthMissingStore:
+		return "missing store"
+	case StoreHealthMissingAuth:
+		return "missing auth"
+	case StoreHealthProviderMismatch:
+		return "provider mismatch"
+	case StoreHealthUnavailable:
+		return "unavailable"
+	case StoreHealthNotInitialized:
+		return "repository not initialized"
+	default:
+		return "unknown"
+	}
+}
+
+func backupFreshnessLabel(state BackupFreshness) string {
+	switch state {
+	case BackupFreshnessRecent:
+		return "recent"
+	case BackupFreshnessStale:
+		return "stale"
+	case BackupFreshnessNever:
+		return "never"
+	default:
+		return ""
+	}
+}
+
 func visibleLen(s string) int {
 	n := 0
 	inEscape := false
@@ -343,11 +386,11 @@ func truncateVisible(s string, limit int) string {
 
 func profileStateLabel(profile ProfileCard) string {
 	switch profile.Status {
-	case "disabled":
+	case ProfileStatusDisabled:
 		return fmt.Sprintf("%sdisabled%s", ui.Dim, ui.Reset)
-	case "warning":
+	case ProfileStatusWarning:
 		return fmt.Sprintf("%swarning%s", ui.Cyan, ui.Reset)
-	case "error":
+	case ProfileStatusError:
 		return "error"
 	default:
 		if profile.Enabled {
@@ -359,8 +402,12 @@ func profileStateLabel(profile ProfileCard) string {
 
 func plainProfileStateLabel(profile ProfileCard) string {
 	switch profile.Status {
-	case "disabled", "warning", "error":
-		return profile.Status
+	case ProfileStatusDisabled:
+		return "disabled"
+	case ProfileStatusWarning:
+		return "warning"
+	case ProfileStatusError:
+		return "error"
 	default:
 		if profile.Enabled {
 			return "enabled"
@@ -381,11 +428,17 @@ func selectedProfileCard(d Dashboard) (ProfileCard, bool) {
 	return d.Profiles[0], true
 }
 
-func selectedActionLabel(profile ProfileCard) string {
-	if plainProfileStateLabel(profile) == "warning" && strings.Contains(profile.StatusNote, "repository not initialized") {
-		return "Press b to initialize the repository"
+func selectedActionLines(profile ProfileCard) []string {
+	if profile.StoreHealth == StoreHealthNotInitialized {
+		return []string{"Press b to initialize the repository"}
 	}
-	return "Press b to run backup"
+	if profile.Status == ProfileStatusDisabled {
+		return []string{"No actions available for disabled profiles"}
+	}
+	if profile.Status == ProfileStatusError {
+		return []string{"Fix profile configuration before running actions"}
+	}
+	return []string{"Press b to run backup", "Press c to run repository check"}
 }
 
 func trimSnapshotRef(ref string) string {

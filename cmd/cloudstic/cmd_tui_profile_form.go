@@ -70,6 +70,7 @@ func newTUIProfileModal(profilesFile, existingName string, editing bool) (*tuiPr
 		return nil, fmt.Errorf("no store references available; create one first")
 	}
 	moveDefaultToFront(storeOptions, existing.Store)
+	source := newTUIProfileSource(existing.Source)
 
 	m := &tuiProfileModal{
 		profilesFile: profilesFile,
@@ -85,24 +86,23 @@ func newTUIProfileModal(profilesFile, existingName string, editing bool) (*tuiPr
 			CancelLabel: "Cancel",
 			Fields: []tui.ModalField{
 				{Key: "name", Label: "Name", Kind: tui.ModalFieldText, Value: existingName, Required: true, Disabled: editing},
-				{Key: "source_type", Label: "Source Type", Kind: tui.ModalFieldSelect, Value: "local", Options: append([]string{}, tuiSourceTypes...), Required: true},
-				{Key: "source_value", Label: "Path", Kind: tui.ModalFieldText, Required: true},
+				{Key: "source_type", Label: "Source Type", Kind: tui.ModalFieldSelect, Value: source.Type, Options: append([]string{}, tuiSourceTypes...), Required: true},
+				{Key: "source_value", Label: source.DetailLabel(), Kind: tui.ModalFieldText, Value: source.Value, Required: source.DetailRequired()},
 				{Key: "store", Label: "Store", Kind: tui.ModalFieldSelect, Value: firstNonEmpty(existing.Store, firstOption(storeOptions)), Options: storeOptions, Required: true},
 				{Key: "auth", Label: "Auth", Kind: tui.ModalFieldSelect, Value: existing.AuthRef},
 			},
 		},
 	}
-	m.loadSource(existing.Source)
-	m.syncAuthField()
+	m.rebuildDerivedFields()
 	m.selectFirstEditableField()
 	return m, nil
 }
 
 func (m *tuiProfileModal) View() tui.Modal {
-	m.syncSourceFieldMetadata()
+	source := m.currentSource()
 	view := m.modal
-	view.Subtitle = profileModalSubtitle(m)
-	view.Message = sourceFieldExamples(m)
+	view.Subtitle = profileModalSubtitle(source, m.cfg)
+	view.Message = sourceFieldExamples(m.selectedFieldKey(), source)
 	return view
 }
 
@@ -125,7 +125,13 @@ func (m *tuiProfileModal) Handle(input tuiModalInput) (bool, string, error) {
 	case tuiModalInputEnter:
 		name, err := m.submit()
 		if err != nil {
-			m.modal.ErrorField, m.modal.Error = modalValidationError(err)
+			if fieldErr, ok := err.(*tuiFieldError); ok {
+				m.modal.ErrorField = fieldErr.Field
+				m.modal.Error = fieldErr.Message
+			} else {
+				m.modal.ErrorField = ""
+				m.modal.Error = err.Error()
+			}
 			return false, "", nil
 		}
 		return true, name, nil
@@ -182,10 +188,7 @@ func (m *tuiProfileModal) cycleField(delta int) {
 	field.Value = field.Options[idx]
 	m.clearError()
 	if field.Key == "source_type" {
-		m.syncSourceFieldMetadata()
-	}
-	if field.Key == "source_type" || field.Key == "source_value" {
-		m.syncAuthField()
+		m.rebuildDerivedFields()
 	}
 }
 
@@ -196,8 +199,8 @@ func (m *tuiProfileModal) appendField(text string) {
 	}
 	field.Value += text
 	m.clearError()
-	if field.Key == "source_type" || field.Key == "source_value" {
-		m.syncAuthField()
+	if field.Key == "source_value" {
+		m.rebuildDerivedFields()
 	}
 }
 
@@ -209,17 +212,22 @@ func (m *tuiProfileModal) backspaceField() {
 	runes := []rune(field.Value)
 	field.Value = string(runes[:len(runes)-1])
 	m.clearError()
-	if field.Key == "source_type" || field.Key == "source_value" {
-		m.syncAuthField()
+	if field.Key == "source_value" {
+		m.rebuildDerivedFields()
 	}
 }
 
-func (m *tuiProfileModal) syncAuthField() {
+func (m *tuiProfileModal) rebuildDerivedFields() {
+	m.updateSourceFieldMetadata()
+	m.updateAuthField()
+}
+
+func (m *tuiProfileModal) updateAuthField() {
 	field := m.fieldByKey("auth")
 	if field == nil {
 		return
 	}
-	provider := profileProviderFromSource(m.composedSource())
+	provider := m.currentSource().Provider()
 	if provider == "" {
 		field.Disabled = true
 		field.Options = nil
@@ -243,49 +251,49 @@ func (m *tuiProfileModal) syncAuthField() {
 }
 
 func (m *tuiProfileModal) submit() (string, error) {
-	name := strings.TrimSpace(m.fieldValue("name"))
+	name := m.textFieldValue("name")
 	if !m.editing {
 		if name == "" {
-			return "", modalFieldError("name", "profile name is required")
+			return "", fieldError("name", "profile name is required")
 		}
 		if err := validateRefName("profile", name); err != nil {
-			return "", modalFieldError("name", err.Error())
+			return "", fieldError("name", err.Error())
 		}
 		if _, exists := m.cfg.Profiles[name]; exists {
-			return "", modalFieldError("name", fmt.Sprintf("profile %q already exists", name))
+			return "", fieldError("name", fmt.Sprintf("profile %q already exists", name))
 		}
 	} else {
 		name = m.originalName
 	}
 
-	source := m.composedSource()
+	source := m.currentSource().Compose()
 	if source == "" {
-		return "", modalFieldError("source_value", "source details are required")
+		return "", fieldError("source_value", "source details are required")
 	}
 	if _, err := parseSourceURI(source); err != nil {
-		return "", modalFieldError("source_value", fmt.Sprintf("invalid source: %v", err))
+		return "", fieldError("source_value", fmt.Sprintf("invalid source: %v", err))
 	}
 
-	storeRef := strings.TrimSpace(m.fieldValue("store"))
+	storeRef := m.textFieldValue("store")
 	if storeRef == "" {
-		return "", modalFieldError("store", "store reference is required")
+		return "", fieldError("store", "store reference is required")
 	}
 	if _, ok := m.cfg.Stores[storeRef]; !ok {
-		return "", modalFieldError("store", fmt.Sprintf("unknown store %q", storeRef))
+		return "", fieldError("store", fmt.Sprintf("unknown store %q", storeRef))
 	}
 
-	authRef := strings.TrimSpace(m.fieldValue("auth"))
-	provider := profileProviderFromSource(source)
+	authRef := m.textFieldValue("auth")
+	provider := m.currentSource().Provider()
 	if provider != "" {
 		if authRef == "" {
-			return "", modalFieldError("auth", fmt.Sprintf("auth reference is required for %s sources", provider))
+			return "", fieldError("auth", fmt.Sprintf("auth reference is required for %s sources", provider))
 		}
 		auth, ok := m.cfg.Auth[authRef]
 		if !ok {
-			return "", modalFieldError("auth", fmt.Sprintf("unknown auth %q", authRef))
+			return "", fieldError("auth", fmt.Sprintf("unknown auth %q", authRef))
 		}
 		if auth.Provider != provider {
-			return "", modalFieldError("auth", fmt.Sprintf("auth %q is not a %s entry", authRef, provider))
+			return "", fieldError("auth", fmt.Sprintf("auth %q is not a %s entry", authRef, provider))
 		}
 	} else {
 		authRef = ""
@@ -313,62 +321,21 @@ func (m *tuiProfileModal) clearError() {
 	m.modal.ErrorField = ""
 }
 
-func (m *tuiProfileModal) loadSource(raw string) {
-	sourceType := firstNonEmpty(sourceTypeFromSource(raw), "local")
-	sourceValue := sourceValueFromSource(raw)
-	if field := m.fieldByKey("source_type"); field != nil {
-		field.Value = sourceType
-	}
-	if field := m.fieldByKey("source_value"); field != nil {
-		field.Value = sourceValue
-	}
-	m.syncSourceFieldMetadata()
-}
-
-func (m *tuiProfileModal) composedSource() string {
-	sourceType := m.fieldValue("source_type")
-	sourceValue := strings.TrimSpace(m.fieldValue("source_value"))
-	switch sourceType {
-	case "local":
-		return "local:" + sourceValue
-	case "sftp":
-		if sourceValue == "" {
-			return ""
-		}
-		return "sftp://" + sourceValue
-	case "gdrive", "gdrive-changes", "onedrive", "onedrive-changes":
-		switch {
-		case sourceValue == "", sourceValue == "/":
-			return sourceType
-		case strings.HasPrefix(sourceValue, "/"):
-			return sourceType + ":" + sourceValue
-		default:
-			return sourceType + "://" + sourceValue
-		}
-	default:
-		return sourceValue
+func (m *tuiProfileModal) currentSource() tuiProfileSource {
+	return tuiProfileSource{
+		Type:  firstNonEmpty(m.fieldValue("source_type"), "local"),
+		Value: m.fieldValue("source_value"),
 	}
 }
 
-func (m *tuiProfileModal) syncSourceFieldMetadata() {
+func (m *tuiProfileModal) updateSourceFieldMetadata() {
 	field := m.fieldByKey("source_value")
 	if field == nil {
 		return
 	}
-	switch m.fieldValue("source_type") {
-	case "local":
-		field.Label = "Path"
-		field.Required = true
-	case "sftp":
-		field.Label = "Target"
-		field.Required = true
-	case "gdrive", "gdrive-changes", "onedrive", "onedrive-changes":
-		field.Label = "Location"
-		field.Required = false
-	default:
-		field.Label = "Source"
-		field.Required = true
-	}
+	source := m.currentSource()
+	field.Label = source.DetailLabel()
+	field.Required = source.DetailRequired()
 }
 
 func (m *tuiProfileModal) fieldByKey(key string) *tui.ModalField {
@@ -386,6 +353,17 @@ func (m *tuiProfileModal) fieldValue(key string) string {
 		return ""
 	}
 	return field.Value
+}
+
+func (m *tuiProfileModal) textFieldValue(key string) string {
+	return strings.TrimSpace(m.fieldValue(key))
+}
+
+func (m *tuiProfileModal) selectedFieldKey() string {
+	if m.modal.Selected < 0 || m.modal.Selected >= len(m.modal.Fields) {
+		return ""
+	}
+	return m.modal.Fields[m.modal.Selected].Key
 }
 
 func (s *tuiSession) runProfileModal(ctx context.Context, existingName string, editing bool) error {
@@ -561,59 +539,27 @@ func profileModalTitle(editing bool) string {
 	return "Create Profile"
 }
 
-func profileModalSubtitle(m *tuiProfileModal) string {
-	m.syncSourceFieldMetadata()
-	source := m.composedSource()
-	provider := profileProviderFromSource(source)
+func profileModalSubtitle(source tuiProfileSource, cfg *cloudstic.ProfilesConfig) string {
+	provider := source.Provider()
 	switch {
 	case provider == "":
-		return sourceTypeDescription(m.fieldValue("source_type"))
-	case len(profileAuthOptions(m.cfg, provider)) == 0:
+		return source.Description()
+	case len(profileAuthOptions(cfg, provider)) == 0:
 		return fmt.Sprintf("No %s auth refs available yet.", provider)
 	default:
 		return fmt.Sprintf("Source requires a %s auth reference.", provider)
 	}
 }
 
-func sourceFieldExamples(m *tuiProfileModal) []string {
-	selected := ""
-	if m.modal.Selected >= 0 && m.modal.Selected < len(m.modal.Fields) {
-		selected = m.modal.Fields[m.modal.Selected].Key
-	}
-	if selected != "source_value" {
+func sourceFieldExamples(selectedField string, source tuiProfileSource) []string {
+	if selectedField != "source_value" {
 		return nil
 	}
-	switch m.fieldValue("source_type") {
-	case "local":
-		return []string{fmt.Sprintf("%sExample:%s /Users/me/Documents", ui.Dim, ui.Reset)}
-	case "sftp":
-		return []string{fmt.Sprintf("%sExample:%s backup@host.example.com/data", ui.Dim, ui.Reset)}
-	case "gdrive", "gdrive-changes":
-		return []string{fmt.Sprintf("%sExamples:%s /Team Folder   or   Shared Drive/Finance   (leave empty for the whole drive)", ui.Dim, ui.Reset)}
-	case "onedrive", "onedrive-changes":
-		return []string{fmt.Sprintf("%sExamples:%s /Documents   or   Shared Library/Reports   (leave empty for the whole drive)", ui.Dim, ui.Reset)}
-	default:
+	example := source.ExampleText()
+	if example == "" {
 		return nil
 	}
-}
-
-func sourceTypeDescription(sourceType string) string {
-	switch sourceType {
-	case "local":
-		return "Back up a local filesystem path."
-	case "sftp":
-		return "Back up files from an SFTP server."
-	case "gdrive":
-		return "Back up Google Drive with a full scan."
-	case "gdrive-changes":
-		return "Back up Google Drive incrementally via the Changes API."
-	case "onedrive":
-		return "Back up OneDrive with a full scan."
-	case "onedrive-changes":
-		return "Back up OneDrive incrementally via the delta API."
-	default:
-		return "Configure the source details below."
-	}
+	return []string{fmt.Sprintf("%s%s%s", ui.Dim, example, ui.Reset)}
 }
 
 func firstNonEmpty(values ...string) string {
@@ -684,19 +630,17 @@ func moveDefaultToFront(options []string, current string) {
 	}
 }
 
-func modalFieldError(field, message string) error {
-	return fmt.Errorf("%s::%s", field, message)
+type tuiFieldError struct {
+	Field   string
+	Message string
 }
 
-func modalValidationError(err error) (field, message string) {
-	if err == nil {
-		return "", ""
-	}
-	parts := strings.SplitN(err.Error(), "::", 2)
-	if len(parts) == 2 {
-		return parts[0], parts[1]
-	}
-	return "", err.Error()
+func (e *tuiFieldError) Error() string {
+	return e.Message
+}
+
+func fieldError(field, message string) error {
+	return &tuiFieldError{Field: field, Message: message}
 }
 
 func managementActivity(status tui.ActivityStatus, action, summary string, lines ...string) tui.ActivityPanel {

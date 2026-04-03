@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -14,6 +15,82 @@ import (
 	"github.com/cloudstic/cli/internal/tui"
 	xterm "golang.org/x/term"
 )
+
+func TestTUIProfileSourceCompose(t *testing.T) {
+	tests := []struct {
+		name string
+		src  tuiProfileSource
+		want string
+	}{
+		{name: "local", src: tuiProfileSource{Type: "local", Value: "/docs"}, want: "local:/docs"},
+		{name: "sftp", src: tuiProfileSource{Type: "sftp", Value: "backup@host/data"}, want: "sftp://backup@host/data"},
+		{name: "gdrive root", src: tuiProfileSource{Type: "gdrive", Value: ""}, want: "gdrive"},
+		{name: "gdrive path", src: tuiProfileSource{Type: "gdrive", Value: "/Team"}, want: "gdrive:/Team"},
+		{name: "gdrive drive name", src: tuiProfileSource{Type: "gdrive", Value: "Shared Drive/Finance"}, want: "gdrive://Shared Drive/Finance"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.src.Compose(); got != tt.want {
+				t.Fatalf("Compose()=%q want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTUIProfileModalSubmitReturnsTypedFieldError(t *testing.T) {
+	dir := t.TempDir()
+	profilesPath := dir + "/profiles.yaml"
+	if err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
+		Version: 1,
+		Stores: map[string]cloudstic.ProfileStore{
+			"remote": {URI: "s3:bucket/test"},
+		},
+	}); err != nil {
+		t.Fatalf("SaveProfilesFile: %v", err)
+	}
+
+	modal, err := newTUIProfileModal(profilesPath, "", false)
+	if err != nil {
+		t.Fatalf("newTUIProfileModal: %v", err)
+	}
+	modal.fieldByKey("name").Value = ""
+
+	_, err = modal.submit()
+	if err == nil {
+		t.Fatalf("expected validation error")
+	}
+	fieldErr, ok := err.(*tuiFieldError)
+	if !ok {
+		t.Fatalf("expected *tuiFieldError, got %T", err)
+	}
+	if fieldErr.Field != "name" {
+		t.Fatalf("field=%q want name", fieldErr.Field)
+	}
+}
+
+func TestTUIProfileModalViewDoesNotMutateState(t *testing.T) {
+	dir := t.TempDir()
+	profilesPath := dir + "/profiles.yaml"
+	if err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
+		Version: 1,
+		Stores: map[string]cloudstic.ProfileStore{
+			"remote": {URI: "s3:bucket/test"},
+		},
+	}); err != nil {
+		t.Fatalf("SaveProfilesFile: %v", err)
+	}
+
+	modal, err := newTUIProfileModal(profilesPath, "", false)
+	if err != nil {
+		t.Fatalf("newTUIProfileModal: %v", err)
+	}
+	before := modal.modal
+	_ = modal.View()
+	after := modal.modal
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("View mutated modal state")
+	}
+}
 
 func stubTUITestHooks(t *testing.T) {
 	t.Helper()

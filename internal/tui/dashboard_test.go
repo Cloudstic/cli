@@ -67,6 +67,9 @@ func TestBuildDashboard_SortsProfilesAndCountsSections(t *testing.T) {
 	if got.Profiles[0].LastRef != "snapshot/abc" {
 		t.Fatalf("last ref = %q want snapshot/abc", got.Profiles[0].LastRef)
 	}
+	if got.SelectedView != ProfileViewSummary {
+		t.Fatalf("selected view = %q want summary", got.SelectedView)
+	}
 	if got.Profiles[0].Status != ProfileStatusReady {
 		t.Fatalf("status = %q want ready", got.Profiles[0].Status)
 	}
@@ -81,6 +84,12 @@ func TestBuildDashboard_SortsProfilesAndCountsSections(t *testing.T) {
 	}
 	if got.Profiles[0].BackupState != BackupFreshnessRecent {
 		t.Fatalf("backup state = %q want recent", got.Profiles[0].BackupState)
+	}
+	if len(got.Profiles[0].History) != 1 {
+		t.Fatalf("history entries = %d want 1", len(got.Profiles[0].History))
+	}
+	if got.Profiles[0].History[0].Ref != "snapshot/abc" {
+		t.Fatalf("history ref = %q want snapshot/abc", got.Profiles[0].History[0].Ref)
 	}
 	if len(got.Profiles[0].Actions) != 2 || got.Profiles[0].Actions[0].Kind != ActionKindBackup || !got.Profiles[0].Actions[0].Enabled {
 		t.Fatalf("unexpected actions: %+v", got.Profiles[0].Actions)
@@ -162,6 +171,57 @@ func TestBuildDashboardFromConfig_LoadsStoreSnapshots(t *testing.T) {
 	})
 	if len(got.Profiles) != 1 || got.Profiles[0].LastRef != "snapshot/1" {
 		t.Fatalf("unexpected dashboard: %+v", got)
+	}
+}
+
+func TestBuildDashboard_BuildsProfileHistoryNewestFirst(t *testing.T) {
+	cfg := &engine.ProfilesConfig{
+		Stores: map[string]engine.ProfileStore{
+			"remote": {URI: "s3:bucket/prod"},
+		},
+		Profiles: map[string]engine.BackupProfile{
+			"docs": {Source: "local:/docs", Store: "remote"},
+		},
+	}
+
+	got := BuildDashboard(cfg, map[string]StoreProbe{
+		"remote": {
+			Status: "ok",
+			Snapshots: []engine.SnapshotEntry{
+				{
+					Ref:     "snapshot/old",
+					Created: mustTime(t, "2026-04-02T10:00:00Z"),
+					Snap: core.Snapshot{
+						Source: &core.SourceInfo{Type: "local", Path: "/docs"},
+					},
+				},
+				{
+					Ref:     "snapshot/new",
+					Created: mustTime(t, "2026-04-03T12:30:00Z"),
+					Snap: core.Snapshot{
+						Source: &core.SourceInfo{Type: "local", Path: "/docs"},
+					},
+				},
+				{
+					Ref:     "snapshot/other",
+					Created: mustTime(t, "2026-04-04T08:00:00Z"),
+					Snap: core.Snapshot{
+						Source: &core.SourceInfo{Type: "local", Path: "/photos"},
+					},
+				},
+			},
+		},
+	})
+
+	if len(got.Profiles) != 1 {
+		t.Fatalf("profiles=%d want 1", len(got.Profiles))
+	}
+	history := got.Profiles[0].History
+	if len(history) != 2 {
+		t.Fatalf("history entries = %d want 2", len(history))
+	}
+	if history[0].Ref != "snapshot/new" || history[1].Ref != "snapshot/old" {
+		t.Fatalf("unexpected history order: %+v", history)
 	}
 }
 

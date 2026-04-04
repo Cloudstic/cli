@@ -585,6 +585,24 @@ func TestReadTUIAction_ParsesCheckShortcut(t *testing.T) {
 	}
 }
 
+func TestReadTUIAction_ParsesViewShortcuts(t *testing.T) {
+	ev, err := readTUIAction(bufio.NewReader(bytes.NewBufferString("s")), tui.DashboardLayout{})
+	if err != nil {
+		t.Fatalf("readTUIAction summary: %v", err)
+	}
+	if ev.Kind != tuiActionSummaryView {
+		t.Fatalf("summary action=%v want %v", ev.Kind, tuiActionSummaryView)
+	}
+
+	ev, err = readTUIAction(bufio.NewReader(bytes.NewBufferString("h")), tui.DashboardLayout{})
+	if err != nil {
+		t.Fatalf("readTUIAction history: %v", err)
+	}
+	if ev.Kind != tuiActionHistoryView {
+		t.Fatalf("history action=%v want %v", ev.Kind, tuiActionHistoryView)
+	}
+}
+
 func TestReadTUIAction_ParsesManagementShortcuts(t *testing.T) {
 	ev, err := readTUIAction(bufio.NewReader(bytes.NewBufferString("n")), tui.DashboardLayout{})
 	if err != nil {
@@ -711,6 +729,7 @@ func TestTUISession_HandleActionRunRefreshesDashboard(t *testing.T) {
 			ProfileCount:    1,
 			StoreCount:      1,
 			SelectedProfile: "docs",
+			SelectedView:    tui.ProfileViewSummary,
 			Profiles: []tui.ProfileCard{
 				{
 					Name:       "docs",
@@ -735,6 +754,7 @@ func TestTUISession_HandleActionRunRefreshesDashboard(t *testing.T) {
 	var out strings.Builder
 	s := newTUISession(&runner{out: &out, stdoutFile: os.Stdout, stdin: os.Stdin}, "profiles.yaml", tui.Dashboard{
 		SelectedProfile: "docs",
+		SelectedView:    tui.ProfileViewHistory,
 		Profiles: []tui.ProfileCard{
 			{
 				Name:     "docs",
@@ -756,6 +776,9 @@ func TestTUISession_HandleActionRunRefreshesDashboard(t *testing.T) {
 	if s.dashboard.SelectedProfile != "docs" {
 		t.Fatalf("selected profile lost after refresh: %+v", s.dashboard)
 	}
+	if s.dashboard.SelectedView != tui.ProfileViewHistory {
+		t.Fatalf("selected view lost after refresh: %+v", s.dashboard)
+	}
 	if len(s.dashboard.Activity.Lines) == 0 {
 		t.Fatalf("expected activity lines after action")
 	}
@@ -764,6 +787,32 @@ func TestTUISession_HandleActionRunRefreshesDashboard(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(s.dashboard.Activity.Lines, "\n"), "Action completed successfully") {
 		t.Fatalf("missing completion activity: %+v", s.dashboard.Activity)
+	}
+}
+
+func TestTUISession_HandleActionSwitchesSelectedView(t *testing.T) {
+	stubTUITestHooks(t)
+
+	s := newTUISession(&runner{out: io.Discard, stdoutFile: os.Stdout, stdin: os.Stdin}, "profiles.yaml", tui.Dashboard{
+		SelectedProfile: "docs",
+		SelectedView:    tui.ProfileViewSummary,
+		Profiles: []tui.ProfileCard{
+			{Name: "docs", Enabled: true, Status: tui.ProfileStatusReady},
+		},
+	})
+
+	if _, err := s.handleAction(context.Background(), tuiAction{Kind: tuiActionHistoryView}); err != nil {
+		t.Fatalf("handleAction(history): %v", err)
+	}
+	if s.dashboard.SelectedView != tui.ProfileViewHistory {
+		t.Fatalf("selected view = %q want history", s.dashboard.SelectedView)
+	}
+
+	if _, err := s.handleAction(context.Background(), tuiAction{Kind: tuiActionSummaryView}); err != nil {
+		t.Fatalf("handleAction(summary): %v", err)
+	}
+	if s.dashboard.SelectedView != tui.ProfileViewSummary {
+		t.Fatalf("selected view = %q want summary", s.dashboard.SelectedView)
 	}
 }
 

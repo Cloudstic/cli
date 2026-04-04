@@ -17,6 +17,8 @@ const (
 	tuiActionNone tuiActionKind = iota
 	tuiActionUp
 	tuiActionDown
+	tuiActionSummaryView
+	tuiActionHistoryView
 	tuiActionRun
 	tuiActionCheck
 	tuiActionCreate
@@ -33,6 +35,9 @@ type tuiAction struct {
 }
 
 func ensureSelectedProfile(d tui.Dashboard) tui.Dashboard {
+	if d.SelectedView == "" {
+		d.SelectedView = tui.ProfileViewSummary
+	}
 	if d.SelectedProfile != "" || len(d.Profiles) == 0 {
 		return d
 	}
@@ -93,6 +98,10 @@ func readTUIAction(r io.ByteReader, layout tui.DashboardLayout) (tuiAction, erro
 		return tuiAction{Kind: tuiActionRun}, nil
 	case 'c', 'C':
 		return tuiAction{Kind: tuiActionCheck}, nil
+	case 's', 'S':
+		return tuiAction{Kind: tuiActionSummaryView}, nil
+	case 'h', 'H':
+		return tuiAction{Kind: tuiActionHistoryView}, nil
 	case 'n', 'N':
 		return tuiAction{Kind: tuiActionCreate}, nil
 	case 'e', 'E':

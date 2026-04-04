@@ -13,9 +13,34 @@ import (
 	"time"
 
 	cloudstic "github.com/cloudstic/cli"
+	"github.com/cloudstic/cli/internal/secretref"
 	"github.com/cloudstic/cli/internal/tui"
 	xterm "golang.org/x/term"
 )
+
+type testWritableSecretBackend struct {
+	scheme      string
+	displayName string
+	defaultRef  string
+	storedRef   string
+	storedValue string
+}
+
+func (b *testWritableSecretBackend) Resolve(context.Context, secretref.Ref) (string, error) {
+	return "", nil
+}
+func (b *testWritableSecretBackend) Scheme() string                   { return b.scheme }
+func (b *testWritableSecretBackend) DisplayName() string              { return b.displayName }
+func (b *testWritableSecretBackend) WriteSupported() bool             { return true }
+func (b *testWritableSecretBackend) DefaultRef(string, string) string { return b.defaultRef }
+func (b *testWritableSecretBackend) Exists(context.Context, secretref.Ref) (bool, error) {
+	return false, nil
+}
+func (b *testWritableSecretBackend) Store(_ context.Context, ref secretref.Ref, value string) error {
+	b.storedRef = ref.Raw
+	b.storedValue = value
+	return nil
+}
 
 func TestTUIProfileSourceCompose(t *testing.T) {
 	tests := []struct {
@@ -112,6 +137,177 @@ func TestNewTUIProfileModal_AllowsCreatingStoreWhenNoneExist(t *testing.T) {
 	}
 	if len(storeField.Options) != 1 || storeField.Options[0] != tuiCreateStoreOption {
 		t.Fatalf("store options=%v want [%q]", storeField.Options, tuiCreateStoreOption)
+	}
+}
+
+func TestNewTUIStoreModal_PopulatesExistingSecretFields(t *testing.T) {
+	dir := t.TempDir()
+	profilesPath := dir + "/profiles.yaml"
+	if err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
+		Version: 1,
+		Stores: map[string]cloudstic.ProfileStore{
+			"remote": {
+				URI:               "s3:bucket/prod",
+				S3Region:          "us-east-1",
+				S3Profile:         "work",
+				S3Endpoint:        "https://s3.example.com",
+				S3AccessKeySecret: "env://S3_ACCESS_KEY",
+				S3SecretKeySecret: "keychain://cloudstic/store/remote/s3-secret",
+				PasswordSecret:    "keychain://cloudstic/store/remote/password",
+				KMSKeyARN:         "arn:aws:kms:us-east-1:123:key/abc",
+				KMSRegion:         "us-east-1",
+				KMSEndpoint:       "https://kms.example.com",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("SaveProfilesFile: %v", err)
+	}
+
+	modal, err := newTUIStoreModal(profilesPath, "remote", true)
+	if err != nil {
+		t.Fatalf("newTUIStoreModal: %v", err)
+	}
+	if got := modal.fieldValue("store_type"); got != "s3" {
+		t.Fatalf("store_type=%q want s3", got)
+	}
+	if got := modal.fieldValue("s3_access_key_secret"); got != "env://S3_ACCESS_KEY" {
+		t.Fatalf("s3_access_key_secret=%q", got)
+	}
+	if got := modal.fieldValue("s3_secret_key_secret"); got != "keychain://cloudstic/store/remote/s3-secret" {
+		t.Fatalf("s3_secret_key_secret=%q", got)
+	}
+	if got := modal.fieldValue("encryption_mode"); got != string(tuiStoreEncryptionKMS) {
+		t.Fatalf("encryption_mode=%q want kms", got)
+	}
+	if got := modal.fieldValue("kms_key_arn"); got != "arn:aws:kms:us-east-1:123:key/abc" {
+		t.Fatalf("kms_key_arn=%q", got)
+	}
+	if field := modal.fieldByKey("kms_key_arn"); field == nil || field.Disabled {
+		t.Fatalf("expected kms_key_arn field to be enabled")
+	}
+}
+
+func TestTUIStoreModalSubmit_SavesSecretRefs(t *testing.T) {
+	dir := t.TempDir()
+	profilesPath := dir + "/profiles.yaml"
+	if err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
+		Version: 1,
+	}); err != nil {
+		t.Fatalf("SaveProfilesFile: %v", err)
+	}
+
+	modal, err := newTUIStoreModal(profilesPath, "", false)
+	if err != nil {
+		t.Fatalf("newTUIStoreModal: %v", err)
+	}
+	modal.fieldByKey("name").Value = "remote"
+	modal.fieldByKey("store_type").Value = "s3"
+	modal.fieldByKey("store_value").Value = "bucket/prod"
+	modal.fieldByKey("s3_region").Value = "us-east-1"
+	modal.fieldByKey("s3_endpoint").Value = "https://s3.example.com"
+	modal.fieldByKey("s3_access_key_secret").Value = "env://S3_ACCESS_KEY"
+	modal.fieldByKey("s3_secret_key_secret").Value = "keychain://cloudstic/store/remote/s3-secret"
+	modal.fieldByKey("encryption_mode").Value = string(tuiStoreEncryptionPassword)
+	modal.rebuildDerivedFields()
+	modal.fieldByKey("password_secret").Value = "keychain://cloudstic/store/remote/password"
+
+	name, err := modal.submit()
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if name != "remote" {
+		t.Fatalf("name=%q want remote", name)
+	}
+
+	cfg, err := cloudstic.LoadProfilesFile(profilesPath)
+	if err != nil {
+		t.Fatalf("LoadProfilesFile: %v", err)
+	}
+	store := cfg.Stores["remote"]
+	if store.URI != "s3:bucket/prod" {
+		t.Fatalf("uri=%q want s3:bucket/prod", store.URI)
+	}
+	if store.S3Region != "us-east-1" || store.S3Endpoint != "https://s3.example.com" {
+		t.Fatalf("unexpected s3 config: %+v", store)
+	}
+	if store.S3AccessKeySecret != "env://S3_ACCESS_KEY" || store.S3SecretKeySecret != "keychain://cloudstic/store/remote/s3-secret" {
+		t.Fatalf("unexpected s3 secret refs: %+v", store)
+	}
+	if store.PasswordSecret != "keychain://cloudstic/store/remote/password" {
+		t.Fatalf("password secret=%q", store.PasswordSecret)
+	}
+	if store.RecoveryKeySecret != "" {
+		t.Fatalf("expected no recovery secret in store form, got %q", store.RecoveryKeySecret)
+	}
+	if store.KMSKeyARN != "" {
+		t.Fatalf("expected kms config to be cleared: %+v", store)
+	}
+}
+
+func TestTUIStoreModalView_HidesIrrelevantFields(t *testing.T) {
+	dir := t.TempDir()
+	profilesPath := dir + "/profiles.yaml"
+	if err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
+		Version: 1,
+		Stores: map[string]cloudstic.ProfileStore{
+			"local-store": {
+				URI:               "local:/tmp/backups",
+				S3Region:          "us-east-1",
+				S3Endpoint:        "https://s3.example.com",
+				S3AccessKeySecret: "env://S3_ACCESS_KEY",
+				KMSKeyARN:         "",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("SaveProfilesFile: %v", err)
+	}
+
+	modal, err := newTUIStoreModal(profilesPath, "local-store", true)
+	if err != nil {
+		t.Fatalf("newTUIStoreModal: %v", err)
+	}
+	view := modal.View()
+	for _, key := range []string{"s3_region", "s3_endpoint", "s3_access_key_secret", "password_secret", "kms_key_arn"} {
+		for _, field := range view.Fields {
+			if field.Key == key {
+				t.Fatalf("did not expect field %q in visible view", key)
+			}
+		}
+	}
+}
+
+func TestTUISecretRefModal_SubmitStoresSecretInWritableBackend(t *testing.T) {
+	backend := &testWritableSecretBackend{
+		scheme:      "test",
+		displayName: "Test Backend",
+		defaultRef:  "test://cloudstic/store/remote/password",
+	}
+	oldResolver := tuiSecretResolver
+	t.Cleanup(func() { tuiSecretResolver = oldResolver })
+	tuiSecretResolver = secretref.NewResolver(map[string]secretref.Backend{
+		"env":  secretref.NewEnvBackend(nil),
+		"test": backend,
+	})
+
+	modal := newTUISecretRefModal("remote", tuiSecretFieldSpec{
+		FieldKey:       "password_secret",
+		SecretLabel:    "repository password",
+		DefaultEnvName: "CLOUDSTIC_PASSWORD",
+		DefaultAccount: "password",
+	}, "")
+	modal.fieldByKey("storage").Value = "test"
+	modal.updateFields()
+	modal.fieldByKey("value").Value = "super-secret"
+
+	ref, err := modal.submit(context.Background())
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if ref != "test://cloudstic/store/remote/password" {
+		t.Fatalf("ref=%q", ref)
+	}
+	if backend.storedRef != ref || backend.storedValue != "super-secret" {
+		t.Fatalf("unexpected stored secret: ref=%q value=%q", backend.storedRef, backend.storedValue)
 	}
 }
 

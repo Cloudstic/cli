@@ -486,6 +486,16 @@ func (s *tuiSession) runStoreModal(existingName string, editing bool) (string, b
 		if err != nil {
 			return "", false, err
 		}
+		if spec, ok := modal.wantsEditSecret(input); ok {
+			ref, canceled, err := s.runSecretRefModal(modal.storeName(), spec, modal.fieldValue(spec.FieldKey))
+			if err != nil {
+				return "", false, err
+			}
+			if !canceled {
+				modal.setFieldValue(spec.FieldKey, ref)
+			}
+			continue
+		}
 		done, name, err := modal.Handle(input)
 		if err != nil {
 			return "", false, err
@@ -497,6 +507,32 @@ func (s *tuiSession) runStoreModal(existingName string, editing bool) (string, b
 			return "", true, nil
 		}
 		return name, false, nil
+	}
+}
+
+func (s *tuiSession) runSecretRefModal(storeName string, spec tuiSecretFieldSpec, existingRef string) (string, bool, error) {
+	modal := newTUISecretRefModal(storeName, spec, existingRef)
+	for {
+		view := modal.View()
+		s.dashboard.Modal = &view
+		if err := s.render(); err != nil {
+			return "", false, err
+		}
+		input, err := readTUIModalInput(s.r.lineReader())
+		if err != nil {
+			return "", false, err
+		}
+		done, ref, err := modal.Handle(input)
+		if err != nil {
+			return "", false, err
+		}
+		if !done {
+			continue
+		}
+		if ref == "" {
+			return "", true, nil
+		}
+		return ref, false, nil
 	}
 }
 

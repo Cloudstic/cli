@@ -500,92 +500,109 @@ func TestRunTUI_CreateActionUsesModalAndSavesProfile(t *testing.T) {
 }
 
 func TestReadTUIAction_ParsesCSIArrowKeys(t *testing.T) {
-	ev, err := readTUIAction(bufio.NewReader(bytes.NewBufferString("\x1b[A")))
+	ev, err := readTUIAction(bufio.NewReader(bytes.NewBufferString("\x1b[A")), tui.DashboardLayout{})
 	if err != nil {
 		t.Fatalf("readTUIAction up: %v", err)
 	}
-	if ev != tuiActionUp {
-		t.Fatalf("up action=%v want %v", ev, tuiActionUp)
+	if ev.Kind != tuiActionUp {
+		t.Fatalf("up action=%v want %v", ev.Kind, tuiActionUp)
 	}
 
-	ev, err = readTUIAction(bufio.NewReader(bytes.NewBufferString("\x1b[B")))
+	ev, err = readTUIAction(bufio.NewReader(bytes.NewBufferString("\x1b[B")), tui.DashboardLayout{})
 	if err != nil {
 		t.Fatalf("readTUIAction down: %v", err)
 	}
-	if ev != tuiActionDown {
-		t.Fatalf("down action=%v want %v", ev, tuiActionDown)
+	if ev.Kind != tuiActionDown {
+		t.Fatalf("down action=%v want %v", ev.Kind, tuiActionDown)
 	}
 }
 
 func TestReadTUIAction_ParsesParameterizedCSIArrowKeys(t *testing.T) {
-	ev, err := readTUIAction(bufio.NewReader(bytes.NewBufferString("\x1b[1;2A")))
+	ev, err := readTUIAction(bufio.NewReader(bytes.NewBufferString("\x1b[1;2A")), tui.DashboardLayout{})
 	if err != nil {
 		t.Fatalf("readTUIAction param up: %v", err)
 	}
-	if ev != tuiActionUp {
-		t.Fatalf("param up action=%v want %v", ev, tuiActionUp)
+	if ev.Kind != tuiActionUp {
+		t.Fatalf("param up action=%v want %v", ev.Kind, tuiActionUp)
 	}
 
-	ev, err = readTUIAction(bufio.NewReader(bytes.NewBufferString("\x1b[1;2B")))
+	ev, err = readTUIAction(bufio.NewReader(bytes.NewBufferString("\x1b[1;2B")), tui.DashboardLayout{})
 	if err != nil {
 		t.Fatalf("readTUIAction param down: %v", err)
 	}
-	if ev != tuiActionDown {
-		t.Fatalf("param down action=%v want %v", ev, tuiActionDown)
+	if ev.Kind != tuiActionDown {
+		t.Fatalf("param down action=%v want %v", ev.Kind, tuiActionDown)
 	}
 }
 
 func TestReadTUIAction_ParsesSS3ArrowKeys(t *testing.T) {
-	ev, err := readTUIAction(bufio.NewReader(bytes.NewBufferString("\x1bOA")))
+	ev, err := readTUIAction(bufio.NewReader(bytes.NewBufferString("\x1bOA")), tui.DashboardLayout{})
 	if err != nil {
 		t.Fatalf("readTUIAction ss3 up: %v", err)
 	}
-	if ev != tuiActionUp {
-		t.Fatalf("ss3 up action=%v want %v", ev, tuiActionUp)
+	if ev.Kind != tuiActionUp {
+		t.Fatalf("ss3 up action=%v want %v", ev.Kind, tuiActionUp)
 	}
 
-	ev, err = readTUIAction(bufio.NewReader(bytes.NewBufferString("\x1bOB")))
+	ev, err = readTUIAction(bufio.NewReader(bytes.NewBufferString("\x1bOB")), tui.DashboardLayout{})
 	if err != nil {
 		t.Fatalf("readTUIAction ss3 down: %v", err)
 	}
-	if ev != tuiActionDown {
-		t.Fatalf("ss3 down action=%v want %v", ev, tuiActionDown)
+	if ev.Kind != tuiActionDown {
+		t.Fatalf("ss3 down action=%v want %v", ev.Kind, tuiActionDown)
 	}
 }
 
 func TestReadTUIAction_ParsesCheckShortcut(t *testing.T) {
-	ev, err := readTUIAction(bufio.NewReader(bytes.NewBufferString("c")))
+	ev, err := readTUIAction(bufio.NewReader(bytes.NewBufferString("c")), tui.DashboardLayout{})
 	if err != nil {
 		t.Fatalf("readTUIAction check: %v", err)
 	}
-	if ev != tuiActionCheck {
-		t.Fatalf("check action=%v want %v", ev, tuiActionCheck)
+	if ev.Kind != tuiActionCheck {
+		t.Fatalf("check action=%v want %v", ev.Kind, tuiActionCheck)
 	}
 }
 
 func TestReadTUIAction_ParsesManagementShortcuts(t *testing.T) {
-	ev, err := readTUIAction(bufio.NewReader(bytes.NewBufferString("n")))
+	ev, err := readTUIAction(bufio.NewReader(bytes.NewBufferString("n")), tui.DashboardLayout{})
 	if err != nil {
 		t.Fatalf("readTUIAction create: %v", err)
 	}
-	if ev != tuiActionCreate {
-		t.Fatalf("create action=%v want %v", ev, tuiActionCreate)
+	if ev.Kind != tuiActionCreate {
+		t.Fatalf("create action=%v want %v", ev.Kind, tuiActionCreate)
 	}
 
-	ev, err = readTUIAction(bufio.NewReader(bytes.NewBufferString("e")))
+	ev, err = readTUIAction(bufio.NewReader(bytes.NewBufferString("e")), tui.DashboardLayout{})
 	if err != nil {
 		t.Fatalf("readTUIAction edit: %v", err)
 	}
-	if ev != tuiActionEdit {
-		t.Fatalf("edit action=%v want %v", ev, tuiActionEdit)
+	if ev.Kind != tuiActionEdit {
+		t.Fatalf("edit action=%v want %v", ev.Kind, tuiActionEdit)
 	}
 
-	ev, err = readTUIAction(bufio.NewReader(bytes.NewBufferString("d")))
+	ev, err = readTUIAction(bufio.NewReader(bytes.NewBufferString("d")), tui.DashboardLayout{})
 	if err != nil {
 		t.Fatalf("readTUIAction delete: %v", err)
 	}
-	if ev != tuiActionDelete {
-		t.Fatalf("delete action=%v want %v", ev, tuiActionDelete)
+	if ev.Kind != tuiActionDelete {
+		t.Fatalf("delete action=%v want %v", ev.Kind, tuiActionDelete)
+	}
+}
+
+func TestReadTUIAction_ParsesProfileClick(t *testing.T) {
+	layout := tui.DashboardLayout{
+		ProfileRows: map[int]string{8: "photos"},
+		ProfileRect: tui.Rect{X: 1, Y: 5, W: 20, H: 6},
+	}
+	ev, err := readTUIAction(bufio.NewReader(bytes.NewBufferString("\x1b[<0;5;8M")), layout)
+	if err != nil {
+		t.Fatalf("readTUIAction click: %v", err)
+	}
+	if ev.Kind != tuiActionSelectProfile {
+		t.Fatalf("click action=%v want %v", ev.Kind, tuiActionSelectProfile)
+	}
+	if ev.Profile != "photos" {
+		t.Fatalf("click profile=%q want photos", ev.Profile)
 	}
 }
 
@@ -697,7 +714,7 @@ func TestTUISession_HandleActionRunRefreshesDashboard(t *testing.T) {
 		},
 	})
 
-	if _, err := s.handleAction(context.Background(), tuiActionRun); err != nil {
+	if _, err := s.handleAction(context.Background(), tuiAction{Kind: tuiActionRun}); err != nil {
 		t.Fatalf("handleAction(run): %v", err)
 	}
 	if s.dashboard.SelectedProfile != "docs" {
@@ -771,7 +788,7 @@ func TestTUISession_HandleActionRunRefreshFailureRestoresRawMode(t *testing.T) {
 	})
 	s.rawState = state
 
-	if _, err := s.handleAction(context.Background(), tuiActionRun); err == nil {
+	if _, err := s.handleAction(context.Background(), tuiAction{Kind: tuiActionRun}); err == nil {
 		t.Fatalf("expected refresh failure")
 	}
 	if madeRaw != 1 || restored != 1 {
@@ -817,7 +834,7 @@ func TestTUISession_HandleActionCreateRefreshesDashboard(t *testing.T) {
 
 	var out strings.Builder
 	s := newTUISession(&runner{out: &out, stdoutFile: os.Stdout, stdin: readEnd, lineIn: bufio.NewReader(readEnd)}, profilesPath, tui.Dashboard{})
-	if _, err := s.handleAction(context.Background(), tuiActionCreate); err != nil {
+	if _, err := s.handleAction(context.Background(), tuiAction{Kind: tuiActionCreate}); err != nil {
 		t.Fatalf("handleAction(create): %v", err)
 	}
 	if s.dashboard.SelectedProfile != "photos" {
@@ -869,7 +886,7 @@ func TestTUISession_HandleActionDeleteRefreshesDashboard(t *testing.T) {
 	s.r.stdin = readEnd
 	s.r.lineIn = bufio.NewReader(readEnd)
 	s.profilesFile = profilesPath
-	if _, err := s.handleAction(context.Background(), tuiActionDelete); err != nil {
+	if _, err := s.handleAction(context.Background(), tuiAction{Kind: tuiActionDelete}); err != nil {
 		t.Fatalf("handleAction(delete): %v", err)
 	}
 	if s.dashboard.SelectedProfile != "photos" {
@@ -877,6 +894,24 @@ func TestTUISession_HandleActionDeleteRefreshesDashboard(t *testing.T) {
 	}
 	if s.dashboard.Activity.Status != tui.ActivityStatusSuccess {
 		t.Fatalf("unexpected activity: %+v", s.dashboard.Activity)
+	}
+}
+
+func TestTUISession_HandleActionSelectProfileRefreshesSelection(t *testing.T) {
+	stubTUITestHooks(t)
+
+	s := newTUISession(&runner{out: io.Discard, stdoutFile: os.Stdout, stdin: os.Stdin}, "profiles.yaml", tui.Dashboard{
+		SelectedProfile: "docs",
+		Profiles: []tui.ProfileCard{
+			{Name: "docs", Source: "local:/docs", StoreRef: "remote", Enabled: true, Status: tui.ProfileStatusReady},
+			{Name: "photos", Source: "local:/photos", StoreRef: "remote", Enabled: true, Status: tui.ProfileStatusReady},
+		},
+	})
+	if _, err := s.handleAction(context.Background(), tuiAction{Kind: tuiActionSelectProfile, Profile: "photos"}); err != nil {
+		t.Fatalf("handleAction(select): %v", err)
+	}
+	if s.dashboard.SelectedProfile != "photos" {
+		t.Fatalf("selected profile=%q want photos", s.dashboard.SelectedProfile)
 	}
 }
 
@@ -992,7 +1027,7 @@ func TestReadInput_ClosesChannelOnEOF(t *testing.T) {
 	_ = writeEnd.Close()
 
 	s := newTUISession(&runner{stdin: readEnd, lineIn: bufio.NewReader(readEnd)}, "", tui.Dashboard{})
-	readPermitCh := make(chan struct{}, 1)
+	readPermitCh := make(chan tui.DashboardLayout, 1)
 	eventCh := make(chan tuiAction, 2)
 	errCh := make(chan error, 1)
 	close(readPermitCh)

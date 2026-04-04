@@ -101,12 +101,12 @@ func (b tuiCLIBackend) CheckProfile(ctx context.Context, profilesFile, profileNa
 }
 
 func defaultEnterAltScreen(w io.Writer) error {
-	_, err := fmt.Fprint(w, "\x1b[?1049h\x1b[?1007h\x1b[2J\x1b[H\x1b[?25l")
+	_, err := fmt.Fprint(w, "\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[2J\x1b[H\x1b[?25l")
 	return err
 }
 
 func defaultLeaveAltScreen(w io.Writer) error {
-	_, err := fmt.Fprint(w, "\x1b[?25h\x1b[?1007l\x1b[?1049l")
+	_, err := fmt.Fprint(w, "\x1b[?25h\x1b[?1006l\x1b[?1000l\x1b[?1049l")
 	return err
 }
 
@@ -166,10 +166,10 @@ func (s *tuiSession) run(ctx context.Context) int {
 	}
 
 	eventCh := make(chan tuiAction, 32)
-	readPermitCh := make(chan struct{}, 1)
+	readPermitCh := make(chan tui.DashboardLayout, 1)
 	readErrCh := make(chan error, 1)
 	go s.readInput(readPermitCh, eventCh, readErrCh)
-	readPermitCh <- struct{}{}
+	readPermitCh <- tui.LayoutDashboardWidth(s.dashboard, tuiWidth(s.r))
 
 	resizeCh := make(chan os.Signal, 1)
 	tuiNotifyResize(resizeCh)
@@ -198,7 +198,7 @@ func (s *tuiSession) run(ctx context.Context) int {
 			if code >= 0 {
 				return code
 			}
-			readPermitCh <- struct{}{}
+			readPermitCh <- tui.LayoutDashboardWidth(s.dashboard, tuiWidth(s.r))
 		}
 	}
 }
@@ -256,10 +256,10 @@ func (s *tuiSession) render() error {
 	return renderTUIScreenWidth(s.r.out, s.dashboard, tuiWidth(s.r))
 }
 
-func (s *tuiSession) readInput(readPermitCh <-chan struct{}, eventCh chan<- tuiAction, readErrCh chan<- error) {
+func (s *tuiSession) readInput(readPermitCh <-chan tui.DashboardLayout, eventCh chan<- tuiAction, readErrCh chan<- error) {
 	defer close(eventCh)
-	for range readPermitCh {
-		event, err := readTUIAction(s.r.lineReader())
+	for layout := range readPermitCh {
+		event, err := readTUIAction(s.r.lineReader(), layout)
 		if err != nil {
 			if err != io.EOF {
 				readErrCh <- err
@@ -271,13 +271,17 @@ func (s *tuiSession) readInput(readPermitCh <-chan struct{}, eventCh chan<- tuiA
 }
 
 func (s *tuiSession) handleAction(ctx context.Context, action tuiAction) (int, error) {
-	switch action {
+	switch action.Kind {
 	case tuiActionQuit:
 		return 0, nil
 	case tuiActionUp:
 		s.dashboard = moveTUISelection(s.dashboard, -1)
 	case tuiActionDown:
 		s.dashboard = moveTUISelection(s.dashboard, 1)
+	case tuiActionSelectProfile:
+		if action.Profile != "" {
+			s.dashboard.SelectedProfile = action.Profile
+		}
 	case tuiActionRun:
 		if err := s.runSuspended(ctx, func(ctx context.Context) error {
 			s.dashboard = runTUIActionIntoDashboard(ctx, s.r, s.profilesFile, s.dashboard)

@@ -5,14 +5,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/cloudstic/cli/internal/tui"
 )
 
-type tuiAction int
+type tuiActionKind int
 
 const (
-	tuiActionNone tuiAction = iota
+	tuiActionNone tuiActionKind = iota
 	tuiActionUp
 	tuiActionDown
 	tuiActionRun
@@ -20,8 +22,14 @@ const (
 	tuiActionCreate
 	tuiActionEdit
 	tuiActionDelete
+	tuiActionSelectProfile
 	tuiActionQuit
 )
+
+type tuiAction struct {
+	Kind    tuiActionKind
+	Profile string
+}
 
 func ensureSelectedProfile(d tui.Dashboard) tui.Dashboard {
 	if d.SelectedProfile != "" || len(d.Profiles) == 0 {
@@ -68,64 +76,67 @@ func moveTUISelection(d tui.Dashboard, delta int) tui.Dashboard {
 	return d
 }
 
-func readTUIAction(r io.ByteReader) (tuiAction, error) {
+func readTUIAction(r io.ByteReader, layout tui.DashboardLayout) (tuiAction, error) {
 	b, err := r.ReadByte()
 	if err != nil {
-		return tuiActionNone, err
+		return tuiAction{}, err
 	}
 	switch b {
 	case 'q', 'Q':
-		return tuiActionQuit, nil
+		return tuiAction{Kind: tuiActionQuit}, nil
 	case 'j', 'J':
-		return tuiActionDown, nil
+		return tuiAction{Kind: tuiActionDown}, nil
 	case 'k', 'K':
-		return tuiActionUp, nil
+		return tuiAction{Kind: tuiActionUp}, nil
 	case 'b', 'B':
-		return tuiActionRun, nil
+		return tuiAction{Kind: tuiActionRun}, nil
 	case 'c', 'C':
-		return tuiActionCheck, nil
+		return tuiAction{Kind: tuiActionCheck}, nil
 	case 'n', 'N':
-		return tuiActionCreate, nil
+		return tuiAction{Kind: tuiActionCreate}, nil
 	case 'e', 'E':
-		return tuiActionEdit, nil
+		return tuiAction{Kind: tuiActionEdit}, nil
 	case 'd', 'D':
-		return tuiActionDelete, nil
+		return tuiAction{Kind: tuiActionDelete}, nil
 	case 0x1b:
 		next, err := r.ReadByte()
 		if err != nil {
-			return tuiActionNone, nil
+			return tuiAction{}, nil
 		}
 		if next == 'O' {
 			dir, err := r.ReadByte()
 			if err != nil {
-				return tuiActionNone, nil
+				return tuiAction{}, nil
 			}
 			switch dir {
 			case 'A':
-				return tuiActionUp, nil
+				return tuiAction{Kind: tuiActionUp}, nil
 			case 'B':
-				return tuiActionDown, nil
+				return tuiAction{Kind: tuiActionDown}, nil
 			default:
-				return tuiActionNone, nil
+				return tuiAction{}, nil
 			}
 		}
 		if next != '[' {
-			return tuiActionNone, nil
+			return tuiAction{}, nil
 		}
 		csi, err := readTUICSISequence(r)
 		if err != nil || len(csi) == 0 {
-			return tuiActionNone, nil
+			return tuiAction{}, nil
+		}
+		if csi[0] == '<' {
+			return parseTUIMouseAction(csi, layout)
 		}
 		switch csi[len(csi)-1] {
 		case 'A':
-			return tuiActionUp, nil
+			return tuiAction{Kind: tuiActionUp}, nil
 		case 'B':
-			return tuiActionDown, nil
+			return tuiAction{Kind: tuiActionDown}, nil
 		default:
-			return tuiActionNone, nil
+			return tuiAction{}, nil
 		}
 	default:
-		return tuiActionNone, nil
+		return tuiAction{}, nil
 	}
 }
 
@@ -144,6 +155,47 @@ func readTUICSISequence(r io.ByteReader) ([]byte, error) {
 			return seq, fmt.Errorf("csi sequence too long")
 		}
 	}
+}
+
+func parseTUIMouseAction(csi []byte, layout tui.DashboardLayout) (tuiAction, error) {
+	if len(csi) < 2 {
+		return tuiAction{}, nil
+	}
+	final := csi[len(csi)-1]
+	if final != 'M' {
+		return tuiAction{}, nil
+	}
+	parts := strings.Split(string(csi[1:len(csi)-1]), ";")
+	if len(parts) != 3 {
+		return tuiAction{}, nil
+	}
+	button, err := strconv.Atoi(parts[0])
+	if err != nil || button != 0 {
+		return tuiAction{}, nil
+	}
+	x, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return tuiAction{}, nil
+	}
+	y, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return tuiAction{}, nil
+	}
+	if !pointInRect(x, y, layout.ProfileRect) {
+		return tuiAction{}, nil
+	}
+	profile := layout.ProfileRows[y]
+	if profile == "" {
+		return tuiAction{}, nil
+	}
+	return tuiAction{Kind: tuiActionSelectProfile, Profile: profile}, nil
+}
+
+func pointInRect(x, y int, rect tui.Rect) bool {
+	if rect.W <= 0 || rect.H <= 0 {
+		return false
+	}
+	return x >= rect.X && x < rect.X+rect.W && y >= rect.Y && y < rect.Y+rect.H
 }
 
 func runSelectedTUIAction(ctx context.Context, r *runner, profilesFile string, dashboard tui.Dashboard, log *tuiActionState) error {

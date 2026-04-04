@@ -211,6 +211,12 @@ func TestLayoutDashboardWidth_TracksProfileRowsAndActionRect(t *testing.T) {
 	if !foundDocs || !foundPhotos {
 		t.Fatalf("unexpected profile row mapping: %+v", layout.ProfileRows)
 	}
+	if layout.ProfileRect.W <= 0 || layout.ProfileRect.H <= 0 {
+		t.Fatalf("unexpected profile rect: %+v", layout.ProfileRect)
+	}
+	if layout.ProfileRect.X != 1 || layout.ProfileRect.Y <= 0 {
+		t.Fatalf("unexpected profile rect origin: %+v", layout.ProfileRect)
+	}
 	if layout.ActionRect.W <= 0 || layout.ActionRect.H != 1 {
 		t.Fatalf("unexpected action rect: %+v", layout.ActionRect)
 	}

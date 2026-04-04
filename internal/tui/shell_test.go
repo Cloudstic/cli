@@ -12,6 +12,7 @@ func TestRenderDashboard(t *testing.T) {
 		StoreCount:      1,
 		AuthCount:       0,
 		SelectedProfile: "documents",
+		SelectedView:    ProfileViewSummary,
 		Activity: ActivityPanel{
 			Status:     ActivityStatusSuccess,
 			ActionKind: ActionKindCheck,
@@ -38,6 +39,9 @@ func TestRenderDashboard(t *testing.T) {
 				BackupState:  BackupFreshnessRecent,
 				LastBackup:   "2026-04-03 11:05",
 				LastRef:      "snapshot/abc123",
+				History: []ProfileSnapshot{
+					{Created: "2026-04-03 11:05", Ref: "snapshot/abc123"},
+				},
 				Actions: []ProfileAction{
 					{Kind: ActionKindBackup, Key: "b", Label: "Press b to run backup", Enabled: true},
 					{Kind: ActionKindCheck, Key: "c", Label: "Press c to run repository check", Enabled: true},
@@ -61,6 +65,8 @@ func TestRenderDashboard(t *testing.T) {
 		"Auth",
 		"documents",
 		"›",
+		"[s] Summary",
+		"[h] History",
 		"enabled",
 		"Source",
 		"local:/Users/test/Documents",
@@ -85,7 +91,50 @@ func TestRenderDashboard(t *testing.T) {
 		"[c] Run check",
 		"[e] Edit profile",
 		"[d] Delete profile",
-		"Use ↑/↓ to select a profile. Press b to backup/init, c to check, n to create, e to edit, d to delete, q to quit.",
+		"Use ↑/↓ to select a profile. Press s/h to switch views, b to backup/init, c to check, n to create, e to edit, d to delete, q to quit.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in output:\n%s", want, got)
+		}
+	}
+}
+
+func TestRenderDashboard_HistoryView(t *testing.T) {
+	d := Dashboard{
+		ProfileCount:    1,
+		StoreCount:      1,
+		SelectedProfile: "documents",
+		SelectedView:    ProfileViewHistory,
+		Profiles: []ProfileCard{
+			{
+				Name:        "documents",
+				Source:      "local:/Users/test/Documents",
+				StoreRef:    "remote",
+				Enabled:     true,
+				Status:      ProfileStatusReady,
+				StoreHealth: StoreHealthReady,
+				History: []ProfileSnapshot{
+					{Created: "2026-04-03 11:05", Ref: "snapshot/abc123"},
+					{Created: "2026-04-02 09:00", Ref: "snapshot/def456"},
+				},
+				Actions: []ProfileAction{
+					{Kind: ActionKindBackup, Key: "b", Label: "Press b to run backup", Enabled: true},
+				},
+			},
+		},
+	}
+
+	var out strings.Builder
+	if err := RenderDashboard(&out, d); err != nil {
+		t.Fatalf("RenderDashboard: %v", err)
+	}
+	got := stripANSI(out.String())
+	for _, want := range []string{
+		"[s] Summary",
+		"[h] History",
+		"Recent snapshots for this profile:",
+		"2026-04-03 11:05  abc123",
+		"2026-04-02 09:00  def456",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q in output:\n%s", want, got)

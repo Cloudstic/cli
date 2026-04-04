@@ -278,6 +278,10 @@ func (s *tuiSession) handleAction(ctx context.Context, action tuiAction) (int, e
 		s.dashboard = moveTUISelection(s.dashboard, -1)
 	case tuiActionDown:
 		s.dashboard = moveTUISelection(s.dashboard, 1)
+	case tuiActionSummaryView:
+		s.dashboard.SelectedView = tui.ProfileViewSummary
+	case tuiActionHistoryView:
+		s.dashboard.SelectedView = tui.ProfileViewHistory
 	case tuiActionSelectProfile:
 		if action.Profile != "" {
 			s.dashboard.SelectedProfile = action.Profile
@@ -344,12 +348,14 @@ func (s *tuiSession) runSuspended(ctx context.Context, fn func(context.Context) 
 
 func (s *tuiSession) refresh(ctx context.Context) error {
 	selected := s.dashboard.SelectedProfile
+	selectedView := s.dashboard.SelectedView
 	activity := s.dashboard.Activity
 	dashboard, err := tuiBuildDashboard(ctx, s.profilesFile)
 	if err != nil {
 		return err
 	}
 	dashboard.SelectedProfile = selected
+	dashboard.SelectedView = selectedView
 	dashboard.Activity = activity
 	s.dashboard = ensureSelectedProfile(dashboard)
 	return nil

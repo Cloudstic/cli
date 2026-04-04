@@ -117,7 +117,7 @@ func dashboardLinesWidth(d Dashboard, width int) []string {
 	)...)
 
 	lines = append(lines, boxLinesExact("Activity", renderActivityPanel(d.Activity), panelWidth(width))...)
-	footer := fmt.Sprintf("%sUse ↑/↓ to select a profile. Press b to backup/init, c to check, n to create, e to edit, d to delete, q to quit.%s", ui.Dim, ui.Reset)
+	footer := fmt.Sprintf("%sUse ↑/↓ to select a profile. Press s/h to switch views, b to backup/init, c to check, n to create, e to edit, d to delete, q to quit.%s", ui.Dim, ui.Reset)
 	if width > 0 {
 		footer = truncateVisible(footer, width)
 	}
@@ -219,11 +219,19 @@ func renderSelectedProfile(d Dashboard) ([]string, map[int]string) {
 	}
 	lines := []string{
 		fmt.Sprintf("%s%s%s", ui.Bold, profile.Name, ui.Reset),
+		renderProfileViewTabs(d.SelectedView),
+		"",
+	}
+	if d.SelectedView == ProfileViewHistory {
+		lines = append(lines, renderProfileHistory(profile)...)
+		return appendProfileActionButtons(lines, profile)
+	}
+	lines = append(lines,
 		profileDetailLine("State", plainProfileStateLabel(profile)),
 		profileDetailLine("Source", profile.Source),
 		profileDetailLine("Store", profile.StoreRef),
 		profileDetailLine("Health", profileHealthSummary(profile)),
-	}
+	)
 	if profile.AuthRef != "" {
 		lines = append(lines, profileDetailLine("Auth", profile.AuthRef))
 	}
@@ -249,21 +257,7 @@ func renderSelectedProfile(d Dashboard) ([]string, map[int]string) {
 	if profile.StatusNote != "" && noteAddsContext(profile) {
 		lines = append(lines, profileDetailLine("Status", profile.StatusNote))
 	}
-	buttons := selectedProfileActionButtons(profile)
-	actionRows := map[int]string{}
-	if len(buttons) > 0 {
-		lines = append(lines, "")
-		for _, button := range buttons {
-			if button.Enabled {
-				actionRows[len(lines)] = button.Key
-			}
-			lines = append(lines, renderActionButton(button))
-			if !button.Enabled && button.Reason != "" {
-				lines = append(lines, fmt.Sprintf("  %s%s%s", ui.Dim, button.Reason, ui.Reset))
-			}
-		}
-	}
-	return lines, actionRows
+	return appendProfileActionButtons(lines, profile)
 }
 
 func renderModalOverlay(w io.Writer, modal Modal, screenWidth, screenHeight int) error {
@@ -747,6 +741,56 @@ type actionButton struct {
 	Label   string
 	Enabled bool
 	Reason  string
+}
+
+func renderProfileViewTabs(selected ProfileView) string {
+	summary := "[s] Summary"
+	history := "[h] History"
+	switch selected {
+	case ProfileViewSummary:
+		summary = fmt.Sprintf("%s[s] Summary%s", ui.Cyan, ui.Reset)
+	case ProfileViewHistory:
+		history = fmt.Sprintf("%s[h] History%s", ui.Cyan, ui.Reset)
+	}
+	return fmt.Sprintf("  %s  %s", summary, history)
+}
+
+func renderProfileHistory(profile ProfileCard) []string {
+	if len(profile.History) == 0 {
+		return []string{
+			fmt.Sprintf("%sNo snapshots found for this profile.%s", ui.Dim, ui.Reset),
+		}
+	}
+	lines := []string{
+		fmt.Sprintf("%sRecent snapshots for this profile:%s", ui.Dim, ui.Reset),
+	}
+	limit := len(profile.History)
+	if limit > 8 {
+		limit = 8
+	}
+	for i := 0; i < limit; i++ {
+		snapshot := profile.History[i]
+		lines = append(lines, fmt.Sprintf("  %s  %s", snapshot.Created, trimSnapshotRef(snapshot.Ref)))
+	}
+	return lines
+}
+
+func appendProfileActionButtons(lines []string, profile ProfileCard) ([]string, map[int]string) {
+	buttons := selectedProfileActionButtons(profile)
+	actionRows := map[int]string{}
+	if len(buttons) > 0 {
+		lines = append(lines, "")
+		for _, button := range buttons {
+			if button.Enabled {
+				actionRows[len(lines)] = button.Key
+			}
+			lines = append(lines, renderActionButton(button))
+			if !button.Enabled && button.Reason != "" {
+				lines = append(lines, fmt.Sprintf("  %s%s%s", ui.Dim, button.Reason, ui.Reset))
+			}
+		}
+	}
+	return lines, actionRows
 }
 
 func selectedProfileActionButtons(profile ProfileCard) []actionButton {

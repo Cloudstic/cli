@@ -16,10 +16,18 @@ type Dashboard struct {
 	StoreCount      int
 	AuthCount       int
 	SelectedProfile string
+	SelectedView    ProfileView
 	Activity        ActivityPanel
 	Modal           *Modal
 	Profiles        []ProfileCard
 }
+
+type ProfileView string
+
+const (
+	ProfileViewSummary ProfileView = "summary"
+	ProfileViewHistory ProfileView = "history"
+)
 
 type ModalKind string
 
@@ -161,7 +169,13 @@ type ProfileCard struct {
 	BackupState  BackupFreshness
 	LastBackup   string
 	LastRef      string
+	History      []ProfileSnapshot
 	Actions      []ProfileAction
+}
+
+type ProfileSnapshot struct {
+	Created string
+	Ref     string
 }
 
 type StoreProbe struct {
@@ -216,11 +230,13 @@ func BuildDashboard(cfg *engine.ProfilesConfig, probes map[string]StoreProbe) Da
 		ProfileCount: len(cfg.Profiles),
 		StoreCount:   len(cfg.Stores),
 		AuthCount:    len(cfg.Auth),
+		SelectedView: ProfileViewSummary,
 		Profiles:     make([]ProfileCard, 0, len(cfg.Profiles)),
 	}
 	for _, name := range names {
 		profile := cfg.Profiles[name]
 		status, note := profileStatus(cfg, profile, probes[profile.Store])
+		history := snapshotHistory(profile.Source, probes[profile.Store].Snapshots)
 		lastBackup, lastRef, lastCreated := latestBackup(profile.Source, probes[profile.Store].Snapshots)
 		storeHealth := deriveStoreHealth(cfg, profile, probes[profile.Store])
 		reachability := deriveStoreReachability(storeHealth)
@@ -243,6 +259,7 @@ func BuildDashboard(cfg *engine.ProfilesConfig, probes map[string]StoreProbe) Da
 			BackupState:  backupState,
 			LastBackup:   lastBackup,
 			LastRef:      lastRef,
+			History:      history,
 			Actions:      deriveProfileActions(status, storeHealth),
 		})
 	}
@@ -357,20 +374,59 @@ func profileStatus(cfg *engine.ProfilesConfig, p engine.BackupProfile, probe Sto
 	return ProfileStatusReady, ""
 }
 
+func snapshotHistory(sourceURI string, entries []engine.SnapshotEntry) []ProfileSnapshot {
+	want := sourceKeyFromURI(sourceURI)
+	if want.Type == "" {
+		return nil
+	}
+	type item struct {
+		created time.Time
+		entry   ProfileSnapshot
+	}
+	items := make([]item, 0, len(entries))
+	for _, entry := range entries {
+		if snapshotMatchesSource(entry.Snap.Source, want) {
+			snap := ProfileSnapshot{Ref: entry.Ref}
+			if entry.Created.IsZero() {
+				snap.Created = "unknown time"
+			} else {
+				snap.Created = entry.Created.Local().Format("2006-01-02 15:04")
+			}
+			items = append(items, item{created: entry.Created, entry: snap})
+		}
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		return items[i].created.After(items[j].created)
+	})
+	history := make([]ProfileSnapshot, 0, len(items))
+	for _, item := range items {
+		history = append(history, item.entry)
+	}
+	return history
+}
+
 func latestBackup(sourceURI string, entries []engine.SnapshotEntry) (string, string, time.Time) {
 	want := sourceKeyFromURI(sourceURI)
 	if want.Type == "" {
 		return "", "", time.Time{}
 	}
-	for _, entry := range entries {
-		if snapshotMatchesSource(entry.Snap.Source, want) {
-			if entry.Created.IsZero() {
-				return "unknown time", entry.Ref, time.Time{}
-			}
-			return entry.Created.Local().Format("2006-01-02 15:04"), entry.Ref, entry.Created
+	var latest *engine.SnapshotEntry
+	for i := range entries {
+		entry := entries[i]
+		if !snapshotMatchesSource(entry.Snap.Source, want) {
+			continue
+		}
+		if latest == nil || entry.Created.After(latest.Created) {
+			latest = &entry
 		}
 	}
-	return "", "", time.Time{}
+	if latest == nil {
+		return "", "", time.Time{}
+	}
+	if latest.Created.IsZero() {
+		return "unknown time", latest.Ref, time.Time{}
+	}
+	return latest.Created.Local().Format("2006-01-02 15:04"), latest.Ref, latest.Created
 }
 
 func deriveStoreHealth(cfg *engine.ProfilesConfig, p engine.BackupProfile, probe StoreProbe) StoreHealth {

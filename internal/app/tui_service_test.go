@@ -243,3 +243,29 @@ func TestTUIServiceDeleteProfileRemovesProfile(t *testing.T) {
 		t.Fatalf("profile docs still present after delete")
 	}
 }
+
+func TestTUIServiceSaveStorePersistsConfig(t *testing.T) {
+	svc := NewTUIService(nil)
+	svc.loadProfiles = func(string) (*cloudstic.ProfilesConfig, error) {
+		return &cloudstic.ProfilesConfig{
+			Version: 1,
+			Stores:  map[string]cloudstic.ProfileStore{},
+		}, nil
+	}
+	var saved *cloudstic.ProfilesConfig
+	svc.saveProfiles = func(_ string, cfg *cloudstic.ProfilesConfig) error {
+		saved = cfg
+		return nil
+	}
+
+	err := svc.SaveStore("profiles.yaml", "remote", cloudstic.ProfileStore{URI: "local:/tmp/store"})
+	if err != nil {
+		t.Fatalf("SaveStore: %v", err)
+	}
+	if saved == nil {
+		t.Fatalf("saveProfiles was not called")
+	}
+	if got := saved.Stores["remote"].URI; got != "local:/tmp/store" {
+		t.Fatalf("saved store uri=%q want local:/tmp/store", got)
+	}
+}

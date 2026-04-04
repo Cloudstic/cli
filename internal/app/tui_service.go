@@ -124,6 +124,22 @@ func (s *TUIService) DeleteProfile(profilesFile, name string) error {
 	return nil
 }
 
+func (s *TUIService) SaveStore(profilesFile, name string, store cloudstic.ProfileStore) error {
+	cfg, err := s.loadConfig(profilesFile)
+	if err != nil {
+		return fmt.Errorf("load profiles: %w", err)
+	}
+	cfg.Stores[name] = store
+	save := s.saveProfiles
+	if save == nil {
+		save = cloudstic.SaveProfilesFile
+	}
+	if err := save(profilesFile, cfg); err != nil {
+		return fmt.Errorf("save profiles: %w", err)
+	}
+	return nil
+}
+
 func (s *TUIService) loadConfig(profilesFile string) (*cloudstic.ProfilesConfig, error) {
 	load := s.loadProfiles
 	if load == nil {

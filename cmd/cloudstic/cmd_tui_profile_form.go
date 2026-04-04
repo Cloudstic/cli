@@ -40,6 +40,8 @@ type tuiProfileModal struct {
 	modal        tui.Modal
 }
 
+const tuiCreateStoreOption = "+ Create store"
+
 var tuiSourceTypes = []string{
 	"local",
 	"sftp",
@@ -65,11 +67,7 @@ func newTUIProfileModal(profilesFile, existingName string, editing bool) (*tuiPr
 		}
 	}
 
-	storeOptions := sortedKeys(cfg.Stores)
-	if len(storeOptions) == 0 {
-		return nil, fmt.Errorf("no store references available; create one first")
-	}
-	moveDefaultToFront(storeOptions, existing.Store)
+	storeOptions := profileStoreOptions(cfg, existing.Store)
 	source := newTUIProfileSource(existing.Source)
 
 	m := &tuiProfileModal{
@@ -103,6 +101,9 @@ func (m *tuiProfileModal) View() tui.Modal {
 	view := m.modal
 	view.Subtitle = profileModalSubtitle(source, m.cfg)
 	view.Message = sourceFieldExamples(m.selectedFieldKey(), source)
+	if selected := m.selectedFieldKey(); selected == "store" {
+		view.Message = append(view.Message, profileStoreFieldHelp(m.fieldValue("store"))...)
+	}
 	return view
 }
 
@@ -278,6 +279,9 @@ func (m *tuiProfileModal) submit() (string, error) {
 	if storeRef == "" {
 		return "", fieldError("store", "store reference is required")
 	}
+	if storeRef == tuiCreateStoreOption {
+		return "", fieldError("store", "create a store before saving the profile")
+	}
 	if _, ok := m.cfg.Stores[storeRef]; !ok {
 		return "", fieldError("store", fmt.Sprintf("unknown store %q", storeRef))
 	}
@@ -314,6 +318,41 @@ func (m *tuiProfileModal) submit() (string, error) {
 		return "", err
 	}
 	return name, nil
+}
+
+func (m *tuiProfileModal) wantsCreateStore(input tuiModalInput) bool {
+	return m.selectedFieldKey() == "store" && input.Kind == tuiModalInputEnter && m.fieldValue("store") == tuiCreateStoreOption
+}
+
+func (m *tuiProfileModal) wantsEditStore(input tuiModalInput) (string, bool) {
+	if m.selectedFieldKey() != "store" || input.Kind != tuiModalInputText || !strings.EqualFold(input.Text, "e") {
+		return "", false
+	}
+	storeRef := m.fieldValue("store")
+	if storeRef == "" || storeRef == tuiCreateStoreOption {
+		return "", false
+	}
+	if _, ok := m.cfg.Stores[storeRef]; !ok {
+		return "", false
+	}
+	return storeRef, true
+}
+
+func (m *tuiProfileModal) reloadStoreOptions(selected string) error {
+	cfg, err := loadProfilesOrInit(m.profilesFile)
+	if err != nil {
+		return fmt.Errorf("load profiles: %w", err)
+	}
+	ensureProfilesMaps(cfg)
+	m.cfg = cfg
+	field := m.fieldByKey("store")
+	if field == nil {
+		return nil
+	}
+	field.Options = profileStoreOptions(cfg, selected)
+	field.Value = firstNonEmpty(selected, firstOption(field.Options))
+	m.clearError()
+	return nil
 }
 
 func (m *tuiProfileModal) clearError() {
@@ -385,6 +424,32 @@ func (s *tuiSession) runProfileModal(ctx context.Context, existingName string, e
 		if err != nil {
 			return err
 		}
+		if modal.wantsCreateStore(input) {
+			storeName, canceled, err := s.runStoreModal("", false)
+			if err != nil {
+				return err
+			}
+			if canceled {
+				continue
+			}
+			if err := modal.reloadStoreOptions(storeName); err != nil {
+				return err
+			}
+			continue
+		}
+		if storeRef, ok := modal.wantsEditStore(input); ok {
+			storeName, canceled, err := s.runStoreModal(storeRef, true)
+			if err != nil {
+				return err
+			}
+			if canceled {
+				continue
+			}
+			if err := modal.reloadStoreOptions(storeName); err != nil {
+				return err
+			}
+			continue
+		}
 		done, name, err := modal.Handle(input)
 		if err != nil {
 			return err
@@ -403,6 +468,35 @@ func (s *tuiSession) runProfileModal(ctx context.Context, existingName string, e
 		s.dashboard.SelectedProfile = name
 		s.dashboard.Activity = managementActivity(tui.ActivityStatusSuccess, action, fmt.Sprintf("saved %q", name))
 		return nil
+	}
+}
+
+func (s *tuiSession) runStoreModal(existingName string, editing bool) (string, bool, error) {
+	modal, err := newTUIStoreModal(s.profilesFile, existingName, editing)
+	if err != nil {
+		return "", false, err
+	}
+	for {
+		view := modal.View()
+		s.dashboard.Modal = &view
+		if err := s.render(); err != nil {
+			return "", false, err
+		}
+		input, err := readTUIModalInput(s.r.lineReader())
+		if err != nil {
+			return "", false, err
+		}
+		done, name, err := modal.Handle(input)
+		if err != nil {
+			return "", false, err
+		}
+		if !done {
+			continue
+		}
+		if name == "" {
+			return "", true, nil
+		}
+		return name, false, nil
 	}
 }
 
@@ -549,6 +643,25 @@ func profileModalSubtitle(source tuiProfileSource, cfg *cloudstic.ProfilesConfig
 	default:
 		return fmt.Sprintf("Source requires a %s auth reference.", provider)
 	}
+}
+
+func profileStoreOptions(cfg *cloudstic.ProfilesConfig, current string) []string {
+	options := sortedKeys(cfg.Stores)
+	moveDefaultToFront(options, current)
+	options = append(options, tuiCreateStoreOption)
+	return options
+}
+
+func profileStoreFieldHelp(storeRef string) []string {
+	lines := []string{}
+	if storeRef == tuiCreateStoreOption {
+		lines = append(lines, fmt.Sprintf("%sPress Enter to create a store.%s", ui.Dim, ui.Reset))
+		return lines
+	}
+	if storeRef != "" {
+		lines = append(lines, fmt.Sprintf("%sType e to edit the selected store.%s", ui.Dim, ui.Reset))
+	}
+	return lines
 }
 
 func sourceFieldExamples(selectedField string, source tuiProfileSource) []string {

@@ -93,6 +93,28 @@ func TestTUIProfileModalViewDoesNotMutateState(t *testing.T) {
 	}
 }
 
+func TestNewTUIProfileModal_AllowsCreatingStoreWhenNoneExist(t *testing.T) {
+	dir := t.TempDir()
+	profilesPath := dir + "/profiles.yaml"
+	if err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
+		Version: 1,
+	}); err != nil {
+		t.Fatalf("SaveProfilesFile: %v", err)
+	}
+
+	modal, err := newTUIProfileModal(profilesPath, "", false)
+	if err != nil {
+		t.Fatalf("newTUIProfileModal: %v", err)
+	}
+	storeField := modal.fieldByKey("store")
+	if storeField == nil {
+		t.Fatalf("missing store field")
+	}
+	if len(storeField.Options) != 1 || storeField.Options[0] != tuiCreateStoreOption {
+		t.Fatalf("store options=%v want [%q]", storeField.Options, tuiCreateStoreOption)
+	}
+}
+
 func stubTUITestHooks(t *testing.T) {
 	t.Helper()
 
@@ -856,6 +878,49 @@ func TestTUISession_HandleActionCreateRefreshesDashboard(t *testing.T) {
 	}
 	if s.dashboard.Activity.Status != tui.ActivityStatusSuccess {
 		t.Fatalf("unexpected activity: %+v", s.dashboard.Activity)
+	}
+}
+
+func TestTUISession_HandleActionCreateCanCreateStoreInline(t *testing.T) {
+	stubTUITestHooks(t)
+
+	oldBuild := tuiBuildDashboard
+	t.Cleanup(func() { tuiBuildDashboard = oldBuild })
+
+	dir := t.TempDir()
+	profilesPath := dir + "/profiles.yaml"
+	if err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
+		Version: 1,
+	}); err != nil {
+		t.Fatalf("SaveProfilesFile: %v", err)
+	}
+	tuiBuildDashboard = func(context.Context, string) (tui.Dashboard, error) {
+		return defaultBuildTUIDashboard(context.Background(), profilesPath)
+	}
+
+	readEnd, writeEnd, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer func() { _ = readEnd.Close() }()
+	if _, err := writeEnd.WriteString("photos\t\t/photos\t\rbackup-store\t\t/backups\r\r"); err != nil {
+		t.Fatalf("WriteString: %v", err)
+	}
+	_ = writeEnd.Close()
+
+	s := newTUISession(&runner{out: io.Discard, stdoutFile: os.Stdout, stdin: readEnd, lineIn: bufio.NewReader(readEnd)}, profilesPath, tui.Dashboard{})
+	if _, err := s.handleAction(context.Background(), tuiAction{Kind: tuiActionCreate}); err != nil {
+		t.Fatalf("handleAction(create): %v", err)
+	}
+	cfg, err := cloudstic.LoadProfilesFile(profilesPath)
+	if err != nil {
+		t.Fatalf("LoadProfilesFile: %v", err)
+	}
+	if got := cfg.Stores["backup-store"].URI; got != "local:/backups" {
+		t.Fatalf("saved store uri=%q want local:/backups", got)
+	}
+	if got := cfg.Profiles["photos"].Store; got != "backup-store" {
+		t.Fatalf("saved profile store=%q want backup-store", got)
 	}
 }
 

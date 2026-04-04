@@ -69,15 +69,17 @@ const (
 )
 
 type ActivityPanel struct {
-	Status    ActivityStatus
-	Action    string
-	Phase     string
-	Current   int64
-	Total     int64
-	IsBytes   bool
-	Summary   string
-	UpdatedAt string
-	Lines     []string
+	Status     ActivityStatus
+	ActionKind ActionKind
+	Action     string
+	Target     string
+	Phase      string
+	Current    int64
+	Total      int64
+	IsBytes    bool
+	Summary    string
+	UpdatedAt  string
+	Lines      []string
 }
 
 type ActionKind string
@@ -119,6 +121,23 @@ const (
 	StoreHealthUnknown          StoreHealth = "unknown"
 )
 
+type StoreReachability string
+
+const (
+	StoreReachabilityUnknown     StoreReachability = "unknown"
+	StoreReachabilityPending     StoreReachability = "pending"
+	StoreReachabilityReachable   StoreReachability = "reachable"
+	StoreReachabilityUnavailable StoreReachability = "unavailable"
+)
+
+type RepositoryState string
+
+const (
+	RepositoryStateUnknown        RepositoryState = "unknown"
+	RepositoryStateInitialized    RepositoryState = "initialized"
+	RepositoryStateNotInitialized RepositoryState = "not_initialized"
+)
+
 type BackupFreshness string
 
 const (
@@ -129,18 +148,20 @@ const (
 )
 
 type ProfileCard struct {
-	Name        string
-	Source      string
-	StoreRef    string
-	AuthRef     string
-	Enabled     bool
-	Status      ProfileStatus
-	StatusNote  string
-	StoreHealth StoreHealth
-	BackupState BackupFreshness
-	LastBackup  string
-	LastRef     string
-	Actions     []ProfileAction
+	Name         string
+	Source       string
+	StoreRef     string
+	AuthRef      string
+	Enabled      bool
+	Status       ProfileStatus
+	StatusNote   string
+	StoreHealth  StoreHealth
+	Reachability StoreReachability
+	Repository   RepositoryState
+	BackupState  BackupFreshness
+	LastBackup   string
+	LastRef      string
+	Actions      []ProfileAction
 }
 
 type StoreProbe struct {
@@ -202,26 +223,56 @@ func BuildDashboard(cfg *engine.ProfilesConfig, probes map[string]StoreProbe) Da
 		status, note := profileStatus(cfg, profile, probes[profile.Store])
 		lastBackup, lastRef, lastCreated := latestBackup(profile.Source, probes[profile.Store].Snapshots)
 		storeHealth := deriveStoreHealth(cfg, profile, probes[profile.Store])
+		reachability := deriveStoreReachability(storeHealth)
+		repository := deriveRepositoryState(probes[profile.Store], storeHealth)
 		backupState := deriveBackupState(lastCreated)
 		if lastBackup == "" {
 			backupState = BackupFreshnessNever
 		}
 		d.Profiles = append(d.Profiles, ProfileCard{
-			Name:        name,
-			Source:      profile.Source,
-			StoreRef:    profile.Store,
-			AuthRef:     profile.AuthRef,
-			Enabled:     profile.IsEnabled(),
-			Status:      status,
-			StatusNote:  note,
-			StoreHealth: storeHealth,
-			BackupState: backupState,
-			LastBackup:  lastBackup,
-			LastRef:     lastRef,
-			Actions:     deriveProfileActions(status, storeHealth),
+			Name:         name,
+			Source:       profile.Source,
+			StoreRef:     profile.Store,
+			AuthRef:      profile.AuthRef,
+			Enabled:      profile.IsEnabled(),
+			Status:       status,
+			StatusNote:   note,
+			StoreHealth:  storeHealth,
+			Reachability: reachability,
+			Repository:   repository,
+			BackupState:  backupState,
+			LastBackup:   lastBackup,
+			LastRef:      lastRef,
+			Actions:      deriveProfileActions(status, storeHealth),
 		})
 	}
 	return d
+}
+
+func deriveStoreReachability(health StoreHealth) StoreReachability {
+	switch health {
+	case StoreHealthPending:
+		return StoreReachabilityPending
+	case StoreHealthUnavailable:
+		return StoreReachabilityUnavailable
+	case StoreHealthUnknown:
+		return StoreReachabilityUnknown
+	default:
+		return StoreReachabilityReachable
+	}
+}
+
+func deriveRepositoryState(probe StoreProbe, health StoreHealth) RepositoryState {
+	switch health {
+	case StoreHealthNotInitialized:
+		return RepositoryStateNotInitialized
+	case StoreHealthUnavailable, StoreHealthUnknown, StoreHealthPending:
+		return RepositoryStateUnknown
+	}
+	if probe.Status == "ok" {
+		return RepositoryStateInitialized
+	}
+	return RepositoryStateUnknown
 }
 
 func deriveProfileActions(status ProfileStatus, storeHealth StoreHealth) []ProfileAction {

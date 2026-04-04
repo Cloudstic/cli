@@ -222,7 +222,7 @@ func renderSelectedProfile(d Dashboard) ([]string, map[int]string) {
 		profileDetailLine("State", plainProfileStateLabel(profile)),
 		profileDetailLine("Source", profile.Source),
 		profileDetailLine("Store", profile.StoreRef),
-		profileDetailLine("Health", storeHealthLabel(profile.StoreHealth)),
+		profileDetailLine("Health", profileHealthSummary(profile)),
 	}
 	if profile.AuthRef != "" {
 		lines = append(lines, profileDetailLine("Auth", profile.AuthRef))
@@ -240,7 +240,13 @@ func renderSelectedProfile(d Dashboard) ([]string, map[int]string) {
 	if profile.LastRef != "" {
 		lines = append(lines, profileDetailLine("Ref", trimSnapshotRef(profile.LastRef)))
 	}
-	if profile.StatusNote != "" && (profile.Status != ProfileStatusReady || profile.BackupState != BackupFreshnessNever) {
+	if check := profileCheckSummary(d.Activity, profile); check != "" {
+		lines = append(lines, profileDetailLine("Check", check))
+	}
+	if note := profileStatusSummary(profile); note != "" {
+		lines = append(lines, profileDetailLine("Status", note))
+	}
+	if profile.StatusNote != "" && noteAddsContext(profile) {
 		lines = append(lines, profileDetailLine("Status", profile.StatusNote))
 	}
 	buttons := selectedProfileActionButtons(profile)
@@ -507,27 +513,46 @@ func equalizePaneHeights(left, right []string) ([]string, []string) {
 	return left, right
 }
 
-func storeHealthLabel(health StoreHealth) string {
-	switch health {
-	case StoreHealthReady:
-		return "ready"
-	case StoreHealthPending:
-		return "pending"
-	case StoreHealthDisabled:
+func profileHealthSummary(profile ProfileCard) string {
+	switch {
+	case profile.Status == ProfileStatusDisabled:
 		return "disabled"
-	case StoreHealthMissingStore:
-		return "missing store"
-	case StoreHealthMissingAuth:
-		return "missing auth"
-	case StoreHealthProviderMismatch:
-		return "provider mismatch"
-	case StoreHealthUnavailable:
-		return "unavailable"
-	case StoreHealthNotInitialized:
+	case profile.Status == ProfileStatusError:
+		return "configuration error"
+	case profile.Reachability == StoreReachabilityUnavailable:
+		return "store unavailable"
+	case profile.Repository == RepositoryStateNotInitialized:
 		return "repository not initialized"
+	case profile.Reachability == StoreReachabilityPending:
+		return "checking store"
+	case profile.StoreHealth == StoreHealthMissingStore:
+		return "missing store"
+	case profile.StoreHealth == StoreHealthMissingAuth:
+		return "missing auth"
+	case profile.StoreHealth == StoreHealthProviderMismatch:
+		return "provider mismatch"
+	case profile.BackupState == BackupFreshnessStale:
+		return "backup stale"
 	default:
-		return "unknown"
+		return "ready"
 	}
+}
+
+func profileStatusSummary(profile ProfileCard) string {
+	switch {
+	case profile.Reachability == StoreReachabilityUnknown && profile.Repository == RepositoryStateUnknown:
+		return "status unknown"
+	default:
+		return ""
+	}
+}
+
+func noteAddsContext(profile ProfileCard) bool {
+	if profile.StatusNote == "" {
+		return false
+	}
+	summary := profileHealthSummary(profile)
+	return !strings.EqualFold(profile.StatusNote, summary)
 }
 
 func backupFreshnessLabel(state BackupFreshness) string {
@@ -752,6 +777,28 @@ func actionButtonLabel(action ProfileAction) string {
 			return "Run backup"
 		}
 		return "Backup unavailable"
+	}
+}
+
+func profileCheckSummary(activity ActivityPanel, profile ProfileCard) string {
+	if activity.ActionKind != ActionKindCheck || activity.Target != profile.Name {
+		return ""
+	}
+	switch activity.Status {
+	case ActivityStatusRunning:
+		return "running"
+	case ActivityStatusSuccess:
+		if activity.UpdatedAt != "" {
+			return fmt.Sprintf("passed at %s", activity.UpdatedAt)
+		}
+		return "passed"
+	case ActivityStatusError:
+		if activity.UpdatedAt != "" {
+			return fmt.Sprintf("failed at %s", activity.UpdatedAt)
+		}
+		return "failed"
+	default:
+		return ""
 	}
 }
 

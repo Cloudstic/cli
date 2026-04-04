@@ -169,10 +169,13 @@ func (l *tuiActionState) Start(action, target string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.panel.Status = tui.ActivityStatusRunning
+	l.panel.ActionKind = actionKindFromActionLabel(action)
 	if target != "" {
 		l.panel.Action = fmt.Sprintf("%s (%s)", action, target)
+		l.panel.Target = strings.TrimPrefix(target, "profile ")
 	} else {
 		l.panel.Action = action
+		l.panel.Target = ""
 	}
 	l.panel.Summary = ""
 	l.panel.UpdatedAt = ""
@@ -319,4 +322,15 @@ func tuiStoreFlags(profilesFile string, storeCfg cloudstic.ProfileStore) *global
 	g.debug = &debug
 	g.verbose = &verbose
 	return g
+}
+
+func actionKindFromActionLabel(action string) tui.ActionKind {
+	switch action {
+	case "Run repository check":
+		return tui.ActionKindCheck
+	case "Initialize store":
+		return tui.ActionKindInit
+	default:
+		return tui.ActionKindBackup
+	}
 }

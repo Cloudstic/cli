@@ -73,6 +73,12 @@ func TestBuildDashboard_SortsProfilesAndCountsSections(t *testing.T) {
 	if got.Profiles[0].StoreHealth != StoreHealthReady {
 		t.Fatalf("store health = %q want ready", got.Profiles[0].StoreHealth)
 	}
+	if got.Profiles[0].Reachability != StoreReachabilityReachable {
+		t.Fatalf("reachability = %q want reachable", got.Profiles[0].Reachability)
+	}
+	if got.Profiles[0].Repository != RepositoryStateInitialized {
+		t.Fatalf("repository = %q want initialized", got.Profiles[0].Repository)
+	}
 	if got.Profiles[0].BackupState != BackupFreshnessRecent {
 		t.Fatalf("backup state = %q want recent", got.Profiles[0].BackupState)
 	}
@@ -117,6 +123,12 @@ func TestBuildDashboard_NormalizesStoreProbeErrors(t *testing.T) {
 	}
 	if got.Profiles[0].StoreHealth != StoreHealthNotInitialized {
 		t.Fatalf("store health=%q want repository not initialized", got.Profiles[0].StoreHealth)
+	}
+	if got.Profiles[0].Reachability != StoreReachabilityReachable {
+		t.Fatalf("reachability=%q want reachable", got.Profiles[0].Reachability)
+	}
+	if got.Profiles[0].Repository != RepositoryStateNotInitialized {
+		t.Fatalf("repository=%q want not initialized", got.Profiles[0].Repository)
 	}
 	if len(got.Profiles[0].Actions) != 2 || got.Profiles[0].Actions[0].Kind != ActionKindInit || !got.Profiles[0].Actions[0].Enabled {
 		t.Fatalf("unexpected actions: %+v", got.Profiles[0].Actions)
@@ -168,6 +180,12 @@ func TestBuildDashboardFromConfig_StoreErrorBecomesWarning(t *testing.T) {
 	})
 	if got.Profiles[0].Status != ProfileStatusWarning || got.Profiles[0].StatusNote != "unlock failed" {
 		t.Fatalf("unexpected profile status: %+v", got.Profiles[0])
+	}
+	if got.Profiles[0].Reachability != StoreReachabilityUnavailable {
+		t.Fatalf("reachability=%q want unavailable", got.Profiles[0].Reachability)
+	}
+	if got.Profiles[0].Repository != RepositoryStateUnknown {
+		t.Fatalf("repository=%q want unknown", got.Profiles[0].Repository)
 	}
 }
 

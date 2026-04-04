@@ -18,6 +18,7 @@ type Rect struct {
 
 type DashboardLayout struct {
 	ProfileRows map[int]string
+	ProfileRect Rect
 	ActionRect  Rect
 }
 
@@ -61,8 +62,15 @@ func LayoutDashboardWidth(d Dashboard, width int) DashboardLayout {
 	rightLines := renderSelectedProfile(d)
 	leftLines, rightLines = equalizePaneHeights(leftLines, rightLines)
 	leftBox := boxLinesExact("Profiles", leftLines, profilesWidth)
+	leftWidth := longestVisible(leftBox)
+	layout.ProfileRect = Rect{
+		X: 1,
+		Y: y,
+		W: leftWidth,
+		H: len(leftBox),
+	}
 
-	rightStartX := longestVisible(leftBox) + 3
+	rightStartX := leftWidth + 3
 	contentStartY := y + 3
 	for i, profile := range d.Profiles {
 		layout.ProfileRows[contentStartY+i] = profile.Name

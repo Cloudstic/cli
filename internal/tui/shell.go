@@ -19,6 +19,7 @@ type Rect struct {
 type DashboardLayout struct {
 	ProfileRows map[int]string
 	ProfileRect Rect
+	ActionRows  map[int]string
 	ActionRect  Rect
 }
 
@@ -50,7 +51,10 @@ func dimmedLine(line string) string {
 }
 
 func LayoutDashboardWidth(d Dashboard, width int) DashboardLayout {
-	layout := DashboardLayout{ProfileRows: map[int]string{}}
+	layout := DashboardLayout{
+		ProfileRows: map[int]string{},
+		ActionRows:  map[int]string{},
+	}
 	y := 1
 	y += 3 // title, subtitle, blank
 	y += len(boxLinesExact("Overview", []string{
@@ -59,7 +63,7 @@ func LayoutDashboardWidth(d Dashboard, width int) DashboardLayout {
 
 	profilesWidth, detailWidth := splitPaneWidths(width)
 	leftLines := renderProfileList(d)
-	rightLines := renderSelectedProfile(d)
+	rightLines, actionRows := renderSelectedProfile(d)
 	leftLines, rightLines = equalizePaneHeights(leftLines, rightLines)
 	leftBox := boxLinesExact("Profiles", leftLines, profilesWidth)
 	leftWidth := longestVisible(leftBox)
@@ -75,13 +79,15 @@ func LayoutDashboardWidth(d Dashboard, width int) DashboardLayout {
 	for i, profile := range d.Profiles {
 		layout.ProfileRows[contentStartY+i] = profile.Name
 	}
-	actionRow := len(rightLines) - 1
-	if actionRow >= 0 {
+	if len(actionRows) > 0 {
 		layout.ActionRect = Rect{
 			X: rightStartX + 2,
-			Y: contentStartY + actionRow,
+			Y: contentStartY,
 			W: detailWidth,
-			H: 1,
+			H: len(rightLines),
+		}
+		for row, key := range actionRows {
+			layout.ActionRows[contentStartY+row] = key
 		}
 	}
 	return layout
@@ -103,7 +109,7 @@ func dashboardLinesWidth(d Dashboard, width int) []string {
 
 	profilesWidth, detailWidth := splitPaneWidths(width)
 	leftLines := renderProfileList(d)
-	rightLines := renderSelectedProfile(d)
+	rightLines, _ := renderSelectedProfile(d)
 	leftLines, rightLines = equalizePaneHeights(leftLines, rightLines)
 	lines = append(lines, renderColumnLines(
 		boxLinesExact("Profiles", leftLines, profilesWidth),
@@ -168,9 +174,10 @@ func renderProfileList(d Dashboard) []string {
 	if len(d.Profiles) == 0 {
 		return []string{fmt.Sprintf("%sNo profiles configured.%s", ui.Dim, ui.Reset)}
 	}
+	nameWidth, badgeWidth := profileListWidths(d.Profiles)
 	lines := make([]string, 0, len(d.Profiles))
 	for _, profile := range d.Profiles {
-		lines = append(lines, profileHeaderLine(profile, profile.Name == d.SelectedProfile))
+		lines = append(lines, profileHeaderLine(profile, profile.Name == d.SelectedProfile, nameWidth, badgeWidth))
 	}
 	return lines
 }
@@ -205,10 +212,10 @@ func renderActivityPanel(activity ActivityPanel) []string {
 	return lines
 }
 
-func renderSelectedProfile(d Dashboard) []string {
+func renderSelectedProfile(d Dashboard) ([]string, map[int]string) {
 	profile, ok := selectedProfileCard(d)
 	if !ok {
-		return []string{fmt.Sprintf("%sNo profile selected.%s", ui.Dim, ui.Reset)}
+		return []string{fmt.Sprintf("%sNo profile selected.%s", ui.Dim, ui.Reset)}, nil
 	}
 	lines := []string{
 		fmt.Sprintf("%s%s%s", ui.Bold, profile.Name, ui.Reset),
@@ -236,13 +243,21 @@ func renderSelectedProfile(d Dashboard) []string {
 	if profile.StatusNote != "" && (profile.Status != ProfileStatusReady || profile.BackupState != BackupFreshnessNever) {
 		lines = append(lines, profileDetailLine("Status", profile.StatusNote))
 	}
-	lines = append(lines, "")
-	for _, action := range profile.Actions {
-		lines = append(lines, fmt.Sprintf("%sAction%s  %s", ui.Dim, ui.Reset, actionLabel(action)))
+	buttons := selectedProfileActionButtons(profile)
+	actionRows := map[int]string{}
+	if len(buttons) > 0 {
+		lines = append(lines, "")
+		for _, button := range buttons {
+			if button.Enabled {
+				actionRows[len(lines)] = button.Key
+			}
+			lines = append(lines, renderActionButton(button))
+			if !button.Enabled && button.Reason != "" {
+				lines = append(lines, fmt.Sprintf("  %s%s%s", ui.Dim, button.Reason, ui.Reset))
+			}
+		}
 	}
-	lines = append(lines, fmt.Sprintf("%sAction%s  Press e to edit this profile", ui.Dim, ui.Reset))
-	lines = append(lines, fmt.Sprintf("%sAction%s  Press d to delete this profile", ui.Dim, ui.Reset))
-	return lines
+	return lines, actionRows
 }
 
 func renderModalOverlay(w io.Writer, modal Modal, screenWidth, screenHeight int) error {
@@ -387,12 +402,32 @@ func modalLayout(screenWidth int) (startX int, width int) {
 	return startX, width
 }
 
-func profileHeaderLine(profile ProfileCard, selected bool) string {
+func profileHeaderLine(profile ProfileCard, selected bool, nameWidth, badgeWidth int) string {
 	prefix := "  "
 	if selected {
 		prefix = fmt.Sprintf("%s› %s", ui.Cyan, ui.Reset)
 	}
-	return fmt.Sprintf("%s%s%s%s  [%s]", prefix, ui.Bold, profile.Name, ui.Reset, profileStateLabel(profile))
+	namePadding := nameWidth - visibleLen(profile.Name)
+	if namePadding < 0 {
+		namePadding = 0
+	}
+	return fmt.Sprintf("%s%s%s%s%s  %s", prefix, ui.Bold, profile.Name, ui.Reset, strings.Repeat(" ", namePadding), profileStateBadge(profile, badgeWidth))
+}
+
+func profileListWidths(profiles []ProfileCard) (nameWidth, badgeWidth int) {
+	for _, profile := range profiles {
+		if l := visibleLen(profile.Name); l > nameWidth {
+			nameWidth = l
+		}
+		labelWidth := visibleLen(plainProfileStateLabel(profile))
+		if labelWidth > badgeWidth {
+			badgeWidth = labelWidth
+		}
+	}
+	if badgeWidth > 0 {
+		badgeWidth += 2 // brackets
+	}
+	return nameWidth, badgeWidth
 }
 
 func profileDetailLine(label, value string) string {
@@ -640,6 +675,16 @@ func profileStateLabel(profile ProfileCard) string {
 	}
 }
 
+func profileStateBadge(profile ProfileCard, width int) string {
+	label := profileStateLabel(profile)
+	plainWidth := visibleLen(plainProfileStateLabel(profile))
+	padding := width - plainWidth - 2
+	if padding < 0 {
+		padding = 0
+	}
+	return fmt.Sprintf("[%s%s]", label, strings.Repeat(" ", padding))
+}
+
 func plainProfileStateLabel(profile ProfileCard) string {
 	switch profile.Status {
 	case ProfileStatusDisabled:
@@ -668,13 +713,53 @@ func selectedProfileCard(d Dashboard) (ProfileCard, bool) {
 	return d.Profiles[0], true
 }
 
-func actionLabel(action ProfileAction) string {
-	if action.Enabled {
-		return action.Label
-	}
-	return fmt.Sprintf("%s%s%s", ui.Dim, action.Label, ui.Reset)
-}
-
 func trimSnapshotRef(ref string) string {
 	return strings.TrimPrefix(ref, "snapshot/")
+}
+
+type actionButton struct {
+	Key     string
+	Label   string
+	Enabled bool
+	Reason  string
+}
+
+func selectedProfileActionButtons(profile ProfileCard) []actionButton {
+	buttons := make([]actionButton, 0, len(profile.Actions)+2)
+	for _, action := range profile.Actions {
+		buttons = append(buttons, actionButton{
+			Key:     action.Key,
+			Label:   actionButtonLabel(action),
+			Enabled: action.Enabled,
+			Reason:  action.Reason,
+		})
+	}
+	buttons = append(buttons,
+		actionButton{Key: "e", Label: "Edit profile", Enabled: true},
+		actionButton{Key: "d", Label: "Delete profile", Enabled: true},
+	)
+	return buttons
+}
+
+func actionButtonLabel(action ProfileAction) string {
+	switch action.Kind {
+	case ActionKindInit:
+		return "Initialize repository"
+	case ActionKindCheck:
+		return "Run check"
+	default:
+		if action.Enabled {
+			return "Run backup"
+		}
+		return "Backup unavailable"
+	}
+}
+
+func renderActionButton(button actionButton) string {
+	key := fmt.Sprintf("%s[%s]%s", ui.Cyan, button.Key, ui.Reset)
+	label := button.Label
+	if button.Enabled {
+		return fmt.Sprintf("  %s %s", key, label)
+	}
+	return fmt.Sprintf("  %s %s%s%s", key, ui.Dim, label, ui.Reset)
 }

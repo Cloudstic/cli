@@ -29,6 +29,7 @@ const (
 type tuiAction struct {
 	Kind    tuiActionKind
 	Profile string
+	Key     string
 }
 
 func ensureSelectedProfile(d tui.Dashboard) tui.Dashboard {
@@ -181,14 +182,21 @@ func parseTUIMouseAction(csi []byte, layout tui.DashboardLayout) (tuiAction, err
 	if err != nil {
 		return tuiAction{}, nil
 	}
-	if !pointInRect(x, y, layout.ProfileRect) {
-		return tuiAction{}, nil
+	if pointInRect(x, y, layout.ProfileRect) {
+		profile := layout.ProfileRows[y]
+		if profile == "" {
+			return tuiAction{}, nil
+		}
+		return tuiAction{Kind: tuiActionSelectProfile, Profile: profile}, nil
 	}
-	profile := layout.ProfileRows[y]
-	if profile == "" {
-		return tuiAction{}, nil
+	if pointInRect(x, y, layout.ActionRect) {
+		key := layout.ActionRows[y]
+		if key == "" {
+			return tuiAction{}, nil
+		}
+		return actionFromKey(key), nil
 	}
-	return tuiAction{Kind: tuiActionSelectProfile, Profile: profile}, nil
+	return tuiAction{}, nil
 }
 
 func pointInRect(x, y int, rect tui.Rect) bool {
@@ -243,4 +251,27 @@ func profileAction(profile tui.ProfileCard, key string) (tui.ProfileAction, bool
 		}
 	}
 	return tui.ProfileAction{}, false
+}
+
+func actionFromKey(key string) tuiAction {
+	switch strings.ToLower(key) {
+	case "b":
+		return tuiAction{Kind: tuiActionRun, Key: "b"}
+	case "c":
+		return tuiAction{Kind: tuiActionCheck, Key: "c"}
+	case "e":
+		return tuiAction{Kind: tuiActionEdit, Key: "e"}
+	case "d":
+		return tuiAction{Kind: tuiActionDelete, Key: "d"}
+	case "n":
+		return tuiAction{Kind: tuiActionCreate, Key: "n"}
+	case "q":
+		return tuiAction{Kind: tuiActionQuit, Key: "q"}
+	case "j":
+		return tuiAction{Kind: tuiActionDown, Key: "j"}
+	case "k":
+		return tuiAction{Kind: tuiActionUp, Key: "k"}
+	default:
+		return tuiAction{}
+	}
 }

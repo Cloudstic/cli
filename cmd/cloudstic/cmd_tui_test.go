@@ -606,6 +606,20 @@ func TestReadTUIAction_ParsesProfileClick(t *testing.T) {
 	}
 }
 
+func TestReadTUIAction_ParsesActionClick(t *testing.T) {
+	layout := tui.DashboardLayout{
+		ActionRows: map[int]string{12: "c"},
+		ActionRect: tui.Rect{X: 30, Y: 10, W: 40, H: 6},
+	}
+	ev, err := readTUIAction(bufio.NewReader(bytes.NewBufferString("\x1b[<0;35;12M")), layout)
+	if err != nil {
+		t.Fatalf("readTUIAction action click: %v", err)
+	}
+	if ev.Kind != tuiActionCheck {
+		t.Fatalf("click action=%v want %v", ev.Kind, tuiActionCheck)
+	}
+}
+
 func TestReadTUIModalInput_ParsesStandaloneEscape(t *testing.T) {
 	ev, err := readTUIModalInput(bufio.NewReader(bytes.NewBufferString("\x1b")))
 	if err != nil {

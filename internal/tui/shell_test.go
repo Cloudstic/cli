@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestRenderDashboard(t *testing.T) {
@@ -45,7 +46,7 @@ func TestRenderDashboard(t *testing.T) {
 	if err := RenderDashboard(&out, d); err != nil {
 		t.Fatalf("RenderDashboard: %v", err)
 	}
-	got := out.String()
+	got := stripANSI(out.String())
 	for _, want := range []string{
 		"Cloudstic TUI",
 		"Operator dashboard for profiles, stores, and auth.",
@@ -74,9 +75,10 @@ func TestRenderDashboard(t *testing.T) {
 		"completed successfully",
 		"2026-04-03 15:05:00",
 		"Snapshot abc123 saved",
-		"Press c to run repository check",
-		"Press e to edit this profile",
-		"Press d to delete this profile",
+		"[b] Run backup",
+		"[c] Run check",
+		"[e] Edit profile",
+		"[d] Delete profile",
 		"Use ↑/↓ to select a profile. Press b to backup/init, c to check, n to create, e to edit, d to delete, q to quit.",
 	} {
 		if !strings.Contains(got, want) {
@@ -217,10 +219,66 @@ func TestLayoutDashboardWidth_TracksProfileRowsAndActionRect(t *testing.T) {
 	if layout.ProfileRect.X != 1 || layout.ProfileRect.Y <= 0 {
 		t.Fatalf("unexpected profile rect origin: %+v", layout.ProfileRect)
 	}
-	if layout.ActionRect.W <= 0 || layout.ActionRect.H != 1 {
+	if len(layout.ActionRows) != 3 {
+		t.Fatalf("action rows=%d want 3", len(layout.ActionRows))
+	}
+	if layout.ActionRect.W <= 0 || layout.ActionRect.H <= 0 {
 		t.Fatalf("unexpected action rect: %+v", layout.ActionRect)
 	}
 	if layout.ActionRect.X <= 0 || layout.ActionRect.Y <= 0 {
 		t.Fatalf("unexpected action rect origin: %+v", layout.ActionRect)
 	}
+}
+
+func TestRenderProfileList_AlignsStateBadges(t *testing.T) {
+	d := Dashboard{
+		SelectedProfile: "much-longer-name",
+		Profiles: []ProfileCard{
+			{Name: "docs", Enabled: true, Status: ProfileStatusReady},
+			{Name: "much-longer-name", Enabled: true, Status: ProfileStatusWarning},
+		},
+	}
+
+	lines := renderProfileList(d)
+	if len(lines) != 2 {
+		t.Fatalf("profile lines=%d want 2", len(lines))
+	}
+	docsIdx := visibleIndex(stripANSI(lines[0]), "[")
+	longIdx := visibleIndex(stripANSI(lines[1]), "[")
+	if docsIdx <= 0 || longIdx <= 0 {
+		t.Fatalf("missing state badge in profile list: %+v", lines)
+	}
+	if docsIdx != longIdx {
+		t.Fatalf("badge columns differ: docs=%d long=%d lines=%+v", docsIdx, longIdx, lines)
+	}
+}
+
+func stripANSI(s string) string {
+	var b strings.Builder
+	inEscape := false
+	for i := 0; i < len(s); {
+		switch {
+		case s[i] == '\x1b':
+			inEscape = true
+			i++
+		case inEscape:
+			if s[i] == 'm' {
+				inEscape = false
+			}
+			i++
+		default:
+			r, size := utf8.DecodeRuneInString(s[i:])
+			b.WriteRune(r)
+			i += size
+		}
+	}
+	return b.String()
+}
+
+func visibleIndex(s, needle string) int {
+	byteIdx := strings.Index(s, needle)
+	if byteIdx < 0 {
+		return -1
+	}
+	return utf8.RuneCountInString(s[:byteIdx])
 }

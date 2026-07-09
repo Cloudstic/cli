@@ -22,7 +22,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout target ref
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.ref || github.ref }}
 

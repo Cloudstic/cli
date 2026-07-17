@@ -55,12 +55,10 @@ func (r *runner) runRestore(ctx context.Context) int {
 
 	restoreOpts := buildRestoreOpts(a)
 
-	return r.execRestore(a, restoreOpts)
+	return r.execRestore(ctx, a, restoreOpts)
 }
 
-func (r *runner) execRestore(a *restoreArgs, opts []cloudstic.RestoreOption) int {
-	ctx := context.Background()
-
+func (r *runner) execRestore(ctx context.Context, a *restoreArgs, opts []cloudstic.RestoreOption) int {
 	if a.dryRun {
 		result, err := r.client.Restore(ctx, io.Discard, a.snapshotRef, opts...)
 		if err != nil {

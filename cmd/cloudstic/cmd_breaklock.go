@@ -25,7 +25,7 @@ func (r *runner) runBreakLock(ctx context.Context) int {
 		return r.fail("Failed to init store: %v", err)
 	}
 
-	removed, err := r.client.BreakLock(context.Background())
+	removed, err := r.client.BreakLock(ctx)
 	if err != nil {
 		return r.fail("Failed to break lock: %v", err)
 	}

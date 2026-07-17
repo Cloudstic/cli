@@ -112,7 +112,7 @@ func (r *runner) runBackup(ctx context.Context) int {
 	}
 
 	if a.profile != "" || a.allProfiles {
-		return r.runBackupWithProfiles(a)
+		return r.runBackupWithProfiles(ctx, a)
 	}
 
 	if a.authRef != "" {
@@ -129,10 +129,10 @@ func (r *runner) runBackup(ctx context.Context) int {
 		}
 	}
 
-	return r.runSingleBackup(a)
+	return r.runSingleBackup(ctx, a)
 }
 
-func (r *runner) runSingleBackup(a *backupArgs) int {
+func (r *runner) runSingleBackup(ctx context.Context, a *backupArgs) int {
 	if err := ensureDefaultAuthRefForCloudBackup(a); err != nil {
 		return r.fail("Failed to prepare auth settings: %v", err)
 	}
@@ -141,8 +141,6 @@ func (r *runner) runSingleBackup(a *backupArgs) int {
 	if err != nil {
 		return r.fail("Failed to read exclude file: %v", err)
 	}
-
-	ctx := context.Background()
 
 	src, err := initSource(ctx, initSourceOptions{
 		sourceURI:         a.sourceURI,
@@ -278,7 +276,7 @@ func ensureDefaultAuthRefForCloudBackup(a *backupArgs) error {
 	return nil
 }
 
-func (r *runner) runBackupWithProfiles(base *backupArgs) int {
+func (r *runner) runBackupWithProfiles(ctx context.Context, base *backupArgs) int {
 	cfg, err := cloudstic.LoadProfilesFile(base.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
@@ -313,7 +311,7 @@ func (r *runner) runBackupWithProfiles(base *backupArgs) int {
 		}
 		_, _ = fmt.Fprintf(r.out, "\n== Running profile %s ==\n", name)
 		r.client = nil // each profile may target a different store
-		if code := r.runSingleBackup(effective); code != 0 {
+		if code := r.runSingleBackup(ctx, effective); code != 0 {
 			failures++
 			if !base.allProfiles {
 				return code

@@ -53,7 +53,7 @@ func parseKeyListArgs() *keyListArgs {
 func (r *runner) runKeyList(ctx context.Context) int {
 	a := parseKeyListArgs()
 
-	raw, err := a.g.openStore()
+	raw, err := a.g.openStore(ctx)
 	if err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
@@ -107,7 +107,7 @@ func parseKeyPasswdArgs() *keyPasswdArgs {
 func (r *runner) runKeyPasswd(ctx context.Context) int {
 	a := parseKeyPasswdArgs()
 
-	raw, err := a.g.openStore()
+	raw, err := a.g.openStore(ctx)
 	if err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
@@ -157,7 +157,7 @@ func parseAddRecoveryKeyArgs() *addRecoveryKeyArgs {
 func (r *runner) runAddRecoveryKey(ctx context.Context) int {
 	a := parseAddRecoveryKeyArgs()
 
-	raw, err := a.g.openStore()
+	raw, err := a.g.openStore(ctx)
 	if err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}

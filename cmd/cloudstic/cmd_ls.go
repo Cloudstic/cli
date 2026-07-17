@@ -39,7 +39,7 @@ func (r *runner) runLsSnapshot(ctx context.Context) int {
 	start := time.Now()
 	lsOpts := buildLsOpts(a)
 
-	result, err := r.client.LsSnapshot(context.Background(), a.snapshotID, lsOpts...)
+	result, err := r.client.LsSnapshot(ctx, a.snapshotID, lsOpts...)
 	if err != nil {
 		return r.fail("Ls failed: %v", err)
 	}

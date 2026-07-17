@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 )
 
 var (
@@ -25,7 +27,13 @@ func main() {
 		defer stop()
 	}
 
-	exitCode := runCmd(os.Args[1])
+	// A single cancellable context rooted here is threaded through every
+	// command; SIGINT/SIGTERM cancels it so in-flight work (backup, restore,
+	// remote store calls) can unwind cleanly instead of being hard-killed.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	exitCode := runCmd(ctx, os.Args[1])
 
 	if memprofile != "" {
 		writeMemProfile(memprofile)
@@ -34,9 +42,8 @@ func main() {
 	os.Exit(exitCode)
 }
 
-func runCmd(cmd string) int {
+func runCmd(ctx context.Context, cmd string) int {
 	r := newRunner()
-	ctx := context.Background()
 	switch cmd {
 	case "version", "--version", "-v":
 		fmt.Printf("cloudstic %s (commit %s, built %s)\n", version, commit, date)

@@ -31,7 +31,7 @@ func (r *runner) runList(ctx context.Context) int {
 
 	listOpts := buildListOpts(a)
 
-	result, err := r.client.List(context.Background(), listOpts...)
+	result, err := r.client.List(ctx, listOpts...)
 	if err != nil {
 		return r.fail("List failed: %v", err)
 	}

@@ -36,7 +36,7 @@ func (r *runner) runCheck(ctx context.Context) int {
 
 	checkOpts := buildCheckOpts(a)
 
-	result, err := r.client.Check(context.Background(), checkOpts...)
+	result, err := r.client.Check(ctx, checkOpts...)
 	if err != nil {
 		return r.fail("Check failed: %v", err)
 	}

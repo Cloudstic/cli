@@ -74,7 +74,7 @@ func (b tuiCLIBackend) BackupProfile(ctx context.Context, profilesFile, profileN
 	}
 	b.r.client = client
 	defer func() { b.r.client = nil }()
-	if code := b.r.runSingleBackup(effective); code != 0 {
+	if code := b.r.runSingleBackup(ctx, effective); code != 0 {
 		return fmt.Errorf("backup failed")
 	}
 	return nil

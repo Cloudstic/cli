@@ -350,7 +350,7 @@ func (r *runner) checkOrInitStore(ctx context.Context, cfg *cloudstic.ProfilesCo
 		}
 		return fmt.Errorf("could not resolve store credentials: %w", err)
 	}
-	raw, err := g.initObjectStore()
+	raw, err := g.initObjectStore(ctx)
 	if err != nil {
 		return fmt.Errorf("could not connect to store: %w", err)
 	}

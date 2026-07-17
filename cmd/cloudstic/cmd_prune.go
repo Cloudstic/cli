@@ -32,7 +32,7 @@ func (r *runner) runPrune(ctx context.Context) int {
 
 	pruneOpts := buildPruneOpts(a)
 
-	result, err := r.client.Prune(context.Background(), pruneOpts...)
+	result, err := r.client.Prune(ctx, pruneOpts...)
 	if err != nil {
 		return r.fail("Prune failed: %v", err)
 	}

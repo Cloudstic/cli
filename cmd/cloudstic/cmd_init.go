@@ -39,12 +39,12 @@ func (r *runner) runInit(ctx context.Context) int {
 }
 
 func (r *runner) runInitWithArgs(ctx context.Context, a *initArgs) int {
-	raw, err := a.g.openStore()
+	raw, err := a.g.openStore(ctx)
 	if err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 
-	kc, err := a.g.buildKeychain(context.Background())
+	kc, err := a.g.buildKeychain(ctx)
 	if err != nil {
 		return r.fail("Failed to build keychain: %v", err)
 	}
@@ -57,7 +57,7 @@ func (r *runner) runInitWithArgs(ctx context.Context, a *initArgs) int {
 				return r.fail("Error: %v", err)
 			}
 			*a.g.password = pw
-			kc, _ = a.g.buildKeychain(context.Background())
+			kc, _ = a.g.buildKeychain(ctx)
 		} else {
 			_, _ = fmt.Fprintln(r.errOut, "Error: encryption is required by default.")
 			_, _ = fmt.Fprintln(r.errOut, "Provide --password or --encryption-key to encrypt your repository.")
@@ -68,7 +68,7 @@ func (r *runner) runInitWithArgs(ctx context.Context, a *initArgs) int {
 
 	initOpts := buildInitOpts(a, kc)
 
-	result, err := cloudstic.InitRepo(context.Background(), raw, initOpts...)
+	result, err := cloudstic.InitRepo(ctx, raw, initOpts...)
 	if err != nil {
 		return r.fail("Init failed: %v", err)
 	}

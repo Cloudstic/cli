@@ -21,11 +21,11 @@ import (
 
 // openStore initializes the raw object store with debug wrapping applied.
 // Used by commands that operate on the store directly (init, key).
-func (g *globalFlags) openStore() (store.ObjectStore, error) {
+func (g *globalFlags) openStore(ctx context.Context) (store.ObjectStore, error) {
 	if err := g.applyProfileStoreOverrides(); err != nil {
 		return nil, err
 	}
-	raw, err := g.initObjectStore()
+	raw, err := g.initObjectStore(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -53,7 +53,7 @@ func (g *globalFlags) openClientWithReporter(ctx context.Context, reporterOverri
 	if err := g.applyProfileStoreOverrides(); err != nil {
 		return nil, err
 	}
-	raw, err := g.initObjectStore()
+	raw, err := g.initObjectStore(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +266,7 @@ func parseStoreURI(raw string) (*storeURIParts, error) {
 	}
 }
 
-func (g *globalFlags) initObjectStore() (store.ObjectStore, error) {
+func (g *globalFlags) initObjectStore(ctx context.Context) (store.ObjectStore, error) {
 	uri, err := parseStoreURI(*g.store)
 	if err != nil {
 		return nil, err
@@ -285,7 +285,7 @@ func (g *globalFlags) initObjectStore() (store.ObjectStore, error) {
 		inner, err = store.NewB2Store(uri.bucket, store.WithCredentials(keyID, appKey), store.WithPrefix(uri.prefix))
 	case "s3":
 		inner, err = store.NewS3Store(
-			context.Background(),
+			ctx,
 			uri.bucket,
 			store.WithS3Endpoint(*g.s3Endpoint),
 			store.WithS3Region(*g.s3Region),

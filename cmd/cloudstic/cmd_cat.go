@@ -51,7 +51,7 @@ func (r *runner) runCat(ctx context.Context) int {
 
 	quiet := *a.g.quiet || a.g.jsonEnabled()
 
-	results, err := r.client.Cat(context.Background(), a.keys...)
+	results, err := r.client.Cat(ctx, a.keys...)
 	if err != nil {
 		return r.fail("Failed to fetch objects: %v", err)
 	}

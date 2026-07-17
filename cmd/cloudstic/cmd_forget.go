@@ -161,12 +161,12 @@ func (r *runner) runForget(ctx context.Context) int {
 	}
 
 	if a.hasPolicy {
-		return r.execForgetPolicy(a)
+		return r.execForgetPolicy(ctx, a)
 	}
-	return r.execForgetSingle(a)
+	return r.execForgetSingle(ctx, a)
 }
 
-func (r *runner) execForgetSingle(a *forgetArgs) int {
+func (r *runner) execForgetSingle(ctx context.Context, a *forgetArgs) int {
 	var forgetOpts []cloudstic.ForgetOption
 	if a.prune {
 		forgetOpts = append(forgetOpts, cloudstic.WithPrune())
@@ -174,7 +174,7 @@ func (r *runner) execForgetSingle(a *forgetArgs) int {
 	if *a.g.verbose {
 		forgetOpts = append(forgetOpts, cloudstic.WithForgetVerbose())
 	}
-	result, err := r.client.Forget(context.Background(), a.snapshotID, forgetOpts...)
+	result, err := r.client.Forget(ctx, a.snapshotID, forgetOpts...)
 	if err != nil {
 		return r.fail("Forget failed: %v", err)
 	}
@@ -192,9 +192,9 @@ func (r *runner) execForgetSingle(a *forgetArgs) int {
 	return 0
 }
 
-func (r *runner) execForgetPolicy(a *forgetArgs) int {
+func (r *runner) execForgetPolicy(ctx context.Context, a *forgetArgs) int {
 	opts := r.buildForgetPolicyOpts(a)
-	result, err := r.client.ForgetPolicy(context.Background(), opts...)
+	result, err := r.client.ForgetPolicy(ctx, opts...)
 	if err != nil {
 		return r.fail("Forget failed: %v", err)
 	}

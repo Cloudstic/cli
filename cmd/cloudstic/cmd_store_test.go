@@ -313,7 +313,7 @@ func TestCheckOrInitStore_AlreadyInitialized(t *testing.T) {
 	if err != nil {
 		t.Fatalf("globalFlagsFromProfileStore: %v", err)
 	}
-	raw, err := g.initObjectStore()
+	raw, err := g.initObjectStore(context.Background())
 	if err != nil {
 		t.Fatalf("initObjectStore: %v", err)
 	}
@@ -352,7 +352,7 @@ func TestCheckOrInitStore_InitializedEncrypted_ValidCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("globalFlagsFromProfileStore: %v", err)
 	}
-	raw, err := g.initObjectStore()
+	raw, err := g.initObjectStore(context.Background())
 	if err != nil {
 		t.Fatalf("initObjectStore: %v", err)
 	}
@@ -392,7 +392,7 @@ func TestCheckOrInitStore_InitializedEncrypted_InvalidCredentials(t *testing.T) 
 	if err != nil {
 		t.Fatalf("globalFlagsFromProfileStore: %v", err)
 	}
-	raw, err := g.initObjectStore()
+	raw, err := g.initObjectStore(context.Background())
 	if err != nil {
 		t.Fatalf("initObjectStore: %v", err)
 	}

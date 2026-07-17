@@ -38,7 +38,7 @@ func (r *runner) runDiff(ctx context.Context) int {
 
 	diffOpts := buildDiffOpts(a)
 
-	result, err := r.client.Diff(context.Background(), a.snap1, a.snap2, diffOpts...)
+	result, err := r.client.Diff(ctx, a.snap1, a.snap2, diffOpts...)
 	if err != nil {
 		return r.fail("Diff failed: %v", err)
 	}

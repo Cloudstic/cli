@@ -40,8 +40,10 @@ func TestBuildDashboard_SortsProfilesAndCountsSections(t *testing.T) {
 			Status: "ok",
 			Snapshots: []engine.SnapshotEntry{
 				{
-					Ref:     "snapshot/abc",
-					Created: mustTime(t, "2026-04-03T10:30:00Z"),
+					Ref: "snapshot/abc",
+					// Relative to now so the "recent" freshness assertion below
+					// stays valid over time (see deriveBackupState's 7-day window).
+					Created: time.Now().Add(-1 * time.Hour),
 					Snap: core.Snapshot{
 						Source: &core.SourceInfo{Type: "local", Path: "/tmp/alpha"},
 					},

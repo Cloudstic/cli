@@ -204,6 +204,23 @@ Markdown files are linted with `markdownlint` (rules from `.markdownlint.json`).
 - Use `-race` flag during development to catch race conditions.
 - Hermetic tests (default) use local filesystem + containers; no cloud credentials needed.
 
+## Naming Conventions
+
+One set of rules for commit, PR, and issue titles (derived from repo history).
+
+**Commits & PRs** — use a Conventional Commit prefix: `type: imperative summary`, or `type(scope): …`. Lowercase the summary after the colon; no trailing period; keep it short (~72 chars) and specific — what changed, not a file list. PRs are squash-merged, so **the PR title becomes the commit subject** — give both the same form.
+
+- Types mirror the label/branch vocabulary: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `perf`, `ci`. Dependabot's `chore(deps): bump X from A to B` is machine-generated — leave it.
+- An optional scope names the area: `feat(tui):`, `fix(completion):`, `test(e2e):`. Prefer a `type(scope):` scope over an ad-hoc `TUI: …` sentence prefix, which a squash reword tends to mangle.
+
+**Issues** — no conventional-commit prefix; the `type` lives in the label. Lead with an imperative verb (`Add …`, `Convert …`, `Separate …`, `Thread …`) or an `Area:` scanning prefix (`TUI: …`). No trailing period.
+
+**Avoid** (all seen in history — don't repeat):
+
+- `feat:` / `fix:` prefixes in *issue* titles — the label already carries the type (e.g. #176, #187).
+- An `Area:` sentence prefix on a commit/PR where a squash reword will rewrite it — use a `type(scope):` scope instead.
+- Duplicate PR titles for split or re-opened work (e.g. #233 / #234) — disambiguate with the sub-scope.
+
 ## Creating GitHub Issues
 
 Create issues with `gh issue create` against `Cloudstic/cli`. Match the existing house style (see #155, #250–#253 as references).
@@ -235,7 +252,7 @@ One or two sentences on the desired end state.
 - Type (pick one): `bug`, `enhancement`, `refactor`, `tech debt`, `chore`, `test`, `documentation`, `rfc`, `tracking`
 - Area: `area/cli`, `area/core`, `area/tui`, `area/completion`, `area/onboarding`, `area/ci`
 
-**Titles** — short, imperative, no trailing period. Prefix with an area word when it aids scanning (e.g. `TUI: ...`); otherwise lead with the verb (`Add ...`, `Convert ...`, `Separate ...`, `Refactor ...`).
+**Titles** — see Naming Conventions above. In short: no conventional-commit prefix (the label carries the type), lead with an imperative verb or an `Area:` scanning prefix, no trailing period.
 
 Do not invent new labels — reuse what `gh label list` returns.
 
@@ -245,7 +262,7 @@ Open PRs with `gh pr create` against `Cloudstic/cli`. Match the existing house s
 
 **Branch names** — `<type>/<kebab-slug>`, where the type mirrors the label vocabulary: `feat/`, `refactor/`, `test/`, `chore/`, `fix/`, `docs/` (e.g. `feat/tui-profile-history`, `refactor/tui-profile-modal-state`). Dependabot branches (`dependabot/...`) are machine-generated — leave them alone.
 
-**Titles** — same conventions as issues: short, imperative, no trailing period. Prefix with an area word when it aids scanning (e.g. `TUI: ...`); otherwise lead with the verb (`Add ...`, `Refactor ...`, `Fix ...`). Conventional-commit prefixes (`feat:`, `chore:`) are also acceptable.
+**Titles** — see Naming Conventions above. Use a Conventional Commit prefix (`type: …` or `type(scope): …`) matching the branch type; because PRs squash-merge, the title becomes the commit subject.
 
 **Body structure** — two Markdown sections:
 

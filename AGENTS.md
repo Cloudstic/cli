@@ -215,11 +215,21 @@ One set of rules for commit, PR, and issue titles (derived from repo history).
 
 **Issues** — no conventional-commit prefix; the `type` lives in the label. Lead with an imperative verb (`Add …`, `Convert …`, `Separate …`, `Thread …`) or an `Area:` scanning prefix (`TUI: …`). No trailing period.
 
+**RFCs** — a substantial feature gets a design record under `rfcs/`, with one naming shape across the doc, its tracking issue, and its PRs/commits:
+
+- **File** — `rfcs/NNNN-kebab-slug.md`, zero-padded 4-digit number (next free number), listed in `rfcs/README.md`.
+- **Doc title (H1)** — `# RFC NNNN: Title Case Name` (an optional parenthetical clarifier is fine, e.g. `(YAML Presets)`).
+- **Tracking issue** — `RFC NNNN: Epic / Tracking issue for <lower-case description>`, labelled `rfc` + `tracking`.
+- **Proposal PR/commit** (adds or revises the RFC doc): `rfc: <summary> (RFC NNNN)` — `rfc` is a repo-local type carried by the `rfc` label.
+- **Implementation PR/commit**: a standard `type:` prefix (`feat:`, `refactor:`, …) with a trailing `(RFC NNNN)` cross-reference, e.g. `feat: unified source identity (RFC 0009)`.
+- Always keep the zero-padded number and the `(RFC NNNN)` reference — avoid bare inline forms like `rfc 14`, and don't drop the reference on implementation work.
+
 **Avoid** (all seen in history — don't repeat):
 
 - `feat:` / `fix:` prefixes in *issue* titles — the label already carries the type (e.g. #176, #187).
 - An `Area:` sentence prefix on a commit/PR where a squash reword will rewrite it — use a `type(scope):` scope instead.
 - Duplicate PR titles for split or re-opened work (e.g. #233 / #234) — disambiguate with the sub-scope.
+- RFC references that drop the padding or the cross-ref: `feat: rfc 14 api surface` (#200) should be `feat: … (RFC 0014)`.
 
 ## Creating GitHub Issues
 

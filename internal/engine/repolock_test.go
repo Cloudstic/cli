@@ -373,6 +373,29 @@ func TestAcquireSharedLock_Success(t *testing.T) {
 	}
 }
 
+func TestAcquireSharedLock_UsesFilesystemSafeKey(t *testing.T) {
+	ctx := context.Background()
+	s := NewMockStore()
+
+	lock, err := AcquireSharedLock(ctx, s, "backup")
+	if err != nil {
+		t.Fatalf("acquire shared lock: %v", err)
+	}
+	defer lock.Release()
+
+	keys, err := s.List(ctx, sharedLockPrefix)
+	if err != nil || len(keys) != 1 {
+		t.Fatalf("expected 1 shared lock, got %d: %v", len(keys), err)
+	}
+	suffix := strings.TrimPrefix(keys[0], sharedLockPrefix)
+	if len(suffix) != 32 {
+		t.Fatalf("shared lock suffix length = %d, want 32: %q", len(suffix), suffix)
+	}
+	if strings.ContainsAny(suffix, `<>:"/\|?*`) {
+		t.Fatalf("shared lock key is not filesystem safe: %q", keys[0])
+	}
+}
+
 func TestAcquireSharedLock_ConcurrentSharedLocks(t *testing.T) {
 	ctx := context.Background()
 	s := NewMockStore()

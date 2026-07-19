@@ -201,6 +201,26 @@ Markdown files are linted with `markdownlint` (rules from `.markdownlint.json`).
 
 ### Testing Guidelines
 
+Choose the smallest test style that covers the behavior:
+
+- Use plain unit tests for argument parsing, orchestration branches, domain
+  logic, and individual error cases. Inject a `stubClient` when testing command
+  flow without a real repository.
+- Use golden-file tests for deterministic `print*` and `render*` presentation
+  output when the exact full text is the contract. Write output to a buffer and
+  compare it with `assertGolden` against `cmd/cloudstic/testdata/*.golden`.
+  Regenerate intentionally changed files with
+  `go test ./cmd/cloudstic -run <TestName> -update`, then review the golden diff.
+- Use testscript tests for whole-command behavior that crosses the process
+  boundary: flag ordering, stdout/stderr separation, exit success or failure,
+  and filesystem effects. Add hermetic scripts under
+  `cmd/cloudstic/testdata/scripts/`; prefer local stores and sources, and do not
+  require network access, credentials, or Docker.
+
+Do not use golden files for values that are inherently unstable, and do not
+replace focused unit tests with testscript when direct assertions provide a
+clearer failure.
+
 - Run `go test -v -count=1 ./...` before committing to ensure all tests pass.
 - E2E tests require Docker for Testcontainers (MinIO, SFTP). They skip gracefully if Docker is unavailable.
 - Use `-race` flag during development to catch race conditions.

@@ -15,14 +15,7 @@ func TestPrintInitResult_Encrypted(t *testing.T) {
 		AdoptedSlots: false,
 		RecoveryKey:  "",
 	})
-
-	got := errOut.String()
-	if !strings.Contains(got, "Created new encryption key slots.") {
-		t.Errorf("expected key slot message, got:\n%s", got)
-	}
-	if !strings.Contains(got, "encrypted: true") {
-		t.Errorf("expected encrypted=true, got:\n%s", got)
-	}
+	assertGolden(t, "print_init_encrypted", errOut.String())
 }
 
 func TestPrintInitResult_AdoptedSlots(t *testing.T) {

@@ -15,22 +15,27 @@ type checkArgs struct {
 	snapshotRef string
 }
 
-func parseCheckArgs() *checkArgs {
-	fs := flag.NewFlagSet("check", flag.ExitOnError)
+func parseCheckArgs(args []string) (*checkArgs, error) {
+	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	a := &checkArgs{}
 	a.g = addGlobalFlags(fs)
 	readData := fs.Bool("read-data", false, "Re-hash all chunk data for full byte-level verification")
-	mustParse(fs)
+	if err := parseFlags(fs, args); err != nil {
+		return nil, err
+	}
 	a.readData = *readData
 	a.snapshotRef = fs.Arg(0)
 	if a.snapshotRef == "" {
 		a.snapshotRef = "latest"
 	}
-	return a
+	return a, nil
 }
 
 func runCheck(r *runner, ctx context.Context) int {
-	a := parseCheckArgs()
+	a, err := parseCheckArgs(r.args)
+	if err != nil {
+		return parseErrorExitCode(err)
+	}
 	if err := r.openClient(ctx, a.g); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}

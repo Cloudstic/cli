@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	cloudstic "github.com/cloudstic/cli"
@@ -33,8 +32,8 @@ type forgetArgs struct {
 	hasPolicy     bool
 }
 
-func parseForgetArgs() *forgetArgs {
-	fs := flag.NewFlagSet("forget", flag.ExitOnError)
+func parseForgetArgs(args []string) (*forgetArgs, error) {
+	fs := flag.NewFlagSet("forget", flag.ContinueOnError)
 	a := &forgetArgs{}
 	a.g = addGlobalFlags(fs)
 	prune := fs.Bool("prune", false, "Run prune after forgetting")
@@ -49,7 +48,9 @@ func parseForgetArgs() *forgetArgs {
 	filterSource := fs.String("source", "", "Filter by source URI (e.g. local:./docs, gdrive)")
 	filterAccount := fs.String("account", "", "Filter by account")
 	groupBy := fs.String("group-by", "source,account,path", "Group snapshots by fields (comma-separated)")
-	mustParse(fs)
+	if err := parseFlags(fs, args); err != nil {
+		return nil, err
+	}
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "group-by" {
 			a.groupBySet = true
@@ -73,8 +74,7 @@ func parseForgetArgs() *forgetArgs {
 		default:
 			parts, err := parseSourceURI(*filterSource)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Invalid -source filter: %v\n", err)
-				os.Exit(1)
+				return nil, fmt.Errorf("invalid -source filter: %w", err)
 			}
 			a.filterSource = parts.scheme
 			a.filterPath = parts.path
@@ -86,12 +86,10 @@ func parseForgetArgs() *forgetArgs {
 	a.snapshotID = fs.Arg(0)
 
 	if err := validateForgetArgs(a); err != nil {
-		printForgetUsage(os.Stderr)
-		fmt.Fprintf(os.Stderr, "\nError: %v\n", err)
-		os.Exit(1)
+		return nil, err
 	}
 
-	return a
+	return a, nil
 }
 
 func printForgetUsage(w io.Writer) {
@@ -155,7 +153,14 @@ func validateForgetArgs(a *forgetArgs) error {
 }
 
 func runForget(r *runner, ctx context.Context) int {
-	a := parseForgetArgs()
+	a, err := parseForgetArgs(r.args)
+	if err != nil {
+		if parseErrorExitCode(err) == 0 {
+			return 0
+		}
+		printForgetUsage(r.errOut)
+		return r.fail("\nError: %v", err)
+	}
 	if err := r.openClient(ctx, a.g); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}

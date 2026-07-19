@@ -16,33 +16,37 @@ import (
 )
 
 func runStore(r *runner, ctx context.Context) int {
-	if len(os.Args) < 3 {
+	if len(r.args) < 1 {
 		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic store <subcommand> [options]")
 		_, _ = fmt.Fprintln(r.errOut, "")
 		_, _ = fmt.Fprintln(r.errOut, "Available subcommands: list, show, new, verify, init")
 		return 1
 	}
 
-	switch os.Args[2] {
+	subcommand := r.args[0]
+	subRunner := r.withArgs(r.args[1:])
+	switch subcommand {
 	case "list":
-		return runStoreList(r, ctx)
+		return runStoreList(subRunner, ctx)
 	case "show":
-		return runStoreShow(r, ctx)
+		return runStoreShow(subRunner, ctx)
 	case "new":
-		return runStoreNew(r, ctx)
+		return runStoreNew(subRunner, ctx)
 	case "verify":
-		return runStoreVerify(r, ctx)
+		return runStoreVerify(subRunner, ctx)
 	case "init":
-		return runStoreInit(r, ctx)
+		return runStoreInit(subRunner, ctx)
 	default:
-		return r.fail("Unknown store subcommand: %s", os.Args[2])
+		return r.fail("Unknown store subcommand: %s", subcommand)
 	}
 }
 
 func runStoreList(r *runner, ctx context.Context) int {
-	fs := flag.NewFlagSet("store list", flag.ExitOnError)
+	fs := flag.NewFlagSet("store list", flag.ContinueOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
-	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
+	if err := parseFlags(fs, r.args); err != nil {
+		return parseErrorExitCode(err)
+	}
 
 	cfg, err := cloudstic.LoadProfilesFile(*profilesFile)
 	if err != nil {
@@ -57,9 +61,11 @@ func runStoreList(r *runner, ctx context.Context) int {
 }
 
 func runStoreShow(r *runner, ctx context.Context) int {
-	fs := flag.NewFlagSet("store show", flag.ExitOnError)
+	fs := flag.NewFlagSet("store show", flag.ContinueOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
-	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
+	if err := parseFlags(fs, r.args); err != nil {
+		return parseErrorExitCode(err)
+	}
 	if fs.NArg() > 1 {
 		return r.fail("usage: cloudstic store show [-profiles-file <path>] <name>")
 	}
@@ -94,7 +100,7 @@ func runStoreShow(r *runner, ctx context.Context) int {
 }
 
 func runStoreNew(r *runner, ctx context.Context) int {
-	fs := flag.NewFlagSet("store new", flag.ExitOnError)
+	fs := flag.NewFlagSet("store new", flag.ContinueOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
 	name := fs.String("name", "", "Store reference name")
 	uri := fs.String("uri", "", "Store URI (e.g. s3:bucket/path, local:/path, sftp://host/path)")
@@ -115,7 +121,9 @@ func runStoreNew(r *runner, ctx context.Context) int {
 	kmsKeyARN := fs.String("kms-key-arn", "", "AWS KMS key ARN")
 	kmsRegion := fs.String("kms-region", "", "AWS KMS region")
 	kmsEndpoint := fs.String("kms-endpoint", "", "Custom AWS KMS endpoint URL")
-	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
+	if err := parseFlags(fs, r.args); err != nil {
+		return parseErrorExitCode(err)
+	}
 
 	flagsSet := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { flagsSet[f.Name] = true })
@@ -240,9 +248,11 @@ func runStoreNew(r *runner, ctx context.Context) int {
 // before calling this. Errors are printed but never cause a non-zero exit—
 // the store config has already been saved.
 func runStoreVerify(r *runner, ctx context.Context) int {
-	fs := flag.NewFlagSet("store verify", flag.ExitOnError)
+	fs := flag.NewFlagSet("store verify", flag.ContinueOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
-	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
+	if err := parseFlags(fs, r.args); err != nil {
+		return parseErrorExitCode(err)
+	}
 	if fs.NArg() > 1 {
 		return r.fail("usage: cloudstic store verify [-profiles-file <path>] <name>")
 	}
@@ -284,10 +294,12 @@ func runStoreVerify(r *runner, ctx context.Context) int {
 }
 
 func runStoreInit(r *runner, ctx context.Context) int {
-	fs := flag.NewFlagSet("store init", flag.ExitOnError)
+	fs := flag.NewFlagSet("store init", flag.ContinueOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
 	yes := fs.Bool("yes", false, "Initialize without confirmation prompt")
-	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
+	if err := parseFlags(fs, r.args); err != nil {
+		return parseErrorExitCode(err)
+	}
 	if fs.NArg() > 1 {
 		return r.fail("usage: cloudstic store init [-profiles-file <path>] [-yes] <name>")
 	}
@@ -350,6 +362,7 @@ func checkOrInitStore(r *runner, ctx context.Context, cfg *cloudstic.ProfilesCon
 		}
 		return fmt.Errorf("could not resolve store credentials: %w", err)
 	}
+	g.noPrompt = r.noPrompt
 	raw, err := g.initObjectStore(ctx)
 	if err != nil {
 		return fmt.Errorf("could not connect to store: %w", err)

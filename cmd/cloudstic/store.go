@@ -115,7 +115,7 @@ func (g *globalFlags) applyProfileStoreOverrides() error {
 		"store-sftp-password", "store-sftp-key",
 		"password", "encryption-key", "recovery-key", "kms-key-arn", "kms-region", "kms-endpoint",
 	} {
-		flagsSet[name] = cliFlagProvided(name)
+		flagsSet[name] = g.flagProvided(name)
 	}
 	if err := applyProfileStoreToGlobalFlags(g, s, flagsSet); err != nil {
 		return fmt.Errorf("profile %q store %q: %w", g.profile, p.Store, err)
@@ -170,7 +170,7 @@ func (g *globalFlags) buildKeychain(ctx context.Context) (keychain.Chain, error)
 		chain = append(chain, keychain.WithRecoveryKey(g.recoveryKey))
 	}
 	promptRequested := g.prompt
-	if (len(chain) == 0 || promptRequested) && !hasGlobalFlag("no-prompt") && term.IsTerminal(os.Stdin.Fd()) {
+	if (len(chain) == 0 || promptRequested) && !g.noPrompt && term.IsTerminal(os.Stdin.Fd()) {
 		chain = append(chain, keychain.WithPrompt(
 			func() (string, error) { return ui.PromptPassword("Repository password") },
 			func() (string, error) { return ui.PromptPasswordConfirm("Enter new repository password") },

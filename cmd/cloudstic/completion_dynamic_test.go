@@ -67,10 +67,6 @@ func TestRunCompletionQuery_WritesCandidates(t *testing.T) {
 	}
 	t.Cleanup(func() { completionLoadProfilesFile = oldLoad })
 
-	oldArgs := os.Args
-	t.Cleanup(func() { os.Args = oldArgs })
-	os.Args = []string{"cloudstic", "__complete", "profile-names", "", "backup"}
-
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
@@ -78,11 +74,8 @@ func TestRunCompletionQuery_WritesCandidates(t *testing.T) {
 	defer func() { _ = r.Close() }()
 	defer func() { _ = w.Close() }()
 
-	oldStdout := os.Stdout
-	t.Cleanup(func() { os.Stdout = oldStdout })
-	os.Stdout = w
-
-	if code := runCompletionQuery(context.Background()); code != 0 {
+	queryRunner := &runner{args: []string{"profile-names", "", "backup"}, out: w}
+	if code := runCompletionQuery(queryRunner, context.Background()); code != 0 {
 		t.Fatalf("runCompletionQuery code = %d, want 0", code)
 	}
 	_ = w.Close()

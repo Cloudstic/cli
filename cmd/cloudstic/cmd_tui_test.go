@@ -336,14 +336,12 @@ func stubTUITestHooks(t *testing.T) {
 }
 
 func TestRunTUI_Help(t *testing.T) {
-	oldArgs := os.Args
-	t.Cleanup(func() { os.Args = oldArgs })
-	os.Args = []string{"cloudstic", "tui", "--help"}
+	args := []string{"--help"}
 
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runTUI(r, context.Background()); code != 0 {
+	if code := runTUI(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}
 	if !strings.Contains(out.String(), "Usage: cloudstic tui [options]") {
@@ -355,10 +353,7 @@ func TestRunTUI_RequiresInteractiveTerminal(t *testing.T) {
 	oldIsTerminal := isTerminalFunc
 	t.Cleanup(func() { isTerminalFunc = oldIsTerminal })
 	isTerminalFunc = func(uintptr) bool { return false }
-
-	oldArgs := os.Args
-	t.Cleanup(func() { os.Args = oldArgs })
-	os.Args = []string{"cloudstic", "tui"}
+	args := []string{}
 
 	readEnd, writeEnd, err := os.Pipe()
 	if err != nil {
@@ -375,7 +370,7 @@ func TestRunTUI_RequiresInteractiveTerminal(t *testing.T) {
 		stdin:  readEnd,
 		lineIn: bufio.NewReader(readEnd),
 	}
-	if code := runTUI(r, context.Background()); code == 0 {
+	if code := runTUI(r.withArgs(args), context.Background()); code == 0 {
 		t.Fatalf("expected failure for non-interactive terminal")
 	}
 	if !strings.Contains(errOut.String(), "requires an interactive terminal") {
@@ -399,15 +394,12 @@ func TestRunTUI_RendersDashboardAndQuitsOnQ(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveProfilesFile: %v", err)
 	}
-
-	oldArgs := os.Args
 	oldNoPrompt := os.Getenv("CLOUDSTIC_PROFILES_FILE")
 	t.Cleanup(func() {
-		os.Args = oldArgs
 		_ = os.Setenv("CLOUDSTIC_PROFILES_FILE", oldNoPrompt)
 	})
 	_ = os.Setenv("CLOUDSTIC_PROFILES_FILE", profilesPath)
-	os.Args = []string{"cloudstic", "tui", "-profiles-file", profilesPath}
+	args := []string{"-profiles-file", profilesPath}
 
 	readEnd, writeEnd, err := os.Pipe()
 	if err != nil {
@@ -448,7 +440,7 @@ func TestRunTUI_RendersDashboardAndQuitsOnQ(t *testing.T) {
 		stdin:      readEnd,
 		lineIn:     bufio.NewReader(readEnd),
 	}
-	if code := runTUI(r, context.Background()); code != 0 {
+	if code := runTUI(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()
@@ -459,10 +451,7 @@ func TestRunTUI_RendersDashboardAndQuitsOnQ(t *testing.T) {
 
 func TestRunTUI_ArrowNavigationChangesSelection(t *testing.T) {
 	stubTUITestHooks(t)
-
-	oldArgs := os.Args
-	t.Cleanup(func() { os.Args = oldArgs })
-	os.Args = []string{"cloudstic", "tui"}
+	args := []string{}
 
 	readEnd, writeEnd, err := os.Pipe()
 	if err != nil {
@@ -495,7 +484,7 @@ func TestRunTUI_ArrowNavigationChangesSelection(t *testing.T) {
 		stdin:      readEnd,
 		lineIn:     bufio.NewReader(readEnd),
 	}
-	if code := runTUI(r, context.Background()); code != 0 {
+	if code := runTUI(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()
@@ -506,10 +495,7 @@ func TestRunTUI_ArrowNavigationChangesSelection(t *testing.T) {
 
 func TestRunTUI_BackupActionRunsSelectedProfileAction(t *testing.T) {
 	stubTUITestHooks(t)
-
-	oldArgs := os.Args
-	t.Cleanup(func() { os.Args = oldArgs })
-	os.Args = []string{"cloudstic", "tui"}
+	args := []string{}
 
 	readEnd, writeEnd, err := os.Pipe()
 	if err != nil {
@@ -563,7 +549,7 @@ func TestRunTUI_BackupActionRunsSelectedProfileAction(t *testing.T) {
 		stdin:      readEnd,
 		lineIn:     bufio.NewReader(readEnd),
 	}
-	if code := runTUI(r, context.Background()); code != 0 {
+	if code := runTUI(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}
 	if ranProfile != "documents" {
@@ -582,10 +568,7 @@ func TestRunTUI_BackupActionRunsSelectedProfileAction(t *testing.T) {
 
 func TestRunTUI_CheckActionRunsSelectedProfileCheck(t *testing.T) {
 	stubTUITestHooks(t)
-
-	oldArgs := os.Args
-	t.Cleanup(func() { os.Args = oldArgs })
-	os.Args = []string{"cloudstic", "tui"}
+	args := []string{}
 
 	readEnd, writeEnd, err := os.Pipe()
 	if err != nil {
@@ -644,7 +627,7 @@ func TestRunTUI_CheckActionRunsSelectedProfileCheck(t *testing.T) {
 		stdin:      readEnd,
 		lineIn:     bufio.NewReader(readEnd),
 	}
-	if code := runTUI(r, context.Background()); code != 0 {
+	if code := runTUI(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}
 	if checkedProfile != "documents" {
@@ -660,10 +643,7 @@ func TestRunTUI_CheckActionRunsSelectedProfileCheck(t *testing.T) {
 
 func TestRunTUI_CreateActionUsesModalAndSavesProfile(t *testing.T) {
 	stubTUITestHooks(t)
-
-	oldArgs := os.Args
-	t.Cleanup(func() { os.Args = oldArgs })
-	os.Args = []string{"cloudstic", "tui"}
+	args := []string{}
 
 	dir := t.TempDir()
 	profilesPath := dir + "/profiles.yaml"
@@ -702,7 +682,7 @@ func TestRunTUI_CreateActionUsesModalAndSavesProfile(t *testing.T) {
 	oldEnv := os.Getenv("CLOUDSTIC_PROFILES_FILE")
 	t.Cleanup(func() { _ = os.Setenv("CLOUDSTIC_PROFILES_FILE", oldEnv) })
 	_ = os.Setenv("CLOUDSTIC_PROFILES_FILE", profilesPath)
-	if code := runTUI(r, context.Background()); code != 0 {
+	if code := runTUI(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}
 	cfg, err := cloudstic.LoadProfilesFile(profilesPath)
@@ -1373,14 +1353,11 @@ func TestTUIBuildDashboardErrorPropagates(t *testing.T) {
 	tuiBuildDashboard = func(context.Context, string) (tui.Dashboard, error) {
 		return tui.Dashboard{}, errors.New("boom")
 	}
-
-	oldArgs := os.Args
 	oldIsTerminal := isTerminalFunc
 	t.Cleanup(func() {
-		os.Args = oldArgs
 		isTerminalFunc = oldIsTerminal
 	})
-	os.Args = []string{"cloudstic", "tui"}
+	args := []string{}
 	isTerminalFunc = func(uintptr) bool { return true }
 
 	readEnd, writeEnd, err := os.Pipe()
@@ -1392,7 +1369,7 @@ func TestTUIBuildDashboardErrorPropagates(t *testing.T) {
 
 	var errOut strings.Builder
 	r := &runner{out: io.Discard, errOut: &errOut, stdin: readEnd, stdoutFile: os.Stdout, lineIn: bufio.NewReader(readEnd)}
-	if code := runTUI(r, context.Background()); code == 0 {
+	if code := runTUI(r.withArgs(args), context.Background()); code == 0 {
 		t.Fatalf("expected failure")
 	}
 	if !strings.Contains(errOut.String(), "Failed to build TUI dashboard") {

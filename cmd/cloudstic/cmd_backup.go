@@ -49,8 +49,8 @@ type backupArgs struct {
 	flagsSet          map[string]bool
 }
 
-func parseBackupArgs() *backupArgs {
-	fs := flag.NewFlagSet("backup", flag.ExitOnError)
+func parseBackupArgs(args []string) (*backupArgs, error) {
+	fs := flag.NewFlagSet("backup", flag.ContinueOnError)
 	a := &backupArgs{}
 	a.g = addGlobalFlags(fs)
 	sourceURI := fs.String("source", envDefault("CLOUDSTIC_SOURCE", "gdrive"), "Source URI: local:<path>, sftp://[user@]host[:port]/<path>, gdrive[://<Drive Name>][/<path>], gdrive-changes[://<Drive Name>][/<path>], onedrive[://<Drive Name>][/<path>], onedrive-changes[://<Drive Name>][/<path>]")
@@ -75,7 +75,9 @@ func parseBackupArgs() *backupArgs {
 	xattrNamespaces := fs.String("xattr-namespaces", "", "Restrict xattr collection to these prefixes (comma-separated, e.g. \"user.,com.apple.\")")
 	fs.Var(&a.tags, "tag", "Tag to apply to the snapshot (can be specified multiple times)")
 	fs.Var(&a.excludes, "exclude", "Exclude pattern (gitignore syntax, repeatable)")
-	mustParse(fs)
+	if err := parseFlags(fs, args); err != nil {
+		return nil, err
+	}
 	a.sourceURI = *sourceURI
 	a.profile = a.g.profile
 	a.allProfiles = *allProfiles
@@ -102,11 +104,14 @@ func parseBackupArgs() *backupArgs {
 	fs.Visit(func(f *flag.Flag) {
 		a.flagsSet[f.Name] = true
 	})
-	return a
+	return a, nil
 }
 
 func runBackup(r *runner, ctx context.Context) int {
-	a := parseBackupArgs()
+	a, err := parseBackupArgs(r.args)
+	if err != nil {
+		return parseErrorExitCode(err)
+	}
 
 	if a.profile != "" && a.allProfiles {
 		return r.fail("-profile and -all-profiles are mutually exclusive")

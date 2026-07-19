@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 
 	cloudstic "github.com/cloudstic/cli"
 )
@@ -16,23 +15,31 @@ type diffArgs struct {
 	snap2 string
 }
 
-func parseDiffArgs() *diffArgs {
-	fs := flag.NewFlagSet("diff", flag.ExitOnError)
+func parseDiffArgs(args []string) (*diffArgs, error) {
+	fs := flag.NewFlagSet("diff", flag.ContinueOnError)
 	a := &diffArgs{}
 	a.g = addGlobalFlags(fs)
-	mustParse(fs)
+	if err := parseFlags(fs, args); err != nil {
+		return nil, err
+	}
 	if fs.NArg() < 2 {
-		fmt.Fprintln(os.Stderr, "Usage: cloudstic diff [options] <snapshot_id1> <snapshot_id2>")
-		fmt.Fprintln(os.Stderr, "       cloudstic diff [options] <snapshot_id1> latest")
-		os.Exit(1)
+		return nil, fmt.Errorf("two snapshot IDs are required")
 	}
 	a.snap1 = fs.Arg(0)
 	a.snap2 = fs.Arg(1)
-	return a
+	return a, nil
 }
 
 func runDiff(r *runner, ctx context.Context) int {
-	a := parseDiffArgs()
+	a, err := parseDiffArgs(r.args)
+	if err != nil {
+		if parseErrorExitCode(err) == 0 {
+			return 0
+		}
+		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic diff [options] <snapshot_id1> <snapshot_id2>")
+		_, _ = fmt.Fprintln(r.errOut, "       cloudstic diff [options] <snapshot_id1> latest")
+		return r.fail("Error: %v", err)
+	}
 	if err := r.openClient(ctx, a.g); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}

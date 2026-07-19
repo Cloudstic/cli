@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 
@@ -16,15 +15,12 @@ func TestRunSourceDiscover(t *testing.T) {
 			{DisplayName: "Photos", SourceURI: "local:/Volumes/Photos", MountPoint: "/Volumes/Photos", Identity: "UUID-1", FsType: "exfat", Portable: true},
 		},
 	}
-
-	osArgs := os.Args
-	t.Cleanup(func() { os.Args = osArgs })
-	os.Args = []string{"cloudstic", "source", "discover"}
+	args := []string{"discover"}
 
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut, client: client}
-	if code := runSource(r, context.Background()); code != 0 {
+	if code := runSource(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()
@@ -40,15 +36,12 @@ func TestRunSourceDiscover_PortableOnly(t *testing.T) {
 			{DisplayName: "Photos", SourceURI: "local:/Volumes/Photos", MountPoint: "/Volumes/Photos", Portable: true},
 		},
 	}
-
-	osArgs := os.Args
-	t.Cleanup(func() { os.Args = osArgs })
-	os.Args = []string{"cloudstic", "source", "discover", "-portable-only"}
+	args := []string{"discover", "-portable-only"}
 
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut, client: client}
-	if code := runSource(r, context.Background()); code != 0 {
+	if code := runSource(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()
@@ -66,15 +59,12 @@ func TestRunSourceDiscover_JSON(t *testing.T) {
 			{DisplayName: "Photos", SourceURI: "local:/Volumes/Photos", MountPoint: "/Volumes/Photos", Portable: true},
 		},
 	}
-
-	osArgs := os.Args
-	t.Cleanup(func() { os.Args = osArgs })
-	os.Args = []string{"cloudstic", "source", "discover", "-json"}
+	args := []string{"discover", "-json"}
 
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut, client: client}
-	if code := runSource(r, context.Background()); code != 0 {
+	if code := runSource(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()
@@ -84,14 +74,12 @@ func TestRunSourceDiscover_JSON(t *testing.T) {
 }
 
 func TestRunSourceDiscover_DefaultClient(t *testing.T) {
-	osArgs := os.Args
-	t.Cleanup(func() { os.Args = osArgs })
-	os.Args = []string{"cloudstic", "source", "discover", "-json"}
+	args := []string{"discover", "-json"}
 
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runSource(r, context.Background()); code != 0 {
+	if code := runSource(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}
 }

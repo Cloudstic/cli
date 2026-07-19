@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 
@@ -10,7 +9,7 @@ import (
 )
 
 func TestRunPrune_Normal(t *testing.T) {
-	os.Args = []string{"cloudstic", "prune"}
+	args := []string{}
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
 		pruneResult: &cloudstic.PruneResult{
@@ -21,7 +20,7 @@ func TestRunPrune_Normal(t *testing.T) {
 		},
 	}}
 
-	runPrune(r, context.Background())
+	runPrune(r.withArgs(args), context.Background())
 
 	got := out.String()
 	if !strings.Contains(got, "Prune complete.") {
@@ -39,7 +38,7 @@ func TestRunPrune_Normal(t *testing.T) {
 }
 
 func TestRunPrune_DryRun(t *testing.T) {
-	os.Args = []string{"cloudstic", "prune", "--dry-run"}
+	args := []string{"--dry-run"}
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
 		pruneResult: &cloudstic.PruneResult{
@@ -49,7 +48,7 @@ func TestRunPrune_DryRun(t *testing.T) {
 		},
 	}}
 
-	runPrune(r, context.Background())
+	runPrune(r.withArgs(args), context.Background())
 
 	got := out.String()
 	if !strings.Contains(got, "Prune dry run complete.") {

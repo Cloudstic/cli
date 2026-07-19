@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -24,7 +23,6 @@ func TestApplyProfileStoreOverrides_AppliesProfileStore(t *testing.T) {
 		t.Fatalf("SaveProfilesFile: %v", err)
 	}
 
-	os.Args = []string{"cloudstic", "list", "-profile", "p", "-profiles-file", profilesPath}
 	g := newTestGlobalFlags()
 	g.profile = "p"
 	g.profilesFile = profilesPath
@@ -72,7 +70,6 @@ func TestApplyProfileStoreOverrides_EncryptionFields(t *testing.T) {
 		t.Fatalf("SaveProfilesFile: %v", err)
 	}
 
-	os.Args = []string{"cloudstic", "list", "-profile", "p", "-profiles-file", profilesPath}
 	g := newTestGlobalFlags()
 	g.profile = "p"
 	g.profilesFile = profilesPath
@@ -116,8 +113,7 @@ func TestApplyProfileStoreOverrides_DoesNotOverrideExplicitStoreFlag(t *testing.
 		t.Fatalf("SaveProfilesFile: %v", err)
 	}
 
-	os.Args = []string{"cloudstic", "list", "-profile", "p", "-profiles-file", profilesPath, "-store", "local:/explicit"}
-	g := newTestGlobalFlags()
+	g := newTestGlobalFlags("-store", "local:/explicit")
 	g.profile = "p"
 	g.profilesFile = profilesPath
 	g.store = "local:/explicit"

@@ -30,18 +30,20 @@ func defaultProfilesPathNoCreate() string {
 }
 
 func runSetup(r *runner, ctx context.Context) int {
-	if len(os.Args) < 3 {
+	if len(r.args) < 1 {
 		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic setup <subcommand> [options]")
 		_, _ = fmt.Fprintln(r.errOut, "")
 		_, _ = fmt.Fprintln(r.errOut, "Available subcommands: workstation")
 		return 1
 	}
 
-	switch os.Args[2] {
+	subcommand := r.args[0]
+	subRunner := r.withArgs(r.args[1:])
+	switch subcommand {
 	case "workstation":
-		return runSetupWorkstation(r, ctx)
+		return runSetupWorkstation(subRunner, ctx)
 	default:
-		return r.fail("Unknown setup subcommand: %s", os.Args[2])
+		return r.fail("Unknown setup subcommand: %s", subcommand)
 	}
 }
 
@@ -53,25 +55,30 @@ type setupWorkstationArgs struct {
 	storeRef     string
 }
 
-func parseSetupWorkstationArgs() *setupWorkstationArgs {
-	fs := flag.NewFlagSet("setup workstation", flag.ExitOnError)
+func parseSetupWorkstationArgs(args []string) (*setupWorkstationArgs, error) {
+	fs := flag.NewFlagSet("setup workstation", flag.ContinueOnError)
 	a := &setupWorkstationArgs{}
 	dryRun := fs.Bool("dry-run", false, "Preview generated profiles without writing configuration")
 	yes := fs.Bool("yes", false, "Accept default selections without prompting")
 	jsonOutput := fs.Bool("json", false, "Write onboarding plan as JSON")
 	profilesFile := fs.String("profiles-file", defaultProfilesPathNoCreate(), "Path to profiles YAML file")
 	storeRef := fs.String("store-ref", "", "Existing store reference to attach to generated profiles")
-	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
+	if err := parseFlags(fs, args); err != nil {
+		return nil, err
+	}
 	a.dryRun = *dryRun
 	a.yes = *yes
 	a.jsonOutput = *jsonOutput
 	a.profilesFile = *profilesFile
 	a.storeRef = strings.TrimSpace(*storeRef)
-	return a
+	return a, nil
 }
 
 func runSetupWorkstation(r *runner, ctx context.Context) int {
-	args := parseSetupWorkstationArgs()
+	args, err := parseSetupWorkstationArgs(r.args)
+	if err != nil {
+		return parseErrorExitCode(err)
+	}
 	cfg, err := loadProfilesOrInit(args.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)

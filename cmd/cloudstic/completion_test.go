@@ -2,9 +2,29 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 )
+
+func TestRunCompletion(t *testing.T) {
+	for _, shell := range []string{"bash", "zsh", "fish"} {
+		t.Run(shell, func(t *testing.T) {
+			r := &runner{args: []string{shell}, out: io.Discard, errOut: io.Discard}
+			if code := runCompletion(r); code != 0 {
+				t.Fatalf("runCompletion() exit code = %d, want 0", code)
+			}
+		})
+	}
+
+	var errOut bytes.Buffer
+	if code := runCompletion(&runner{out: io.Discard, errOut: &errOut}); code != 1 {
+		t.Fatalf("runCompletion() without a shell exit code = %d, want 1", code)
+	}
+	if !strings.Contains(errOut.String(), "Usage: cloudstic completion <shell>") {
+		t.Fatalf("unexpected usage output: %q", errOut.String())
+	}
+}
 
 func TestCompletionBash(t *testing.T) {
 	var buf bytes.Buffer

@@ -36,12 +36,12 @@ profiles:
 		t.Fatalf("write profiles file: %v", err)
 	}
 
-	os.Args = []string{"cloudstic", "profile", "list", "-profiles-file", profilesPath}
+	args := []string{"list", "-profiles-file", profilesPath}
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r, context.Background()); code != 0 {
+	if code := runProfile(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("runProfile() code=%d err=%s", code, errOut.String())
 	}
 
@@ -76,12 +76,12 @@ profiles:
 		t.Fatalf("write profiles file: %v", err)
 	}
 
-	os.Args = []string{"cloudstic", "profile", "show", "-profiles-file", profilesPath, "work-drive"}
+	args := []string{"show", "-profiles-file", profilesPath, "work-drive"}
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r, context.Background()); code != 0 {
+	if code := runProfile(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("runProfile() code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()
@@ -100,12 +100,12 @@ func TestRunProfileShow_UnknownProfile(t *testing.T) {
 		t.Fatalf("write profiles file: %v", err)
 	}
 
-	os.Args = []string{"cloudstic", "profile", "show", "-profiles-file", profilesPath, "missing"}
+	args := []string{"show", "-profiles-file", profilesPath, "missing"}
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r, context.Background()); code == 0 {
+	if code := runProfile(r.withArgs(args), context.Background()); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "Unknown profile") {
@@ -114,12 +114,12 @@ func TestRunProfileShow_UnknownProfile(t *testing.T) {
 }
 
 func TestRunProfileList_MissingFile(t *testing.T) {
-	os.Args = []string{"cloudstic", "profile", "list", "-profiles-file", filepath.Join(t.TempDir(), "missing.yaml")}
+	args := []string{"list", "-profiles-file", filepath.Join(t.TempDir(), "missing.yaml")}
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r, context.Background()); code != 0 {
+	if code := runProfile(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("expected zero exit code, got=%d err=%s", code, errOut.String())
 	}
 	if out.String() != "" {
@@ -131,12 +131,12 @@ func TestRunProfileList_MissingFile(t *testing.T) {
 }
 
 func TestRunProfile_UnknownSubcommand(t *testing.T) {
-	os.Args = []string{"cloudstic", "profile", "unknown"}
+	args := []string{"unknown"}
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r, context.Background()); code == 0 {
+	if code := runProfile(r.withArgs(args), context.Background()); code == 0 {
 		t.Fatalf("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "Unknown profile subcommand") {
@@ -147,8 +147,7 @@ func TestRunProfile_UnknownSubcommand(t *testing.T) {
 func TestRunProfileNew_CreatesFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
-	os.Args = []string{
-		"cloudstic", "profile", "new",
+	args := []string{"new",
 		"-profiles-file", profilesPath,
 		"-name", "photos",
 		"-source", "local:/Volumes/Photos",
@@ -160,7 +159,7 @@ func TestRunProfileNew_CreatesFile(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r, context.Background()); code != 0 {
+	if code := runProfile(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("runProfile() code=%d err=%s", code, errOut.String())
 	}
 
@@ -182,8 +181,7 @@ func TestRunProfileNew_PrefillsExistingProfile(t *testing.T) {
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
 
 	// Create initial profile.
-	os.Args = []string{
-		"cloudstic", "profile", "new",
+	args := []string{"new",
 		"-profiles-file", profilesPath,
 		"-name", "photos",
 		"-source", "local:/Volumes/Photos",
@@ -194,20 +192,19 @@ func TestRunProfileNew_PrefillsExistingProfile(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runProfile(r, context.Background()); code != 0 {
+	if code := runProfile(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("initial create: code=%d err=%s", code, errOut.String())
 	}
 
 	// Re-run with same name, only override source.
-	os.Args = []string{
-		"cloudstic", "profile", "new",
+	args = []string{"new",
 		"-profiles-file", profilesPath,
 		"-name", "photos",
 		"-source", "local:/Volumes/NewPhotos",
 	}
 	out.Reset()
 	errOut.Reset()
-	if code := runProfile(r, context.Background()); code != 0 {
+	if code := runProfile(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("update: code=%d err=%s", code, errOut.String())
 	}
 
@@ -238,12 +235,12 @@ func TestRunProfileNew_PrefillsExistingProfile(t *testing.T) {
 func TestRunProfileNew_RequiresNameAndSource(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
-	os.Args = []string{"cloudstic", "profile", "new", "-profiles-file", profilesPath, "-name", "x"}
+	args := []string{"new", "-profiles-file", profilesPath, "-name", "x"}
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r, context.Background()); code == 0 {
+	if code := runProfile(r.withArgs(args), context.Background()); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "-source is required") {
@@ -254,8 +251,7 @@ func TestRunProfileNew_RequiresNameAndSource(t *testing.T) {
 func TestRunProfileNew_RequiresStore(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
-	os.Args = []string{
-		"cloudstic", "profile", "new",
+	args := []string{"new",
 		"-profiles-file", profilesPath,
 		"-name", "photos",
 		"-source", "local:/Volumes/Photos",
@@ -264,7 +260,7 @@ func TestRunProfileNew_RequiresStore(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r, context.Background()); code == 0 {
+	if code := runProfile(r.withArgs(args), context.Background()); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "-store-ref is required") {
@@ -275,8 +271,7 @@ func TestRunProfileNew_RequiresStore(t *testing.T) {
 func TestRunProfileNew_RejectsUnknownStoreRef(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
-	os.Args = []string{
-		"cloudstic", "profile", "new",
+	args := []string{"new",
 		"-profiles-file", profilesPath,
 		"-name", "google-drive",
 		"-source", "gdrive-changes:/Test Folder 2",
@@ -286,7 +281,7 @@ func TestRunProfileNew_RejectsUnknownStoreRef(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r, context.Background()); code == 0 {
+	if code := runProfile(r.withArgs(args), context.Background()); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "Unknown store reference") {
@@ -297,8 +292,7 @@ func TestRunProfileNew_RejectsUnknownStoreRef(t *testing.T) {
 func TestRunProfileNew_CloudSourceRequiresAuthRef(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
-	os.Args = []string{
-		"cloudstic", "profile", "new",
+	args := []string{"new",
 		"-profiles-file", profilesPath,
 		"-name", "drive-backup",
 		"-source", "gdrive:/",
@@ -308,7 +302,7 @@ func TestRunProfileNew_CloudSourceRequiresAuthRef(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r, context.Background()); code == 0 {
+	if code := runProfile(r.withArgs(args), context.Background()); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "-auth-ref is required for cloud sources") {
@@ -319,8 +313,7 @@ func TestRunProfileNew_CloudSourceRequiresAuthRef(t *testing.T) {
 func TestRunProfileNew_RejectsUnknownAuthRef(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
-	os.Args = []string{
-		"cloudstic", "profile", "new",
+	args := []string{"new",
 		"-profiles-file", profilesPath,
 		"-name", "work-drive",
 		"-source", "gdrive-changes:/Team",
@@ -331,7 +324,7 @@ func TestRunProfileNew_RejectsUnknownAuthRef(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r, context.Background()); code == 0 {
+	if code := runProfile(r.withArgs(args), context.Background()); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "Unknown auth reference") {
@@ -342,8 +335,7 @@ func TestRunProfileNew_RejectsUnknownAuthRef(t *testing.T) {
 func TestRunProfileNew_AuthRefRequiresCloudSource(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
-	os.Args = []string{
-		"cloudstic", "profile", "new",
+	args := []string{"new",
 		"-profiles-file", profilesPath,
 		"-name", "docs",
 		"-source", "local:/Users/me/Documents",
@@ -354,7 +346,7 @@ func TestRunProfileNew_AuthRefRequiresCloudSource(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r, context.Background()); code == 0 {
+	if code := runProfile(r.withArgs(args), context.Background()); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "-auth-ref requires a cloud source") {
@@ -427,12 +419,12 @@ profiles:
 		t.Fatalf("write profiles file: %v", err)
 	}
 
-	os.Args = []string{"cloudstic", "profile", "show", "-profiles-file", profilesPath, "my-onedrive"}
+	args := []string{"show", "-profiles-file", profilesPath, "my-onedrive"}
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r, context.Background()); code != 0 {
+	if code := runProfile(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("runProfile() code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()
@@ -458,12 +450,12 @@ profiles:
 		t.Fatalf("write profiles file: %v", err)
 	}
 
-	os.Args = []string{"cloudstic", "profile", "show", "-profiles-file", profilesPath, "broken"}
+	args := []string{"show", "-profiles-file", profilesPath, "broken"}
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r, context.Background()); code != 0 {
+	if code := runProfile(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("runProfile() code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()
@@ -490,12 +482,12 @@ profiles:
 		t.Fatalf("write profiles file: %v", err)
 	}
 
-	os.Args = []string{"cloudstic", "profile", "show", "-profiles-file", profilesPath, "broken"}
+	args := []string{"show", "-profiles-file", profilesPath, "broken"}
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r, context.Background()); code != 0 {
+	if code := runProfile(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("runProfile() code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()
@@ -507,8 +499,7 @@ profiles:
 func TestRunProfileNew_WithExcludesAndTags(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
-	os.Args = []string{
-		"cloudstic", "profile", "new",
+	args := []string{"new",
 		"-profiles-file", profilesPath,
 		"-name", "multi",
 		"-source", "local:/data",
@@ -523,7 +514,7 @@ func TestRunProfileNew_WithExcludesAndTags(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r, context.Background()); code != 0 {
+	if code := runProfile(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("runProfile() code=%d err=%s", code, errOut.String())
 	}
 
@@ -542,8 +533,7 @@ func TestRunProfileNew_WithExcludesAndTags(t *testing.T) {
 func TestRunProfileNew_InvalidName(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
-	os.Args = []string{
-		"cloudstic", "profile", "new",
+	args := []string{"new",
 		"-profiles-file", profilesPath,
 		"-name", "bad name!",
 		"-source", "local:/data",
@@ -553,7 +543,7 @@ func TestRunProfileNew_InvalidName(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r, context.Background()); code == 0 {
+	if code := runProfile(r.withArgs(args), context.Background()); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "invalid profile name") {
@@ -564,8 +554,7 @@ func TestRunProfileNew_InvalidName(t *testing.T) {
 func TestRunProfileNew_InvalidSource(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
-	os.Args = []string{
-		"cloudstic", "profile", "new",
+	args := []string{"new",
 		"-profiles-file", profilesPath,
 		"-name", "bad-source",
 		"-source", "garbage-no-scheme",
@@ -575,7 +564,7 @@ func TestRunProfileNew_InvalidSource(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r, context.Background()); code == 0 {
+	if code := runProfile(r.withArgs(args), context.Background()); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "Invalid source") {
@@ -586,8 +575,7 @@ func TestRunProfileNew_InvalidSource(t *testing.T) {
 func TestRunProfileNew_InvalidStoreURI(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
-	os.Args = []string{
-		"cloudstic", "profile", "new",
+	args := []string{"new",
 		"-profiles-file", profilesPath,
 		"-name", "bad-store",
 		"-source", "local:/data",
@@ -597,7 +585,7 @@ func TestRunProfileNew_InvalidStoreURI(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r, context.Background()); code == 0 {
+	if code := runProfile(r.withArgs(args), context.Background()); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "Invalid store URI") {
@@ -626,12 +614,12 @@ profiles:
 		t.Fatalf("write profiles file: %v", err)
 	}
 
-	os.Args = []string{"cloudstic", "profile", "list", "-profiles-file", profilesPath}
+	args := []string{"list", "-profiles-file", profilesPath}
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r, context.Background()); code != 0 {
+	if code := runProfile(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("runProfile() code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()
@@ -668,12 +656,12 @@ profiles:
 		t.Fatalf("write profiles file: %v", err)
 	}
 
-	os.Args = []string{"cloudstic", "profile", "show", "-profiles-file", profilesPath, "full"}
+	args := []string{"show", "-profiles-file", profilesPath, "full"}
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r, context.Background()); code != 0 {
+	if code := runProfile(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("runProfile() code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()

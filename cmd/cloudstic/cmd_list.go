@@ -14,18 +14,23 @@ type listArgs struct {
 	group *bool
 }
 
-func parseListArgs() *listArgs {
-	fs := flag.NewFlagSet("list", flag.ExitOnError)
+func parseListArgs(args []string) (*listArgs, error) {
+	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	a := &listArgs{
 		g:     addGlobalFlags(fs),
 		group: fs.Bool("group", false, "Group snapshots by source identity"),
 	}
-	mustParse(fs)
-	return a
+	if err := parseFlags(fs, args); err != nil {
+		return nil, err
+	}
+	return a, nil
 }
 
 func runList(r *runner, ctx context.Context) int {
-	a := parseListArgs()
+	a, err := parseListArgs(r.args)
+	if err != nil {
+		return parseErrorExitCode(err)
+	}
 	if err := r.openClient(ctx, a.g); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}

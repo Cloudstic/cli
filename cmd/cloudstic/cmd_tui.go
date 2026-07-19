@@ -12,12 +12,12 @@ type tuiArgs struct {
 	profilesFile string
 }
 
-func parseTUIArgs() (*tuiArgs, error) {
+func parseTUIArgs(args []string) (*tuiArgs, error) {
 	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	a := &tuiArgs{}
 	fs.StringVar(&a.profilesFile, "profiles-file", defaultProfilesPathNoCreate(), "Path to profiles YAML file")
-	if err := fs.Parse(reorderArgs(fs, os.Args[2:])); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	return a, nil
@@ -33,16 +33,16 @@ func printTUIUsage(w io.Writer) {
 }
 
 func runTUI(r *runner, ctx context.Context) int {
-	for _, arg := range os.Args[2:] {
+	for _, arg := range r.args {
 		if arg == "-h" || arg == "--help" || arg == "help" {
 			printTUIUsage(r.out)
 			return 0
 		}
 	}
 
-	args, err := parseTUIArgs()
+	args, err := parseTUIArgs(r.args)
 	if err != nil {
-		return 1
+		return parseErrorExitCode(err)
 	}
 	if !r.canPrompt() {
 		return r.fail("cloudstic tui requires an interactive terminal")

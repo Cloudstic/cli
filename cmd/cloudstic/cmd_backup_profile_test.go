@@ -170,9 +170,11 @@ func TestMergeProfileBackupArgs_CLIAuthRefOverridesProfile(t *testing.T) {
 	}
 }
 
-func newTestGlobalFlags() *globalFlags {
+func newTestGlobalFlags(args ...string) *globalFlags {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	return addGlobalFlags(fs)
+	g := addGlobalFlags(fs)
+	_ = parseFlags(fs, args)
+	return g
 }
 
 func TestEnsureDefaultAuthRefForCloudBackup_CreatesDefaultEntry(t *testing.T) {

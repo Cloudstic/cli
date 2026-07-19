@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 
@@ -12,7 +11,7 @@ import (
 )
 
 func TestRunDiff_Success(t *testing.T) {
-	os.Args = []string{"cloudstic", "diff", "aaa", "bbb"}
+	args := []string{"aaa", "bbb"}
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
 		diffResult: &cloudstic.DiffResult{
@@ -26,7 +25,7 @@ func TestRunDiff_Success(t *testing.T) {
 		},
 	}}
 
-	runDiff(r, context.Background())
+	runDiff(r.withArgs(args), context.Background())
 
 	got := out.String()
 	if !strings.Contains(got, "snapshot/aaa") {
@@ -44,7 +43,7 @@ func TestRunDiff_Success(t *testing.T) {
 }
 
 func TestRunDiff_JSON(t *testing.T) {
-	os.Args = []string{"cloudstic", "diff", "-json", "aaa", "bbb"}
+	args := []string{"-json", "aaa", "bbb"}
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
 		diffResult: &cloudstic.DiffResult{
@@ -56,7 +55,7 @@ func TestRunDiff_JSON(t *testing.T) {
 		},
 	}}
 
-	if exit := runDiff(r, context.Background()); exit != 0 {
+	if exit := runDiff(r.withArgs(args), context.Background()); exit != 0 {
 		t.Fatalf("runDiff() exit = %d, want 0", exit)
 	}
 
@@ -70,7 +69,7 @@ func TestRunDiff_JSON(t *testing.T) {
 }
 
 func TestRunDiff_NoChanges(t *testing.T) {
-	os.Args = []string{"cloudstic", "diff", "aaa", "bbb"}
+	args := []string{"aaa", "bbb"}
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
 		diffResult: &cloudstic.DiffResult{
@@ -80,7 +79,7 @@ func TestRunDiff_NoChanges(t *testing.T) {
 		},
 	}}
 
-	runDiff(r, context.Background())
+	runDiff(r.withArgs(args), context.Background())
 
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
 	if len(lines) != 1 {

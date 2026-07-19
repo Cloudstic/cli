@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 
@@ -13,7 +12,7 @@ import (
 )
 
 func TestRunList_Success(t *testing.T) {
-	os.Args = []string{"cloudstic", "list"}
+	args := []string{}
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
 		listResult: &cloudstic.ListResult{
@@ -24,7 +23,7 @@ func TestRunList_Success(t *testing.T) {
 		},
 	}}
 
-	runList(r, context.Background())
+	runList(r.withArgs(args), context.Background())
 
 	got := out.String()
 	if !strings.Contains(got, "2 snapshots") {
@@ -33,7 +32,7 @@ func TestRunList_Success(t *testing.T) {
 }
 
 func TestRunList_JSON(t *testing.T) {
-	os.Args = []string{"cloudstic", "list", "-json"}
+	args := []string{"-json"}
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
 		listResult: &cloudstic.ListResult{
@@ -43,7 +42,7 @@ func TestRunList_JSON(t *testing.T) {
 		},
 	}}
 
-	if exit := runList(r, context.Background()); exit != 0 {
+	if exit := runList(r.withArgs(args), context.Background()); exit != 0 {
 		t.Fatalf("runList() exit = %d, want 0", exit)
 	}
 
@@ -57,13 +56,13 @@ func TestRunList_JSON(t *testing.T) {
 }
 
 func TestRunList_Empty(t *testing.T) {
-	os.Args = []string{"cloudstic", "list"}
+	args := []string{}
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
 		listResult: &cloudstic.ListResult{Snapshots: nil},
 	}}
 
-	runList(r, context.Background())
+	runList(r.withArgs(args), context.Background())
 
 	if !strings.Contains(out.String(), "0 snapshots") {
 		t.Errorf("expected '0 snapshots', got: %s", out.String())
@@ -71,7 +70,7 @@ func TestRunList_Empty(t *testing.T) {
 }
 
 func TestRunList_Group(t *testing.T) {
-	os.Args = []string{"cloudstic", "list", "-group"}
+	args := []string{"-group"}
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
 		listResult: &cloudstic.ListResult{
@@ -94,7 +93,7 @@ func TestRunList_Group(t *testing.T) {
 		},
 	}}
 
-	runList(r, context.Background())
+	runList(r.withArgs(args), context.Background())
 
 	got := out.String()
 	if !strings.Contains(got, "2 snapshots") {

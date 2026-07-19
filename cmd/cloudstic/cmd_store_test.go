@@ -44,8 +44,7 @@ func TestRunStoreNewAndListAndShow(t *testing.T) {
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
 
 	// Create a store.
-	os.Args = []string{
-		"cloudstic", "store", "new",
+	args := []string{"new",
 		"-profiles-file", profilesPath,
 		"-name", "prod-s3",
 		"-uri", "s3:my-bucket/backups",
@@ -55,7 +54,7 @@ func TestRunStoreNewAndListAndShow(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r, context.Background()); code != 0 {
+	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("store new failed: %s", errOut.String())
 	}
 	if !strings.Contains(out.String(), `"prod-s3" saved`) {
@@ -63,10 +62,10 @@ func TestRunStoreNewAndListAndShow(t *testing.T) {
 	}
 
 	// List stores.
-	os.Args = []string{"cloudstic", "store", "list", "-profiles-file", profilesPath}
+	args = []string{"list", "-profiles-file", profilesPath}
 	out.Reset()
 	errOut.Reset()
-	if code := runStore(r, context.Background()); code != 0 {
+	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("store list failed: %s", errOut.String())
 	}
 	if !strings.Contains(out.String(), "Stores") || !strings.Contains(out.String(), "prod-s3") || !strings.Contains(out.String(), "AUTH") {
@@ -74,10 +73,10 @@ func TestRunStoreNewAndListAndShow(t *testing.T) {
 	}
 
 	// Show store.
-	os.Args = []string{"cloudstic", "store", "show", "-profiles-file", profilesPath, "prod-s3"}
+	args = []string{"show", "-profiles-file", profilesPath, "prod-s3"}
 	out.Reset()
 	errOut.Reset()
-	if code := runStore(r, context.Background()); code != 0 {
+	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("store show failed: %s", errOut.String())
 	}
 	got := out.String()
@@ -100,11 +99,11 @@ func TestRunStoreNew_RequiresNameAndURI(t *testing.T) {
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
 
 	// Missing URI.
-	os.Args = []string{"cloudstic", "store", "new", "-profiles-file", profilesPath, "-name", "x"}
+	args := []string{"new", "-profiles-file", profilesPath, "-name", "x"}
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r, context.Background()); code == 0 {
+	if code := runStore(r.withArgs(args), context.Background()); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "-uri is required") {
@@ -131,8 +130,7 @@ func TestRunStoreNew_ExistingStorePrefillsUnsetValues(t *testing.T) {
 		t.Fatalf("SaveProfilesFile: %v", err)
 	}
 
-	os.Args = []string{
-		"cloudstic", "store", "new",
+	args := []string{"new",
 		"-profiles-file", profilesPath,
 		"-name", "prod",
 		"-s3-profile", "new-profile",
@@ -140,7 +138,7 @@ func TestRunStoreNew_ExistingStorePrefillsUnsetValues(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r, context.Background()); code != 0 {
+	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("store new failed: %s", errOut.String())
 	}
 
@@ -173,16 +171,14 @@ func TestNoPromptDisablesInteractivity(t *testing.T) {
 }
 
 func TestHasGlobalFlag(t *testing.T) {
-	orig := os.Args
-	defer func() { os.Args = orig }()
 
-	os.Args = []string{"cloudstic", "store", "new", "--no-prompt", "-name", "x"}
-	if !hasGlobalFlag("no-prompt") {
+	args := []string{"new", "--no-prompt", "-name", "x"}
+	if !hasGlobalFlag(args, "no-prompt") {
 		t.Fatal("expected hasGlobalFlag to find --no-prompt")
 	}
 
-	os.Args = []string{"cloudstic", "store", "new", "-name", "x"}
-	if hasGlobalFlag("no-prompt") {
+	args = []string{"new", "-name", "x"}
+	if hasGlobalFlag(args, "no-prompt") {
 		t.Fatal("expected hasGlobalFlag to not find --no-prompt")
 	}
 }
@@ -194,11 +190,11 @@ func TestRunStoreShow_UnknownStore(t *testing.T) {
 		t.Fatalf("write profiles: %v", err)
 	}
 
-	os.Args = []string{"cloudstic", "store", "show", "-profiles-file", profilesPath, "missing"}
+	args := []string{"show", "-profiles-file", profilesPath, "missing"}
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r, context.Background()); code == 0 {
+	if code := runStore(r.withArgs(args), context.Background()); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "Unknown store") {
@@ -225,11 +221,11 @@ profiles:
 		t.Fatalf("write profiles: %v", err)
 	}
 
-	os.Args = []string{"cloudstic", "store", "show", "-profiles-file", profilesPath, "main"}
+	args := []string{"show", "-profiles-file", profilesPath, "main"}
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r, context.Background()); code != 0 {
+	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("store show failed: %s", errOut.String())
 	}
 	got := out.String()
@@ -239,11 +235,11 @@ profiles:
 }
 
 func TestRunStoreList_MissingFile(t *testing.T) {
-	os.Args = []string{"cloudstic", "store", "list", "-profiles-file", filepath.Join(t.TempDir(), "missing.yaml")}
+	args := []string{"list", "-profiles-file", filepath.Join(t.TempDir(), "missing.yaml")}
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r, context.Background()); code != 0 {
+	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("expected zero exit code, got err=%s", errOut.String())
 	}
 }
@@ -252,8 +248,7 @@ func TestRunStoreNew_WithEncryption(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
 
-	os.Args = []string{
-		"cloudstic", "store", "new",
+	args := []string{"new",
 		"-profiles-file", profilesPath,
 		"-name", "encrypted-s3",
 		"-uri", "s3:secure-bucket/backups",
@@ -264,15 +259,15 @@ func TestRunStoreNew_WithEncryption(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r, context.Background()); code != 0 {
+	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("store new failed: %s", errOut.String())
 	}
 
 	// Verify show displays encryption fields.
-	os.Args = []string{"cloudstic", "store", "show", "-profiles-file", profilesPath, "encrypted-s3"}
+	args = []string{"show", "-profiles-file", profilesPath, "encrypted-s3"}
 	out.Reset()
 	errOut.Reset()
-	if code := runStore(r, context.Background()); code != 0 {
+	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("store show failed: %s", errOut.String())
 	}
 	got := out.String()
@@ -493,11 +488,11 @@ func TestRunStoreNew_InvalidURI(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
 
-	os.Args = []string{"cloudstic", "store", "new", "-profiles-file", profilesPath, "-name", "bad", "-uri", "garbage-no-scheme"}
+	args := []string{"new", "-profiles-file", profilesPath, "-name", "bad", "-uri", "garbage-no-scheme"}
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r, context.Background()); code == 0 {
+	if code := runStore(r.withArgs(args), context.Background()); code == 0 {
 		t.Fatal("expected non-zero exit code for invalid URI")
 	}
 	if !strings.Contains(errOut.String(), "invalid store URI") {
@@ -509,11 +504,11 @@ func TestRunStoreNew_InvalidName(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
 
-	os.Args = []string{"cloudstic", "store", "new", "-profiles-file", profilesPath, "-name", "bad name!", "-uri", "local:/tmp/store"}
+	args := []string{"new", "-profiles-file", profilesPath, "-name", "bad name!", "-uri", "local:/tmp/store"}
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r, context.Background()); code == 0 {
+	if code := runStore(r.withArgs(args), context.Background()); code == 0 {
 		t.Fatal("expected non-zero exit code for invalid name")
 	}
 	if !strings.Contains(errOut.String(), "invalid store name") {
@@ -522,11 +517,11 @@ func TestRunStoreNew_InvalidName(t *testing.T) {
 }
 
 func TestRunStore_UnknownSubcommand(t *testing.T) {
-	os.Args = []string{"cloudstic", "store", "unknown"}
+	args := []string{"unknown"}
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r, context.Background()); code == 0 {
+	if code := runStore(r.withArgs(args), context.Background()); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "Unknown store subcommand") {
@@ -552,11 +547,11 @@ stores:
 		t.Fatalf("write profiles: %v", err)
 	}
 
-	os.Args = []string{"cloudstic", "store", "show", "-profiles-file", profilesPath, "enc-store"}
+	args := []string{"show", "-profiles-file", profilesPath, "enc-store"}
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r, context.Background()); code != 0 {
+	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("store show failed: %s", errOut.String())
 	}
 	got := out.String()
@@ -594,11 +589,11 @@ stores:
 		t.Fatalf("write profiles: %v", err)
 	}
 
-	os.Args = []string{"cloudstic", "store", "show", "-profiles-file", profilesPath, "sftp-store"}
+	args := []string{"show", "-profiles-file", profilesPath, "sftp-store"}
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r, context.Background()); code != 0 {
+	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("store show failed: %s", errOut.String())
 	}
 	got := out.String()
@@ -629,11 +624,11 @@ stores:
 		t.Fatalf("write profiles: %v", err)
 	}
 
-	os.Args = []string{"cloudstic", "store", "show", "-profiles-file", profilesPath, "s3env-store"}
+	args := []string{"show", "-profiles-file", profilesPath, "s3env-store"}
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r, context.Background()); code != 0 {
+	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("store show failed: %s", errOut.String())
 	}
 	got := out.String()
@@ -655,8 +650,7 @@ func TestRunStoreNew_WithSFTPOptions(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
 
-	os.Args = []string{
-		"cloudstic", "store", "new",
+	args := []string{"new",
 		"-profiles-file", profilesPath,
 		"-name", "sftp-new",
 		"-uri", "sftp://user@host/path",
@@ -666,15 +660,15 @@ func TestRunStoreNew_WithSFTPOptions(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r, context.Background()); code != 0 {
+	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("store new failed: %s", errOut.String())
 	}
 
 	// Verify via show.
-	os.Args = []string{"cloudstic", "store", "show", "-profiles-file", profilesPath, "sftp-new"}
+	args = []string{"show", "-profiles-file", profilesPath, "sftp-new"}
 	out.Reset()
 	errOut.Reset()
-	if code := runStore(r, context.Background()); code != 0 {
+	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("store show failed: %s", errOut.String())
 	}
 	got := out.String()
@@ -694,8 +688,7 @@ func TestRunStoreNew_WithAllS3Options(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
 
-	os.Args = []string{
-		"cloudstic", "store", "new",
+	args := []string{"new",
 		"-profiles-file", profilesPath,
 		"-name", "full-s3",
 		"-uri", "s3:bucket",
@@ -708,7 +701,7 @@ func TestRunStoreNew_WithAllS3Options(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r, context.Background()); code != 0 {
+	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("store new failed: %s", errOut.String())
 	}
 
@@ -734,8 +727,7 @@ func TestRunStoreNew_WithSecretRefFlags(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
 
-	os.Args = []string{
-		"cloudstic", "store", "new",
+	args := []string{"new",
 		"-profiles-file", profilesPath,
 		"-name", "secrets-store",
 		"-uri", "s3:bucket",
@@ -750,7 +742,7 @@ func TestRunStoreNew_WithSecretRefFlags(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r, context.Background()); code != 0 {
+	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("store new failed: %s", errOut.String())
 	}
 
@@ -1035,11 +1027,11 @@ func TestRunStoreVerify_MissingSecretFails(t *testing.T) {
 		t.Fatalf("SaveProfilesFile: %v", err)
 	}
 
-	os.Args = []string{"cloudstic", "store", "verify", "-profiles-file", profilesPath, "test"}
+	args := []string{"verify", "-profiles-file", profilesPath, "test"}
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r, context.Background()); code == 0 {
+	if code := runStore(r.withArgs(args), context.Background()); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "could not resolve store credentials") {
@@ -1331,11 +1323,11 @@ stores:
 		t.Fatalf("write profiles: %v", err)
 	}
 
-	os.Args = []string{"cloudstic", "store", "list", "-profiles-file", profilesPath}
+	args := []string{"list", "-profiles-file", profilesPath}
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r, context.Background()); code != 0 {
+	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("store list failed: %s", errOut.String())
 	}
 	got := out.String()
@@ -1353,8 +1345,7 @@ func TestRunStoreNew_LocalStore(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
 
-	os.Args = []string{
-		"cloudstic", "store", "new",
+	args := []string{"new",
 		"-profiles-file", profilesPath,
 		"-name", "local-bk",
 		"-uri", "local:/tmp/backup",
@@ -1362,7 +1353,7 @@ func TestRunStoreNew_LocalStore(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r, context.Background()); code != 0 {
+	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("store new failed: %s", errOut.String())
 	}
 	if !strings.Contains(out.String(), `"local-bk" saved`) {

@@ -34,15 +34,12 @@ func TestRunSetupWorkstation_DryRun(t *testing.T) {
 			SkippedIntentionally: []string{"Downloads (/Users/test/Downloads)"},
 		},
 	}, nil)
-
-	osArgs := os.Args
-	t.Cleanup(func() { os.Args = osArgs })
-	os.Args = []string{"cloudstic", "setup", "workstation", "-dry-run"}
+	args := []string{"workstation", "-dry-run"}
 
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut, client: &stubClient{}}
-	if code := runSetup(r, context.Background()); code != 0 {
+	if code := runSetup(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()
@@ -56,15 +53,12 @@ func TestRunSetupWorkstation_JSON(t *testing.T) {
 	stubSetupWorkstationPlan(t, &cloudstic.WorkstationSetupPlan{
 		Hostname: "testbox",
 	}, nil)
-
-	osArgs := os.Args
-	t.Cleanup(func() { os.Args = osArgs })
-	os.Args = []string{"cloudstic", "setup", "workstation", "-dry-run", "-json"}
+	args := []string{"workstation", "-dry-run", "-json"}
 
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut, client: &stubClient{}}
-	if code := runSetup(r, context.Background()); code != 0 {
+	if code := runSetup(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}
 	if !strings.Contains(out.String(), "\"hostname\": \"testbox\"") {
@@ -88,15 +82,12 @@ func TestRunSetupWorkstation_ApplyYes(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveProfilesFile: %v", err)
 	}
-
-	osArgs := os.Args
-	t.Cleanup(func() { os.Args = osArgs })
-	os.Args = []string{"cloudstic", "setup", "workstation", "-yes", "-profiles-file", profilesPath}
+	args := []string{"workstation", "-yes", "-profiles-file", profilesPath}
 
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut, client: &stubClient{}, noPrompt: true}
-	if code := runSetup(r, context.Background()); code != 0 {
+	if code := runSetup(r.withArgs(args), context.Background()); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}
 	cfg, err := cloudstic.LoadProfilesFile(profilesPath)
@@ -109,14 +100,12 @@ func TestRunSetupWorkstation_ApplyYes(t *testing.T) {
 }
 
 func TestRunSetupWorkstation_RequiresStoreResolutionWithoutPrompt(t *testing.T) {
-	osArgs := os.Args
-	t.Cleanup(func() { os.Args = osArgs })
-	os.Args = []string{"cloudstic", "setup", "workstation", "-yes"}
+	args := []string{"workstation", "-yes"}
 
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut, client: &stubClient{}, noPrompt: true}
-	if code := runSetup(r, context.Background()); code == 0 {
+	if code := runSetup(r.withArgs(args), context.Background()); code == 0 {
 		t.Fatal("expected failure without store resolution")
 	}
 }

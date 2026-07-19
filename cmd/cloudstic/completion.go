@@ -3,34 +3,34 @@ package main
 import (
 	"fmt"
 	"io"
-	"os"
 )
 
-func runCompletion() {
-	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "Usage: cloudstic completion <shell>")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Available shells: bash, zsh, fish")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Setup:")
-		fmt.Fprintln(os.Stderr, "  bash:  source <(cloudstic completion bash)")
-		fmt.Fprintln(os.Stderr, "  zsh:   source <(cloudstic completion zsh)")
-		fmt.Fprintln(os.Stderr, "  fish:  cloudstic completion fish | source")
-		os.Exit(1)
+func runCompletion(r *runner) int {
+	if len(r.args) < 1 {
+		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic completion <shell>")
+		_, _ = fmt.Fprintln(r.errOut)
+		_, _ = fmt.Fprintln(r.errOut, "Available shells: bash, zsh, fish")
+		_, _ = fmt.Fprintln(r.errOut)
+		_, _ = fmt.Fprintln(r.errOut, "Setup:")
+		_, _ = fmt.Fprintln(r.errOut, "  bash:  source <(cloudstic completion bash)")
+		_, _ = fmt.Fprintln(r.errOut, "  zsh:   source <(cloudstic completion zsh)")
+		_, _ = fmt.Fprintln(r.errOut, "  fish:  cloudstic completion fish | source")
+		return 1
 	}
 
-	shell := os.Args[2]
+	shell := r.args[0]
 	switch shell {
 	case "bash":
-		completionBash(os.Stdout)
+		completionBash(r.out)
 	case "zsh":
-		completionZsh(os.Stdout)
+		completionZsh(r.out)
 	case "fish":
-		completionFish(os.Stdout)
+		completionFish(r.out)
 	default:
-		fmt.Fprintf(os.Stderr, "Unsupported shell: %s\nAvailable shells: bash, zsh, fish\n", shell)
-		os.Exit(1)
+		_, _ = fmt.Fprintf(r.errOut, "Unsupported shell: %s\nAvailable shells: bash, zsh, fish\n", shell)
+		return 1
 	}
+	return 0
 }
 
 // completionBash writes a bash completion script to w.

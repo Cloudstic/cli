@@ -13,15 +13,20 @@ type breakLockArgs struct {
 	g *globalFlags
 }
 
-func parseBreakLockArgs() *breakLockArgs {
-	fs := flag.NewFlagSet("break-lock", flag.ExitOnError)
+func parseBreakLockArgs(args []string) (*breakLockArgs, error) {
+	fs := flag.NewFlagSet("break-lock", flag.ContinueOnError)
 	a := &breakLockArgs{g: addGlobalFlags(fs)}
-	mustParse(fs)
-	return a
+	if err := parseFlags(fs, args); err != nil {
+		return nil, err
+	}
+	return a, nil
 }
 
 func runBreakLock(r *runner, ctx context.Context) int {
-	a := parseBreakLockArgs()
+	a, err := parseBreakLockArgs(r.args)
+	if err != nil {
+		return parseErrorExitCode(err)
+	}
 	if err := r.openClient(ctx, a.g); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}

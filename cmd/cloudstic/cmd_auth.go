@@ -12,31 +12,35 @@ import (
 )
 
 func runAuth(r *runner, ctx context.Context) int {
-	if len(os.Args) < 3 {
+	if len(r.args) < 1 {
 		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic auth <subcommand> [options]")
 		_, _ = fmt.Fprintln(r.errOut, "")
 		_, _ = fmt.Fprintln(r.errOut, "Available subcommands: list, show, new, login")
 		return 1
 	}
 
-	switch os.Args[2] {
+	subcommand := r.args[0]
+	subRunner := r.withArgs(r.args[1:])
+	switch subcommand {
 	case "list":
-		return runAuthList(r, ctx)
+		return runAuthList(subRunner, ctx)
 	case "show":
-		return runAuthShow(r, ctx)
+		return runAuthShow(subRunner, ctx)
 	case "new":
-		return runAuthNew(r, ctx)
+		return runAuthNew(subRunner, ctx)
 	case "login":
-		return runAuthLogin(r, ctx)
+		return runAuthLogin(subRunner, ctx)
 	default:
-		return r.fail("Unknown auth subcommand: %s", os.Args[2])
+		return r.fail("Unknown auth subcommand: %s", subcommand)
 	}
 }
 
 func runAuthList(r *runner, ctx context.Context) int {
-	fs := flag.NewFlagSet("auth list", flag.ExitOnError)
+	fs := flag.NewFlagSet("auth list", flag.ContinueOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
-	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
+	if err := parseFlags(fs, r.args); err != nil {
+		return parseErrorExitCode(err)
+	}
 
 	cfg, err := cloudstic.LoadProfilesFile(*profilesFile)
 	if err != nil {
@@ -51,9 +55,11 @@ func runAuthList(r *runner, ctx context.Context) int {
 }
 
 func runAuthShow(r *runner, ctx context.Context) int {
-	fs := flag.NewFlagSet("auth show", flag.ExitOnError)
+	fs := flag.NewFlagSet("auth show", flag.ContinueOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
-	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
+	if err := parseFlags(fs, r.args); err != nil {
+		return parseErrorExitCode(err)
+	}
 	if fs.NArg() > 1 {
 		return r.fail("usage: cloudstic auth show [-profiles-file <path>] <name>")
 	}
@@ -87,7 +93,7 @@ func runAuthShow(r *runner, ctx context.Context) int {
 }
 
 func runAuthNew(r *runner, ctx context.Context) int {
-	fs := flag.NewFlagSet("auth new", flag.ExitOnError)
+	fs := flag.NewFlagSet("auth new", flag.ContinueOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
 	name := fs.String("name", "", "Auth reference name")
 	provider := fs.String("provider", "", "Auth provider: google|onedrive")
@@ -98,7 +104,9 @@ func runAuthNew(r *runner, ctx context.Context) int {
 	onedriveClientID := fs.String("onedrive-client-id", "", "OneDrive OAuth client ID")
 	onedriveTokenFile := fs.String("onedrive-token-file", "", "Path to OneDrive OAuth token file")
 	onedriveTokenRef := fs.String("onedrive-token-ref", "", "Secret reference to OneDrive OAuth token")
-	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
+	if err := parseFlags(fs, r.args); err != nil {
+		return parseErrorExitCode(err)
+	}
 
 	if *name == "" {
 		if r.canPrompt() {
@@ -195,10 +203,12 @@ func runAuthNew(r *runner, ctx context.Context) int {
 }
 
 func runAuthLogin(r *runner, ctx context.Context) int {
-	fs := flag.NewFlagSet("auth login", flag.ExitOnError)
+	fs := flag.NewFlagSet("auth login", flag.ContinueOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
 	name := fs.String("name", "", "Auth reference name")
-	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
+	if err := parseFlags(fs, r.args); err != nil {
+		return parseErrorExitCode(err)
+	}
 
 	cfg, err := cloudstic.LoadProfilesFile(*profilesFile)
 	if err != nil {

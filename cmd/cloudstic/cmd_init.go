@@ -20,22 +20,27 @@ type initArgs struct {
 	adoptSlots   bool
 }
 
-func parseInitArgs() *initArgs {
-	fs := flag.NewFlagSet("init", flag.ExitOnError)
+func parseInitArgs(args []string) (*initArgs, error) {
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	a := &initArgs{}
 	a.g = addGlobalFlags(fs)
 	recovery := fs.Bool("add-recovery-key", false, "Generate a recovery key (24-word seed phrase) during init")
 	noEncryption := fs.Bool("no-encryption", false, "Create an unencrypted repository (NOT recommended)")
 	adoptSlots := fs.Bool("adopt-slots", false, "Initialize by adopting existing key slots if found (prevents error if already has slots)")
-	mustParse(fs)
+	if err := parseFlags(fs, args); err != nil {
+		return nil, err
+	}
 	a.recovery = *recovery
 	a.noEncryption = *noEncryption
 	a.adoptSlots = *adoptSlots
-	return a
+	return a, nil
 }
 
 func runInit(r *runner, ctx context.Context) int {
-	a := parseInitArgs()
+	a, err := parseInitArgs(r.args)
+	if err != nil {
+		return parseErrorExitCode(err)
+	}
 	return runInitWithArgs(r, ctx, a)
 }
 

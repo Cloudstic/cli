@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -37,13 +38,15 @@ type globalFlags struct {
 	recoveryKey                       string
 	kmsKeyARN, kmsRegion, kmsEndpoint string
 	disablePackfile                   bool
-	prompt, verbose, quiet, debug     bool
+	prompt, noPrompt                  bool
+	verbose, quiet, debug             bool
 	json                              bool
 	debugLog                          *ui.SafeLogWriter
+	flagSet                           *flag.FlagSet
 }
 
 func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
-	g := &globalFlags{}
+	g := &globalFlags{flagSet: fs}
 	fs.StringVar(&g.store, "store", envDefault("CLOUDSTIC_STORE", "local:./backup_store"), "Storage backend URI: local:<path>, s3:<bucket>[/<prefix>], b2:<bucket>[/<prefix>], sftp://[user@]host[:port]/<path>")
 	defaultProfilesPath, err := defaultProfilesPath()
 	if err != nil {
@@ -75,6 +78,7 @@ func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
 	fs.StringVar(&g.kmsEndpoint, "kms-endpoint", envDefault("CLOUDSTIC_KMS_ENDPOINT", ""), "Custom AWS KMS endpoint URL")
 	fs.BoolVar(&g.disablePackfile, "disable-packfile", envBool("CLOUDSTIC_DISABLE_PACKFILE"), "Disable bundling small objects into 8MB packs")
 	fs.BoolVar(&g.prompt, "prompt", false, "Prompt for password interactively (use alongside --encryption-key or --kms-key-arn to add a password layer)")
+	fs.BoolVar(&g.noPrompt, "no-prompt", false, "Disable interactive prompts (for scripts and CI)")
 	fs.BoolVar(&g.verbose, "verbose", false, "Log detailed file-level operations")
 	fs.BoolVar(&g.quiet, "quiet", false, "Suppress progress bars (keeps final summary)")
 	fs.BoolVar(&g.json, "json", false, "Write command result as JSON to stdout")
@@ -86,24 +90,30 @@ func (g *globalFlags) jsonEnabled() bool {
 	return g != nil && g.json
 }
 
-func cliFlagProvided(name string) bool {
-	for _, arg := range os.Args[1:] {
-		if arg == "-"+name || arg == "--"+name {
-			return true
-		}
-		if strings.HasPrefix(arg, "-"+name+"=") || strings.HasPrefix(arg, "--"+name+"=") {
-			return true
-		}
-	}
-	return false
+func (g *globalFlags) flagProvided(name string) bool {
+	provided := false
+	g.flagSet.Visit(func(f *flag.Flag) {
+		provided = provided || f.Name == name
+	})
+	return provided
 }
 
-// mustParse parses os.Args[2:] into fs, reordering positional arguments after
+// parseFlags parses args into fs, reordering positional arguments after
 // flags so that flags can appear anywhere on the command line (e.g.
 // "cloudstic restore abc123 -output ./out.zip" works as well as the reverse).
 // Using this consistently means every command supports flexible argument ordering.
-func mustParse(fs *flag.FlagSet) {
-	_ = fs.Parse(reorderArgs(fs, os.Args[2:]))
+func parseFlags(fs *flag.FlagSet, args []string) error {
+	if fs.Lookup("no-prompt") == nil {
+		fs.Bool("no-prompt", false, "Disable interactive prompts (for scripts and CI)")
+	}
+	return fs.Parse(reorderArgs(fs, args))
+}
+
+func parseErrorExitCode(err error) int {
+	if errors.Is(err, flag.ErrHelp) {
+		return 0
+	}
+	return 1
 }
 
 // reorderArgs moves flag arguments before positional arguments so that Go's
@@ -111,8 +121,14 @@ func mustParse(fs *flag.FlagSet) {
 // of where they appear on the command line.
 func reorderArgs(fs *flag.FlagSet, args []string) []string {
 	var flags, positional []string
+	terminated := false
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
+		if arg == "--" {
+			terminated = true
+			positional = append(positional, args[i+1:]...)
+			break
+		}
 		if !strings.HasPrefix(arg, "-") {
 			positional = append(positional, arg)
 			continue
@@ -133,6 +149,9 @@ func reorderArgs(fs *flag.FlagSet, args []string) []string {
 			i++
 			flags = append(flags, args[i])
 		}
+	}
+	if terminated {
+		flags = append(flags, "--")
 	}
 	return append(flags, positional...)
 }

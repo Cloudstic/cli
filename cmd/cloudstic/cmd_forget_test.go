@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 
@@ -12,13 +11,13 @@ import (
 )
 
 func TestRunForget_SingleSnapshot(t *testing.T) {
-	os.Args = []string{"cloudstic", "forget", "abc123"}
+	args := []string{"abc123"}
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
 		forgetResult: &cloudstic.ForgetResult{Prune: nil},
 	}}
 
-	runForget(r, context.Background())
+	runForget(r.withArgs(args), context.Background())
 
 	if !strings.Contains(out.String(), "Snapshot removed.") {
 		t.Errorf("expected 'Snapshot removed.', got:\n%s", out.String())
@@ -26,7 +25,7 @@ func TestRunForget_SingleSnapshot(t *testing.T) {
 }
 
 func TestRunForget_SingleSnapshot_WithPruneResult(t *testing.T) {
-	os.Args = []string{"cloudstic", "forget", "--prune", "abc123"}
+	args := []string{"--prune", "abc123"}
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
 		forgetResult: &cloudstic.ForgetResult{
@@ -38,7 +37,7 @@ func TestRunForget_SingleSnapshot_WithPruneResult(t *testing.T) {
 		},
 	}}
 
-	runForget(r, context.Background())
+	runForget(r.withArgs(args), context.Background())
 
 	got := out.String()
 	if !strings.Contains(got, "Snapshot removed.") {
@@ -50,7 +49,7 @@ func TestRunForget_SingleSnapshot_WithPruneResult(t *testing.T) {
 }
 
 func TestRunForget_Policy_NoRemove(t *testing.T) {
-	os.Args = []string{"cloudstic", "forget", "--keep-last", "1"}
+	args := []string{"--keep-last", "1"}
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
 		policyResult: &cloudstic.PolicyResult{
@@ -64,7 +63,7 @@ func TestRunForget_Policy_NoRemove(t *testing.T) {
 		},
 	}}
 
-	runForget(r, context.Background())
+	runForget(r.withArgs(args), context.Background())
 
 	got := out.String()
 	if !strings.Contains(got, "No snapshots to remove") {
@@ -73,7 +72,7 @@ func TestRunForget_Policy_NoRemove(t *testing.T) {
 }
 
 func TestRunForget_Policy_WithRemoval(t *testing.T) {
-	os.Args = []string{"cloudstic", "forget", "--keep-last", "1"}
+	args := []string{"--keep-last", "1"}
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
 		policyResult: &cloudstic.PolicyResult{
@@ -87,7 +86,7 @@ func TestRunForget_Policy_WithRemoval(t *testing.T) {
 		},
 	}}
 
-	runForget(r, context.Background())
+	runForget(r.withArgs(args), context.Background())
 
 	got := out.String()
 	if !strings.Contains(got, "1 snapshots have been removed") {
@@ -96,7 +95,7 @@ func TestRunForget_Policy_WithRemoval(t *testing.T) {
 }
 
 func TestRunForget_Policy_DryRun(t *testing.T) {
-	os.Args = []string{"cloudstic", "forget", "--keep-last", "1", "--dry-run"}
+	args := []string{"--keep-last", "1", "--dry-run"}
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
 		policyResult: &cloudstic.PolicyResult{
@@ -109,7 +108,7 @@ func TestRunForget_Policy_DryRun(t *testing.T) {
 		},
 	}}
 
-	runForget(r, context.Background())
+	runForget(r.withArgs(args), context.Background())
 
 	got := out.String()
 	if !strings.Contains(got, "would remove") {
@@ -201,57 +200,57 @@ func TestValidateForgetArgs_RejectsSnapshotIDWithAllFilterKinds(t *testing.T) {
 }
 
 func TestParseForgetArgs_FilterOnlySourceSetsPolicyAndGrouping(t *testing.T) {
-	origArgs := os.Args
-	defer func() { os.Args = origArgs }()
 
-	os.Args = []string{
-		"cloudstic", "forget",
-		"--source", "local:/docs",
+	args := []string{"--source", "local:/docs",
 		"--account", "workstation",
 		"--group-by", "source,path",
 	}
 
-	args := parseForgetArgs()
+	parsed, err := parseForgetArgs(args)
+	if err != nil {
+		t.Fatalf("parseForgetArgs() error = %v", err)
+	}
 
-	if !args.hasFilters {
+	if !parsed.hasFilters {
 		t.Fatal("expected parseForgetArgs to detect filters")
 	}
-	if !args.hasPolicy {
+	if !parsed.hasPolicy {
 		t.Fatal("expected filter-only parse to enable policy mode")
 	}
-	if !args.groupBySet {
+	if !parsed.groupBySet {
 		t.Fatal("expected explicit group-by to be recorded")
 	}
-	if args.filterSource != "local" {
-		t.Fatalf("filterSource = %q, want %q", args.filterSource, "local")
+	if parsed.filterSource != "local" {
+		t.Fatalf("filterSource = %q, want %q", parsed.filterSource, "local")
 	}
-	if args.filterPath != "/docs" {
-		t.Fatalf("filterPath = %q, want %q", args.filterPath, "/docs")
+	if parsed.filterPath != "/docs" {
+		t.Fatalf("filterPath = %q, want %q", parsed.filterPath, "/docs")
 	}
-	if args.filterAccount != "workstation" {
-		t.Fatalf("filterAccount = %q, want %q", args.filterAccount, "workstation")
+	if parsed.filterAccount != "workstation" {
+		t.Fatalf("filterAccount = %q, want %q", parsed.filterAccount, "workstation")
 	}
-	if args.groupBy != "source,path" {
-		t.Fatalf("groupBy = %q, want %q", args.groupBy, "source,path")
+	if parsed.groupBy != "source,path" {
+		t.Fatalf("groupBy = %q, want %q", parsed.groupBy, "source,path")
 	}
 }
 
 func TestParseForgetArgs_BareSourceKeywordDoesNotSetFilterPath(t *testing.T) {
-	origArgs := os.Args
-	defer func() { os.Args = origArgs }()
 
-	os.Args = []string{"cloudstic", "forget", "--source", "local"}
+	args := []string{"--source", "local"}
 
-	args := parseForgetArgs()
-
-	if args.filterSource != "local" {
-		t.Fatalf("filterSource = %q, want %q", args.filterSource, "local")
+	parsed, err := parseForgetArgs(args)
+	if err != nil {
+		t.Fatalf("parseForgetArgs() error = %v", err)
 	}
-	if args.filterPath != "" {
-		t.Fatalf("filterPath = %q, want empty", args.filterPath)
+
+	if parsed.filterSource != "local" {
+		t.Fatalf("filterSource = %q, want %q", parsed.filterSource, "local")
 	}
-	if !args.hasFilters || !args.hasPolicy {
-		t.Fatalf("expected bare source filter to enable filter-only policy mode: %+v", args)
+	if parsed.filterPath != "" {
+		t.Fatalf("filterPath = %q, want empty", parsed.filterPath)
+	}
+	if !parsed.hasFilters || !parsed.hasPolicy {
+		t.Fatalf("expected bare source filter to enable filter-only policy mode: %+v", parsed)
 	}
 }
 

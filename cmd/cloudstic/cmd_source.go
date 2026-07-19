@@ -4,33 +4,36 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"os"
 
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/jedib0t/go-pretty/v6/table"
 )
 
 func runSource(r *runner, ctx context.Context) int {
-	if len(os.Args) < 3 {
+	if len(r.args) < 1 {
 		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic source <subcommand> [options]")
 		_, _ = fmt.Fprintln(r.errOut, "")
 		_, _ = fmt.Fprintln(r.errOut, "Available subcommands: discover")
 		return 1
 	}
 
-	switch os.Args[2] {
+	subcommand := r.args[0]
+	subRunner := r.withArgs(r.args[1:])
+	switch subcommand {
 	case "discover":
-		return runSourceDiscover(r, ctx)
+		return runSourceDiscover(subRunner, ctx)
 	default:
-		return r.fail("Unknown source subcommand: %s", os.Args[2])
+		return r.fail("Unknown source subcommand: %s", subcommand)
 	}
 }
 
 func runSourceDiscover(r *runner, ctx context.Context) int {
-	fs := flag.NewFlagSet("source discover", flag.ExitOnError)
+	fs := flag.NewFlagSet("source discover", flag.ContinueOnError)
 	portableOnly := fs.Bool("portable-only", false, "Only show portable/external source candidates")
 	jsonOutput := fs.Bool("json", false, "Write discovered sources as JSON")
-	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
+	if err := parseFlags(fs, r.args); err != nil {
+		return parseErrorExitCode(err)
+	}
 
 	if r.client == nil {
 		r.client = &cloudstic.Client{}

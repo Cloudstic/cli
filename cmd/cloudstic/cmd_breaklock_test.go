@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 
@@ -11,11 +10,11 @@ import (
 )
 
 func TestRunBreakLock_NoLock(t *testing.T) {
-	os.Args = []string{"cloudstic", "break-lock"}
+	args := []string{}
 	var errOut strings.Builder
 	r := &runner{out: &strings.Builder{}, errOut: &errOut, client: &stubClient{breakLockResult: nil}}
 
-	runBreakLock(r, context.Background())
+	runBreakLock(r.withArgs(args), context.Background())
 
 	if !strings.Contains(errOut.String(), "not locked") {
 		t.Errorf("expected 'not locked' message, got:\n%s", errOut.String())
@@ -23,7 +22,7 @@ func TestRunBreakLock_NoLock(t *testing.T) {
 }
 
 func TestRunBreakLock_JSON(t *testing.T) {
-	os.Args = []string{"cloudstic", "break-lock", "-json"}
+	args := []string{"-json"}
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
 		breakLockResult: []*cloudstic.RepoLock{
@@ -31,7 +30,7 @@ func TestRunBreakLock_JSON(t *testing.T) {
 		},
 	}}
 
-	if exit := runBreakLock(r, context.Background()); exit != 0 {
+	if exit := runBreakLock(r.withArgs(args), context.Background()); exit != 0 {
 		t.Fatalf("runBreakLock() exit = %d, want 0", exit)
 	}
 
@@ -45,7 +44,7 @@ func TestRunBreakLock_JSON(t *testing.T) {
 }
 
 func TestRunBreakLock_LocksRemoved(t *testing.T) {
-	os.Args = []string{"cloudstic", "break-lock"}
+	args := []string{}
 	var errOut strings.Builder
 	r := &runner{out: &strings.Builder{}, errOut: &errOut, client: &stubClient{
 		breakLockResult: []*cloudstic.RepoLock{
@@ -59,7 +58,7 @@ func TestRunBreakLock_LocksRemoved(t *testing.T) {
 		},
 	}}
 
-	runBreakLock(r, context.Background())
+	runBreakLock(r.withArgs(args), context.Background())
 
 	got := errOut.String()
 	if !strings.Contains(got, "Locks removed") {

@@ -13,21 +13,25 @@ import (
 
 var completionLoadProfilesFile = cloudstic.LoadProfilesFile
 
-func runCompletionQuery(ctx context.Context) int {
-	if len(os.Args) < 3 {
+func runCompletionQuery(r *runner, ctx context.Context) int {
+	if len(r.args) < 1 {
 		return 0
 	}
-	kind := os.Args[2]
+	kind := r.args[0]
 	current := ""
-	if len(os.Args) > 3 {
-		current = os.Args[3]
+	if len(r.args) > 1 {
+		current = r.args[1]
 	}
-	candidates, err := completionCandidates(ctx, kind, current, os.Args[4:])
+	var commandArgs []string
+	if len(r.args) > 2 {
+		commandArgs = r.args[2:]
+	}
+	candidates, err := completionCandidates(ctx, kind, current, commandArgs)
 	if err != nil {
 		return 0
 	}
 	for _, candidate := range candidates {
-		_, _ = fmt.Fprintln(os.Stdout, candidate)
+		_, _ = fmt.Fprintln(r.out, candidate)
 	}
 	return 0
 }

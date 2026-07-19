@@ -25,22 +25,24 @@ func defaultProfilesPath() (string, error) {
 }
 
 func runProfile(r *runner, ctx context.Context) int {
-	if len(os.Args) < 3 {
+	if len(r.args) < 1 {
 		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic profile <subcommand> [options]")
 		_, _ = fmt.Fprintln(r.errOut, "")
 		_, _ = fmt.Fprintln(r.errOut, "Available subcommands: list, show, new")
 		return 1
 	}
 
-	switch os.Args[2] {
+	subcommand := r.args[0]
+	subRunner := r.withArgs(r.args[1:])
+	switch subcommand {
 	case "list":
-		return runProfileList(r, ctx)
+		return runProfileList(subRunner, ctx)
 	case "show":
-		return runProfileShow(r, ctx)
+		return runProfileShow(subRunner, ctx)
 	case "new":
-		return runProfileNew(r, ctx)
+		return runProfileNew(subRunner, ctx)
 	default:
-		return r.fail("Unknown profile subcommand: %s", os.Args[2])
+		return r.fail("Unknown profile subcommand: %s", subcommand)
 	}
 }
 
@@ -49,15 +51,17 @@ type profileShowArgs struct {
 	name         string
 }
 
-func parseProfileShowArgs() (*profileShowArgs, error) {
-	fs := flag.NewFlagSet("profile show", flag.ExitOnError)
+func parseProfileShowArgs(args []string) (*profileShowArgs, error) {
+	fs := flag.NewFlagSet("profile show", flag.ContinueOnError)
 	a := &profileShowArgs{}
 	defaultPath, err := defaultProfilesPath()
 	if err != nil {
 		defaultPath = defaultProfilesFilename
 	}
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultPath), "Path to profiles YAML file")
-	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
+	if err := parseFlags(fs, args); err != nil {
+		return nil, err
+	}
 	a.profilesFile = *profilesFile
 	if fs.NArg() > 1 {
 		return nil, fmt.Errorf("usage: cloudstic profile show [-profiles-file <path>] <name>")
@@ -69,8 +73,11 @@ func parseProfileShowArgs() (*profileShowArgs, error) {
 }
 
 func runProfileShow(r *runner, ctx context.Context) int {
-	a, err := parseProfileShowArgs()
+	a, err := parseProfileShowArgs(r.args)
 	if err != nil {
+		if parseErrorExitCode(err) == 0 {
+			return 0
+		}
 		return r.fail("%v", err)
 	}
 	cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
@@ -113,21 +120,26 @@ type profileListArgs struct {
 	profilesFile string
 }
 
-func parseProfileListArgs() *profileListArgs {
-	fs := flag.NewFlagSet("profile list", flag.ExitOnError)
+func parseProfileListArgs(args []string) (*profileListArgs, error) {
+	fs := flag.NewFlagSet("profile list", flag.ContinueOnError)
 	a := &profileListArgs{}
 	defaultPath, err := defaultProfilesPath()
 	if err != nil {
 		defaultPath = defaultProfilesFilename
 	}
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultPath), "Path to profiles YAML file")
-	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
+	if err := parseFlags(fs, args); err != nil {
+		return nil, err
+	}
 	a.profilesFile = *profilesFile
-	return a
+	return a, nil
 }
 
 func runProfileList(r *runner, ctx context.Context) int {
-	a := parseProfileListArgs()
+	a, err := parseProfileListArgs(r.args)
+	if err != nil {
+		return parseErrorExitCode(err)
+	}
 	cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -169,8 +181,8 @@ type profileNewArgs struct {
 	flagsSet          map[string]bool
 }
 
-func parseProfileNewArgs() *profileNewArgs {
-	fs := flag.NewFlagSet("profile new", flag.ExitOnError)
+func parseProfileNewArgs(args []string) (*profileNewArgs, error) {
+	fs := flag.NewFlagSet("profile new", flag.ContinueOnError)
 	a := &profileNewArgs{}
 	defaultPath, err := defaultProfilesPath()
 	if err != nil {
@@ -196,7 +208,9 @@ func parseProfileNewArgs() *profileNewArgs {
 	onedriveTokenRef := fs.String("onedrive-token-ref", "", "Secret reference to OneDrive OAuth token")
 	fs.Var(&a.tags, "tag", "Tag to apply to snapshots (repeatable)")
 	fs.Var(&a.excludes, "exclude", "Exclude pattern (repeatable)")
-	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
+	if err := parseFlags(fs, args); err != nil {
+		return nil, err
+	}
 
 	a.flagsSet = map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { a.flagsSet[f.Name] = true })
@@ -220,11 +234,14 @@ func parseProfileNewArgs() *profileNewArgs {
 	a.onedriveTokenFile = *onedriveTokenFile
 	a.onedriveTokenRef = *onedriveTokenRef
 
-	return a
+	return a, nil
 }
 
 func runProfileNew(r *runner, ctx context.Context) int {
-	a := parseProfileNewArgs()
+	a, err := parseProfileNewArgs(r.args)
+	if err != nil {
+		return parseErrorExitCode(err)
+	}
 	if a.name == "" {
 		if r.canPrompt() {
 			v, err := r.promptValidatedLine(ctx, "Profile name", "", func(v string) error {

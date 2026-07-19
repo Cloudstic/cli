@@ -15,7 +15,7 @@ import (
 )
 
 func runKey(r *runner, ctx context.Context) int {
-	if len(os.Args) < 3 {
+	if len(r.args) < 1 {
 		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic key <subcommand>")
 		_, _ = fmt.Fprintln(r.errOut)
 		_, _ = fmt.Fprintln(r.errOut, "Subcommands:")
@@ -25,16 +25,16 @@ func runKey(r *runner, ctx context.Context) int {
 		return 1
 	}
 
-	sub := os.Args[2]
-	os.Args = append(os.Args[:2], os.Args[3:]...)
+	sub := r.args[0]
+	subRunner := r.withArgs(r.args[1:])
 
 	switch sub {
 	case "list":
-		return runKeyList(r, ctx)
+		return runKeyList(subRunner, ctx)
 	case "add-recovery":
-		return runAddRecoveryKey(r, ctx)
+		return runAddRecoveryKey(subRunner, ctx)
 	case "passwd":
-		return runKeyPasswd(r, ctx)
+		return runKeyPasswd(subRunner, ctx)
 	default:
 		return r.fail("Unknown key subcommand: %s", sub)
 	}
@@ -44,15 +44,20 @@ type keyListArgs struct {
 	g *globalFlags
 }
 
-func parseKeyListArgs() *keyListArgs {
-	fs := flag.NewFlagSet("key list", flag.ExitOnError)
+func parseKeyListArgs(args []string) (*keyListArgs, error) {
+	fs := flag.NewFlagSet("key list", flag.ContinueOnError)
 	a := &keyListArgs{g: addGlobalFlags(fs)}
-	mustParse(fs)
-	return a
+	if err := parseFlags(fs, args); err != nil {
+		return nil, err
+	}
+	return a, nil
 }
 
 func runKeyList(r *runner, ctx context.Context) int {
-	a := parseKeyListArgs()
+	a, err := parseKeyListArgs(r.args)
+	if err != nil {
+		return parseErrorExitCode(err)
+	}
 
 	raw, err := a.g.openStore(ctx)
 	if err != nil {
@@ -95,18 +100,23 @@ type keyPasswdArgs struct {
 	newPassword string
 }
 
-func parseKeyPasswdArgs() *keyPasswdArgs {
-	fs := flag.NewFlagSet("key passwd", flag.ExitOnError)
+func parseKeyPasswdArgs(args []string) (*keyPasswdArgs, error) {
+	fs := flag.NewFlagSet("key passwd", flag.ContinueOnError)
 	a := &keyPasswdArgs{}
 	a.g = addGlobalFlags(fs)
 	newPassword := fs.String("new-password", "", "New repository password (prompted interactively if not set)")
-	mustParse(fs)
+	if err := parseFlags(fs, args); err != nil {
+		return nil, err
+	}
 	a.newPassword = *newPassword
-	return a
+	return a, nil
 }
 
 func runKeyPasswd(r *runner, ctx context.Context) int {
-	a := parseKeyPasswdArgs()
+	a, err := parseKeyPasswdArgs(r.args)
+	if err != nil {
+		return parseErrorExitCode(err)
+	}
 
 	raw, err := a.g.openStore(ctx)
 	if err != nil {
@@ -148,15 +158,20 @@ type addRecoveryKeyArgs struct {
 	g *globalFlags
 }
 
-func parseAddRecoveryKeyArgs() *addRecoveryKeyArgs {
-	fs := flag.NewFlagSet("add-recovery-key", flag.ExitOnError)
+func parseAddRecoveryKeyArgs(args []string) (*addRecoveryKeyArgs, error) {
+	fs := flag.NewFlagSet("add-recovery-key", flag.ContinueOnError)
 	a := &addRecoveryKeyArgs{g: addGlobalFlags(fs)}
-	mustParse(fs)
-	return a
+	if err := parseFlags(fs, args); err != nil {
+		return nil, err
+	}
+	return a, nil
 }
 
 func runAddRecoveryKey(r *runner, ctx context.Context) int {
-	a := parseAddRecoveryKeyArgs()
+	a, err := parseAddRecoveryKeyArgs(r.args)
+	if err != nil {
+		return parseErrorExitCode(err)
+	}
 
 	raw, err := a.g.openStore(ctx)
 	if err != nil {

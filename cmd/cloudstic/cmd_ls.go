@@ -19,20 +19,25 @@ type lsArgs struct {
 	snapshotID string
 }
 
-func parseLsArgs() *lsArgs {
-	fs := flag.NewFlagSet("ls", flag.ExitOnError)
+func parseLsArgs(args []string) (*lsArgs, error) {
+	fs := flag.NewFlagSet("ls", flag.ContinueOnError)
 	a := &lsArgs{}
 	a.g = addGlobalFlags(fs)
-	mustParse(fs)
+	if err := parseFlags(fs, args); err != nil {
+		return nil, err
+	}
 	a.snapshotID = "latest"
 	if fs.NArg() > 0 {
 		a.snapshotID = fs.Arg(0)
 	}
-	return a
+	return a, nil
 }
 
 func runLsSnapshot(r *runner, ctx context.Context) int {
-	a := parseLsArgs()
+	a, err := parseLsArgs(r.args)
+	if err != nil {
+		return parseErrorExitCode(err)
+	}
 	if err := r.openClient(ctx, a.g); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}

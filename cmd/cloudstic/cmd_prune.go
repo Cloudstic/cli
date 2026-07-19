@@ -15,18 +15,23 @@ type pruneArgs struct {
 	dryRun bool
 }
 
-func parsePruneArgs() *pruneArgs {
-	fs := flag.NewFlagSet("prune", flag.ExitOnError)
+func parsePruneArgs(args []string) (*pruneArgs, error) {
+	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
 	a := &pruneArgs{}
 	a.g = addGlobalFlags(fs)
 	dryRun := fs.Bool("dry-run", false, "Show what would be deleted without deleting")
-	mustParse(fs)
+	if err := parseFlags(fs, args); err != nil {
+		return nil, err
+	}
 	a.dryRun = *dryRun
-	return a
+	return a, nil
 }
 
 func runPrune(r *runner, ctx context.Context) int {
-	a := parsePruneArgs()
+	a, err := parsePruneArgs(r.args)
+	if err != nil {
+		return parseErrorExitCode(err)
+	}
 	if err := r.openClient(ctx, a.g); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}

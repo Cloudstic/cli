@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 
 	cloudstic "github.com/cloudstic/cli"
 )
@@ -18,30 +17,31 @@ type catArgs struct {
 	raw  bool
 }
 
-func parseCatArgs() *catArgs {
-	fs := flag.NewFlagSet("cat", flag.ExitOnError)
+func parseCatArgs(args []string) (*catArgs, error) {
+	fs := flag.NewFlagSet("cat", flag.ContinueOnError)
 	a := &catArgs{}
 	a.g = addGlobalFlags(fs)
 	rawFlag := fs.Bool("raw", false, "Output raw, unformatted data (useful for hashing)")
-	mustParse(fs)
+	if err := parseFlags(fs, args); err != nil {
+		return nil, err
+	}
 	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: cloudstic cat [options] <object_key> [object_key...]")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Examples:")
-		fmt.Fprintln(os.Stderr, "  cloudstic cat config")
-		fmt.Fprintln(os.Stderr, "  cloudstic cat index/latest")
-		fmt.Fprintln(os.Stderr, "  cloudstic cat snapshot/abc123...")
-		fmt.Fprintln(os.Stderr, "  cloudstic cat filemeta/def456... node/789abc...")
-		fmt.Fprintln(os.Stderr, "  cloudstic cat -raw filemeta/def456... | sha256sum")
-		os.Exit(1)
+		return nil, fmt.Errorf("at least one object key is required")
 	}
 	a.raw = *rawFlag
 	a.keys = fs.Args()
-	return a
+	return a, nil
 }
 
 func runCat(r *runner, ctx context.Context) int {
-	a := parseCatArgs()
+	a, err := parseCatArgs(r.args)
+	if err != nil {
+		if parseErrorExitCode(err) == 0 {
+			return 0
+		}
+		printCatUsage(r.errOut)
+		return r.fail("Error: %v", err)
+	}
 	if err := r.openClient(ctx, a.g); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
@@ -62,6 +62,17 @@ func runCat(r *runner, ctx context.Context) int {
 	}
 	printCatResult(r.out, r.errOut, results, quiet, a.raw)
 	return 0
+}
+
+func printCatUsage(w io.Writer) {
+	_, _ = fmt.Fprintln(w, "Usage: cloudstic cat [options] <object_key> [object_key...]")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Examples:")
+	_, _ = fmt.Fprintln(w, "  cloudstic cat config")
+	_, _ = fmt.Fprintln(w, "  cloudstic cat index/latest")
+	_, _ = fmt.Fprintln(w, "  cloudstic cat snapshot/abc123...")
+	_, _ = fmt.Fprintln(w, "  cloudstic cat filemeta/def456... node/789abc...")
+	_, _ = fmt.Fprintln(w, "  cloudstic cat -raw filemeta/def456... | sha256sum")
 }
 
 func printCatResult(out io.Writer, errOut io.Writer, results []*cloudstic.CatResult, quiet, raw bool) {

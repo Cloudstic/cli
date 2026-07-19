@@ -21,15 +21,17 @@ type restoreArgs struct {
 	snapshotRef string
 }
 
-func parseRestoreArgs() *restoreArgs {
-	fs := flag.NewFlagSet("restore", flag.ExitOnError)
+func parseRestoreArgs(args []string) (*restoreArgs, error) {
+	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
 	a := &restoreArgs{}
 	a.g = addGlobalFlags(fs)
 	output := fs.String("output", "./restore.zip", "Output path (ZIP file for -format zip, directory for -format dir)")
 	format := fs.String("format", "", "Restore format: zip or dir (default: auto from -output)")
 	dryRun := fs.Bool("dry-run", false, "Show what would be restored without writing output")
 	pathFilter := fs.String("path", "", "Restore only the given file or subtree (e.g. Documents/report.pdf or Documents/)")
-	mustParse(fs)
+	if err := parseFlags(fs, args); err != nil {
+		return nil, err
+	}
 	a.output = *output
 	a.format = strings.TrimSpace(strings.ToLower(*format))
 	a.dryRun = *dryRun
@@ -38,11 +40,14 @@ func parseRestoreArgs() *restoreArgs {
 	if fs.NArg() > 0 {
 		a.snapshotRef = fs.Arg(0)
 	}
-	return a
+	return a, nil
 }
 
 func runRestore(r *runner, ctx context.Context) int {
-	a := parseRestoreArgs()
+	a, err := parseRestoreArgs(r.args)
+	if err != nil {
+		return parseErrorExitCode(err)
+	}
 	format, err := resolveRestoreFormat(a.format, a.output)
 	if err != nil {
 		return r.fail("%v", err)

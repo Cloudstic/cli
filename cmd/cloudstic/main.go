@@ -33,7 +33,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	exitCode := runCmd(ctx, os.Args[1])
+	exitCode := runCmd(ctx, os.Args[1], os.Args[2:])
 
 	if memprofile != "" {
 		writeMemProfile(memprofile)
@@ -42,8 +42,8 @@ func main() {
 	os.Exit(exitCode)
 }
 
-func runCmd(ctx context.Context, cmd string) int {
-	r := newRunner()
+func runCmd(ctx context.Context, cmd string, args []string) int {
+	r := newRunner(args)
 	switch cmd {
 	case "version", "--version", "-v":
 		fmt.Printf("cloudstic %s (commit %s, built %s)\n", version, commit, date)
@@ -85,10 +85,9 @@ func runCmd(ctx context.Context, cmd string) int {
 	case "tui":
 		return runTUI(r, ctx)
 	case "completion":
-		runCompletion()
-		return 0
+		return runCompletion(r)
 	case "__complete":
-		return runCompletionQuery(ctx)
+		return runCompletionQuery(r, ctx)
 	case "help", "--help", "-h":
 		printUsage()
 		return 0

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 
@@ -12,7 +11,7 @@ import (
 )
 
 func TestRunCheck_Healthy(t *testing.T) {
-	os.Args = []string{"cloudstic", "check"}
+	args := []string{}
 	var errOut strings.Builder
 	r := &runner{out: &strings.Builder{}, errOut: &errOut, client: &stubClient{
 		checkResult: &cloudstic.CheckResult{
@@ -22,7 +21,7 @@ func TestRunCheck_Healthy(t *testing.T) {
 		},
 	}}
 
-	runCheck(r, context.Background())
+	runCheck(r.withArgs(args), context.Background())
 
 	got := errOut.String()
 	if !strings.Contains(got, "No errors found") {
@@ -34,7 +33,7 @@ func TestRunCheck_Healthy(t *testing.T) {
 }
 
 func TestRunCheck_JSONWithErrorsReturnsExitOne(t *testing.T) {
-	os.Args = []string{"cloudstic", "check", "-json"}
+	args := []string{"-json"}
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
 		checkResult: &cloudstic.CheckResult{
@@ -46,7 +45,7 @@ func TestRunCheck_JSONWithErrorsReturnsExitOne(t *testing.T) {
 		},
 	}}
 
-	if exit := runCheck(r, context.Background()); exit != 1 {
+	if exit := runCheck(r.withArgs(args), context.Background()); exit != 1 {
 		t.Fatalf("runCheck() exit = %d, want 1", exit)
 	}
 

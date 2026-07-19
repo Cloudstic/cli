@@ -10,6 +10,7 @@ import (
 )
 
 type runner struct {
+	args              []string
 	out               io.Writer
 	errOut            io.Writer
 	stdoutFile        *os.File
@@ -20,15 +21,25 @@ type runner struct {
 	runInteractiveCmd func(context.Context, *os.File, io.Writer, io.Writer, string, ...string) error
 }
 
-func newRunner() *runner {
+func newRunner(args []string) *runner {
 	return &runner{
+		args:              args,
 		out:               os.Stdout,
 		errOut:            os.Stderr,
 		stdoutFile:        os.Stdout,
-		noPrompt:          hasGlobalFlag("no-prompt"),
+		noPrompt:          hasGlobalFlag(args, "no-prompt"),
 		stdin:             os.Stdin,
 		runInteractiveCmd: defaultRunInteractiveCmd,
 	}
+}
+
+// withArgs returns a shallow runner copy for nested command dispatch. The
+// parent runner and its argument slice are never mutated.
+func (r *runner) withArgs(args []string) *runner {
+	child := *r
+	child.args = args
+	child.noPrompt = r.noPrompt || hasGlobalFlag(args, "no-prompt")
+	return &child
 }
 
 func (r *runner) lineReader() *bufio.Reader {
@@ -41,10 +52,13 @@ func (r *runner) lineReader() *bufio.Reader {
 	return r.lineIn
 }
 
-// hasGlobalFlag checks whether a boolean flag appears anywhere in os.Args.
+// hasGlobalFlag checks whether a boolean flag appears before the -- terminator.
 // This is used for flags that must be parsed before subcommand flag sets.
-func hasGlobalFlag(name string) bool {
-	for _, arg := range os.Args[1:] {
+func hasGlobalFlag(args []string, name string) bool {
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
 		if arg == "-"+name || arg == "--"+name ||
 			arg == "-"+name+"=true" || arg == "--"+name+"=true" {
 			return true

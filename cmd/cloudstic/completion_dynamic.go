@@ -78,7 +78,10 @@ func completionLoadProfilesConfig(path string) (*cloudstic.ProfilesConfig, error
 func completionProfilesPath(args []string) string {
 	fs := flag.NewFlagSet("__complete", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	defaultPath := envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback())
+	defaultPath := defaultProfilesPathFallback()
+	if value, ok := environmentValue("profiles-file"); ok {
+		defaultPath = value
+	}
 	profilesFile := fs.String("profiles-file", defaultPath, "")
 	_ = fs.Parse(filterCompletionFlags(args, map[string]bool{
 		"profiles-file": true,

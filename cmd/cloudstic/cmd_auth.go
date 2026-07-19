@@ -37,7 +37,7 @@ func runAuth(r *runner, ctx context.Context) int {
 
 func runAuthList(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("auth list", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
+	profilesFile := fs.String("profiles-file", defaultProfilesPathFallback(), "Path to profiles YAML file")
 	if err := parseFlags(fs, r.args); err != nil {
 		return r.parseError(err)
 	}
@@ -56,7 +56,7 @@ func runAuthList(r *runner, ctx context.Context) int {
 
 func runAuthShow(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("auth show", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
+	profilesFile := fs.String("profiles-file", defaultProfilesPathFallback(), "Path to profiles YAML file")
 	if err := parseFlags(fs, r.args); err != nil {
 		return r.parseError(err)
 	}
@@ -94,7 +94,7 @@ func runAuthShow(r *runner, ctx context.Context) int {
 
 func runAuthNew(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("auth new", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
+	profilesFile := fs.String("profiles-file", defaultProfilesPathFallback(), "Path to profiles YAML file")
 	name := fs.String("name", "", "Auth reference name")
 	provider := fs.String("provider", "", "Auth provider: google|onedrive")
 	googleCreds := fs.String("google-credentials", "", "Path to Google service account credentials JSON file")
@@ -204,7 +204,7 @@ func runAuthNew(r *runner, ctx context.Context) int {
 
 func runAuthLogin(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("auth login", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
+	profilesFile := fs.String("profiles-file", defaultProfilesPathFallback(), "Path to profiles YAML file")
 	name := fs.String("name", "", "Auth reference name")
 	if err := parseFlags(fs, r.args); err != nil {
 		return r.parseError(err)

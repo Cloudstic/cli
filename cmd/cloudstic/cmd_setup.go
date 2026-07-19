@@ -17,10 +17,10 @@ import (
 var planWorkstationSetup = cloudstic.PlanWorkstationSetup
 
 func defaultProfilesPathNoCreate() string {
-	if path := os.Getenv("CLOUDSTIC_PROFILES_FILE"); path != "" {
+	if path, ok := namedEnvironmentValue("CLOUDSTIC_PROFILES_FILE"); ok {
 		return path
 	}
-	if dir := os.Getenv("CLOUDSTIC_CONFIG_DIR"); dir != "" {
+	if dir, ok := namedEnvironmentValue("CLOUDSTIC_CONFIG_DIR"); ok {
 		return filepath.Join(dir, defaultProfilesFilename)
 	}
 	if dir, err := os.UserConfigDir(); err == nil {

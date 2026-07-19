@@ -47,27 +47,35 @@ type backupArgs struct {
 	tags              stringArrayFlags
 	excludes          stringArrayFlags
 	flagsSet          map[string]bool
+	sources           map[string]valueSource
+}
+
+func (a *backupArgs) valueSource(name string) valueSource {
+	if source, ok := a.sources[name]; ok {
+		return source
+	}
+	return valueSourceDefault
 }
 
 func parseBackupArgs(args []string) (*backupArgs, error) {
 	fs := flag.NewFlagSet("backup", flag.ContinueOnError)
 	a := &backupArgs{}
 	a.g = addGlobalFlags(fs)
-	sourceURI := fs.String("source", envDefault("CLOUDSTIC_SOURCE", "gdrive"), "Source URI: local:<path>, sftp://[user@]host[:port]/<path>, gdrive[://<Drive Name>][/<path>], gdrive-changes[://<Drive Name>][/<path>], onedrive[://<Drive Name>][/<path>], onedrive-changes[://<Drive Name>][/<path>]")
+	sourceURI := fs.String("source", "gdrive", "Source URI: local:<path>, sftp://[user@]host[:port]/<path>, gdrive[://<Drive Name>][/<path>], gdrive-changes[://<Drive Name>][/<path>], onedrive[://<Drive Name>][/<path>], onedrive-changes[://<Drive Name>][/<path>]")
 	allProfiles := fs.Bool("all-profiles", false, "Run backup for all enabled profiles from profiles.yaml")
 	authRef := fs.String("auth-ref", "", "Use named auth entry from profiles.yaml for cloud source credentials")
 	dryRun := fs.Bool("dry-run", false, "Scan source and report changes without writing to the store")
 	ignoreEmpty := fs.Bool("ignore-empty-snapshot", false, "Skip creating a new snapshot when nothing changed")
 	skipNativeFiles := fs.Bool("skip-native-files", false, "Exclude Google-native files (Docs, Sheets, Slides, etc.) from the backup")
 	excludeFile := fs.String("exclude-file", "", "Path to file with exclude patterns (one per line, gitignore syntax)")
-	volumeUUID := fs.String("volume-uuid", envDefault("CLOUDSTIC_VOLUME_UUID", ""), "Override volume UUID for local source (enables cross-machine incremental backup)")
-	googleCreds := fs.String("google-credentials", envDefault("GOOGLE_APPLICATION_CREDENTIALS", ""), "Path to Google service account credentials JSON file")
+	volumeUUID := fs.String("volume-uuid", "", "Override volume UUID for local source (enables cross-machine incremental backup)")
+	googleCreds := fs.String("google-credentials", "", "Path to Google service account credentials JSON file")
 	googleCredsRef := fs.String("google-credentials-ref", "", "Secret reference to Google service account credentials JSON")
-	googleCredsJSON := fs.String("google-credentials-json", envDefault("GOOGLE_CREDENTIALS_JSON", ""), "Inline Google credentials JSON (OAuth client or service account)")
-	googleTokenFile := fs.String("google-token-file", envDefault("GOOGLE_TOKEN_FILE", ""), "Path to Google OAuth token file")
+	googleCredsJSON := fs.String("google-credentials-json", "", "Inline Google credentials JSON (OAuth client or service account)")
+	googleTokenFile := fs.String("google-token-file", "", "Path to Google OAuth token file")
 	googleTokenRef := fs.String("google-token-ref", "", "Secret reference to Google OAuth token")
-	onedriveClientID := fs.String("onedrive-client-id", envDefault("ONEDRIVE_CLIENT_ID", ""), "OneDrive OAuth client ID")
-	onedriveTokenFile := fs.String("onedrive-token-file", envDefault("ONEDRIVE_TOKEN_FILE", ""), "Path to OneDrive OAuth token file")
+	onedriveClientID := fs.String("onedrive-client-id", "", "OneDrive OAuth client ID")
+	onedriveTokenFile := fs.String("onedrive-token-file", "", "Path to OneDrive OAuth token file")
 	onedriveTokenRef := fs.String("onedrive-token-ref", "", "Secret reference to OneDrive OAuth token")
 	skipMode := fs.Bool("skip-mode", false, "Skip POSIX mode, uid, gid, btime, and flags collection")
 	skipFlags := fs.Bool("skip-flags", false, "Skip file flags collection")
@@ -101,8 +109,11 @@ func parseBackupArgs(args []string) (*backupArgs, error) {
 	a.skipXattrs = *skipXattrs
 	a.xattrNamespaces = *xattrNamespaces
 	a.flagsSet = map[string]bool{}
-	fs.Visit(func(f *flag.Flag) {
-		a.flagsSet[f.Name] = true
+	a.sources = map[string]valueSource{}
+	fs.VisitAll(func(f *flag.Flag) {
+		source := flagValueSource(fs, f.Name)
+		a.sources[f.Name] = source
+		a.flagsSet[f.Name] = source == valueSourceFlag || source == valueSourceEnvironment
 	})
 	return a, nil
 }
@@ -334,9 +345,14 @@ func mergeProfileBackupArgs(base *backupArgs, profileName string, p cloudstic.Ba
 	g := cloneGlobalFlags(base.g)
 	a := *base
 	a.g = g
+	a.sources = make(map[string]valueSource, len(base.sources))
+	for name, source := range base.sources {
+		a.sources[name] = source
+	}
 
 	if !a.flagsSet["source"] {
 		a.sourceURI = p.Source
+		a.sources["source"] = valueSourceProfile
 	}
 	if a.sourceURI == "" {
 		return nil, fmt.Errorf("profile %q has empty source", profileName)
@@ -344,46 +360,60 @@ func mergeProfileBackupArgs(base *backupArgs, profileName string, p cloudstic.Ba
 
 	if !a.flagsSet["skip-native-files"] {
 		a.skipNativeFiles = p.SkipNativeFiles
+		a.sources["skip-native-files"] = valueSourceProfile
 	}
 	if !a.flagsSet["volume-uuid"] && p.VolumeUUID != "" {
 		a.volumeUUID = p.VolumeUUID
+		a.sources["volume-uuid"] = valueSourceProfile
 	}
 	if !a.flagsSet["google-credentials"] && p.GoogleCreds != "" {
 		a.googleCreds = p.GoogleCreds
+		a.sources["google-credentials"] = valueSourceProfile
 	}
 	if !a.flagsSet["google-credentials-ref"] && p.GoogleCredsRef != "" {
 		a.googleCredsRef = p.GoogleCredsRef
+		a.sources["google-credentials-ref"] = valueSourceProfile
 	}
 	if !a.flagsSet["google-credentials-json"] && p.GoogleCredsJSON != "" {
 		a.googleCredsJSON = p.GoogleCredsJSON
+		a.sources["google-credentials-json"] = valueSourceProfile
 	}
 	if !a.flagsSet["google-token-file"] && p.GoogleTokenFile != "" {
 		a.googleTokenFile = p.GoogleTokenFile
+		a.sources["google-token-file"] = valueSourceProfile
 	}
 	if !a.flagsSet["google-token-ref"] && p.GoogleTokenRef != "" {
 		a.googleTokenRef = p.GoogleTokenRef
+		a.sources["google-token-ref"] = valueSourceProfile
 	}
 	if !a.flagsSet["onedrive-client-id"] && p.OneDriveClientID != "" {
 		a.onedriveClientID = p.OneDriveClientID
+		a.sources["onedrive-client-id"] = valueSourceProfile
 	}
 	if !a.flagsSet["onedrive-token-file"] && p.OneDriveTokenFile != "" {
 		a.onedriveTokenFile = p.OneDriveTokenFile
+		a.sources["onedrive-token-file"] = valueSourceProfile
 	}
 	if !a.flagsSet["onedrive-token-ref"] && p.OneDriveTokenRef != "" {
 		a.onedriveTokenRef = p.OneDriveTokenRef
+		a.sources["onedrive-token-ref"] = valueSourceProfile
 	}
 
 	if len(a.tags) == 0 && len(p.Tags) > 0 {
 		a.tags = append(stringArrayFlags{}, p.Tags...)
+		a.sources["tag"] = valueSourceProfile
 	}
 	if len(a.excludes) == 0 && len(p.Excludes) > 0 {
 		a.excludes = append(stringArrayFlags{}, p.Excludes...)
+		a.sources["exclude"] = valueSourceProfile
 	}
 	if !a.flagsSet["exclude-file"] && p.ExcludeFile != "" {
 		a.excludeFile = p.ExcludeFile
+		a.sources["exclude-file"] = valueSourceProfile
 	}
 	if !a.flagsSet["ignore-empty-snapshot"] {
 		a.ignoreEmpty = p.IgnoreEmpty
+		a.sources["ignore-empty-snapshot"] = valueSourceProfile
 	}
 
 	if p.Store != "" {
@@ -422,6 +452,9 @@ func mergeProfileBackupArgs(base *backupArgs, profileName string, p cloudstic.Ba
 }
 
 func applyProfileAuthToBackupArgs(a *backupArgs, auth cloudstic.ProfileAuth) error {
+	if a.sources == nil {
+		a.sources = map[string]valueSource{}
+	}
 	uri, err := parseSourceURI(a.sourceURI)
 	if err != nil {
 		return fmt.Errorf("parse source URI: %w", err)
@@ -444,30 +477,38 @@ func applyProfileAuthToBackupArgs(a *backupArgs, auth cloudstic.ProfileAuth) err
 	if requiredProvider == "google" {
 		if !a.flagsSet["google-credentials"] && auth.GoogleCreds != "" {
 			a.googleCreds = auth.GoogleCreds
+			a.sources["google-credentials"] = valueSourceProfile
 		}
 		if !a.flagsSet["google-credentials-ref"] && auth.GoogleCredsRef != "" {
 			a.googleCredsRef = auth.GoogleCredsRef
+			a.sources["google-credentials-ref"] = valueSourceProfile
 		}
 		if !a.flagsSet["google-credentials-json"] && auth.GoogleCredsJSON != "" {
 			a.googleCredsJSON = auth.GoogleCredsJSON
+			a.sources["google-credentials-json"] = valueSourceProfile
 		}
 		if !a.flagsSet["google-token-file"] && auth.GoogleTokenFile != "" {
 			a.googleTokenFile = auth.GoogleTokenFile
+			a.sources["google-token-file"] = valueSourceProfile
 		}
 		if !a.flagsSet["google-token-ref"] && auth.GoogleTokenRef != "" {
 			a.googleTokenRef = auth.GoogleTokenRef
+			a.sources["google-token-ref"] = valueSourceProfile
 		}
 	}
 
 	if requiredProvider == "onedrive" {
 		if !a.flagsSet["onedrive-client-id"] && auth.OneDriveClientID != "" {
 			a.onedriveClientID = auth.OneDriveClientID
+			a.sources["onedrive-client-id"] = valueSourceProfile
 		}
 		if !a.flagsSet["onedrive-token-file"] && auth.OneDriveTokenFile != "" {
 			a.onedriveTokenFile = auth.OneDriveTokenFile
+			a.sources["onedrive-token-file"] = valueSourceProfile
 		}
 		if !a.flagsSet["onedrive-token-ref"] && auth.OneDriveTokenRef != "" {
 			a.onedriveTokenRef = auth.OneDriveTokenRef
+			a.sources["onedrive-token-ref"] = valueSourceProfile
 		}
 	}
 
@@ -485,12 +526,15 @@ func cloneGlobalFlags(src *globalFlags) *globalFlags {
 func applyProfileStoreToGlobalFlags(g *globalFlags, s cloudstic.ProfileStore, flagsSet map[string]bool) error {
 	if !flagsSet["store"] && s.URI != "" {
 		g.store = s.URI
+		g.setValueSource("store", valueSourceProfile)
 	}
 	if !flagsSet["s3-endpoint"] && s.S3Endpoint != "" {
 		g.s3Endpoint = s.S3Endpoint
+		g.setValueSource("s3-endpoint", valueSourceProfile)
 	}
 	if !flagsSet["s3-region"] && s.S3Region != "" {
 		g.s3Region = s.S3Region
+		g.setValueSource("s3-region", valueSourceProfile)
 	}
 	if !flagsSet["s3-profile"] {
 		v, err := resolveProfileStoreValue("s3_profile", s.S3Profile, "")
@@ -498,6 +542,9 @@ func applyProfileStoreToGlobalFlags(g *globalFlags, s cloudstic.ProfileStore, fl
 			return err
 		}
 		g.s3Profile = v
+		if v != "" {
+			g.setValueSource("s3-profile", valueSourceProfile)
+		}
 	}
 	if !flagsSet["s3-access-key"] {
 		v, err := resolveProfileStoreValue("s3_access_key", s.S3AccessKey, s.S3AccessKeySecret)
@@ -505,6 +552,9 @@ func applyProfileStoreToGlobalFlags(g *globalFlags, s cloudstic.ProfileStore, fl
 			return err
 		}
 		g.s3AccessKey = v
+		if v != "" {
+			g.setValueSource("s3-access-key", valueSourceProfile)
+		}
 	}
 	if !flagsSet["s3-secret-key"] {
 		v, err := resolveProfileStoreValue("s3_secret_key", s.S3SecretKey, s.S3SecretKeySecret)
@@ -512,6 +562,29 @@ func applyProfileStoreToGlobalFlags(g *globalFlags, s cloudstic.ProfileStore, fl
 			return err
 		}
 		g.s3SecretKey = v
+		if v != "" {
+			g.setValueSource("s3-secret-key", valueSourceProfile)
+		}
+	}
+	if !flagsSet["b2-key-id"] {
+		v, err := resolveProfileStoreValue("b2_key_id", s.B2KeyID, s.B2KeyIDSecret)
+		if err != nil {
+			return err
+		}
+		g.b2KeyID = v
+		if v != "" {
+			g.setValueSource("b2-key-id", valueSourceProfile)
+		}
+	}
+	if !flagsSet["b2-app-key"] {
+		v, err := resolveProfileStoreValue("b2_app_key", s.B2AppKey, s.B2AppKeySecret)
+		if err != nil {
+			return err
+		}
+		g.b2AppKey = v
+		if v != "" {
+			g.setValueSource("b2-app-key", valueSourceProfile)
+		}
 	}
 	if !flagsSet["store-sftp-password"] {
 		v, err := resolveProfileStoreValue("store_sftp_password", s.StoreSFTPPassword, s.StoreSFTPPasswordSecret)
@@ -519,6 +592,9 @@ func applyProfileStoreToGlobalFlags(g *globalFlags, s cloudstic.ProfileStore, fl
 			return err
 		}
 		g.storeSFTPPassword = v
+		if v != "" {
+			g.setValueSource("store-sftp-password", valueSourceProfile)
+		}
 	}
 	if !flagsSet["store-sftp-key"] {
 		v, err := resolveProfileStoreValue("store_sftp_key", s.StoreSFTPKey, s.StoreSFTPKeySecret)
@@ -526,6 +602,9 @@ func applyProfileStoreToGlobalFlags(g *globalFlags, s cloudstic.ProfileStore, fl
 			return err
 		}
 		g.storeSFTPKey = v
+		if v != "" {
+			g.setValueSource("store-sftp-key", valueSourceProfile)
+		}
 	}
 	if !flagsSet["password"] {
 		v, err := resolveProfileStoreValue("password", "", s.PasswordSecret)
@@ -533,6 +612,9 @@ func applyProfileStoreToGlobalFlags(g *globalFlags, s cloudstic.ProfileStore, fl
 			return err
 		}
 		g.password = v
+		if v != "" {
+			g.setValueSource("password", valueSourceProfile)
+		}
 	}
 	if !flagsSet["encryption-key"] {
 		v, err := resolveProfileStoreValue("encryption_key", "", s.EncryptionKeySecret)
@@ -540,6 +622,9 @@ func applyProfileStoreToGlobalFlags(g *globalFlags, s cloudstic.ProfileStore, fl
 			return err
 		}
 		g.encryptionKey = v
+		if v != "" {
+			g.setValueSource("encryption-key", valueSourceProfile)
+		}
 	}
 	if !flagsSet["recovery-key"] {
 		v, err := resolveProfileStoreValue("recovery_key", "", s.RecoveryKeySecret)
@@ -547,15 +632,21 @@ func applyProfileStoreToGlobalFlags(g *globalFlags, s cloudstic.ProfileStore, fl
 			return err
 		}
 		g.recoveryKey = v
+		if v != "" {
+			g.setValueSource("recovery-key", valueSourceProfile)
+		}
 	}
 	if !flagsSet["kms-key-arn"] && s.KMSKeyARN != "" {
 		g.kmsKeyARN = s.KMSKeyARN
+		g.setValueSource("kms-key-arn", valueSourceProfile)
 	}
 	if !flagsSet["kms-region"] && s.KMSRegion != "" {
 		g.kmsRegion = s.KMSRegion
+		g.setValueSource("kms-region", valueSourceProfile)
 	}
 	if !flagsSet["kms-endpoint"] && s.KMSEndpoint != "" {
 		g.kmsEndpoint = s.KMSEndpoint
+		g.setValueSource("kms-endpoint", valueSourceProfile)
 	}
 	return nil
 }

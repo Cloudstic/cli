@@ -58,7 +58,7 @@ func parseProfileShowArgs(args []string) (*profileShowArgs, error) {
 	if err != nil {
 		defaultPath = defaultProfilesFilename
 	}
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultPath), "Path to profiles YAML file")
+	profilesFile := fs.String("profiles-file", defaultPath, "Path to profiles YAML file")
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
@@ -124,7 +124,7 @@ func parseProfileListArgs(args []string) (*profileListArgs, error) {
 	if err != nil {
 		defaultPath = defaultProfilesFilename
 	}
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultPath), "Path to profiles YAML file")
+	profilesFile := fs.String("profiles-file", defaultPath, "Path to profiles YAML file")
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
@@ -185,7 +185,7 @@ func parseProfileNewArgs(args []string) (*profileNewArgs, error) {
 	if err != nil {
 		defaultPath = defaultProfilesFilename
 	}
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultPath), "Path to profiles YAML file")
+	profilesFile := fs.String("profiles-file", defaultPath, "Path to profiles YAML file")
 	name := fs.String("name", "", "Profile name")
 	source := fs.String("source", "", "Source URI")
 	storeRef := fs.String("store-ref", "", "Store reference name from top-level stores map")

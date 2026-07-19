@@ -487,11 +487,6 @@ New snapshots are tagged `hamt_version: 2`. Snapshots without this field default
 
 ## Environment Variables
 
-| Variable                         | Used by   | Description                          |
-|----------------------------------|-----------|--------------------------------------|
-| `GOOGLE_APPLICATION_CREDENTIALS` | `gdrive`  | Path to OAuth client credentials     |
-| `ONEDRIVE_CLIENT_ID`            | `onedrive`| Azure app client ID                  |
-| `ONEDRIVE_CLIENT_SECRET`        | `onedrive`| Azure app client secret              |
-| `ONEDRIVE_TOKEN_FILE`           | `onedrive`| Path to cached OAuth token (default: `onedrive_token.json`) |
-| `B2_KEY_ID`                     | `b2`      | Backblaze B2 application key ID      |
-| `B2_APP_KEY`                    | `b2`      | Backblaze B2 application key         |
+The canonical environment-variable inventory, including flag mappings,
+precedence, and sensitivity, is generated from the CLI declarations into the
+[user guide](user-guide.md#environment-variables).

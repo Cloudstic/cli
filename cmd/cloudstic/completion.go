@@ -49,7 +49,7 @@ _cloudstic() {
 
     local commands="init backup auth profile store source setup tui restore list ls prune forget diff break-lock key cat completion version help"
 
-    local global_flags="-store -profile -profiles-file -s3-endpoint -s3-region -s3-profile -s3-access-key -s3-secret-key -source-sftp-password -source-sftp-key -source-sftp-known-hosts -source-sftp-insecure -store-sftp-password -store-sftp-key -store-sftp-known-hosts -store-sftp-insecure -encryption-key -password -recovery-key -kms-key-arn -kms-region -kms-endpoint -disable-packfile -prompt -no-prompt -verbose -quiet -json -debug"
+    local global_flags="-store -profile -profiles-file -s3-endpoint -s3-region -s3-profile -s3-access-key -s3-secret-key -b2-key-id -b2-app-key -source-sftp-password -source-sftp-key -source-sftp-known-hosts -source-sftp-insecure -store-sftp-password -store-sftp-key -store-sftp-known-hosts -store-sftp-insecure -encryption-key -password -recovery-key -kms-key-arn -kms-region -kms-endpoint -disable-packfile -prompt -no-prompt -verbose -quiet -json -debug"
 
     # Identify the subcommand
     local cmd=""
@@ -59,7 +59,7 @@ _cloudstic() {
             -*)
                 # skip flags and their values
                 case "${words[i]}" in
-					-store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-source-sftp-known-hosts|-store|-store-sftp-password|-store-sftp-key|-store-sftp-known-hosts|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-all-profiles|-auth-ref|-google-credentials|-google-credentials-ref|-google-credentials-json|-google-token-file|-google-token-ref|-onedrive-client-id|-onedrive-token-file|-onedrive-token-ref|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account|-xattr-namespaces)
+					-store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-b2-key-id|-b2-app-key|-source-sftp-password|-source-sftp-key|-source-sftp-known-hosts|-store|-store-sftp-password|-store-sftp-key|-store-sftp-known-hosts|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-all-profiles|-auth-ref|-google-credentials|-google-credentials-ref|-google-credentials-json|-google-token-file|-google-token-ref|-onedrive-client-id|-onedrive-token-file|-onedrive-token-ref|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account|-xattr-namespaces)
 						((i++)) ;;
 				esac
                 ;;
@@ -201,7 +201,7 @@ _cloudstic() {
 			init)
 				cmd_flags="-profiles-file -yes" ;;
 			new)
-				cmd_flags="-profiles-file -name -uri -s3-region -s3-profile -s3-endpoint -s3-access-key -s3-secret-key -s3-access-key-secret -s3-secret-key-secret -store-sftp-password -store-sftp-key -store-sftp-known-hosts -store-sftp-insecure -store-sftp-password-secret -store-sftp-key-secret -password-secret -encryption-key-secret -recovery-key-secret -kms-key-arn -kms-region -kms-endpoint" ;;
+				cmd_flags="-profiles-file -name -uri -s3-region -s3-profile -s3-endpoint -s3-access-key -s3-secret-key -s3-access-key-secret -s3-secret-key-secret -b2-key-id -b2-app-key -b2-key-id-secret -b2-app-key-secret -store-sftp-password -store-sftp-key -store-sftp-known-hosts -store-sftp-insecure -store-sftp-password-secret -store-sftp-key-secret -password-secret -encryption-key-secret -recovery-key-secret -kms-key-arn -kms-region -kms-endpoint" ;;
                 *)
                     cmd_flags="" ;;
             esac
@@ -354,6 +354,8 @@ _cloudstic() {
         '-s3-profile[AWS shared config profile for S3 auth]:name:'
         '-s3-access-key[S3 access key ID]:key:'
         '-s3-secret-key[S3 secret access key]:secret:'
+        '-b2-key-id[Backblaze B2 application key ID]:key:'
+        '-b2-app-key[Backblaze B2 application key]:secret:'
         '-source-sftp-password[SFTP source password]:password:'
         '-source-sftp-key[Path to SSH private key for SFTP source]:key:_files'
         '-source-sftp-known-hosts[Path to known_hosts file for SFTP source]:path:_files'
@@ -384,7 +386,7 @@ _cloudstic() {
             -*)
                 # Skip flags with values
                 case "${words[i]}" in
-					-store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-store-sftp-password|-store-sftp-key|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-auth-ref|-google-credentials|-google-credentials-ref|-google-credentials-json|-google-token-file|-google-token-ref|-onedrive-client-id|-onedrive-token-file|-onedrive-token-ref|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account)
+					-store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-b2-key-id|-b2-app-key|-source-sftp-password|-source-sftp-key|-store-sftp-password|-store-sftp-key|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-auth-ref|-google-credentials|-google-credentials-ref|-google-credentials-json|-google-token-file|-google-token-ref|-onedrive-client-id|-onedrive-token-file|-onedrive-token-ref|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account)
 						(( i++ )) ;;
 				esac
                 ;;
@@ -398,7 +400,7 @@ _cloudstic() {
 
     if [[ -z "$cmd" ]]; then
         case "$prev_word" in
-            -store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-source-sftp-known-hosts|-store-sftp-password|-store-sftp-key|-store-sftp-known-hosts|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint)
+            -store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-b2-key-id|-b2-app-key|-source-sftp-password|-source-sftp-key|-source-sftp-known-hosts|-store-sftp-password|-store-sftp-key|-store-sftp-known-hosts|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint)
                 _arguments $global_flags
                 return
                 ;;
@@ -590,6 +592,10 @@ _cloudstic() {
                         '-s3-secret-key[S3 static secret key]:key:' \
                         '-s3-access-key-secret[Secret ref for S3 access key]:ref:' \
                         '-s3-secret-key-secret[Secret ref for S3 secret key]:ref:' \
+                        '-b2-key-id[Backblaze B2 application key ID]:key:' \
+                        '-b2-app-key[Backblaze B2 application key]:secret:' \
+                        '-b2-key-id-secret[Secret ref for B2 key ID]:ref:' \
+                        '-b2-app-key-secret[Secret ref for B2 application key]:ref:' \
                         '-store-sftp-password[SFTP password]:password:' \
                         '-store-sftp-key[SFTP private key path]:path:_files' \
                         '-store-sftp-known-hosts[SFTP known_hosts path]:path:_files' \
@@ -799,6 +805,8 @@ complete -c cloudstic -l s3-region -x -d 'S3 region'
 complete -c cloudstic -l s3-profile -x -d 'AWS shared config profile for S3 auth'
 complete -c cloudstic -l s3-access-key -x -d 'S3 access key ID'
 complete -c cloudstic -l s3-secret-key -x -d 'S3 secret access key'
+complete -c cloudstic -l b2-key-id -x -d 'Backblaze B2 application key ID'
+complete -c cloudstic -l b2-app-key -x -d 'Backblaze B2 application key'
 complete -c cloudstic -l source-sftp-password -x -d 'SFTP source password'
 complete -c cloudstic -l source-sftp-key -r -F -d 'Path to SSH private key for SFTP source'
 complete -c cloudstic -l source-sftp-known-hosts -r -F -d 'Path to known_hosts file for SFTP source'
@@ -885,6 +893,10 @@ complete -c cloudstic -n '__fish_seen_subcommand_from store; and not __fish_seen
 complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from list' -l profiles-file -r -F -d 'Path to profiles YAML file'
 complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from show' -l profiles-file -r -F -d 'Path to profiles YAML file'
 complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from new' -l profiles-file -r -F -d 'Path to profiles YAML file'
+complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from new' -l b2-key-id -x -d 'Backblaze B2 application key ID'
+complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from new' -l b2-app-key -x -d 'Backblaze B2 application key'
+complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from new' -l b2-key-id-secret -x -d 'Secret ref for B2 key ID'
+complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from new' -l b2-app-key-secret -x -d 'Secret ref for B2 application key'
 complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from new' -l store-sftp-password -x -d 'SFTP store password'
 complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from new' -l store-sftp-key -r -F -d 'Path to SSH private key for SFTP store'
 complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from new' -l store-sftp-known-hosts -r -F -d 'Path to known_hosts file for SFTP store'

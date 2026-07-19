@@ -1589,6 +1589,10 @@ cloudstic init -store b2:my-bucket-name -password "passphrase"
 cloudstic backup -store b2:my-bucket-name -source local:~/Documents
 ```
 
+Credentials may also be passed explicitly with `-b2-key-id` and
+`-b2-app-key`. Stored profiles support `b2_key_id` / `b2_app_key` and the
+preferred `b2_key_id_secret` / `b2_app_key_secret` secret-reference fields.
+
 Use a prefix to namespace objects within a bucket:
 
 ```bash
@@ -1597,10 +1601,10 @@ cloudstic init -store b2:my-bucket/laptop/ -password "passphrase"
 
 **Environment variables:**
 
-| Variable | Description |
-|----------|-------------|
-| `B2_KEY_ID` | Backblaze B2 application key ID |
-| `B2_APP_KEY` | Backblaze B2 application key |
+| Variable | Flag | Description |
+|----------|------|-------------|
+| `B2_KEY_ID` | `-b2-key-id` | Backblaze B2 application key ID |
+| `B2_APP_KEY` | `-b2-app-key` | Backblaze B2 application key |
 
 ### Amazon S3
 
@@ -1790,31 +1794,45 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 
 ## Environment Variables
 
+<!-- BEGIN GENERATED ENVIRONMENT VARIABLES -->
+Values resolve in this order: explicit CLI flag, environment variable, profile, built-in default.
+
+Provider-oriented variables remain deliberately unprefixed for compatibility with their existing ecosystems. Sensitive values are never rendered in help output.
+
 | Variable | Flag equivalent | Description |
 | :--- | :--- | :--- |
-| `CLOUDSTIC_STORE` | `-store` | Storage backend URI: `local:<path>`, `s3:<bucket>[/<prefix>]`, `b2:<bucket>[/<prefix>]`, `sftp://[user@]host[:port]/<path>` |
-| `CLOUDSTIC_S3_ENDPOINT` | `-s3-endpoint` | S3 compatible endpoint (for MinIO, R2, etc.) |
-| `CLOUDSTIC_S3_REGION` | `-s3-region` | S3 Region |
-| `CLOUDSTIC_S3_PROFILE` | `-s3-profile` | AWS shared config profile for S3 auth |
-| `AWS_ACCESS_KEY_ID` | `-s3-access-key` | S3 Access Key ID |
-| `AWS_SECRET_ACCESS_KEY` | `-s3-secret-key` | S3 Secret Access Key |
-| `CLOUDSTIC_STORE_SFTP_PASSWORD` | `-store-sftp-password` | SFTP password for the store |
-| `CLOUDSTIC_STORE_SFTP_KEY` | `-store-sftp-key` | Path to SSH private key for the store |
-| `CLOUDSTIC_SOURCE` | `-source` | Source URI: `local:<path>`, `sftp://[user@]host[:port]/<path>`, `gdrive[://<Drive Name>][/<path>]`, `gdrive-changes[://<Drive Name>][/<path>]`, `onedrive[://<Drive Name>][/<path>]`, `onedrive-changes[://<Drive Name>][/<path>]` |
-| `CLOUDSTIC_SOURCE_SFTP_PASSWORD` | `-source-sftp-password` | SFTP password for the source |
-| `CLOUDSTIC_SOURCE_SFTP_KEY` | `-source-sftp-key` | Path to SSH private key for the source |
-| `CLOUDSTIC_ENCRYPTION_KEY` | `-encryption-key` | Platform key (hex) |
-| `CLOUDSTIC_PASSWORD` | `-password` | Encryption password |
-| `CLOUDSTIC_RECOVERY_KEY` | `-recovery-key` | Recovery seed phrase |
-| `CLOUDSTIC_KMS_KEY_ARN` | `-kms-key-arn` | AWS KMS key ARN for kms-platform slots |
-| `CLOUDSTIC_KMS_REGION` | `-kms-region` | AWS KMS region |
-| `CLOUDSTIC_KMS_ENDPOINT` | `-kms-endpoint` | Custom AWS KMS endpoint URL |
+| `CLOUDSTIC_STORE` | `-store` | Storage backend URI |
+| `CLOUDSTIC_PROFILE` | `-profile` | Backup profile name |
 | `CLOUDSTIC_PROFILES_FILE` | `-profiles-file` | Path to profiles YAML file |
-| `CLOUDSTIC_CONFIG_DIR` | — | Override config directory path |
-| `GOOGLE_APPLICATION_CREDENTIALS` | `-google-credentials` | Path to your own Google OAuth credentials file (optional, overrides built-in) |
-| `GOOGLE_CREDENTIALS_JSON` | `-google-credentials-json` | Inline Google credentials JSON (OAuth client or service account) |
-| `GOOGLE_TOKEN_FILE` | `-google-token-file` | Override Google OAuth token path |
-| `ONEDRIVE_CLIENT_ID` | — | Microsoft app client ID (optional, overrides built-in) |
-| `ONEDRIVE_TOKEN_FILE` | — | Override OneDrive token path |
-| `B2_KEY_ID` | — | Backblaze B2 key ID |
-| `B2_APP_KEY` | — | Backblaze B2 application key |
+| `CLOUDSTIC_S3_ENDPOINT` | `-s3-endpoint` | S3-compatible endpoint URL |
+| `CLOUDSTIC_S3_REGION` | `-s3-region` | S3 region |
+| `CLOUDSTIC_S3_PROFILE` | `-s3-profile` | AWS shared config profile |
+| `AWS_PROFILE` | `-s3-profile` | AWS shared config profile |
+| `AWS_ACCESS_KEY_ID` | `-s3-access-key` | S3 access key ID (sensitive) |
+| `AWS_SECRET_ACCESS_KEY` | `-s3-secret-key` | S3 secret access key (sensitive) |
+| `B2_KEY_ID` | `-b2-key-id` | Backblaze B2 application key ID (sensitive) |
+| `B2_APP_KEY` | `-b2-app-key` | Backblaze B2 application key (sensitive) |
+| `CLOUDSTIC_SOURCE_SFTP_PASSWORD` | `-source-sftp-password` | SFTP source password (sensitive) |
+| `CLOUDSTIC_SOURCE_SFTP_KEY` | `-source-sftp-key` | SFTP source private key path (sensitive) |
+| `CLOUDSTIC_SOURCE_SFTP_INSECURE` | `-source-sftp-insecure` | Disable SFTP source host-key verification |
+| `CLOUDSTIC_SOURCE_SFTP_KNOWN_HOSTS` | `-source-sftp-known-hosts` | SFTP source known_hosts path |
+| `CLOUDSTIC_STORE_SFTP_PASSWORD` | `-store-sftp-password` | SFTP store password (sensitive) |
+| `CLOUDSTIC_STORE_SFTP_KEY` | `-store-sftp-key` | SFTP store private key path (sensitive) |
+| `CLOUDSTIC_STORE_SFTP_INSECURE` | `-store-sftp-insecure` | Disable SFTP store host-key verification |
+| `CLOUDSTIC_STORE_SFTP_KNOWN_HOSTS` | `-store-sftp-known-hosts` | SFTP store known_hosts path |
+| `CLOUDSTIC_ENCRYPTION_KEY` | `-encryption-key` | Platform encryption key (sensitive) |
+| `CLOUDSTIC_PASSWORD` | `-password` | Repository password (sensitive) |
+| `CLOUDSTIC_RECOVERY_KEY` | `-recovery-key` | Recovery seed phrase (sensitive) |
+| `CLOUDSTIC_KMS_KEY_ARN` | `-kms-key-arn` | AWS KMS key ARN |
+| `CLOUDSTIC_KMS_REGION` | `-kms-region` | AWS KMS region |
+| `CLOUDSTIC_KMS_ENDPOINT` | `-kms-endpoint` | AWS KMS endpoint URL |
+| `CLOUDSTIC_DISABLE_PACKFILE` | `-disable-packfile` | Disable packfiles |
+| `CLOUDSTIC_SOURCE` | `-source` | Backup source URI |
+| `GOOGLE_APPLICATION_CREDENTIALS` | `-google-credentials` | Google credentials file (sensitive) |
+| `GOOGLE_CREDENTIALS_JSON` | `-google-credentials-json` | Inline Google credentials JSON (sensitive) |
+| `GOOGLE_TOKEN_FILE` | `-google-token-file` | Google OAuth token file (sensitive) |
+| `ONEDRIVE_CLIENT_ID` | `-onedrive-client-id` | OneDrive OAuth client ID |
+| `ONEDRIVE_TOKEN_FILE` | `-onedrive-token-file` | OneDrive OAuth token file (sensitive) |
+| `CLOUDSTIC_CONFIG_DIR` | — | Cloudstic configuration directory |
+
+<!-- END GENERATED ENVIRONMENT VARIABLES -->

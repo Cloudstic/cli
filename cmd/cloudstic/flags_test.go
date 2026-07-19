@@ -54,8 +54,8 @@ func TestGlobalFlagScans_StopAtTerminator(t *testing.T) {
 	if err := parseFlags(fs, []string{"--", "-store"}); err != nil {
 		t.Fatalf("parseFlags() error = %v", err)
 	}
-	if g.flagProvided("store") {
-		t.Fatal("globalFlags.flagProvided() treated a positional argument as a flag")
+	if g.valueSource("store") != valueSourceDefault {
+		t.Fatal("globalFlags.valueSource() treated a positional argument as a flag")
 	}
 }
 

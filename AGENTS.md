@@ -135,6 +135,7 @@ Backends expose `Load`/`Save`/`Delete`; unsupported operations return a typed `s
 | `CLOUDSTIC_RECOVERY_KEY` | BIP39 recovery mnemonic for unlock/recovery. |
 | `CLOUDSTIC_KMS_KEY_ARN` / `CLOUDSTIC_KMS_REGION` / `CLOUDSTIC_KMS_ENDPOINT` | AWS KMS envelope-encryption config for `kms-platform` slots. |
 | `CLOUDSTIC_STORE` / `CLOUDSTIC_SOURCE` | Default store / source URI when no flag is given. |
+| `B2_KEY_ID` / `B2_APP_KEY` | Backblaze B2 credentials (`-b2-key-id` / `-b2-app-key`). |
 | `CLOUDSTIC_PROFILE` / `CLOUDSTIC_PROFILES_FILE` | Active backup profile and override for the profiles file path. |
 | `CLOUDSTIC_CONFIG_DIR` | Override the config/state directory (default `~/.config/cloudstic`). |
 | `CLOUDSTIC_{STORE,SOURCE}_SFTP_{PASSWORD,KEY,KNOWN_HOSTS,INSECURE}` | SFTP auth/host-key config for the store and source backends. |

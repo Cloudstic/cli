@@ -43,7 +43,7 @@ func runStore(r *runner, ctx context.Context) int {
 
 func runStoreList(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("store list", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
+	profilesFile := fs.String("profiles-file", defaultProfilesPathFallback(), "Path to profiles YAML file")
 	if err := parseFlags(fs, r.args); err != nil {
 		return r.parseError(err)
 	}
@@ -62,7 +62,7 @@ func runStoreList(r *runner, ctx context.Context) int {
 
 func runStoreShow(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("store show", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
+	profilesFile := fs.String("profiles-file", defaultProfilesPathFallback(), "Path to profiles YAML file")
 	if err := parseFlags(fs, r.args); err != nil {
 		return r.parseError(err)
 	}
@@ -101,7 +101,7 @@ func runStoreShow(r *runner, ctx context.Context) int {
 
 func runStoreNew(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("store new", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
+	profilesFile := fs.String("profiles-file", defaultProfilesPathFallback(), "Path to profiles YAML file")
 	name := fs.String("name", "", "Store reference name")
 	uri := fs.String("uri", "", "Store URI (e.g. s3:bucket/path, local:/path, sftp://host/path)")
 	s3Region := fs.String("s3-region", "", "S3 region")
@@ -111,6 +111,10 @@ func runStoreNew(r *runner, ctx context.Context) int {
 	s3SecretKey := fs.String("s3-secret-key", "", "S3 static secret key")
 	s3AccessKeySecret := fs.String("s3-access-key-secret", "", "Secret reference for S3 access key (e.g. env://..., keychain://...)")
 	s3SecretKeySecret := fs.String("s3-secret-key-secret", "", "Secret reference for S3 secret key (e.g. env://..., keychain://...)")
+	b2KeyID := fs.String("b2-key-id", "", "Backblaze B2 application key ID")
+	b2AppKey := fs.String("b2-app-key", "", "Backblaze B2 application key")
+	b2KeyIDSecret := fs.String("b2-key-id-secret", "", "Secret reference for B2 key ID (e.g. env://..., keychain://...)")
+	b2AppKeySecret := fs.String("b2-app-key-secret", "", "Secret reference for B2 application key (e.g. env://..., keychain://...)")
 	sftpPassword := fs.String("store-sftp-password", "", "SFTP password")
 	sftpKey := fs.String("store-sftp-key", "", "Path to SFTP private key")
 	sftpPasswordSecret := fs.String("store-sftp-password-secret", "", "Secret reference for SFTP password (e.g. env://..., keychain://...)")
@@ -136,6 +140,10 @@ func runStoreNew(r *runner, ctx context.Context) int {
 		s3SecretKey:         s3SecretKey,
 		s3AccessKeySecret:   s3AccessKeySecret,
 		s3SecretKeySecret:   s3SecretKeySecret,
+		b2KeyID:             b2KeyID,
+		b2AppKey:            b2AppKey,
+		b2KeyIDSecret:       b2KeyIDSecret,
+		b2AppKeySecret:      b2AppKeySecret,
 		sftpPassword:        sftpPassword,
 		sftpKey:             sftpKey,
 		sftpPasswordSecret:  sftpPasswordSecret,
@@ -249,7 +257,7 @@ func runStoreNew(r *runner, ctx context.Context) int {
 // the store config has already been saved.
 func runStoreVerify(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("store verify", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
+	profilesFile := fs.String("profiles-file", defaultProfilesPathFallback(), "Path to profiles YAML file")
 	if err := parseFlags(fs, r.args); err != nil {
 		return r.parseError(err)
 	}
@@ -295,7 +303,7 @@ func runStoreVerify(r *runner, ctx context.Context) int {
 
 func runStoreInit(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("store init", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
+	profilesFile := fs.String("profiles-file", defaultProfilesPathFallback(), "Path to profiles YAML file")
 	yes := fs.Bool("yes", false, "Initialize without confirmation prompt")
 	if err := parseFlags(fs, r.args); err != nil {
 		return r.parseError(err)
@@ -757,6 +765,12 @@ func globalFlagsFromProfileStore(s cloudstic.ProfileStore) (*globalFlags, error)
 		return nil, err
 	}
 	if g.s3SecretKey, err = resolveProfileStoreValue("s3_secret_key", s.S3SecretKey, s.S3SecretKeySecret); err != nil {
+		return nil, err
+	}
+	if g.b2KeyID, err = resolveProfileStoreValue("b2_key_id", s.B2KeyID, s.B2KeyIDSecret); err != nil {
+		return nil, err
+	}
+	if g.b2AppKey, err = resolveProfileStoreValue("b2_app_key", s.B2AppKey, s.B2AppKeySecret); err != nil {
 		return nil, err
 	}
 	if g.storeSFTPPassword, err = resolveProfileStoreValue("store_sftp_password", s.StoreSFTPPassword, s.StoreSFTPPasswordSecret); err != nil {

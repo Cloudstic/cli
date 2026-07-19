@@ -196,6 +196,8 @@ func newTUIStoreModal(profilesFile, existingName string, editing bool) (*tuiStor
 				{Key: "s3_endpoint", Label: "S3 Endpoint", Kind: tui.ModalFieldText, Value: existing.S3Endpoint},
 				{Key: "s3_access_key_secret", Label: "Access Key Ref", Kind: tui.ModalFieldText, Value: existing.S3AccessKeySecret},
 				{Key: "s3_secret_key_secret", Label: "Secret Key Ref", Kind: tui.ModalFieldText, Value: existing.S3SecretKeySecret},
+				{Key: "b2_key_id_secret", Label: "B2 Key ID Ref", Kind: tui.ModalFieldText, Value: existing.B2KeyIDSecret},
+				{Key: "b2_app_key_secret", Label: "B2 App Key Ref", Kind: tui.ModalFieldText, Value: existing.B2AppKeySecret},
 				{Key: "sftp_password_secret", Label: "Password Ref", Kind: tui.ModalFieldText, Value: existing.StoreSFTPPasswordSecret},
 				{Key: "sftp_key_secret", Label: "Key Ref", Kind: tui.ModalFieldText, Value: existing.StoreSFTPKeySecret},
 				{Key: "encryption_mode", Label: "Encryption", Kind: tui.ModalFieldSelect, Value: string(encryptionMode), Options: append([]string{}, tuiStoreEncryptionOptions...), Required: true},
@@ -378,25 +380,41 @@ func (m *tuiStoreModal) submit() (string, error) {
 func (m *tuiStoreModal) applyConnectionFields(store *cloudstic.ProfileStore) {
 	storeType := m.currentStore().Type
 	switch storeType {
-	case "s3", "b2":
+	case "s3":
 		store.S3Region = m.textFieldValue("s3_region")
 		store.S3Profile = m.textFieldValue("s3_profile")
 		store.S3Endpoint = m.textFieldValue("s3_endpoint")
 		store.S3AccessKeySecret = m.textFieldValue("s3_access_key_secret")
 		store.S3SecretKeySecret = m.textFieldValue("s3_secret_key_secret")
+		store.B2KeyIDSecret = ""
+		store.B2AppKeySecret = ""
+	case "b2":
+		store.S3Region = ""
+		store.S3Profile = ""
+		store.S3Endpoint = ""
+		store.S3AccessKeySecret = ""
+		store.S3SecretKeySecret = ""
+		store.B2KeyIDSecret = m.textFieldValue("b2_key_id_secret")
+		store.B2AppKeySecret = m.textFieldValue("b2_app_key_secret")
 	case "local":
 		store.S3Region = ""
 		store.S3Profile = ""
 		store.S3Endpoint = ""
 		store.S3AccessKeySecret = ""
 		store.S3SecretKeySecret = ""
+		store.B2KeyIDSecret = ""
+		store.B2AppKeySecret = ""
 	}
-	if storeType != "s3" && storeType != "b2" {
+	if storeType != "s3" {
 		store.S3Region = ""
 		store.S3Profile = ""
 		store.S3Endpoint = ""
 		store.S3AccessKeySecret = ""
 		store.S3SecretKeySecret = ""
+	}
+	if storeType != "b2" {
+		store.B2KeyIDSecret = ""
+		store.B2AppKeySecret = ""
 	}
 	if storeType == "sftp" {
 		store.StoreSFTPPasswordSecret = m.textFieldValue("sftp_password_secret")
@@ -421,6 +439,8 @@ func (m *tuiStoreModal) applyEncryptionFields(store *cloudstic.ProfileStore) err
 	}{
 		{key: "s3_access_key_secret", value: m.textFieldValue("s3_access_key_secret")},
 		{key: "s3_secret_key_secret", value: m.textFieldValue("s3_secret_key_secret")},
+		{key: "b2_key_id_secret", value: m.textFieldValue("b2_key_id_secret")},
+		{key: "b2_app_key_secret", value: m.textFieldValue("b2_app_key_secret")},
 		{key: "sftp_password_secret", value: m.textFieldValue("sftp_password_secret")},
 		{key: "sftp_key_secret", value: m.textFieldValue("sftp_key_secret")},
 		{key: "password_secret", value: passwordRef},
@@ -501,11 +521,19 @@ func (m *tuiStoreModal) updateStoreFieldMetadata() {
 func (m *tuiStoreModal) updateConnectionFields() {
 	storeType := m.currentStore().Type
 	s3Fields := []string{"s3_region", "s3_profile", "s3_endpoint", "s3_access_key_secret", "s3_secret_key_secret"}
+	b2Fields := []string{"b2_key_id_secret", "b2_app_key_secret"}
 	sftpFields := []string{"sftp_password_secret", "sftp_key_secret"}
-	enableS3 := storeType == "s3" || storeType == "b2"
+	enableS3 := storeType == "s3"
 	for _, key := range s3Fields {
 		if field := m.fieldByKey(key); field != nil {
 			field.Disabled = !enableS3
+			field.Required = false
+		}
+	}
+	enableB2 := storeType == "b2"
+	for _, key := range b2Fields {
+		if field := m.fieldByKey(key); field != nil {
+			field.Disabled = !enableB2
 			field.Required = false
 		}
 	}
@@ -600,7 +628,7 @@ func storeFieldHelp(selectedField string, store tuiStoreConfig, mode tuiStoreEnc
 			return nil
 		}
 		return []string{fmt.Sprintf("%s%s%s", ui.Dim, example, ui.Reset)}
-	case "s3_access_key_secret", "s3_secret_key_secret", "sftp_password_secret", "sftp_key_secret", "password_secret", "encryption_key_secret":
+	case "s3_access_key_secret", "s3_secret_key_secret", "b2_key_id_secret", "b2_app_key_secret", "sftp_password_secret", "sftp_key_secret", "password_secret", "encryption_key_secret":
 		return []string{fmt.Sprintf("%sType e to configure secret storage.%s", ui.Dim, ui.Reset)}
 	case "kms_key_arn":
 		return []string{fmt.Sprintf("%sExample: arn:aws:kms:us-east-1:123456789012:key/abcd...%s", ui.Dim, ui.Reset)}
@@ -683,6 +711,18 @@ func tuiSecretFieldSpecForKey(key string) (tuiSecretFieldSpec, bool) {
 			SecretLabel:    "S3 secret key",
 			DefaultEnvName: "AWS_SECRET_ACCESS_KEY",
 			DefaultAccount: "s3-secret-key",
+		},
+		"b2_key_id_secret": {
+			FieldKey:       "b2_key_id_secret",
+			SecretLabel:    "B2 key ID",
+			DefaultEnvName: "B2_KEY_ID",
+			DefaultAccount: "b2-key-id",
+		},
+		"b2_app_key_secret": {
+			FieldKey:       "b2_app_key_secret",
+			SecretLabel:    "B2 application key",
+			DefaultEnvName: "B2_APP_KEY",
+			DefaultAccount: "b2-app-key",
 		},
 		"sftp_password_secret": {
 			FieldKey:       "sftp_password_secret",

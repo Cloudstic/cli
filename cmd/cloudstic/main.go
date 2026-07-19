@@ -5,21 +5,20 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 )
 
-var (
-	version = "dev"
-	commit  = "none"
-	date    = "unknown"
-)
-
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	cpuprofile, memprofile := parseProfileFlags()
 
 	if len(os.Args) < 2 {
-		printUsage()
-		os.Exit(1)
+		printUsage(os.Stdout)
+		return 1
 	}
 
 	if cpuprofile != "" {
@@ -33,20 +32,20 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	exitCode := runCmd(ctx, os.Args[1], os.Args[2:])
+	exitCode := runCmd(newRunner(os.Args[2:]), ctx, os.Args[1])
 
 	if memprofile != "" {
 		writeMemProfile(memprofile)
 	}
 
-	os.Exit(exitCode)
+	return exitCode
 }
 
-func runCmd(ctx context.Context, cmd string, args []string) int {
-	r := newRunner(args)
+func runCmd(r *runner, ctx context.Context, cmd string) int {
 	switch cmd {
 	case "version", "--version", "-v":
-		fmt.Printf("cloudstic %s (commit %s, built %s)\n", version, commit, date)
+		buildVersion, buildCommit, buildDate := buildMetadata()
+		_, _ = fmt.Fprintf(r.out, "cloudstic %s (commit %s, built %s)\n", buildVersion, buildCommit, buildDate)
 		return 0
 	case "init":
 		return runInit(r, ctx)
@@ -89,11 +88,38 @@ func runCmd(ctx context.Context, cmd string, args []string) int {
 	case "__complete":
 		return runCompletionQuery(r, ctx)
 	case "help", "--help", "-h":
-		printUsage()
+		printUsage(r.out)
 		return 0
 	default:
-		fmt.Printf("Unknown command: %s\n", cmd)
-		printUsage()
+		_, _ = fmt.Fprintf(r.errOut, "Unknown command: %s\n", cmd)
+		printUsage(r.errOut)
 		return 1
 	}
+}
+
+func buildMetadata() (string, string, string) {
+	info, _ := debug.ReadBuildInfo()
+	return resolveBuildMetadata(info)
+}
+
+func resolveBuildMetadata(info *debug.BuildInfo) (string, string, string) {
+	buildVersion, buildCommit, buildDate := "dev", "none", "unknown"
+	if info != nil {
+		if info.Main.Version != "" && info.Main.Version != "(devel)" {
+			buildVersion = info.Main.Version
+		}
+		for _, setting := range info.Settings {
+			switch setting.Key {
+			case "vcs.revision":
+				if setting.Value != "" {
+					buildCommit = setting.Value
+				}
+			case "vcs.time":
+				if setting.Value != "" {
+					buildDate = setting.Value
+				}
+			}
+		}
+	}
+	return buildVersion, buildCommit, buildDate
 }

@@ -11,9 +11,6 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w
-      - -X main.version={{.Version}}
-      - -X main.commit={{.ShortCommit}}
-      - -X main.date={{.Date}}
       - -X github.com/cloudstic/cli/pkg/source.defaultGoogleClientID={{ .Env.GOOGLE_CLIENT_ID }}
       - -X github.com/cloudstic/cli/pkg/source.defaultGoogleClientSecret={{ .Env.GOOGLE_CLIENT_SECRET }}
       - -X github.com/cloudstic/cli/pkg/source.defaultOneDriveClientID={{ .Env.ONEDRIVE_CLIENT_ID }}

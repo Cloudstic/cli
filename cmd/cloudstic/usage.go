@@ -2,13 +2,13 @@ package main
 
 import (
 	"fmt"
-	"os"
+	"io"
 
 	"github.com/cloudstic/cli/internal/ui"
 )
 
-func printUsage() {
-	t := ui.NewTermWriter(os.Stdout)
+func printUsage(out io.Writer) {
+	t := ui.NewTermWriter(out)
 
 	_, _ = fmt.Fprintf(t.W, "%sCloudstic%s — Content-Addressable Backup System\n", ui.Bold, ui.Reset)
 

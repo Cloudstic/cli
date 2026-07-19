@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	cloudstic "github.com/cloudstic/cli"
@@ -30,7 +31,7 @@ func parseDiffArgs() *diffArgs {
 	return a
 }
 
-func (r *runner) runDiff(ctx context.Context) int {
+func runDiff(r *runner, ctx context.Context) int {
 	a := parseDiffArgs()
 	if err := r.openClient(ctx, a.g); err != nil {
 		return r.fail("Failed to init store: %v", err)
@@ -45,7 +46,7 @@ func (r *runner) runDiff(ctx context.Context) int {
 	if a.g.jsonEnabled() {
 		return r.writeJSON(result)
 	}
-	r.printDiffResult(result)
+	printDiffResult(r.out, result)
 	return 0
 }
 
@@ -57,9 +58,9 @@ func buildDiffOpts(a *diffArgs) []cloudstic.DiffOption {
 	return diffOpts
 }
 
-func (r *runner) printDiffResult(result *cloudstic.DiffResult) {
-	_, _ = fmt.Fprintf(r.out, "Diffing %s vs %s\n", result.Ref1, result.Ref2)
+func printDiffResult(out io.Writer, result *cloudstic.DiffResult) {
+	_, _ = fmt.Fprintf(out, "Diffing %s vs %s\n", result.Ref1, result.Ref2)
 	for _, c := range result.Changes {
-		_, _ = fmt.Fprintf(r.out, "%s %s\n", c.Type, c.Path)
+		_, _ = fmt.Fprintf(out, "%s %s\n", c.Type, c.Path)
 	}
 }

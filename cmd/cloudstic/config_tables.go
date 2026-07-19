@@ -177,14 +177,14 @@ func appendWarningRow(rows []table.Row, warnings []string) []table.Row {
 	return append(rows, table.Row{"Warnings", strings.Join(warnings, ", ")})
 }
 
-func (r *runner) renderStoreList(cfg *cloudstic.ProfilesConfig) {
+func renderStoreList(out io.Writer, cfg *cloudstic.ProfilesConfig) {
 	names := sortedKeys(cfg.Stores)
-	renderSectionHeading(r.out, "Stores", len(names))
+	renderSectionHeading(out, "Stores", len(names))
 	if len(names) == 0 {
-		renderMessageRow(r.out, "No stores configured.")
+		renderMessageRow(out, "No stores configured.")
 		return
 	}
-	t := newConfigTableWriter(r.out)
+	t := newConfigTableWriter(out)
 	t.AppendHeader(table.Row{"Name", "Type", "Target", "Auth", "Used By", "Status"})
 	for _, name := range names {
 		s := cfg.Stores[name]
@@ -201,14 +201,14 @@ func (r *runner) renderStoreList(cfg *cloudstic.ProfilesConfig) {
 	t.Render()
 }
 
-func (r *runner) renderAuthList(cfg *cloudstic.ProfilesConfig) {
+func renderAuthList(out io.Writer, cfg *cloudstic.ProfilesConfig) {
 	names := sortedKeys(cfg.Auth)
-	renderSectionHeading(r.out, "Auth", len(names))
+	renderSectionHeading(out, "Auth", len(names))
 	if len(names) == 0 {
-		renderMessageRow(r.out, "No auth entries configured.")
+		renderMessageRow(out, "No auth entries configured.")
 		return
 	}
-	t := newConfigTableWriter(r.out)
+	t := newConfigTableWriter(out)
 	t.AppendHeader(table.Row{"Name", "Provider", "Token", "Used By", "Status"})
 	for _, name := range names {
 		auth := cfg.Auth[name]
@@ -224,24 +224,24 @@ func (r *runner) renderAuthList(cfg *cloudstic.ProfilesConfig) {
 	t.Render()
 }
 
-func (r *runner) renderProfileList(cfg *cloudstic.ProfilesConfig) {
+func renderProfileList(out io.Writer, cfg *cloudstic.ProfilesConfig) {
 	names := sortedKeys(cfg.Profiles)
-	renderSectionHeading(r.out, "Profiles", len(names))
+	renderSectionHeading(out, "Profiles", len(names))
 	if len(names) == 0 {
-		renderMessageRow(r.out, "No profiles configured.")
+		renderMessageRow(out, "No profiles configured.")
 		return
 	}
-	t := newConfigTableWriter(r.out)
+	t := newConfigTableWriter(out)
 	t.AppendHeader(table.Row{"Name", "Source", "Store", "Auth", "Tags", "Status"})
 	for _, name := range names {
-		p := cfg.Profiles[name]
-		status, warnings := profileHealth(cfg, p)
+		profile := cfg.Profiles[name]
+		status, warnings := profileHealth(cfg, profile)
 		t.AppendRow(table.Row{
 			name,
-			p.Source,
-			dashIfEmpty(p.Store),
-			dashIfEmpty(p.AuthRef),
-			shortList(p.Tags, 2),
+			profile.Source,
+			dashIfEmpty(profile.Store),
+			dashIfEmpty(profile.AuthRef),
+			shortList(profile.Tags, 2),
 			statusLabel(status) + warningSuffix(warnings),
 		})
 	}
@@ -278,10 +278,10 @@ func authTokenPath(auth cloudstic.ProfileAuth) string {
 	return "-"
 }
 
-func (r *runner) renderStoreShow(cfg *cloudstic.ProfilesConfig, name string, s cloudstic.ProfileStore) {
+func renderStoreShow(out io.Writer, cfg *cloudstic.ProfilesConfig, name string, s cloudstic.ProfileStore) {
 	status, warnings := storeHealth(s)
-	renderSectionHeading(r.out, fmt.Sprintf("Store %s", name), -1)
-	renderKVTable(r.out, appendWarningRow([]table.Row{
+	renderSectionHeading(out, fmt.Sprintf("Store %s", name), -1)
+	renderKVTable(out, appendWarningRow([]table.Row{
 		{"URI", s.URI},
 		{"Type", storeScheme(s.URI)},
 		{"Auth Mode", profileStoreAuthMode(s)},
@@ -308,23 +308,23 @@ func (r *runner) renderStoreShow(cfg *cloudstic.ProfilesConfig, name string, s c
 		connection = append(connection, table.Row{"KMS Endpoint", s.KMSEndpoint})
 	}
 	if len(connection) > 0 {
-		renderSectionHeading(r.out, "Connection", -1)
-		renderKVTable(r.out, connection)
+		renderSectionHeading(out, "Connection", -1)
+		renderKVTable(out, connection)
 	}
 
 	credentials := secretDisplayRows(s)
 	if len(credentials) > 0 {
-		renderSectionHeading(r.out, "Credential References", -1)
-		renderKVTable(r.out, credentials)
+		renderSectionHeading(out, "Credential References", -1)
+		renderKVTable(out, credentials)
 	}
 
 	usedBy := profilesUsingStore(cfg, name)
-	renderSectionHeading(r.out, "Used By", len(usedBy))
+	renderSectionHeading(out, "Used By", len(usedBy))
 	if len(usedBy) == 0 {
-		renderMessageRow(r.out, "No profiles reference this store.")
+		renderMessageRow(out, "No profiles reference this store.")
 		return
 	}
-	t := newConfigTableWriter(r.out)
+	t := newConfigTableWriter(out)
 	t.AppendHeader(table.Row{"Profile"})
 	for _, ref := range usedBy {
 		t.AppendRow(table.Row{ref})
@@ -353,10 +353,10 @@ func secretDisplayRows(s cloudstic.ProfileStore) []table.Row {
 	return rows
 }
 
-func (r *runner) renderAuthShow(cfg *cloudstic.ProfilesConfig, name string, auth cloudstic.ProfileAuth) {
+func renderAuthShow(out io.Writer, cfg *cloudstic.ProfilesConfig, name string, auth cloudstic.ProfileAuth) {
 	status, warnings := authHealth(auth)
-	renderSectionHeading(r.out, fmt.Sprintf("Auth %s", name), -1)
-	renderKVTable(r.out, appendWarningRow([]table.Row{
+	renderSectionHeading(out, fmt.Sprintf("Auth %s", name), -1)
+	renderKVTable(out, appendWarningRow([]table.Row{
 		{"Provider", auth.Provider},
 		{"Token Storage", authTokenPath(auth)},
 		{"Status", statusLabel(status)},
@@ -385,17 +385,17 @@ func (r *runner) renderAuthShow(cfg *cloudstic.ProfilesConfig, name string, auth
 		providerRows = append(providerRows, table.Row{"OneDrive Token Ref", auth.OneDriveTokenRef})
 	}
 	if len(providerRows) > 0 {
-		renderSectionHeading(r.out, "Provider Details", -1)
-		renderKVTable(r.out, providerRows)
+		renderSectionHeading(out, "Provider Details", -1)
+		renderKVTable(out, providerRows)
 	}
 
 	usedBy := profilesUsingAuth(cfg, name)
-	renderSectionHeading(r.out, "Used By", len(usedBy))
+	renderSectionHeading(out, "Used By", len(usedBy))
 	if len(usedBy) == 0 {
-		renderMessageRow(r.out, "No profiles reference this auth entry.")
+		renderMessageRow(out, "No profiles reference this auth entry.")
 		return
 	}
-	t := newConfigTableWriter(r.out)
+	t := newConfigTableWriter(out)
 	t.AppendHeader(table.Row{"Profile"})
 	for _, ref := range usedBy {
 		t.AppendRow(table.Row{ref})
@@ -403,23 +403,23 @@ func (r *runner) renderAuthShow(cfg *cloudstic.ProfilesConfig, name string, auth
 	t.Render()
 }
 
-func (r *runner) renderProfileShow(cfg *cloudstic.ProfilesConfig, name string, p cloudstic.BackupProfile) {
-	status, warnings := profileHealth(cfg, p)
-	renderSectionHeading(r.out, fmt.Sprintf("Profile %s", name), -1)
-	renderKVTable(r.out, appendWarningRow([]table.Row{
-		{"Source", p.Source},
-		{"Source Type", sourceScheme(p.Source)},
-		{"Provider", dashIfEmpty(profileProviderFromSource(p.Source))},
-		{"Enabled", boolLabel(p.IsEnabled())},
+func renderProfileShow(out io.Writer, cfg *cloudstic.ProfilesConfig, name string, profile cloudstic.BackupProfile) {
+	status, warnings := profileHealth(cfg, profile)
+	renderSectionHeading(out, fmt.Sprintf("Profile %s", name), -1)
+	renderKVTable(out, appendWarningRow([]table.Row{
+		{"Source", profile.Source},
+		{"Source Type", sourceScheme(profile.Source)},
+		{"Provider", dashIfEmpty(profileProviderFromSource(profile.Source))},
+		{"Enabled", boolLabel(profile.IsEnabled())},
 		{"Status", statusLabel(status)},
 	}, warnings))
 
 	storeValue := "<missing>"
 	storeAuthMode := "-"
 	storeExtraRows := []table.Row{}
-	if p.Store == "" {
+	if profile.Store == "" {
 		storeValue = "-"
-	} else if s, ok := cfg.Stores[p.Store]; ok {
+	} else if s, ok := cfg.Stores[profile.Store]; ok {
 		storeValue = s.URI
 		storeAuthMode = profileStoreAuthMode(s)
 		if s.S3Region != "" {
@@ -434,65 +434,65 @@ func (r *runner) renderProfileShow(cfg *cloudstic.ProfilesConfig, name string, p
 	}
 	authProvider := "-"
 	authToken := "-"
-	if p.AuthRef != "" {
-		if auth, ok := cfg.Auth[p.AuthRef]; ok {
+	if profile.AuthRef != "" {
+		if auth, ok := cfg.Auth[profile.AuthRef]; ok {
 			authProvider = auth.Provider
 			authToken = authTokenPath(auth)
 		} else {
 			authProvider = "<missing>"
 		}
 	}
-	renderSectionHeading(r.out, "Resolved References", -1)
+	renderSectionHeading(out, "Resolved References", -1)
 	resolvedRows := []table.Row{
-		{"Store Ref", dashIfEmpty(p.Store)},
+		{"Store Ref", dashIfEmpty(profile.Store)},
 		{"Store URI", storeValue},
 		{"Store Auth Mode", storeAuthMode},
-		{"Auth Ref", dashIfEmpty(p.AuthRef)},
+		{"Auth Ref", dashIfEmpty(profile.AuthRef)},
 		{"Auth Provider", authProvider},
 		{"Auth Token", authToken},
 	}
 	resolvedRows = append(resolvedRows, storeExtraRows...)
-	renderKVTable(r.out, resolvedRows)
+	renderKVTable(out, resolvedRows)
 
 	optionRows := []table.Row{
-		{"Tags", joinOrDash(p.Tags)},
-		{"Excludes", fmt.Sprintf("%d pattern(s)", len(p.Excludes))},
-		{"Exclude File", dashIfEmpty(p.ExcludeFile)},
-		{"Ignore Empty Snapshot", boolLabel(p.IgnoreEmpty)},
-		{"Skip Native Files", boolLabel(p.SkipNativeFiles)},
+		{"Tags", joinOrDash(profile.Tags)},
+		{"Excludes", fmt.Sprintf("%d pattern(s)", len(profile.Excludes))},
+		{"Exclude File", dashIfEmpty(profile.ExcludeFile)},
+		{"Ignore Empty Snapshot", boolLabel(profile.IgnoreEmpty)},
+		{"Skip Native Files", boolLabel(profile.SkipNativeFiles)},
 	}
-	if p.VolumeUUID != "" {
-		optionRows = append(optionRows, table.Row{"Volume UUID", p.VolumeUUID})
+	if profile.VolumeUUID != "" {
+		optionRows = append(optionRows, table.Row{"Volume UUID", profile.VolumeUUID})
 	}
-	if p.GoogleCreds != "" {
-		optionRows = append(optionRows, table.Row{"Google Credentials File", p.GoogleCreds})
+	if profile.GoogleCreds != "" {
+		optionRows = append(optionRows, table.Row{"Google Credentials File", profile.GoogleCreds})
 	}
-	if p.GoogleCredsRef != "" {
-		optionRows = append(optionRows, table.Row{"Google Credentials Ref", p.GoogleCredsRef})
+	if profile.GoogleCredsRef != "" {
+		optionRows = append(optionRows, table.Row{"Google Credentials Ref", profile.GoogleCredsRef})
 	}
-	if p.GoogleTokenFile != "" {
-		optionRows = append(optionRows, table.Row{"Google Token File", p.GoogleTokenFile})
+	if profile.GoogleTokenFile != "" {
+		optionRows = append(optionRows, table.Row{"Google Token File", profile.GoogleTokenFile})
 	}
-	if p.GoogleTokenRef != "" {
-		optionRows = append(optionRows, table.Row{"Google Token Ref", p.GoogleTokenRef})
+	if profile.GoogleTokenRef != "" {
+		optionRows = append(optionRows, table.Row{"Google Token Ref", profile.GoogleTokenRef})
 	}
-	if p.OneDriveClientID != "" {
-		optionRows = append(optionRows, table.Row{"OneDrive Client ID", p.OneDriveClientID})
+	if profile.OneDriveClientID != "" {
+		optionRows = append(optionRows, table.Row{"OneDrive Client ID", profile.OneDriveClientID})
 	}
-	if p.OneDriveTokenFile != "" {
-		optionRows = append(optionRows, table.Row{"OneDrive Token File", p.OneDriveTokenFile})
+	if profile.OneDriveTokenFile != "" {
+		optionRows = append(optionRows, table.Row{"OneDrive Token File", profile.OneDriveTokenFile})
 	}
-	if p.OneDriveTokenRef != "" {
-		optionRows = append(optionRows, table.Row{"OneDrive Token Ref", p.OneDriveTokenRef})
+	if profile.OneDriveTokenRef != "" {
+		optionRows = append(optionRows, table.Row{"OneDrive Token Ref", profile.OneDriveTokenRef})
 	}
-	renderSectionHeading(r.out, "Options", -1)
-	renderKVTable(r.out, optionRows)
+	renderSectionHeading(out, "Options", -1)
+	renderKVTable(out, optionRows)
 
-	if len(p.Excludes) > 0 {
-		renderSectionHeading(r.out, "Exclude Patterns", len(p.Excludes))
-		t := newConfigTableWriter(r.out)
+	if len(profile.Excludes) > 0 {
+		renderSectionHeading(out, "Exclude Patterns", len(profile.Excludes))
+		t := newConfigTableWriter(out)
 		t.AppendHeader(table.Row{"Pattern"})
-		for _, pattern := range p.Excludes {
+		for _, pattern := range profile.Excludes {
 			t.AppendRow(table.Row{pattern})
 		}
 		t.Render()

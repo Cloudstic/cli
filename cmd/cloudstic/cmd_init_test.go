@@ -10,7 +10,7 @@ import (
 func TestPrintInitResult_Encrypted(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &strings.Builder{}, errOut: &errOut}
-	r.printInitResult(&cloudstic.InitResult{
+	printInitResult(r.errOut, &cloudstic.InitResult{
 		Encrypted:    true,
 		AdoptedSlots: false,
 		RecoveryKey:  "",
@@ -28,7 +28,7 @@ func TestPrintInitResult_Encrypted(t *testing.T) {
 func TestPrintInitResult_AdoptedSlots(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &strings.Builder{}, errOut: &errOut}
-	r.printInitResult(&cloudstic.InitResult{
+	printInitResult(r.errOut, &cloudstic.InitResult{
 		Encrypted:    true,
 		AdoptedSlots: true,
 	})
@@ -42,7 +42,7 @@ func TestPrintInitResult_AdoptedSlots(t *testing.T) {
 func TestPrintInitResult_WithRecoveryKey(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &strings.Builder{}, errOut: &errOut}
-	r.printInitResult(&cloudstic.InitResult{
+	printInitResult(r.errOut, &cloudstic.InitResult{
 		Encrypted:   true,
 		RecoveryKey: "word1 word2 word3",
 	})
@@ -59,7 +59,7 @@ func TestPrintInitResult_WithRecoveryKey(t *testing.T) {
 func TestPrintInitResult_NoEncryption(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &strings.Builder{}, errOut: &errOut}
-	r.printInitResult(&cloudstic.InitResult{Encrypted: false})
+	printInitResult(r.errOut, &cloudstic.InitResult{Encrypted: false})
 
 	got := errOut.String()
 	if !strings.Contains(got, "WARNING") {
@@ -73,7 +73,7 @@ func TestPrintInitResult_NoEncryption(t *testing.T) {
 func TestPrintRecoveryKey(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &strings.Builder{}, errOut: &errOut}
-	r.printRecoveryKey("abandon ability able about above")
+	printRecoveryKey(r.errOut, "abandon ability able about above")
 
 	got := errOut.String()
 	if !strings.Contains(got, "RECOVERY KEY") {

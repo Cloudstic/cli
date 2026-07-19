@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 
 	cloudstic "github.com/cloudstic/cli"
 )
@@ -28,7 +29,7 @@ func parseCheckArgs() *checkArgs {
 	return a
 }
 
-func (r *runner) runCheck(ctx context.Context) int {
+func runCheck(r *runner, ctx context.Context) int {
 	a := parseCheckArgs()
 	if err := r.openClient(ctx, a.g); err != nil {
 		return r.fail("Failed to init store: %v", err)
@@ -49,7 +50,7 @@ func (r *runner) runCheck(ctx context.Context) int {
 		}
 		return 0
 	}
-	if r.printCheckResult(result) {
+	if printCheckResult(r.errOut, result) {
 		return 1
 	}
 	return 0
@@ -71,19 +72,19 @@ func buildCheckOpts(a *checkArgs) []cloudstic.CheckOption {
 
 // printCheckResult prints the check summary to r.errOut.
 // Returns true if integrity errors were found.
-func (r *runner) printCheckResult(result *cloudstic.CheckResult) bool {
-	_, _ = fmt.Fprintf(r.errOut, "\nRepository check complete.\n")
-	_, _ = fmt.Fprintf(r.errOut, "  Snapshots checked:  %d\n", result.SnapshotsChecked)
-	_, _ = fmt.Fprintf(r.errOut, "  Objects verified:   %d\n", result.ObjectsVerified)
+func printCheckResult(errOut io.Writer, result *cloudstic.CheckResult) bool {
+	_, _ = fmt.Fprintf(errOut, "\nRepository check complete.\n")
+	_, _ = fmt.Fprintf(errOut, "  Snapshots checked:  %d\n", result.SnapshotsChecked)
+	_, _ = fmt.Fprintf(errOut, "  Objects verified:   %d\n", result.ObjectsVerified)
 	if len(result.Errors) > 0 {
-		_, _ = fmt.Fprintf(r.errOut, "  Errors found:       %d\n\n", len(result.Errors))
+		_, _ = fmt.Fprintf(errOut, "  Errors found:       %d\n\n", len(result.Errors))
 		for _, e := range result.Errors {
-			_, _ = fmt.Fprintf(r.errOut, "  [%s] %s: %s\n", e.Type, e.Key, e.Message)
+			_, _ = fmt.Fprintf(errOut, "  [%s] %s: %s\n", e.Type, e.Key, e.Message)
 		}
-		_, _ = fmt.Fprintln(r.errOut)
+		_, _ = fmt.Fprintln(errOut)
 		return true
 	}
-	_, _ = fmt.Fprintf(r.errOut, "  Errors found:       0\n")
-	_, _ = fmt.Fprintf(r.errOut, "\nNo errors found — repository is healthy.\n")
+	_, _ = fmt.Fprintf(errOut, "  Errors found:       0\n")
+	_, _ = fmt.Fprintf(errOut, "\nNo errors found — repository is healthy.\n")
 	return false
 }

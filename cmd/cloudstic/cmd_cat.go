@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	cloudstic "github.com/cloudstic/cli"
@@ -39,7 +40,7 @@ func parseCatArgs() *catArgs {
 	return a
 }
 
-func (r *runner) runCat(ctx context.Context) int {
+func runCat(r *runner, ctx context.Context) int {
 	a := parseCatArgs()
 	if err := r.openClient(ctx, a.g); err != nil {
 		return r.fail("Failed to init store: %v", err)
@@ -59,31 +60,31 @@ func (r *runner) runCat(ctx context.Context) int {
 	if a.g.jsonEnabled() {
 		return r.writeJSON(makeCatJSONResults(results))
 	}
-	r.printCatResult(results, quiet, a.raw)
+	printCatResult(r.out, r.errOut, results, quiet, a.raw)
 	return 0
 }
 
-func (r *runner) printCatResult(results []*cloudstic.CatResult, quiet, raw bool) {
+func printCatResult(out io.Writer, errOut io.Writer, results []*cloudstic.CatResult, quiet, raw bool) {
 	for i, result := range results {
 		if !quiet && len(results) > 1 {
-			_, _ = fmt.Fprintf(r.errOut, "==> %s <==\n", result.Key)
+			_, _ = fmt.Fprintf(errOut, "==> %s <==\n", result.Key)
 		}
 		if raw {
-			if _, err := r.out.Write(result.Data); err != nil {
-				_, _ = fmt.Fprintf(r.errOut, "Failed to write raw data: %v\n", err)
+			if _, err := out.Write(result.Data); err != nil {
+				_, _ = fmt.Fprintf(errOut, "Failed to write raw data: %v\n", err)
 				return
 			}
 		} else {
 			var indented bytes.Buffer
 			if err := json.Indent(&indented, result.Data, "", "  "); err != nil {
-				_, _ = fmt.Fprint(r.out, string(result.Data))
+				_, _ = fmt.Fprint(out, string(result.Data))
 			} else {
-				_, _ = fmt.Fprintln(r.out, indented.String())
+				_, _ = fmt.Fprintln(out, indented.String())
 			}
 		}
 
 		if !quiet && i < len(results)-1 {
-			_, _ = fmt.Fprintln(r.errOut)
+			_, _ = fmt.Fprintln(errOut)
 		}
 	}
 }

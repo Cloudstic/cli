@@ -121,7 +121,7 @@ func TestPrintBackupSummary_EmptySnapshotIgnored(t *testing.T) {
 	var out strings.Builder
 	r := &runner{out: &out}
 
-	r.printBackupSummary(&engine.RunResult{
+	printBackupSummary(r.out, &engine.RunResult{
 		Root:                 "node/abc",
 		FilesUnmodified:      1,
 		Duration:             2,

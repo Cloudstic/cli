@@ -29,7 +29,7 @@ func defaultProfilesPathNoCreate() string {
 	return defaultProfilesFilename
 }
 
-func (r *runner) runSetup(ctx context.Context) int {
+func runSetup(r *runner, ctx context.Context) int {
 	if len(os.Args) < 3 {
 		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic setup <subcommand> [options]")
 		_, _ = fmt.Fprintln(r.errOut, "")
@@ -39,7 +39,7 @@ func (r *runner) runSetup(ctx context.Context) int {
 
 	switch os.Args[2] {
 	case "workstation":
-		return r.runSetupWorkstation(ctx)
+		return runSetupWorkstation(r, ctx)
 	default:
 		return r.fail("Unknown setup subcommand: %s", os.Args[2])
 	}
@@ -70,7 +70,7 @@ func parseSetupWorkstationArgs() *setupWorkstationArgs {
 	return a
 }
 
-func (r *runner) runSetupWorkstation(ctx context.Context) int {
+func runSetupWorkstation(r *runner, ctx context.Context) int {
 	args := parseSetupWorkstationArgs()
 	cfg, err := loadProfilesOrInit(args.profilesFile)
 	if err != nil {
@@ -93,7 +93,7 @@ func (r *runner) runSetupWorkstation(ctx context.Context) int {
 				if !storeHasExplicitEncryption(s) {
 					r.promptEncryptionConfig(ctx, cfg, args.storeRef, args.profilesFile)
 				}
-				if err := r.checkOrInitStoreWithRecovery(ctx, cfg, args.storeRef, args.profilesFile, checkOrInitOptions{
+				if err := checkOrInitStoreWithRecovery(r, ctx, cfg, args.storeRef, args.profilesFile, checkOrInitOptions{
 					allowMissingSecrets:  true,
 					warnOnMissingSecrets: true,
 					offerInit:            true,

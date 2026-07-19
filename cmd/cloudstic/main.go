@@ -49,41 +49,41 @@ func runCmd(ctx context.Context, cmd string) int {
 		fmt.Printf("cloudstic %s (commit %s, built %s)\n", version, commit, date)
 		return 0
 	case "init":
-		return r.runInit(ctx)
+		return runInit(r, ctx)
 	case "backup":
-		return r.runBackup(ctx)
+		return runBackup(r, ctx)
 	case "restore":
-		return r.runRestore(ctx)
+		return runRestore(r, ctx)
 	case "list":
-		return r.runList(ctx)
+		return runList(r, ctx)
 	case "ls":
-		return r.runLsSnapshot(ctx)
+		return runLsSnapshot(r, ctx)
 	case "prune":
-		return r.runPrune(ctx)
+		return runPrune(r, ctx)
 	case "forget":
-		return r.runForget(ctx)
+		return runForget(r, ctx)
 	case "diff":
-		return r.runDiff(ctx)
+		return runDiff(r, ctx)
 	case "break-lock":
-		return r.runBreakLock(ctx)
+		return runBreakLock(r, ctx)
 	case "key":
-		return r.runKey(ctx)
+		return runKey(r, ctx)
 	case "check":
-		return r.runCheck(ctx)
+		return runCheck(r, ctx)
 	case "cat":
-		return r.runCat(ctx)
+		return runCat(r, ctx)
 	case "profile":
-		return r.runProfile(ctx)
+		return runProfile(r, ctx)
 	case "auth":
-		return r.runAuth(ctx)
+		return runAuth(r, ctx)
 	case "store":
-		return r.runStore(ctx)
+		return runStore(r, ctx)
 	case "source":
-		return r.runSource(ctx)
+		return runSource(r, ctx)
 	case "setup":
-		return r.runSetup(ctx)
+		return runSetup(r, ctx)
 	case "tui":
-		return r.runTUI(ctx)
+		return runTUI(r, ctx)
 	case "completion":
 		runCompletion()
 		return 0

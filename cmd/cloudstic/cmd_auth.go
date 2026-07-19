@@ -11,7 +11,7 @@ import (
 	cloudstic "github.com/cloudstic/cli"
 )
 
-func (r *runner) runAuth(ctx context.Context) int {
+func runAuth(r *runner, ctx context.Context) int {
 	if len(os.Args) < 3 {
 		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic auth <subcommand> [options]")
 		_, _ = fmt.Fprintln(r.errOut, "")
@@ -21,19 +21,19 @@ func (r *runner) runAuth(ctx context.Context) int {
 
 	switch os.Args[2] {
 	case "list":
-		return r.runAuthList(ctx)
+		return runAuthList(r, ctx)
 	case "show":
-		return r.runAuthShow(ctx)
+		return runAuthShow(r, ctx)
 	case "new":
-		return r.runAuthNew(ctx)
+		return runAuthNew(r, ctx)
 	case "login":
-		return r.runAuthLogin(ctx)
+		return runAuthLogin(r, ctx)
 	default:
 		return r.fail("Unknown auth subcommand: %s", os.Args[2])
 	}
 }
 
-func (r *runner) runAuthList(ctx context.Context) int {
+func runAuthList(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("auth list", flag.ExitOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
 	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
@@ -46,11 +46,11 @@ func (r *runner) runAuthList(ctx context.Context) int {
 		return r.fail("Failed to load profiles: %v", err)
 	}
 
-	r.renderAuthList(cfg)
+	renderAuthList(r.out, cfg)
 	return 0
 }
 
-func (r *runner) runAuthShow(ctx context.Context) int {
+func runAuthShow(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("auth show", flag.ExitOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
 	_ = fs.Parse(reorderArgs(fs, os.Args[3:]))
@@ -82,11 +82,11 @@ func (r *runner) runAuthShow(ctx context.Context) int {
 	if !ok {
 		return r.fail("Unknown auth %q", name)
 	}
-	r.renderAuthShow(cfg, name, auth)
+	renderAuthShow(r.out, cfg, name, auth)
 	return 0
 }
 
-func (r *runner) runAuthNew(ctx context.Context) int {
+func runAuthNew(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("auth new", flag.ExitOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
 	name := fs.String("name", "", "Auth reference name")
@@ -194,7 +194,7 @@ func (r *runner) runAuthNew(ctx context.Context) int {
 	return 0
 }
 
-func (r *runner) runAuthLogin(ctx context.Context) int {
+func runAuthLogin(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("auth login", flag.ExitOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
 	name := fs.String("name", "", "Auth reference name")

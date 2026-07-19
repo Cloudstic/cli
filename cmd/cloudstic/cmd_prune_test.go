@@ -21,7 +21,7 @@ func TestRunPrune_Normal(t *testing.T) {
 		},
 	}}
 
-	r.runPrune(context.Background())
+	runPrune(r, context.Background())
 
 	got := out.String()
 	if !strings.Contains(got, "Prune complete.") {
@@ -49,7 +49,7 @@ func TestRunPrune_DryRun(t *testing.T) {
 		},
 	}}
 
-	r.runPrune(context.Background())
+	runPrune(r, context.Background())
 
 	got := out.String()
 	if !strings.Contains(got, "Prune dry run complete.") {
@@ -63,7 +63,7 @@ func TestRunPrune_DryRun(t *testing.T) {
 func TestPrintPruneStats_Normal(t *testing.T) {
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}}
-	r.printPruneStats(&cloudstic.PruneResult{
+	printPruneStats(r.out, &cloudstic.PruneResult{
 		ObjectsScanned: 200,
 		ObjectsDeleted: 15,
 		BytesReclaimed: 1024 * 1024,
@@ -81,7 +81,7 @@ func TestPrintPruneStats_Normal(t *testing.T) {
 func TestPrintPruneStats_DryRun(t *testing.T) {
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}}
-	r.printPruneStats(&cloudstic.PruneResult{
+	printPruneStats(r.out, &cloudstic.PruneResult{
 		ObjectsScanned: 30,
 		ObjectsDeleted: 3,
 		DryRun:         true,

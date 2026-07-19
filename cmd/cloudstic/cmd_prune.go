@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/engine"
@@ -24,7 +25,7 @@ func parsePruneArgs() *pruneArgs {
 	return a
 }
 
-func (r *runner) runPrune(ctx context.Context) int {
+func runPrune(r *runner, ctx context.Context) int {
 	a := parsePruneArgs()
 	if err := r.openClient(ctx, a.g); err != nil {
 		return r.fail("Failed to init store: %v", err)
@@ -40,7 +41,7 @@ func (r *runner) runPrune(ctx context.Context) int {
 		return r.writeJSON(result)
 	}
 	_, _ = fmt.Fprintln(r.out)
-	r.printPruneStats(result)
+	printPruneStats(r.out, result)
 	return 0
 }
 
@@ -55,15 +56,15 @@ func buildPruneOpts(a *pruneArgs) []cloudstic.PruneOption {
 	return pruneOpts
 }
 
-func (r *runner) printPruneStats(res *cloudstic.PruneResult) {
+func printPruneStats(out io.Writer, res *cloudstic.PruneResult) {
 	if res.DryRun {
-		_, _ = fmt.Fprintf(r.out, "Prune dry run complete.\n")
-		_, _ = fmt.Fprintf(r.out, "  Objects scanned:       %d\n", res.ObjectsScanned)
-		_, _ = fmt.Fprintf(r.out, "  Objects would delete:  %d\n", res.ObjectsDeleted)
+		_, _ = fmt.Fprintf(out, "Prune dry run complete.\n")
+		_, _ = fmt.Fprintf(out, "  Objects scanned:       %d\n", res.ObjectsScanned)
+		_, _ = fmt.Fprintf(out, "  Objects would delete:  %d\n", res.ObjectsDeleted)
 	} else {
-		_, _ = fmt.Fprintf(r.out, "Prune complete.\n")
-		_, _ = fmt.Fprintf(r.out, "  Objects scanned:  %d\n", res.ObjectsScanned)
-		_, _ = fmt.Fprintf(r.out, "  Objects deleted:  %d\n", res.ObjectsDeleted)
-		_, _ = fmt.Fprintf(r.out, "  Space reclaimed:  %s\n", formatBytes(res.BytesReclaimed))
+		_, _ = fmt.Fprintf(out, "Prune complete.\n")
+		_, _ = fmt.Fprintf(out, "  Objects scanned:  %d\n", res.ObjectsScanned)
+		_, _ = fmt.Fprintf(out, "  Objects deleted:  %d\n", res.ObjectsDeleted)
+		_, _ = fmt.Fprintf(out, "  Space reclaimed:  %s\n", formatBytes(res.BytesReclaimed))
 	}
 }

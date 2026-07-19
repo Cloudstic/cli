@@ -10,7 +10,7 @@ import (
 	"github.com/jedib0t/go-pretty/v6/table"
 )
 
-func (r *runner) runSource(ctx context.Context) int {
+func runSource(r *runner, ctx context.Context) int {
 	if len(os.Args) < 3 {
 		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic source <subcommand> [options]")
 		_, _ = fmt.Fprintln(r.errOut, "")
@@ -20,13 +20,13 @@ func (r *runner) runSource(ctx context.Context) int {
 
 	switch os.Args[2] {
 	case "discover":
-		return r.runSourceDiscover(ctx)
+		return runSourceDiscover(r, ctx)
 	default:
 		return r.fail("Unknown source subcommand: %s", os.Args[2])
 	}
 }
 
-func (r *runner) runSourceDiscover(ctx context.Context) int {
+func runSourceDiscover(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("source discover", flag.ExitOnError)
 	portableOnly := fs.Bool("portable-only", false, "Only show portable/external source candidates")
 	jsonOutput := fs.Bool("json", false, "Write discovered sources as JSON")

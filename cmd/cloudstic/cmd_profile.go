@@ -75,10 +75,7 @@ func parseProfileShowArgs(args []string) (*profileShowArgs, error) {
 func runProfileShow(r *runner, ctx context.Context) int {
 	a, err := parseProfileShowArgs(r.args)
 	if err != nil {
-		if parseErrorExitCode(err) == 0 {
-			return 0
-		}
-		return r.fail("%v", err)
+		return r.parseError(err)
 	}
 	cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
 	if err != nil {
@@ -138,7 +135,7 @@ func parseProfileListArgs(args []string) (*profileListArgs, error) {
 func runProfileList(r *runner, ctx context.Context) int {
 	a, err := parseProfileListArgs(r.args)
 	if err != nil {
-		return parseErrorExitCode(err)
+		return r.parseError(err)
 	}
 	cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
 	if err != nil {
@@ -240,7 +237,7 @@ func parseProfileNewArgs(args []string) (*profileNewArgs, error) {
 func runProfileNew(r *runner, ctx context.Context) int {
 	a, err := parseProfileNewArgs(r.args)
 	if err != nil {
-		return parseErrorExitCode(err)
+		return r.parseError(err)
 	}
 	if a.name == "" {
 		if r.canPrompt() {

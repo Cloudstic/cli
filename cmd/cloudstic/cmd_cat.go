@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -36,11 +37,13 @@ func parseCatArgs(args []string) (*catArgs, error) {
 func runCat(r *runner, ctx context.Context) int {
 	a, err := parseCatArgs(r.args)
 	if err != nil {
-		if parseErrorExitCode(err) == 0 {
+		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
-		printCatUsage(r.errOut)
-		return r.fail("Error: %v", err)
+		if !r.jsonEnabled() {
+			printCatUsage(r.errOut)
+		}
+		return r.parseError(err)
 	}
 	if err := r.openClient(ctx, a.g); err != nil {
 		return r.fail("Failed to init store: %v", err)

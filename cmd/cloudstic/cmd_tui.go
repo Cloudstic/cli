@@ -42,7 +42,7 @@ func runTUI(r *runner, ctx context.Context) int {
 
 	args, err := parseTUIArgs(r.args)
 	if err != nil {
-		return parseErrorExitCode(err)
+		return r.parseError(err)
 	}
 	if !r.canPrompt() {
 		return r.fail("cloudstic tui requires an interactive terminal")

@@ -3,11 +3,22 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 )
+
+const (
+	exitFailure     = 1
+	exitInterrupted = 130
+)
+
+type errorOutput struct {
+	Error string `json:"error"`
+}
 
 type runner struct {
 	args              []string
@@ -67,10 +78,26 @@ func hasGlobalFlag(args []string, name string) bool {
 	return false
 }
 
-// fail writes a formatted error to r.errOut and returns exit code 1.
+func (r *runner) jsonEnabled() bool {
+	return hasGlobalFlag(r.args, "json")
+}
+
+// fail reports an error using the command's selected output format.
 func (r *runner) fail(format string, args ...any) int {
-	_, _ = fmt.Fprintf(r.errOut, format+"\n", args...)
-	return 1
+	message, exitCode := fmt.Sprintf(format, args...), exitFailure
+	for _, arg := range args {
+		err, ok := arg.(error)
+		if ok && errors.Is(err, context.Canceled) {
+			message, exitCode = "Interrupted.", exitInterrupted
+			break
+		}
+	}
+	if r.jsonEnabled() {
+		_ = json.NewEncoder(r.errOut).Encode(&errorOutput{Error: message})
+	} else {
+		_, _ = fmt.Fprintln(r.errOut, message)
+	}
+	return exitCode
 }
 
 // openClient opens the cloudstic client from the given global flags.

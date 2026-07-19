@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -155,11 +156,13 @@ func validateForgetArgs(a *forgetArgs) error {
 func runForget(r *runner, ctx context.Context) int {
 	a, err := parseForgetArgs(r.args)
 	if err != nil {
-		if parseErrorExitCode(err) == 0 {
+		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
-		printForgetUsage(r.errOut)
-		return r.fail("\nError: %v", err)
+		if !r.jsonEnabled() {
+			printForgetUsage(r.errOut)
+		}
+		return r.parseError(err)
 	}
 	if err := r.openClient(ctx, a.g); err != nil {
 		return r.fail("Failed to init store: %v", err)

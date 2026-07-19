@@ -32,7 +32,7 @@ func runSourceDiscover(r *runner, ctx context.Context) int {
 	portableOnly := fs.Bool("portable-only", false, "Only show portable/external source candidates")
 	jsonOutput := fs.Bool("json", false, "Write discovered sources as JSON")
 	if err := parseFlags(fs, r.args); err != nil {
-		return parseErrorExitCode(err)
+		return r.parseError(err)
 	}
 
 	if r.client == nil {

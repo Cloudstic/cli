@@ -67,8 +67,9 @@ func TestParseFlags_AcceptsNoPromptForNestedCommands(t *testing.T) {
 }
 
 func TestParseErrorExitCode_HelpSucceeds(t *testing.T) {
-	if code := parseErrorExitCode(flag.ErrHelp); code != 0 {
-		t.Fatalf("parseErrorExitCode(flag.ErrHelp) = %d, want 0", code)
+	r := newRunner(nil)
+	if code := r.parseError(flag.ErrHelp); code != 0 {
+		t.Fatalf("parseError(flag.ErrHelp) = %d, want 0", code)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -106,14 +107,17 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 	if fs.Lookup("no-prompt") == nil {
 		fs.Bool("no-prompt", false, "Disable interactive prompts (for scripts and CI)")
 	}
+	if hasGlobalFlag(args, "json") && !hasGlobalFlag(args, "h") {
+		fs.SetOutput(io.Discard)
+	}
 	return fs.Parse(reorderArgs(fs, args))
 }
 
-func parseErrorExitCode(err error) int {
+func (r *runner) parseError(err error) int {
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
-	return 1
+	return r.fail("Error: %v", err)
 }
 
 // reorderArgs moves flag arguments before positional arguments so that Go's

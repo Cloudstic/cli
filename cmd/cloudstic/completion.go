@@ -27,8 +27,7 @@ func runCompletion(r *runner) int {
 	case "fish":
 		completionFish(r.out)
 	default:
-		_, _ = fmt.Fprintf(r.errOut, "Unsupported shell: %s\nAvailable shells: bash, zsh, fish\n", shell)
-		return 1
+		return r.fail("Unsupported shell: %s\nAvailable shells: bash, zsh, fish", shell)
 	}
 	return 0
 }

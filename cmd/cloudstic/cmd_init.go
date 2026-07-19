@@ -39,7 +39,7 @@ func parseInitArgs(args []string) (*initArgs, error) {
 func runInit(r *runner, ctx context.Context) int {
 	a, err := parseInitArgs(r.args)
 	if err != nil {
-		return parseErrorExitCode(err)
+		return r.parseError(err)
 	}
 	return runInitWithArgs(r, ctx, a)
 }
@@ -65,10 +65,7 @@ func runInitWithArgs(r *runner, ctx context.Context, a *initArgs) int {
 			a.g.password = pw
 			kc, _ = a.g.buildKeychain(ctx)
 		} else {
-			_, _ = fmt.Fprintln(r.errOut, "Error: encryption is required by default.")
-			_, _ = fmt.Fprintln(r.errOut, "Provide --password or --encryption-key to encrypt your repository.")
-			_, _ = fmt.Fprintln(r.errOut, "To create an unencrypted repository, pass --no-encryption (not recommended).")
-			return 1
+			return r.fail("Error: encryption is required by default.\nProvide --password or --encryption-key to encrypt your repository.\nTo create an unencrypted repository, pass --no-encryption (not recommended).")
 		}
 	}
 

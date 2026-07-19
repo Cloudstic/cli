@@ -52,7 +52,7 @@ func runDiff(r *runner, ctx context.Context) int {
 
 func buildDiffOpts(a *diffArgs) []cloudstic.DiffOption {
 	var diffOpts []cloudstic.DiffOption
-	if *a.g.verbose {
+	if a.g.verbose {
 		diffOpts = append(diffOpts, cloudstic.WithDiffVerbose())
 	}
 	return diffOpts

@@ -45,7 +45,7 @@ func runList(r *runner, ctx context.Context) int {
 
 func buildListOpts(a *listArgs) []cloudstic.ListOption {
 	var listOpts []cloudstic.ListOption
-	if *a.g.verbose {
+	if a.g.verbose {
 		listOpts = append(listOpts, cloudstic.WithListVerbose())
 	}
 	return listOpts

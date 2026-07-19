@@ -50,7 +50,7 @@ func buildPruneOpts(a *pruneArgs) []cloudstic.PruneOption {
 	if a.dryRun {
 		pruneOpts = append(pruneOpts, engine.WithPruneDryRun())
 	}
-	if *a.g.verbose {
+	if a.g.verbose {
 		pruneOpts = append(pruneOpts, engine.WithPruneVerbose())
 	}
 	return pruneOpts

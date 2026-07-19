@@ -728,76 +728,59 @@ func existingStoreInteractivePlan(canPrompt, hasOverrides, hasEncryption bool) (
 // globalFlagsFromProfileStore builds a globalFlags populated from a ProfileStore,
 // resolving env var indirections for secrets.
 func globalFlagsFromProfileStore(s cloudstic.ProfileStore) (*globalFlags, error) {
-
 	g := &globalFlags{}
-	store := s.URI
-	g.store = &store
-	s3Endpoint := s.S3Endpoint
-	g.s3Endpoint = &s3Endpoint
-	s3Region := s.S3Region
-	if s3Region == "" {
-		s3Region = "us-east-1"
+	g.store = s.URI
+	g.s3Endpoint = s.S3Endpoint
+	g.s3Region = s.S3Region
+	if g.s3Region == "" {
+		g.s3Region = "us-east-1"
 	}
-	g.s3Region = &s3Region
-	s3Profile, err := resolveProfileStoreValue("s3_profile", s.S3Profile, "")
-	if err != nil {
-		return nil, err
-	}
-	g.s3Profile = &s3Profile
-	s3AccessKey, err := resolveProfileStoreValue("s3_access_key", s.S3AccessKey, s.S3AccessKeySecret)
-	if err != nil {
-		return nil, err
-	}
-	g.s3AccessKey = &s3AccessKey
-	s3SecretKey, err := resolveProfileStoreValue("s3_secret_key", s.S3SecretKey, s.S3SecretKeySecret)
-	if err != nil {
-		return nil, err
-	}
-	g.s3SecretKey = &s3SecretKey
-	storeSFTPPassword, err := resolveProfileStoreValue("store_sftp_password", s.StoreSFTPPassword, s.StoreSFTPPasswordSecret)
-	if err != nil {
-		return nil, err
-	}
-	g.storeSFTPPassword = &storeSFTPPassword
-	storeSFTPKey, err := resolveProfileStoreValue("store_sftp_key", s.StoreSFTPKey, s.StoreSFTPKeySecret)
-	if err != nil {
-		return nil, err
-	}
-	g.storeSFTPKey = &storeSFTPKey
-	password, err := resolveProfileStoreValue("password", "", s.PasswordSecret)
-	if err != nil {
-		return nil, err
-	}
-	g.password = &password
-	encryptionKey, err := resolveProfileStoreValue("encryption_key", "", s.EncryptionKeySecret)
-	if err != nil {
-		return nil, err
-	}
-	g.encryptionKey = &encryptionKey
-	recoveryKey, err := resolveProfileStoreValue("recovery_key", "", s.RecoveryKeySecret)
-	if err != nil {
-		return nil, err
-	}
-	g.recoveryKey = &recoveryKey
-	kmsKeyARN := s.KMSKeyARN
-	g.kmsKeyARN = &kmsKeyARN
-	kmsRegion := s.KMSRegion
-	g.kmsRegion = &kmsRegion
-	kmsEndpoint := s.KMSEndpoint
-	g.kmsEndpoint = &kmsEndpoint
 
-	// Non-store fields with safe defaults.
-	empty := ""
-	g.sourceSFTPPassword = &empty
-	g.sourceSFTPKey = &empty
-	falseVal := false
-	g.disablePackfile = &falseVal
-	g.prompt = &falseVal
-	g.verbose = &falseVal
-	g.quiet = &falseVal
-	g.debug = &falseVal
-	g.profile = &empty
-	g.profilesFile = &empty
+	var err error
+	if g.s3Profile, err = resolveProfileStoreValue("s3_profile", s.S3Profile, ""); err != nil {
+		return nil, err
+	}
+	if g.s3AccessKey, err = resolveProfileStoreValue("s3_access_key", s.S3AccessKey, s.S3AccessKeySecret); err != nil {
+		return nil, err
+	}
+	if g.s3SecretKey, err = resolveProfileStoreValue("s3_secret_key", s.S3SecretKey, s.S3SecretKeySecret); err != nil {
+		return nil, err
+	}
+	if g.storeSFTPPassword, err = resolveProfileStoreValue("store_sftp_password", s.StoreSFTPPassword, s.StoreSFTPPasswordSecret); err != nil {
+		return nil, err
+	}
+	if g.storeSFTPKey, err = resolveProfileStoreValue("store_sftp_key", s.StoreSFTPKey, s.StoreSFTPKeySecret); err != nil {
+		return nil, err
+	}
+	if g.password, err = resolveProfileStoreValue("password", "", s.PasswordSecret); err != nil {
+		return nil, err
+	}
+	if g.encryptionKey, err = resolveProfileStoreValue("encryption_key", "", s.EncryptionKeySecret); err != nil {
+		return nil, err
+	}
+	if g.recoveryKey, err = resolveProfileStoreValue("recovery_key", "", s.RecoveryKeySecret); err != nil {
+		return nil, err
+	}
+	g.kmsKeyARN = s.KMSKeyARN
+	g.kmsRegion = s.KMSRegion
+	g.kmsEndpoint = s.KMSEndpoint
+
+	// Non-store fields with safe defaults: ProfileStore carries no source-side
+	// SFTP credentials or SFTP host-key-verification overrides, so those stay
+	// at their zero value (disabled/empty) rather than left unset.
+	g.sourceSFTPPassword = ""
+	g.sourceSFTPKey = ""
+	g.sourceSFTPInsecure = false
+	g.sourceSFTPKnownHosts = ""
+	g.storeSFTPInsecure = false
+	g.storeSFTPKnownHosts = ""
+	g.disablePackfile = false
+	g.prompt = false
+	g.verbose = false
+	g.quiet = false
+	g.debug = false
+	g.profile = ""
+	g.profilesFile = ""
 
 	return g, nil
 }

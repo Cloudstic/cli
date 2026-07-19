@@ -106,7 +106,7 @@ func buildRestoreOpts(a *restoreArgs) []cloudstic.RestoreOption {
 	if a.dryRun {
 		restoreOpts = append(restoreOpts, engine.WithRestoreDryRun())
 	}
-	if *a.g.verbose {
+	if a.g.verbose {
 		restoreOpts = append(restoreOpts, engine.WithRestoreVerbose())
 	}
 	if a.pathFilter != "" {

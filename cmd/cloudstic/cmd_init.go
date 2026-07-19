@@ -57,7 +57,7 @@ func runInitWithArgs(r *runner, ctx context.Context, a *initArgs) int {
 			if err != nil {
 				return r.fail("Error: %v", err)
 			}
-			*a.g.password = pw
+			a.g.password = pw
 			kc, _ = a.g.buildKeychain(ctx)
 		} else {
 			_, _ = fmt.Fprintln(r.errOut, "Error: encryption is required by default.")

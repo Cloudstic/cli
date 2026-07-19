@@ -26,20 +26,20 @@ func TestApplyProfileStoreOverrides_AppliesProfileStore(t *testing.T) {
 
 	os.Args = []string{"cloudstic", "list", "-profile", "p", "-profiles-file", profilesPath}
 	g := newTestGlobalFlags()
-	*g.profile = "p"
-	*g.profilesFile = profilesPath
+	g.profile = "p"
+	g.profilesFile = profilesPath
 
 	if err := g.applyProfileStoreOverrides(); err != nil {
 		t.Fatalf("applyProfileStoreOverrides: %v", err)
 	}
-	if *g.store != "s3:bucket/prefix" {
-		t.Fatalf("store=%q want s3:bucket/prefix", *g.store)
+	if g.store != "s3:bucket/prefix" {
+		t.Fatalf("store=%q want s3:bucket/prefix", g.store)
 	}
-	if *g.s3Region != "eu-west-1" {
-		t.Fatalf("s3Region=%q want eu-west-1", *g.s3Region)
+	if g.s3Region != "eu-west-1" {
+		t.Fatalf("s3Region=%q want eu-west-1", g.s3Region)
 	}
-	if *g.s3Profile != "prod" {
-		t.Fatalf("s3Profile=%q want prod", *g.s3Profile)
+	if g.s3Profile != "prod" {
+		t.Fatalf("s3Profile=%q want prod", g.s3Profile)
 	}
 }
 
@@ -74,29 +74,29 @@ func TestApplyProfileStoreOverrides_EncryptionFields(t *testing.T) {
 
 	os.Args = []string{"cloudstic", "list", "-profile", "p", "-profiles-file", profilesPath}
 	g := newTestGlobalFlags()
-	*g.profile = "p"
-	*g.profilesFile = profilesPath
+	g.profile = "p"
+	g.profilesFile = profilesPath
 
 	if err := g.applyProfileStoreOverrides(); err != nil {
 		t.Fatalf("applyProfileStoreOverrides: %v", err)
 	}
-	if *g.password != "s3cret" {
-		t.Fatalf("password=%q want s3cret", *g.password)
+	if g.password != "s3cret" {
+		t.Fatalf("password=%q want s3cret", g.password)
 	}
-	if *g.encryptionKey != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
-		t.Fatalf("encryptionKey=%q want aaa...", *g.encryptionKey)
+	if g.encryptionKey != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatalf("encryptionKey=%q want aaa...", g.encryptionKey)
 	}
-	if *g.recoveryKey == "" {
+	if g.recoveryKey == "" {
 		t.Fatal("expected recoveryKey to be set from env")
 	}
-	if *g.kmsKeyARN != "arn:aws:kms:us-east-1:123456:key/abcd" {
-		t.Fatalf("kmsKeyARN=%q want arn:...", *g.kmsKeyARN)
+	if g.kmsKeyARN != "arn:aws:kms:us-east-1:123456:key/abcd" {
+		t.Fatalf("kmsKeyARN=%q want arn:...", g.kmsKeyARN)
 	}
-	if *g.kmsRegion != "us-east-1" {
-		t.Fatalf("kmsRegion=%q want us-east-1", *g.kmsRegion)
+	if g.kmsRegion != "us-east-1" {
+		t.Fatalf("kmsRegion=%q want us-east-1", g.kmsRegion)
 	}
-	if *g.kmsEndpoint != "https://kms.example.com" {
-		t.Fatalf("kmsEndpoint=%q want https://kms.example.com", *g.kmsEndpoint)
+	if g.kmsEndpoint != "https://kms.example.com" {
+		t.Fatalf("kmsEndpoint=%q want https://kms.example.com", g.kmsEndpoint)
 	}
 }
 
@@ -118,14 +118,14 @@ func TestApplyProfileStoreOverrides_DoesNotOverrideExplicitStoreFlag(t *testing.
 
 	os.Args = []string{"cloudstic", "list", "-profile", "p", "-profiles-file", profilesPath, "-store", "local:/explicit"}
 	g := newTestGlobalFlags()
-	*g.profile = "p"
-	*g.profilesFile = profilesPath
-	*g.store = "local:/explicit"
+	g.profile = "p"
+	g.profilesFile = profilesPath
+	g.store = "local:/explicit"
 
 	if err := g.applyProfileStoreOverrides(); err != nil {
 		t.Fatalf("applyProfileStoreOverrides: %v", err)
 	}
-	if *g.store != "local:/explicit" {
-		t.Fatalf("store=%q want local:/explicit", *g.store)
+	if g.store != "local:/explicit" {
+		t.Fatalf("store=%q want local:/explicit", g.store)
 	}
 }

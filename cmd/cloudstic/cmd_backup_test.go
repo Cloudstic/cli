@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"strings"
 	"testing"
 
@@ -106,7 +107,7 @@ func TestParseXattrNamespacePrefixes(t *testing.T) {
 
 func TestPrintUsage_Smoke(t *testing.T) {
 	// Verify printUsage doesn't panic.
-	printUsage()
+	printUsage(io.Discard)
 }
 
 func TestBuildBackupOpts_IgnoreEmptySnapshot(t *testing.T) {

@@ -24,26 +24,31 @@ func defaultProfilesPath() (string, error) {
 	return filepath.Join(configDir, defaultProfilesFilename), nil
 }
 
-func runProfile(r *runner, ctx context.Context) int {
-	if len(r.args) < 1 {
-		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic profile <subcommand> [options]")
-		_, _ = fmt.Fprintln(r.errOut, "")
-		_, _ = fmt.Fprintln(r.errOut, "Available subcommands: list, show, new")
-		return 1
-	}
+func profileCommandSpec() *commandSpec {
+	return group("profile", "Manage backup profiles",
+		profileNewCommandSpec(), profileListCommandSpec(), profileShowCommandSpec())
+}
 
-	subcommand := r.args[0]
-	subRunner := r.withArgs(r.args[1:])
-	switch subcommand {
-	case "list":
-		return runProfileList(subRunner, ctx)
-	case "show":
-		return runProfileShow(subRunner, ctx)
-	case "new":
-		return runProfileNew(subRunner, ctx)
-	default:
-		return r.fail("Unknown profile subcommand: %s", subcommand)
-	}
+func profileNewCommandSpec() *commandSpec {
+	return leaf("new", "Create or update a backup profile", "", runProfileNew,
+		profilesFileFlag(), valueFlag("name", "name", "Profile name", completionNone), sourceFlag(),
+		valueFlag("store-ref", "name", "Store reference", completionNone), storeFlag(),
+		valueFlag("auth-ref", "name", "Auth reference", completionAuth), valueFlag("tag", "tag", "Snapshot tag", completionNone),
+		valueFlag("exclude", "pattern", "Exclude pattern", completionNone), valueFlag("exclude-file", "path", "Exclude-pattern file", completionFile),
+		boolFlag("ignore-empty-snapshot", "Skip unchanged snapshots"), boolFlag("skip-native-files", "Exclude cloud-native files"),
+		volumeUUIDFlag(), googleCredentialsFlag(), valueFlag("google-credentials-ref", "ref", "Google credentials reference", completionNone),
+		googleCredentialsJSONFlag(), googleTokenFileFlag(), valueFlag("google-token-ref", "ref", "Google token reference", completionNone),
+		onedriveClientIDFlag(), onedriveTokenFileFlag(), valueFlag("onedrive-token-ref", "ref", "OneDrive token reference", completionNone)).withNotes(
+		"Use -store-ref to select an existing store; add -store to create or update it.",
+		"Use -auth-ref to reuse cloud OAuth settings across profiles.")
+}
+
+func profileListCommandSpec() *commandSpec {
+	return leaf("list", "List stores, auth entries, and backup profiles", "", runProfileList, profilesFileFlag())
+}
+
+func profileShowCommandSpec() *commandSpec {
+	return leaf("show", "Show one profile and resolved references", "<name>", runProfileShow, profilesFileFlag())
 }
 
 type profileShowArgs struct {
@@ -58,8 +63,8 @@ func parseProfileShowArgs(args []string) (*profileShowArgs, error) {
 	if err != nil {
 		defaultPath = defaultProfilesFilename
 	}
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultPath), "Path to profiles YAML file")
-	if err := parseFlags(fs, args); err != nil {
+	profilesFile := fs.String("profiles-file", defaultPath, "Path to profiles YAML file")
+	if err := parseFlags(fs, args, profileShowCommandSpec()); err != nil {
 		return nil, err
 	}
 	a.profilesFile = *profilesFile
@@ -124,8 +129,8 @@ func parseProfileListArgs(args []string) (*profileListArgs, error) {
 	if err != nil {
 		defaultPath = defaultProfilesFilename
 	}
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultPath), "Path to profiles YAML file")
-	if err := parseFlags(fs, args); err != nil {
+	profilesFile := fs.String("profiles-file", defaultPath, "Path to profiles YAML file")
+	if err := parseFlags(fs, args, profileListCommandSpec()); err != nil {
 		return nil, err
 	}
 	a.profilesFile = *profilesFile
@@ -179,13 +184,14 @@ type profileNewArgs struct {
 }
 
 func parseProfileNewArgs(args []string) (*profileNewArgs, error) {
+	command := profileNewCommandSpec()
 	fs := flag.NewFlagSet("profile new", flag.ContinueOnError)
 	a := &profileNewArgs{}
 	defaultPath, err := defaultProfilesPath()
 	if err != nil {
 		defaultPath = defaultProfilesFilename
 	}
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultPath), "Path to profiles YAML file")
+	profilesFile := fs.String("profiles-file", defaultPath, "Path to profiles YAML file")
 	name := fs.String("name", "", "Profile name")
 	source := fs.String("source", "", "Source URI")
 	storeRef := fs.String("store-ref", "", "Store reference name from top-level stores map")
@@ -205,12 +211,11 @@ func parseProfileNewArgs(args []string) (*profileNewArgs, error) {
 	onedriveTokenRef := fs.String("onedrive-token-ref", "", "Secret reference to OneDrive OAuth token")
 	fs.Var(&a.tags, "tag", "Tag to apply to snapshots (repeatable)")
 	fs.Var(&a.excludes, "exclude", "Exclude pattern (repeatable)")
-	if err := parseFlags(fs, args); err != nil {
+	if err := parseFlags(fs, args, command); err != nil {
 		return nil, err
 	}
 
-	a.flagsSet = map[string]bool{}
-	fs.Visit(func(f *flag.Flag) { a.flagsSet[f.Name] = true })
+	a.flagsSet = suppliedFlags(commandValueSources(fs, command))
 
 	a.profilesFile = *profilesFile
 	a.name = *name

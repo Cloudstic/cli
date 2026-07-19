@@ -1,0 +1,11 @@
+# Help names supported environment variables without exposing their live values.
+env CLOUDSTIC_PASSWORD=sentinel-repository-password
+env GOOGLE_CREDENTIALS_JSON=sentinel-google-credentials
+env B2_APP_KEY=sentinel-b2-application-key
+
+exec cloudstic backup -h
+! stdout 'sentinel-'
+! stderr 'sentinel-'
+stderr 'CLOUDSTIC_PASSWORD'
+stderr 'GOOGLE_CREDENTIALS_JSON'
+stderr 'B2_APP_KEY'

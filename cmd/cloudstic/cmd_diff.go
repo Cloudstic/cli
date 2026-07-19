@@ -16,11 +16,16 @@ type diffArgs struct {
 	snap2 string
 }
 
+func diffCommandSpec() *commandSpec {
+	return leaf("diff", "Compare two snapshots", "<snapshot_1> <snapshot_2>", runDiff).withGlobalFlags().withNotes(
+		"Use 'latest' as an alias for the most recent snapshot.")
+}
+
 func parseDiffArgs(args []string) (*diffArgs, error) {
 	fs := flag.NewFlagSet("diff", flag.ContinueOnError)
 	a := &diffArgs{}
 	a.g = addGlobalFlags(fs)
-	if err := parseFlags(fs, args); err != nil {
+	if err := parseFlags(fs, args, diffCommandSpec()); err != nil {
 		return nil, err
 	}
 	if fs.NArg() < 2 {

@@ -15,12 +15,17 @@ type pruneArgs struct {
 	dryRun bool
 }
 
+func pruneCommandSpec() *commandSpec {
+	return leaf("prune", "Remove unused data chunks", "", runPrune,
+		boolFlag("dry-run", "Preview without deleting")).withGlobalFlags()
+}
+
 func parsePruneArgs(args []string) (*pruneArgs, error) {
 	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
 	a := &pruneArgs{}
 	a.g = addGlobalFlags(fs)
 	dryRun := fs.Bool("dry-run", false, "Show what would be deleted without deleting")
-	if err := parseFlags(fs, args); err != nil {
+	if err := parseFlags(fs, args, pruneCommandSpec()); err != nil {
 		return nil, err
 	}
 	a.dryRun = *dryRun

@@ -173,7 +173,7 @@ func TestMergeProfileBackupArgs_CLIAuthRefOverridesProfile(t *testing.T) {
 func newTestGlobalFlags(args ...string) *globalFlags {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	g := addGlobalFlags(fs)
-	_ = parseFlags(fs, args)
+	_ = parseFlags(fs, args, nil)
 	return g
 }
 
@@ -280,12 +280,14 @@ func TestCloneGlobalFlags_Independence(t *testing.T) {
 	orig.profile = "orig-profile"
 	orig.profilesFile = "/tmp/orig-profiles.yaml"
 	orig.s3Profile = "orig-s3-profile"
+	orig.setValueSource("store", valueSourceEnvironment)
 
 	clone := cloneGlobalFlags(orig)
 	clone.store = "modified-store"
 	clone.profile = "clone-profile"
 	clone.profilesFile = "/tmp/clone-profiles.yaml"
 	clone.s3Profile = "clone-s3-profile"
+	clone.setValueSource("store", valueSourceProfile)
 
 	if orig.store != "original-store" {
 		t.Fatalf("original store=%q want original-store", orig.store)
@@ -301,6 +303,12 @@ func TestCloneGlobalFlags_Independence(t *testing.T) {
 	}
 	if orig.s3Profile != "orig-s3-profile" {
 		t.Fatalf("original s3Profile=%q want orig-s3-profile", orig.s3Profile)
+	}
+	if source := orig.valueSource("store"); source != valueSourceEnvironment {
+		t.Fatalf("original store source=%q want %q", source, valueSourceEnvironment)
+	}
+	if source := clone.valueSource("store"); source != valueSourceProfile {
+		t.Fatalf("clone store source=%q want %q", source, valueSourceProfile)
 	}
 }
 

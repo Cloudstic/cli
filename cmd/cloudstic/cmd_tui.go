@@ -12,12 +12,23 @@ type tuiArgs struct {
 	profilesFile string
 }
 
+func tuiCommandSpec() *commandSpec {
+	command := leaf("tui", "Launch the interactive terminal dashboard", "", runTUI, profilesFileFlag())
+	command.flagProbe = probeTUIFlags
+	return command
+}
+
+func probeTUIFlags(r *runner, _ context.Context) int {
+	_, _ = parseTUIArgs(r.args)
+	return 0
+}
+
 func parseTUIArgs(args []string) (*tuiArgs, error) {
 	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	a := &tuiArgs{}
 	fs.StringVar(&a.profilesFile, "profiles-file", defaultProfilesPathNoCreate(), "Path to profiles YAML file")
-	if err := parseFlags(fs, args); err != nil {
+	if err := parseFlags(fs, args, tuiCommandSpec()); err != nil {
 		return nil, err
 	}
 	return a, nil

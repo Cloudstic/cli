@@ -112,10 +112,12 @@ func (g *globalFlags) applyProfileStoreOverrides() error {
 	flagsSet := map[string]bool{}
 	for _, name := range []string{
 		"store", "s3-endpoint", "s3-region", "s3-profile", "s3-access-key", "s3-secret-key",
+		"b2-key-id", "b2-app-key",
 		"store-sftp-password", "store-sftp-key",
 		"password", "encryption-key", "recovery-key", "kms-key-arn", "kms-region", "kms-endpoint",
 	} {
-		flagsSet[name] = g.flagProvided(name)
+		source := g.valueSource(name)
+		flagsSet[name] = source == valueSourceFlag || source == valueSourceEnvironment
 	}
 	if err := applyProfileStoreToGlobalFlags(g, s, flagsSet); err != nil {
 		return fmt.Errorf("profile %q store %q: %w", g.profile, p.Store, err)
@@ -277,12 +279,10 @@ func (g *globalFlags) initObjectStore(ctx context.Context) (store.ObjectStore, e
 	case "local":
 		inner, err = store.NewLocalStore(uri.path)
 	case "b2":
-		keyID := os.Getenv("B2_KEY_ID")
-		appKey := os.Getenv("B2_APP_KEY")
-		if keyID == "" || appKey == "" {
-			return nil, fmt.Errorf("B2_KEY_ID and B2_APP_KEY env vars required for b2 store")
+		if g.b2KeyID == "" || g.b2AppKey == "" {
+			return nil, fmt.Errorf("B2 credentials required (use -b2-key-id and -b2-app-key or their environment variables)")
 		}
-		inner, err = store.NewB2Store(uri.bucket, store.WithCredentials(keyID, appKey), store.WithPrefix(uri.prefix))
+		inner, err = store.NewB2Store(uri.bucket, store.WithCredentials(g.b2KeyID, g.b2AppKey), store.WithPrefix(uri.prefix))
 	case "s3":
 		inner, err = store.NewS3Store(
 			ctx,

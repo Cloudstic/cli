@@ -11,6 +11,10 @@ type storeNewFlagPtrs struct {
 	s3SecretKey         *string
 	s3AccessKeySecret   *string
 	s3SecretKeySecret   *string
+	b2KeyID             *string
+	b2AppKey            *string
+	b2KeyIDSecret       *string
+	b2AppKeySecret      *string
 	sftpPassword        *string
 	sftpKey             *string
 	sftpPasswordSecret  *string
@@ -47,6 +51,18 @@ func applyExistingStoreDefaults(flagsSet map[string]bool, existing cloudstic.Pro
 	}
 	if !flagsSet["s3-secret-key-secret"] && existing.S3SecretKeySecret != "" {
 		*f.s3SecretKeySecret = existing.S3SecretKeySecret
+	}
+	if !flagsSet["b2-key-id"] && existing.B2KeyID != "" {
+		*f.b2KeyID = existing.B2KeyID
+	}
+	if !flagsSet["b2-app-key"] && existing.B2AppKey != "" {
+		*f.b2AppKey = existing.B2AppKey
+	}
+	if !flagsSet["b2-key-id-secret"] && existing.B2KeyIDSecret != "" {
+		*f.b2KeyIDSecret = existing.B2KeyIDSecret
+	}
+	if !flagsSet["b2-app-key-secret"] && existing.B2AppKeySecret != "" {
+		*f.b2AppKeySecret = existing.B2AppKeySecret
 	}
 	if !flagsSet["store-sftp-password"] && existing.StoreSFTPPassword != "" {
 		*f.sftpPassword = existing.StoreSFTPPassword
@@ -90,6 +106,10 @@ func buildProfileStoreFromFlags(f storeNewFlagPtrs) cloudstic.ProfileStore {
 		S3SecretKey:             *f.s3SecretKey,
 		S3AccessKeySecret:       *f.s3AccessKeySecret,
 		S3SecretKeySecret:       *f.s3SecretKeySecret,
+		B2KeyID:                 *f.b2KeyID,
+		B2AppKey:                *f.b2AppKey,
+		B2KeyIDSecret:           *f.b2KeyIDSecret,
+		B2AppKeySecret:          *f.b2AppKeySecret,
 		StoreSFTPPassword:       *f.sftpPassword,
 		StoreSFTPKey:            *f.sftpKey,
 		StoreSFTPPasswordSecret: *f.sftpPasswordSecret,

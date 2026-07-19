@@ -17,10 +17,7 @@ import (
 var planWorkstationSetup = cloudstic.PlanWorkstationSetup
 
 func defaultProfilesPathNoCreate() string {
-	if path := os.Getenv("CLOUDSTIC_PROFILES_FILE"); path != "" {
-		return path
-	}
-	if dir := os.Getenv("CLOUDSTIC_CONFIG_DIR"); dir != "" {
+	if dir, ok := nonEmptyEnvironment("CLOUDSTIC_CONFIG_DIR"); ok {
 		return filepath.Join(dir, defaultProfilesFilename)
 	}
 	if dir, err := os.UserConfigDir(); err == nil {
@@ -29,22 +26,15 @@ func defaultProfilesPathNoCreate() string {
 	return defaultProfilesFilename
 }
 
-func runSetup(r *runner, ctx context.Context) int {
-	if len(r.args) < 1 {
-		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic setup <subcommand> [options]")
-		_, _ = fmt.Fprintln(r.errOut, "")
-		_, _ = fmt.Fprintln(r.errOut, "Available subcommands: workstation")
-		return 1
-	}
+func setupCommandSpec() *commandSpec {
+	return group("setup", "Guided setup and onboarding flows", setupWorkstationCommandSpec())
+}
 
-	subcommand := r.args[0]
-	subRunner := r.withArgs(r.args[1:])
-	switch subcommand {
-	case "workstation":
-		return runSetupWorkstation(subRunner, ctx)
-	default:
-		return r.fail("Unknown setup subcommand: %s", subcommand)
-	}
+func setupWorkstationCommandSpec() *commandSpec {
+	return leaf("workstation", "Guide workstation onboarding and profile setup", "", runSetupWorkstation,
+		boolFlag("dry-run", "Preview without writing configuration"), boolFlag("yes", "Accept defaults without prompting"),
+		boolFlag("json", "Write onboarding plan as JSON"), profilesFileFlag(),
+		valueFlag("store-ref", "name", "Store reference to attach", completionNone))
 }
 
 type setupWorkstationArgs struct {
@@ -63,7 +53,7 @@ func parseSetupWorkstationArgs(args []string) (*setupWorkstationArgs, error) {
 	jsonOutput := fs.Bool("json", false, "Write onboarding plan as JSON")
 	profilesFile := fs.String("profiles-file", defaultProfilesPathNoCreate(), "Path to profiles YAML file")
 	storeRef := fs.String("store-ref", "", "Existing store reference to attach to generated profiles")
-	if err := parseFlags(fs, args); err != nil {
+	if err := parseFlags(fs, args, setupWorkstationCommandSpec()); err != nil {
 		return nil, err
 	}
 	a.dryRun = *dryRun

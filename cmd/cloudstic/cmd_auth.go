@@ -11,34 +11,37 @@ import (
 	cloudstic "github.com/cloudstic/cli"
 )
 
-func runAuth(r *runner, ctx context.Context) int {
-	if len(r.args) < 1 {
-		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic auth <subcommand> [options]")
-		_, _ = fmt.Fprintln(r.errOut, "")
-		_, _ = fmt.Fprintln(r.errOut, "Available subcommands: list, show, new, login")
-		return 1
-	}
+func authCommandSpec() *commandSpec {
+	return group("auth", "Manage reusable cloud auth entries",
+		authNewCommandSpec(), authListCommandSpec(), authShowCommandSpec(), authLoginCommandSpec())
+}
 
-	subcommand := r.args[0]
-	subRunner := r.withArgs(r.args[1:])
-	switch subcommand {
-	case "list":
-		return runAuthList(subRunner, ctx)
-	case "show":
-		return runAuthShow(subRunner, ctx)
-	case "new":
-		return runAuthNew(subRunner, ctx)
-	case "login":
-		return runAuthLogin(subRunner, ctx)
-	default:
-		return r.fail("Unknown auth subcommand: %s", subcommand)
-	}
+func authNewCommandSpec() *commandSpec {
+	return leaf("new", "Create or update a reusable cloud auth entry", "", runAuthNew,
+		profilesFileFlag(), valueFlag("name", "name", "Auth reference name", completionNone),
+		valueFlag("provider", "provider", "Auth provider", completionNone), googleCredentialsFlag(),
+		valueFlag("google-credentials-ref", "ref", "Google credentials reference", completionNone), googleTokenFileFlag(),
+		valueFlag("google-token-ref", "ref", "Google token reference", completionNone), onedriveClientIDFlag(), onedriveTokenFileFlag(),
+		valueFlag("onedrive-token-ref", "ref", "OneDrive token reference", completionNone))
+}
+
+func authListCommandSpec() *commandSpec {
+	return leaf("list", "List configured auth entries", "", runAuthList, profilesFileFlag())
+}
+
+func authShowCommandSpec() *commandSpec {
+	return leaf("show", "Show one auth entry", "<name>", runAuthShow, profilesFileFlag())
+}
+
+func authLoginCommandSpec() *commandSpec {
+	return leaf("login", "Run OAuth login for one auth entry", "", runAuthLogin,
+		profilesFileFlag(), valueFlag("name", "name", "Auth reference name", completionAuth))
 }
 
 func runAuthList(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("auth list", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
-	if err := parseFlags(fs, r.args); err != nil {
+	profilesFile := fs.String("profiles-file", defaultProfilesPathFallback(), "Path to profiles YAML file")
+	if err := parseFlags(fs, r.args, authListCommandSpec()); err != nil {
 		return r.parseError(err)
 	}
 
@@ -56,8 +59,8 @@ func runAuthList(r *runner, ctx context.Context) int {
 
 func runAuthShow(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("auth show", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
-	if err := parseFlags(fs, r.args); err != nil {
+	profilesFile := fs.String("profiles-file", defaultProfilesPathFallback(), "Path to profiles YAML file")
+	if err := parseFlags(fs, r.args, authShowCommandSpec()); err != nil {
 		return r.parseError(err)
 	}
 	if fs.NArg() > 1 {
@@ -94,7 +97,7 @@ func runAuthShow(r *runner, ctx context.Context) int {
 
 func runAuthNew(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("auth new", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
+	profilesFile := fs.String("profiles-file", defaultProfilesPathFallback(), "Path to profiles YAML file")
 	name := fs.String("name", "", "Auth reference name")
 	provider := fs.String("provider", "", "Auth provider: google|onedrive")
 	googleCreds := fs.String("google-credentials", "", "Path to Google service account credentials JSON file")
@@ -104,7 +107,7 @@ func runAuthNew(r *runner, ctx context.Context) int {
 	onedriveClientID := fs.String("onedrive-client-id", "", "OneDrive OAuth client ID")
 	onedriveTokenFile := fs.String("onedrive-token-file", "", "Path to OneDrive OAuth token file")
 	onedriveTokenRef := fs.String("onedrive-token-ref", "", "Secret reference to OneDrive OAuth token")
-	if err := parseFlags(fs, r.args); err != nil {
+	if err := parseFlags(fs, r.args, authNewCommandSpec()); err != nil {
 		return r.parseError(err)
 	}
 
@@ -204,9 +207,9 @@ func runAuthNew(r *runner, ctx context.Context) int {
 
 func runAuthLogin(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("auth login", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
+	profilesFile := fs.String("profiles-file", defaultProfilesPathFallback(), "Path to profiles YAML file")
 	name := fs.String("name", "", "Auth reference name")
-	if err := parseFlags(fs, r.args); err != nil {
+	if err := parseFlags(fs, r.args, authLoginCommandSpec()); err != nil {
 		return r.parseError(err)
 	}
 

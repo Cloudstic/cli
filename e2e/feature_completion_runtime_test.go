@@ -170,16 +170,9 @@ _cloudstic_query profile-names
 `
 	case len(words) >= 3 && words[1] == "-store" && words[2] == "":
 		scriptBody = `
-compadd() {
-    local arg
-    for arg in "$@"; do
-        case "$arg" in
-            -*) ;;
-            *) print -r -- "$arg" ;;
-        esac
-    done
-}
-_cloudstic_store_prefixes
+_describe() { return 0 }
+_arguments() { print -l -- "$@" }
+_cloudstic
 `
 	}
 	return runShell(t, "zsh", append(append([]string{}, rt.env...), zshHomeEnv(t)...), `

@@ -15,12 +15,18 @@ type checkArgs struct {
 	snapshotRef string
 }
 
+func checkCommandSpec() *commandSpec {
+	return leaf("check", "Verify repository integrity", "[snapshot_id]", runCheck,
+		boolFlag("read-data", "Re-hash all chunk data")).withGlobalFlags().withNotes(
+		"Walks the complete snapshot reference chain and reports missing, corrupt, or unreadable objects.")
+}
+
 func parseCheckArgs(args []string) (*checkArgs, error) {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	a := &checkArgs{}
 	a.g = addGlobalFlags(fs)
 	readData := fs.Bool("read-data", false, "Re-hash all chunk data for full byte-level verification")
-	if err := parseFlags(fs, args); err != nil {
+	if err := parseFlags(fs, args, checkCommandSpec()); err != nil {
 		return nil, err
 	}
 	a.readData = *readData

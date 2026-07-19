@@ -15,36 +15,50 @@ import (
 	"github.com/cloudstic/cli/pkg/store"
 )
 
-func runStore(r *runner, ctx context.Context) int {
-	if len(r.args) < 1 {
-		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic store <subcommand> [options]")
-		_, _ = fmt.Fprintln(r.errOut, "")
-		_, _ = fmt.Fprintln(r.errOut, "Available subcommands: list, show, new, verify, init")
-		return 1
-	}
+func storeCommandSpec() *commandSpec {
+	return group("store", "Manage backup stores",
+		storeNewCommandSpec(), storeListCommandSpec(), storeShowCommandSpec(), storeVerifyCommandSpec(), storeInitCommandSpec())
+}
 
-	subcommand := r.args[0]
-	subRunner := r.withArgs(r.args[1:])
-	switch subcommand {
-	case "list":
-		return runStoreList(subRunner, ctx)
-	case "show":
-		return runStoreShow(subRunner, ctx)
-	case "new":
-		return runStoreNew(subRunner, ctx)
-	case "verify":
-		return runStoreVerify(subRunner, ctx)
-	case "init":
-		return runStoreInit(subRunner, ctx)
-	default:
-		return r.fail("Unknown store subcommand: %s", subcommand)
-	}
+func storeNewCommandSpec() *commandSpec {
+	return leaf("new", "Create or update a store entry", "", runStoreNew,
+		profilesFileFlag(), valueFlag("name", "name", "Store reference name", completionNone),
+		storeURIFlag("uri", "Store URI"), valueFlag("s3-region", "region", "S3 region", completionNone),
+		valueFlag("s3-profile", "name", "AWS profile", completionNone), valueFlag("s3-endpoint", "url", "S3 endpoint", completionNone),
+		valueFlag("s3-access-key", "key", "S3 access key", completionNone), valueFlag("s3-secret-key", "secret", "S3 secret key", completionNone),
+		valueFlag("s3-access-key-secret", "ref", "S3 access-key reference", completionNone), valueFlag("s3-secret-key-secret", "ref", "S3 secret-key reference", completionNone),
+		valueFlag("b2-key-id", "key", "B2 key ID", completionNone), valueFlag("b2-app-key", "key", "B2 application key", completionNone),
+		valueFlag("b2-key-id-secret", "ref", "B2 key-ID reference", completionNone), valueFlag("b2-app-key-secret", "ref", "B2 application-key reference", completionNone),
+		valueFlag("store-sftp-password", "password", "SFTP password", completionNone), valueFlag("store-sftp-key", "path", "SFTP private key", completionFile),
+		valueFlag("store-sftp-password-secret", "ref", "SFTP password reference", completionNone), valueFlag("store-sftp-key-secret", "ref", "SFTP key reference", completionNone),
+		valueFlag("password-secret", "ref", "Repository-password reference", completionNone), valueFlag("encryption-key-secret", "ref", "Encryption-key reference", completionNone),
+		valueFlag("recovery-key-secret", "ref", "Recovery-key reference", completionNone), valueFlag("kms-key-arn", "arn", "AWS KMS key ARN", completionNone),
+		valueFlag("kms-region", "region", "AWS KMS region", completionNone), valueFlag("kms-endpoint", "url", "AWS KMS endpoint", completionNone)).withNotes(
+		"Create or update a store entry in profiles.yaml.",
+		"Prefer secret-reference flags for credentials; KMS settings are stored directly.")
+}
+
+func storeListCommandSpec() *commandSpec {
+	return leaf("list", "List configured stores", "", runStoreList, profilesFileFlag())
+}
+
+func storeShowCommandSpec() *commandSpec {
+	return leaf("show", "Show one store and its configuration", "<name>", runStoreShow, profilesFileFlag())
+}
+
+func storeVerifyCommandSpec() *commandSpec {
+	return leaf("verify", "Verify one store's credentials and connectivity", "<name>", runStoreVerify, profilesFileFlag())
+}
+
+func storeInitCommandSpec() *commandSpec {
+	return leaf("init", "Initialize a configured store", "<name>", runStoreInit,
+		profilesFileFlag(), boolFlag("yes", "Initialize without confirmation"))
 }
 
 func runStoreList(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("store list", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
-	if err := parseFlags(fs, r.args); err != nil {
+	profilesFile := fs.String("profiles-file", defaultProfilesPathFallback(), "Path to profiles YAML file")
+	if err := parseFlags(fs, r.args, storeListCommandSpec()); err != nil {
 		return r.parseError(err)
 	}
 
@@ -62,8 +76,8 @@ func runStoreList(r *runner, ctx context.Context) int {
 
 func runStoreShow(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("store show", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
-	if err := parseFlags(fs, r.args); err != nil {
+	profilesFile := fs.String("profiles-file", defaultProfilesPathFallback(), "Path to profiles YAML file")
+	if err := parseFlags(fs, r.args, storeShowCommandSpec()); err != nil {
 		return r.parseError(err)
 	}
 	if fs.NArg() > 1 {
@@ -100,8 +114,9 @@ func runStoreShow(r *runner, ctx context.Context) int {
 }
 
 func runStoreNew(r *runner, ctx context.Context) int {
+	command := storeNewCommandSpec()
 	fs := flag.NewFlagSet("store new", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
+	profilesFile := fs.String("profiles-file", defaultProfilesPathFallback(), "Path to profiles YAML file")
 	name := fs.String("name", "", "Store reference name")
 	uri := fs.String("uri", "", "Store URI (e.g. s3:bucket/path, local:/path, sftp://host/path)")
 	s3Region := fs.String("s3-region", "", "S3 region")
@@ -111,6 +126,10 @@ func runStoreNew(r *runner, ctx context.Context) int {
 	s3SecretKey := fs.String("s3-secret-key", "", "S3 static secret key")
 	s3AccessKeySecret := fs.String("s3-access-key-secret", "", "Secret reference for S3 access key (e.g. env://..., keychain://...)")
 	s3SecretKeySecret := fs.String("s3-secret-key-secret", "", "Secret reference for S3 secret key (e.g. env://..., keychain://...)")
+	b2KeyID := fs.String("b2-key-id", "", "Backblaze B2 application key ID")
+	b2AppKey := fs.String("b2-app-key", "", "Backblaze B2 application key")
+	b2KeyIDSecret := fs.String("b2-key-id-secret", "", "Secret reference for B2 key ID (e.g. env://..., keychain://...)")
+	b2AppKeySecret := fs.String("b2-app-key-secret", "", "Secret reference for B2 application key (e.g. env://..., keychain://...)")
 	sftpPassword := fs.String("store-sftp-password", "", "SFTP password")
 	sftpKey := fs.String("store-sftp-key", "", "Path to SFTP private key")
 	sftpPasswordSecret := fs.String("store-sftp-password-secret", "", "Secret reference for SFTP password (e.g. env://..., keychain://...)")
@@ -121,12 +140,11 @@ func runStoreNew(r *runner, ctx context.Context) int {
 	kmsKeyARN := fs.String("kms-key-arn", "", "AWS KMS key ARN")
 	kmsRegion := fs.String("kms-region", "", "AWS KMS region")
 	kmsEndpoint := fs.String("kms-endpoint", "", "Custom AWS KMS endpoint URL")
-	if err := parseFlags(fs, r.args); err != nil {
+	if err := parseFlags(fs, r.args, command); err != nil {
 		return r.parseError(err)
 	}
 
-	flagsSet := map[string]bool{}
-	fs.Visit(func(f *flag.Flag) { flagsSet[f.Name] = true })
+	flagsSet := suppliedFlags(commandValueSources(fs, command))
 	storeFlags := storeNewFlagPtrs{
 		uri:                 uri,
 		s3Region:            s3Region,
@@ -136,6 +154,10 @@ func runStoreNew(r *runner, ctx context.Context) int {
 		s3SecretKey:         s3SecretKey,
 		s3AccessKeySecret:   s3AccessKeySecret,
 		s3SecretKeySecret:   s3SecretKeySecret,
+		b2KeyID:             b2KeyID,
+		b2AppKey:            b2AppKey,
+		b2KeyIDSecret:       b2KeyIDSecret,
+		b2AppKeySecret:      b2AppKeySecret,
 		sftpPassword:        sftpPassword,
 		sftpKey:             sftpKey,
 		sftpPasswordSecret:  sftpPasswordSecret,
@@ -249,8 +271,8 @@ func runStoreNew(r *runner, ctx context.Context) int {
 // the store config has already been saved.
 func runStoreVerify(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("store verify", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
-	if err := parseFlags(fs, r.args); err != nil {
+	profilesFile := fs.String("profiles-file", defaultProfilesPathFallback(), "Path to profiles YAML file")
+	if err := parseFlags(fs, r.args, storeVerifyCommandSpec()); err != nil {
 		return r.parseError(err)
 	}
 	if fs.NArg() > 1 {
@@ -295,9 +317,9 @@ func runStoreVerify(r *runner, ctx context.Context) int {
 
 func runStoreInit(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("store init", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
+	profilesFile := fs.String("profiles-file", defaultProfilesPathFallback(), "Path to profiles YAML file")
 	yes := fs.Bool("yes", false, "Initialize without confirmation prompt")
-	if err := parseFlags(fs, r.args); err != nil {
+	if err := parseFlags(fs, r.args, storeInitCommandSpec()); err != nil {
 		return r.parseError(err)
 	}
 	if fs.NArg() > 1 {
@@ -757,6 +779,12 @@ func globalFlagsFromProfileStore(s cloudstic.ProfileStore) (*globalFlags, error)
 		return nil, err
 	}
 	if g.s3SecretKey, err = resolveProfileStoreValue("s3_secret_key", s.S3SecretKey, s.S3SecretKeySecret); err != nil {
+		return nil, err
+	}
+	if g.b2KeyID, err = resolveProfileStoreValue("b2_key_id", s.B2KeyID, s.B2KeyIDSecret); err != nil {
+		return nil, err
+	}
+	if g.b2AppKey, err = resolveProfileStoreValue("b2_app_key", s.B2AppKey, s.B2AppKeySecret); err != nil {
 		return nil, err
 	}
 	if g.storeSFTPPassword, err = resolveProfileStoreValue("store_sftp_password", s.StoreSFTPPassword, s.StoreSFTPPasswordSecret); err != nil {

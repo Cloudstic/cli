@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"strings"
 )
 
 func runCompletion(r *runner) int {
@@ -18,8 +20,7 @@ func runCompletion(r *runner) int {
 		return 1
 	}
 
-	shell := r.args[0]
-	switch shell {
+	switch r.args[0] {
 	case "bash":
 		completionBash(r.out)
 	case "zsh":
@@ -27,18 +28,23 @@ func runCompletion(r *runner) int {
 	case "fish":
 		completionFish(r.out)
 	default:
-		return r.fail("Unsupported shell: %s\nAvailable shells: bash, zsh, fish", shell)
+		return r.fail("Unsupported shell: %s\nAvailable shells: bash, zsh, fish", r.args[0])
 	}
 	return 0
 }
 
-// completionBash writes a bash completion script to w.
+func completionCommandSpec() *commandSpec {
+	return leaf("completion", "Generate shell completion scripts", "<bash|zsh|fish>",
+		func(r *runner, _ context.Context) int { return runCompletion(r) }).withoutFlagProbe().withArgumentValues(
+		"shell", "bash", "zsh", "fish").withNotes(
+		"Supported shells: bash, zsh, and fish.")
+}
+
 func completionBash(w io.Writer) {
-	_, _ = fmt.Fprint(w, `# bash completion for cloudstic
+	_, _ = fmt.Fprintf(w, `# bash completion for cloudstic
 
 _cloudstic_query() {
-    local kind="$1"
-    local cur="$2"
+    local kind="$1" cur="$2"
     shift 2
     cloudstic __complete "$kind" "$cur" "$@" 2>/dev/null
 }
@@ -47,234 +53,84 @@ _cloudstic() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="init backup auth profile store source setup tui restore list ls prune forget diff break-lock key cat completion version help"
+    local commands=%q
+    local global_flags=%q
+    local global_value_flags=%q
+    local root=""
+    local root_index=0
+    local sub=""
+    local path=""
+    local cmd_flags=""
+    local value_flags=""
+    local i value_flag
 
-    local global_flags="-store -profile -profiles-file -s3-endpoint -s3-region -s3-profile -s3-access-key -s3-secret-key -source-sftp-password -source-sftp-key -source-sftp-known-hosts -source-sftp-insecure -store-sftp-password -store-sftp-key -store-sftp-known-hosts -store-sftp-insecure -encryption-key -password -recovery-key -kms-key-arn -kms-region -kms-endpoint -disable-packfile -prompt -no-prompt -verbose -quiet -json -debug"
-
-    # Identify the subcommand
-    local cmd=""
-    local i
-    for ((i=1; i < cword; i++)); do
-        case "${words[i]}" in
-            -*)
-                # skip flags and their values
-                case "${words[i]}" in
-					-store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-source-sftp-known-hosts|-store|-store-sftp-password|-store-sftp-key|-store-sftp-known-hosts|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-all-profiles|-auth-ref|-google-credentials|-google-credentials-ref|-google-credentials-json|-google-token-file|-google-token-ref|-onedrive-client-id|-onedrive-token-file|-onedrive-token-ref|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account|-xattr-namespaces)
-						((i++)) ;;
-				esac
-                ;;
-            *)
-                cmd="${words[i]}"
-                break
-                ;;
-        esac
+    for ((i=1; i<cword; i++)); do
+        if [[ "${words[i]}" == -* ]]; then
+            for value_flag in $global_value_flags; do
+                if [[ "${words[i]}" == "$value_flag" ]]; then
+                    ((i++))
+                    break
+                fi
+            done
+            continue
+        fi
+        root="${words[i]}"
+        root_index=$i
+        break
     done
 
-    # Complete subcommand
-    if [[ -z "$cmd" ]]; then
-        case "$prev" in
-            -profile)
-                COMPREPLY=($(compgen -W "$(_cloudstic_query profile-names "$cur" "${words[@]:1:$((cword-1))}")" -- "$cur"))
-                return ;;
-            -store)
-                COMPREPLY=($(compgen -W "local: s3: b2: sftp://" -- "$cur"))
-                return ;;
-            -source-sftp-key|-store-sftp-key|-output|-profiles-file)
-                _filedir
-                return ;;
-        esac
-        COMPREPLY=($(compgen -W "$commands" -- "$cur"))
+    if [[ -z "$root" ]]; then
+`, commandWords(publicRootCommands()), flagWords(globalFlagSpecs), valueFlagWords(globalFlagSpecs))
+	writeBashRootCompletionCases(w)
+	_, _ = fmt.Fprint(w, `
+        if [[ "$cur" == -* ]]; then
+            COMPREPLY=($(compgen -W "$global_flags" -- "$cur"))
+        else
+            COMPREPLY=($(compgen -W "$commands" -- "$cur"))
+        fi
         return
     fi
 
-    # Complete flags per subcommand
-    local cmd_flags=""
-    case "$cmd" in
-		init)
-			cmd_flags="-add-recovery-key -no-encryption -adopt-slots" ;;
-		backup)
-			cmd_flags="-source -profile -all-profiles -auth-ref -profiles-file -skip-native-files -google-credentials -google-credentials-ref -google-credentials-json -google-token-file -google-token-ref -onedrive-client-id -onedrive-token-file -onedrive-token-ref -tag -ignore-empty-snapshot -dry-run -skip-mode -skip-flags -skip-xattrs -xattr-namespaces" ;;
-        restore)
-            cmd_flags="-output -format -path -dry-run" ;;
-        prune)
-            cmd_flags="-dry-run" ;;
-        forget)
-            cmd_flags="-prune -dry-run -keep-last -keep-hourly -keep-daily -keep-weekly -keep-monthly -keep-yearly -tag -source -account -group-by" ;;
-        cat)
-            cmd_flags="-raw" ;;
-        completion)
-            COMPREPLY=($(compgen -W "bash zsh fish" -- "$cur"))
-            return ;;
-        key)
-            # Handle key subcommands
-            local key_sub=""
-            local j
-            for ((j=i+1; j < cword; j++)); do
-                case "${words[j]}" in
-                    -*) ;;
-                    *) key_sub="${words[j]}"; break ;;
-                esac
-            done
-            if [[ -z "$key_sub" ]]; then
-                COMPREPLY=($(compgen -W "list add-recovery passwd" -- "$cur"))
-                return
-            fi
-            case "$key_sub" in
-                passwd)
-                    cmd_flags="-new-password" ;;
-                *)
-                    cmd_flags="" ;;
-            esac
-            ;;
-        list)
-            cmd_flags="-group" ;;
-        profile)
-            local profile_sub=""
-            local j
-            for ((j=i+1; j < cword; j++)); do
-                case "${words[j]}" in
-                    -*) ;;
-                    *) profile_sub="${words[j]}"; break ;;
-                esac
-            done
-            if [[ -z "$profile_sub" ]]; then
-                COMPREPLY=($(compgen -W "list show new" -- "$cur"))
-                return
-            fi
-            case "$profile_sub" in
-                list)
-                    cmd_flags="-profiles-file" ;;
-                show)
-                    cmd_flags="-profiles-file" ;;
-                new)
-                    cmd_flags="-profiles-file -name -source -store-ref -store -auth-ref -tag -exclude -exclude-file -ignore-empty-snapshot -skip-native-files -volume-uuid -google-credentials -google-credentials-ref -google-credentials-json -google-token-file -google-token-ref -onedrive-client-id -onedrive-token-file -onedrive-token-ref" ;;
-                *)
-                    cmd_flags="" ;;
-            esac
-            ;;
-        auth)
-            local auth_sub=""
-            local j
-            for ((j=i+1; j < cword; j++)); do
-                case "${words[j]}" in
-                    -*) ;;
-                    *) auth_sub="${words[j]}"; break ;;
-                esac
-            done
-            if [[ -z "$auth_sub" ]]; then
-                COMPREPLY=($(compgen -W "list show new login" -- "$cur"))
-                return
-            fi
-            case "$auth_sub" in
-                list)
-                    cmd_flags="-profiles-file" ;;
-                show)
-                    cmd_flags="-profiles-file" ;;
-                new)
-                    cmd_flags="-profiles-file -name -provider -google-credentials -google-credentials-ref -google-credentials-json -google-token-file -google-token-ref -onedrive-client-id -onedrive-token-file -onedrive-token-ref" ;;
-                login)
-                    cmd_flags="-profiles-file -name" ;;
-                *)
-                    cmd_flags="" ;;
-            esac
-            ;;
-        store)
-            local store_sub=""
-            local j
-            for ((j=i+1; j < cword; j++)); do
-                case "${words[j]}" in
-                    -*) ;;
-                    *) store_sub="${words[j]}"; break ;;
-                esac
-            done
-		if [[ -z "$store_sub" ]]; then
-			COMPREPLY=($(compgen -W "list show new verify init" -- "$cur"))
-			return
-		fi
-		case "$store_sub" in
-			list)
-				cmd_flags="-profiles-file" ;;
-			show)
-				cmd_flags="-profiles-file" ;;
-			verify)
-				cmd_flags="-profiles-file" ;;
-			init)
-				cmd_flags="-profiles-file -yes" ;;
-			new)
-				cmd_flags="-profiles-file -name -uri -s3-region -s3-profile -s3-endpoint -s3-access-key -s3-secret-key -s3-access-key-secret -s3-secret-key-secret -store-sftp-password -store-sftp-key -store-sftp-known-hosts -store-sftp-insecure -store-sftp-password-secret -store-sftp-key-secret -password-secret -encryption-key-secret -recovery-key-secret -kms-key-arn -kms-region -kms-endpoint" ;;
-                *)
-                    cmd_flags="" ;;
-            esac
-            ;;
-        source)
-            local source_sub=""
-            local j
-            for ((j=i+1; j < cword; j++)); do
-                case "${words[j]}" in
-                    -*) ;;
-                    *) source_sub="${words[j]}"; break ;;
-                esac
-            done
-            if [[ -z "$source_sub" ]]; then
-                COMPREPLY=($(compgen -W "discover" -- "$cur"))
-                return
-            fi
-            case "$source_sub" in
-                discover)
-                    cmd_flags="-portable-only -json" ;;
-                *)
-                    cmd_flags="" ;;
-            esac
-            ;;
-        setup)
-            local setup_sub=""
-            local j
-            for ((j=i+1; j < cword; j++)); do
-                case "${words[j]}" in
-                    -*) ;;
-                    *) setup_sub="${words[j]}"; break ;;
-                esac
-            done
-            if [[ -z "$setup_sub" ]]; then
-                COMPREPLY=($(compgen -W "workstation" -- "$cur"))
-                return
-            fi
-            case "$setup_sub" in
-                workstation)
-                    cmd_flags="-dry-run -yes -profiles-file -store-ref -json" ;;
-                *)
-                    cmd_flags="" ;;
-            esac
-            ;;
-        check)
-            cmd_flags="-read-data" ;;
-        ls|diff|break-lock|version|help)
-            cmd_flags="" ;;
-    esac
+    path="$root"
 
-    case "$prev" in
-        -profile)
-            COMPREPLY=($(compgen -W "$(_cloudstic_query profile-names "$cur" "${words[@]:1:$((cword-1))}")" -- "$cur"))
-            return ;;
-        -auth-ref)
-            COMPREPLY=($(compgen -W "$(_cloudstic_query auth-names "$cur" "${words[@]:1:$((cword-1))}")" -- "$cur"))
-            return ;;
-        -store)
-            # URI completion hint: show scheme prefixes
-            COMPREPLY=($(compgen -W "local: s3: b2: sftp://" -- "$cur"))
-            return ;;
-        -source)
-            # URI completion hint: show scheme prefixes and bare keywords
-            COMPREPLY=($(compgen -W "local: sftp:// gdrive gdrive-changes onedrive onedrive-changes" -- "$cur"))
-            return ;;
-        -source-sftp-key|-store-sftp-key|-output|-profiles-file)
-            _filedir
-            return ;;
-    esac
+    case "$root" in
+`)
+	for _, root := range publicRootCommands() {
+		if len(root.children) == 0 {
+			continue
+		}
+		_, _ = fmt.Fprintf(w, "        %s)\n", root.name)
+		_, _ = fmt.Fprintf(w, "            sub=\"${words[root_index+1]}\"\n")
+		_, _ = fmt.Fprintf(w, "            if [[ $cword -eq $((root_index+1)) ]]; then\n")
+		_, _ = fmt.Fprintf(w, "                COMPREPLY=($(compgen -W %q -- \"$cur\")); return\n", commandWords(root.children))
+		_, _ = fmt.Fprintf(w, "            fi\n")
+		_, _ = fmt.Fprintf(w, "            path=\"$root $sub\" ;;\n")
+	}
+	_, _ = fmt.Fprint(w, `    esac
 
+    case "$path" in
+`)
+	for _, command := range publicLeafCommands() {
+		flags := command.effectiveFlags()
+		_, _ = fmt.Fprintf(w, "        %q) cmd_flags=%q; value_flags=%q ;;\n", command.path(), flagWords(flags), valueFlagWords(flags))
+	}
+	_, _ = fmt.Fprint(w, `    esac
+
+    case "$path:$prev" in
+`)
+	writeBashCompletionCases(w)
+	_, _ = fmt.Fprint(w, "    esac\n\n")
+	writeBashArgumentCases(w)
+	_, _ = fmt.Fprint(w, `
+
+    if [[ -n "$value_flags" ]]; then
+        local value_flag
+        for value_flag in $value_flags; do
+            [[ "$prev" == "$value_flag" ]] && return
+        done
+    fi
     if [[ -z "$cur" || "$cur" == -* ]]; then
-        COMPREPLY=($(compgen -W "$cmd_flags $global_flags" -- "$cur"))
-        return
+        COMPREPLY=($(compgen -W "$cmd_flags" -- "$cur"))
     fi
 }
 
@@ -282,685 +138,239 @@ complete -F _cloudstic cloudstic
 `)
 }
 
-// completionZsh writes a zsh completion script to w.
+func writeBashArgumentCases(w io.Writer) {
+	_, _ = fmt.Fprintln(w, "    case \"$path:$((cword-root_index))\" in")
+	for _, command := range publicLeafCommands() {
+		if len(command.argumentValues) == 0 {
+			continue
+		}
+		word := 1
+		if command.parent != nil {
+			word = 2
+		}
+		_, _ = fmt.Fprintf(w, "        %q) COMPREPLY=($(compgen -W %q -- \"$cur\")); return ;;\n",
+			fmt.Sprintf("%s:%d", command.path(), word), strings.Join(command.argumentValues, " "))
+	}
+	_, _ = fmt.Fprintln(w, "    esac")
+}
+
+func writeBashRootCompletionCases(w io.Writer) {
+	_, _ = fmt.Fprintln(w, "        case \"$prev\" in")
+	for _, spec := range globalFlagSpecs {
+		writeBashCompletionCase(w, "            ", "-"+spec.name, spec)
+	}
+	_, _ = fmt.Fprintln(w, "        esac")
+}
+
+func writeBashCompletionCases(w io.Writer) {
+	for _, command := range publicLeafCommands() {
+		for _, spec := range command.effectiveFlags() {
+			writeBashCompletionCase(w, "        ", command.path()+":-"+spec.name, spec)
+		}
+	}
+}
+
+func writeBashCompletionCase(w io.Writer, indent, key string, spec flagSpec) {
+	if len(spec.completionValues) != 0 {
+		_, _ = fmt.Fprintf(w, "%s%q) COMPREPLY=($(compgen -W %q -- \"$cur\")); return ;;\n",
+			indent, key, strings.Join(spec.completionValues, " "))
+		return
+	}
+	switch spec.completion {
+	case completionProfile:
+		_, _ = fmt.Fprintf(w, "%s%q) COMPREPLY=($(compgen -W \"$(_cloudstic_query profile-names \"$cur\" \"${words[@]:1:$((cword-1))}\")\" -- \"$cur\")); return ;;\n", indent, key)
+	case completionAuth:
+		_, _ = fmt.Fprintf(w, "%s%q) COMPREPLY=($(compgen -W \"$(_cloudstic_query auth-names \"$cur\" \"${words[@]:1:$((cword-1))}\")\" -- \"$cur\")); return ;;\n", indent, key)
+	case completionFile:
+		_, _ = fmt.Fprintf(w, "%s%q) _filedir; return ;;\n", indent, key)
+	}
+}
+
 func completionZsh(w io.Writer) {
-	_, _ = fmt.Fprint(w, `#compdef cloudstic
+	_, _ = fmt.Fprintf(w, `#compdef cloudstic
 
 # zsh completion for cloudstic
-
 _cloudstic_query() {
     local kind="$1"
     shift
-    local -a prior_words
-    prior_words=("${words[@]:2:$(( CURRENT - 2 ))}")
-    cloudstic __complete "$kind" "$PREFIX" "${prior_words[@]}" 2>/dev/null
+    cloudstic __complete "$kind" "$PREFIX" "${words[@]:2:$(( CURRENT - 2 ))}" 2>/dev/null
 }
 
-_cloudstic_dynamic_values() {
-    local kind="$1"
-    local label="$2"
-    local -a values
-    values=(${(f)"$(_cloudstic_query "$kind")"})
-    _describe -t "$kind" "$label" values
-}
-
-_cloudstic_profile_names() {
-    _cloudstic_dynamic_values profile-names 'profile'
-}
-
-_cloudstic_auth_names() {
-    _cloudstic_dynamic_values auth-names 'auth entry'
-}
-
-_cloudstic_store_prefixes() {
-    local -a values
-    values=('local:' 's3:' 'b2:' 'sftp://')
-    compadd -Q -S '' -X 'store URI prefix' -- "${values[@]}"
-}
+_cloudstic_profile_names() { compadd ${(f)"$(_cloudstic_query profile-names)"}; }
+_cloudstic_auth_names() { compadd ${(f)"$(_cloudstic_query auth-names)"}; }
 
 _cloudstic() {
-    local -a commands
+	local root="" sub="" path=""
+	local -i root_index=0 i
+	local value_flag
+	local -a commands subcommands specs global_value_flags
+	global_value_flags=(%s)
+
     commands=(
-        'init:Initialize a new repository'
-        'backup:Create a new backup snapshot from a source'
-        'auth:Manage reusable cloud auth entries'
-        'profile:Manage backup profiles'
-        'source:Discover source candidates for onboarding'
-        'setup:Guided setup and onboarding flows'
-        'tui:Launch the interactive terminal dashboard'
-        'restore:Restore files from a backup snapshot'
-        'list:List all backup snapshots in the repository'
-        'ls:List files within a specific snapshot'
-        'prune:Remove unused data chunks from the repository'
-        'forget:Remove a specific snapshot from history'
-        'diff:Compare two snapshots or a snapshot against latest'
-        'break-lock:Remove a stale repository lock'
-        'key:Manage encryption key slots'
-        'cat:Display raw JSON content of repository objects'
-        'completion:Generate shell completion scripts'
-        'version:Print version information'
-        'help:Show usage information'
-    )
+`, valueFlagWords(globalFlagSpecs))
+	for _, command := range publicRootCommands() {
+		_, _ = fmt.Fprintf(w, "        %s:%s\n", zshQuote(command.name), zshQuote(command.summary))
+	}
+	_, _ = fmt.Fprint(w, `    )
 
-    local prev_word="${words[CURRENT-1]}"
+	for ((i=2; i<CURRENT; i++)); do
+		if [[ "${words[i]}" == -* ]]; then
+			for value_flag in $global_value_flags; do
+				if [[ "${words[i]}" == "$value_flag" ]]; then
+					((i++))
+					break
+				fi
+			done
+			continue
+		fi
+		root="${words[i]}"
+		root_index=$i
+		break
+	done
 
-    local -a global_flags
-    global_flags=(
-        '-store[Storage backend URI]:uri:_cloudstic_store_prefixes'
-        '-profile[Profile name from profiles.yaml]:name:_cloudstic_profile_names'
-        '-profiles-file[Path to profiles YAML file]:path:_files'
-        '-s3-endpoint[S3 compatible endpoint URL]:url:'
-        '-s3-region[S3 region]:region:'
-        '-s3-profile[AWS shared config profile for S3 auth]:name:'
-        '-s3-access-key[S3 access key ID]:key:'
-        '-s3-secret-key[S3 secret access key]:secret:'
-        '-source-sftp-password[SFTP source password]:password:'
-        '-source-sftp-key[Path to SSH private key for SFTP source]:key:_files'
-        '-source-sftp-known-hosts[Path to known_hosts file for SFTP source]:path:_files'
-        '-source-sftp-insecure[Skip host key validation for SFTP source (INSECURE)]'
-        '-store-sftp-password[SFTP store password]:password:'
-        '-store-sftp-key[Path to SSH private key for SFTP store]:key:_files'
-        '-store-sftp-known-hosts[Path to known_hosts file for SFTP store]:path:_files'
-        '-store-sftp-insecure[Skip host key validation for SFTP store (INSECURE)]'
-        '-encryption-key[Platform key (hex-encoded)]:key:'
-        '-password[Repository password]:password:'
-        '-recovery-key[Recovery key (24-word mnemonic)]:words:'
-        '-kms-key-arn[AWS KMS key ARN]:arn:'
-        '-kms-region[AWS KMS region]:region:'
-        '-kms-endpoint[Custom AWS KMS endpoint]:url:'
-        '-disable-packfile[Disable bundling small objects into packs]'
-        '-prompt[Prompt for password interactively]'
-        '-no-prompt[Disable interactive prompts (for scripts and CI)]'
-        '-verbose[Log detailed operations]'
-        '-quiet[Suppress progress bars]'
-        '-json[Write command result as JSON to stdout]'
-        '-debug[Log every store request]'
-    )
-    # Check if a subcommand has been given
-    local cmd
-    local -i i=2
-    while (( i < CURRENT )); do
-        case "${words[i]}" in
-            -*)
-                # Skip flags with values
-                case "${words[i]}" in
-					-store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-store-sftp-password|-store-sftp-key|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-auth-ref|-google-credentials|-google-credentials-ref|-google-credentials-json|-google-token-file|-google-token-ref|-onedrive-client-id|-onedrive-token-file|-onedrive-token-ref|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account)
-						(( i++ )) ;;
-				esac
-                ;;
-            *)
-                cmd="${words[i]}"
-                break
-                ;;
-        esac
-        (( i++ ))
-    done
+	if [[ -z "$root" ]]; then
+		specs=(
+`)
+	for _, spec := range globalFlagSpecs {
+		_, _ = fmt.Fprintf(w, "            %s\n", zshQuote(zshFlagSpec(spec)))
+	}
+	_, _ = fmt.Fprint(w, `        )
+		_describe -t commands 'cloudstic command' commands
+		_arguments $specs
+		return
+	fi
 
-    if [[ -z "$cmd" ]]; then
-        case "$prev_word" in
-            -store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-source-sftp-known-hosts|-store-sftp-password|-store-sftp-key|-store-sftp-known-hosts|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint)
-                _arguments $global_flags
-                return
-                ;;
-        esac
-        _describe -t commands 'cloudstic command' commands
-        _arguments $global_flags
-        return
-    fi
+	path="$root"
 
-    case "$cmd" in
-        init)
-            _arguments $global_flags \
-                '-add-recovery-key[Generate a 24-word recovery key]' \
-                '-no-encryption[Create an unencrypted repository]' \
-                '-adopt-slots[Adopt existing key slots]'
-            ;;
-        backup)
-            _arguments $global_flags \
-                '-source[Source URI]:uri:(local: sftp:// gdrive gdrive-changes onedrive onedrive-changes)' \
-                '-profile[Backup profile name]:name:' \
-                '-all-profiles[Run all enabled backup profiles]' \
-                '-auth-ref[Use named auth entry from profiles.yaml]:name:_cloudstic_auth_names' \
-                '-profiles-file[Path to profiles YAML file]:path:_files' \
-                '-skip-native-files[Exclude Google-native files]' \
-                '-google-credentials[Google service account credentials JSON]:path:_files' \
-                '-google-credentials-ref[Secret reference to Google credentials]:ref:' \
-                '-google-credentials-json[Inline Google credentials JSON]:json:' \
-                '-google-token-file[Google OAuth token file]:path:_files' \
-                '-google-token-ref[Secret reference to Google OAuth token]:ref:' \
-                '-onedrive-client-id[OneDrive OAuth client ID]:id:' \
-                '-onedrive-token-file[OneDrive OAuth token file]:path:_files' \
-                '-onedrive-token-ref[Secret reference to OneDrive OAuth token]:ref:' \
-                '*-tag[Tag for the snapshot]:tag:' \
-                '-ignore-empty-snapshot[Skip creating a new snapshot when nothing changed]' \
-                '-dry-run[Scan without writing]' \
-                '-skip-mode[Skip POSIX mode/uid/gid/btime/flags]' \
-                '-skip-flags[Skip file flags collection]' \
-                '-skip-xattrs[Skip extended attribute collection]' \
-                '-xattr-namespaces[Restrict xattr collection to prefixes]:prefixes:'
-            ;;
-        profile)
-            local -a profile_commands
-            profile_commands=(
-                'list:List stores, auth entries, and backup profiles'
-                'show:Show one profile and resolved store/auth references'
-                'new:Create or update a backup profile'
-            )
-            local profile_sub
-            local -i pi=$((i+1))
-            while (( pi < CURRENT )); do
-                case "${words[pi]}" in
-                    -*) ;;
-                    *) profile_sub="${words[pi]}"; break ;;
-                esac
-                (( pi++ ))
-            done
-            if [[ -z "$profile_sub" ]]; then
-                _describe -t profile-commands 'profile subcommand' profile_commands
-                return
-            fi
-            case "$profile_sub" in
-                list)
-                    _arguments '-profiles-file[Path to profiles YAML file]:path:_files'
-                    ;;
-                show)
-                    _arguments '-profiles-file[Path to profiles YAML file]:path:_files' ':profile name:'
-                    ;;
-                new)
-                    _arguments \
-                        '-profiles-file[Path to profiles YAML file]:path:_files' \
-                        '-name[Profile name]:name:' \
-                        '-source[Source URI]:uri:(local: sftp:// gdrive gdrive-changes onedrive onedrive-changes)' \
-                        '-store-ref[Store reference name]:name:' \
-                        '-store[Store URI]:uri:' \
-                        '-auth-ref[Auth reference name]:name:_cloudstic_auth_names' \
-                        '*-tag[Tag for snapshots]:tag:' \
-                        '*-exclude[Exclude pattern]:pattern:' \
-                        '-exclude-file[Path to exclude file]:path:_files' \
-                        '-ignore-empty-snapshot[Skip creating a new snapshot when nothing changed]' \
-                        '-skip-native-files[Exclude Google-native files]' \
-                        '-volume-uuid[Volume UUID override]:uuid:' \
-                        '-google-credentials[Google service account credentials JSON]:path:_files' \
-                        '-google-credentials-ref[Secret reference to Google credentials]:ref:' \
-                        '-google-credentials-json[Inline Google credentials JSON]:json:' \
-                        '-google-token-file[Google OAuth token file]:path:_files' \
-                        '-google-token-ref[Secret reference to Google OAuth token]:ref:' \
-                        '-onedrive-client-id[OneDrive OAuth client ID]:id:' \
-                        '-onedrive-token-file[OneDrive OAuth token file]:path:_files' \
-                        '-onedrive-token-ref[Secret reference to OneDrive OAuth token]:ref:'
-                    ;;
-                *)
-                    _arguments
-                    ;;
-            esac
-            ;;
-        auth)
-            local -a auth_commands
-            auth_commands=(
-                'list:List auth entries from profiles.yaml'
-                'show:Show one auth entry'
-                'new:Create or update a reusable cloud auth entry'
-                'login:Run OAuth login flow for one auth entry'
-            )
-            local auth_sub
-            local -i ai=$((i+1))
-            while (( ai < CURRENT )); do
-                case "${words[ai]}" in
-                    -*) ;;
-                    *) auth_sub="${words[ai]}"; break ;;
-                esac
-                (( ai++ ))
-            done
-            if [[ -z "$auth_sub" ]]; then
-                _describe -t auth-commands 'auth subcommand' auth_commands
-                return
-            fi
-            case "$auth_sub" in
-                list)
-                    _arguments '-profiles-file[Path to profiles YAML file]:path:_files'
-                    ;;
-                show)
-                    _arguments '-profiles-file[Path to profiles YAML file]:path:_files' ':auth name:'
-                    ;;
-                new)
-                    _arguments \
-                        '-profiles-file[Path to profiles YAML file]:path:_files' \
-                        '-name[Auth reference name]:name:' \
-                        '-provider[Auth provider]:provider:(google onedrive)' \
-                        '-google-credentials[Google service account credentials JSON]:path:_files' \
-                        '-google-credentials-json[Inline Google credentials JSON]:json:' \
-                        '-google-token-file[Google OAuth token file]:path:_files' \
-                        '-onedrive-client-id[OneDrive OAuth client ID]:id:' \
-                        '-onedrive-token-file[OneDrive OAuth token file]:path:_files'
-                    ;;
-                login)
-                    _arguments \
-                        '-profiles-file[Path to profiles YAML file]:path:_files' \
-                        '-name[Auth reference name]:name:'
-                    ;;
-                *)
-                    _arguments
-                    ;;
-            esac
-            ;;
-        store)
-            local -a store_commands
-			store_commands=(
-				'list:List configured stores'
-				'show:Show one store and its configuration'
-				'new:Create or update a store entry'
-				'verify:Verify store credentials and connectivity'
-				'init:Initialize a store by reference'
-			)
-            local store_sub
-            local -i si=$((i+1))
-            while (( si < CURRENT )); do
-                case "${words[si]}" in
-                    -*) ;;
-                    *) store_sub="${words[si]}"; break ;;
-                esac
-                (( si++ ))
-            done
-            if [[ -z "$store_sub" ]]; then
-                _describe -t store-commands 'store subcommand' store_commands
-                return
-            fi
-			case "$store_sub" in
-				list)
-					_arguments '-profiles-file[Path to profiles YAML file]:path:_files'
-					;;
-				show)
-					_arguments '-profiles-file[Path to profiles YAML file]:path:_files' ':store name:'
-					;;
-				verify)
-					_arguments '-profiles-file[Path to profiles YAML file]:path:_files' ':store name:'
-					;;
-				init)
-					_arguments '-profiles-file[Path to profiles YAML file]:path:_files' '-yes[Initialize without confirmation prompt]' ':store name:'
-					;;
-				new)
-                    _arguments \
-                        '-profiles-file[Path to profiles YAML file]:path:_files' \
-                        '-name[Store reference name]:name:' \
-                        '-uri[Store URI]:uri:' \
-                        '-s3-region[S3 region]:region:' \
-                        '-s3-profile[AWS shared config profile]:profile:' \
-                        '-s3-endpoint[S3-compatible endpoint URL]:url:' \
-                        '-s3-access-key[S3 static access key]:key:' \
-                        '-s3-secret-key[S3 static secret key]:key:' \
-                        '-s3-access-key-secret[Secret ref for S3 access key]:ref:' \
-                        '-s3-secret-key-secret[Secret ref for S3 secret key]:ref:' \
-                        '-store-sftp-password[SFTP password]:password:' \
-                        '-store-sftp-key[SFTP private key path]:path:_files' \
-                        '-store-sftp-known-hosts[SFTP known_hosts path]:path:_files' \
-                        '-store-sftp-insecure[Skip SFTP host key validation (INSECURE)]' \
-                        '-store-sftp-password-secret[Secret ref for SFTP password]:ref:' \
-                        '-store-sftp-key-secret[Secret ref for SFTP key path]:ref:' \
-                        '-password-secret[Secret ref for repository password]:ref:' \
-                        '-encryption-key-secret[Secret ref for platform key]:ref:' \
-                        '-recovery-key-secret[Secret ref for recovery key mnemonic]:ref:' \
-                        '-kms-key-arn[AWS KMS key ARN]:arn:' \
-                        '-kms-region[AWS KMS region]:region:' \
-                        '-kms-endpoint[Custom KMS endpoint URL]:url:'
-                    ;;
-                *)
-                    _arguments
-                    ;;
-            esac
-            ;;
-        source)
-            local -a source_commands
-            source_commands=(
-                'discover:Discover local source candidates'
-            )
-            local source_sub
-            local -i soi=$((i+1))
-            while (( soi < CURRENT )); do
-                case "${words[soi]}" in
-                    -*) ;;
-                    *) source_sub="${words[soi]}"; break ;;
-                esac
-                (( soi++ ))
-            done
-            if [[ -z "$source_sub" ]]; then
-                _describe -t source-commands 'source subcommand' source_commands
-                return
-            fi
-            case "$source_sub" in
-                discover)
-                    _arguments '-portable-only[Only show portable or external source candidates]' '-json[Write discovered sources as JSON]'
-                    ;;
-                *)
-                    _arguments
-                    ;;
-            esac
-            ;;
-        setup)
-            local -a setup_commands
-            setup_commands=(
-                'workstation:Preview workstation onboarding plan'
-            )
-            local setup_sub
-            local -i sui=$((i+1))
-            while (( sui < CURRENT )); do
-                case "${words[sui]}" in
-                    -*) ;;
-                    *) setup_sub="${words[sui]}"; break ;;
-                esac
-                (( sui++ ))
-            done
-            if [[ -z "$setup_sub" ]]; then
-                _describe -t setup-commands 'setup subcommand' setup_commands
-                return
-            fi
-            case "$setup_sub" in
-                workstation)
-                    _arguments \
-                        '-dry-run[Preview generated profiles without writing configuration]' \
-                        '-yes[Accept default selections without prompting]' \
-                        '-profiles-file[Path to profiles YAML file]:path:_files' \
-                        '-store-ref[Existing store reference to attach]:name:' \
-                        '-json[Write onboarding plan as JSON]'
-                    ;;
-                *)
-                    _arguments
-                    ;;
-            esac
-            ;;
-        restore)
-            _arguments $global_flags \
-                '-output[Output path for zip or dir restore]:path:_files' \
-                '-format[Restore format]:format:(zip dir)' \
-                '-path[Restore only the given file or subtree]:path:' \
-                '-dry-run[Show what would be restored without writing output]' \
-                ':snapshot ID:'
-            ;;
-        list)
-            _arguments $global_flags \
-                '-group[Group output by source identity]'
-            ;;
-        ls)
-            _arguments $global_flags \
-                ':snapshot ID:'
-            ;;
-        prune)
-            _arguments $global_flags \
-                '-dry-run[Show what would be deleted]'
-            ;;
-        forget)
-            _arguments $global_flags \
-                '-prune[Run prune after forgetting]' \
-                '-dry-run[Show what would be removed]' \
-                '-keep-last[Keep N most recent snapshots]:count:' \
-                '-keep-hourly[Keep N hourly snapshots]:count:' \
-                '-keep-daily[Keep N daily snapshots]:count:' \
-                '-keep-weekly[Keep N weekly snapshots]:count:' \
-                '-keep-monthly[Keep N monthly snapshots]:count:' \
-                '-keep-yearly[Keep N yearly snapshots]:count:' \
-                '*-tag[Filter by tag]:tag:' \
-                '-source[Filter by source URI (e.g. local:./docs, gdrive)]:uri:' \
-                '-account[Filter by account]:account:' \
-                '-group-by[Group snapshots by fields]:fields:' \
-                ':snapshot ID:'
-            ;;
-        diff)
-            _arguments $global_flags \
-                ':snapshot 1:' \
-                ':snapshot 2:'
-            ;;
-        break-lock)
-            _arguments $global_flags
-            ;;
-        key)
-            local -a key_commands
-            key_commands=(
-                'list:List all encryption key slots'
-                'add-recovery:Generate a 24-word recovery key'
-                'passwd:Change the repository password'
-            )
-            # Check if a key subcommand has been given
-            local key_sub
-            local -i ki=$((i+1))
-            while (( ki < CURRENT )); do
-                case "${words[ki]}" in
-                    -*) ;;
-                    *) key_sub="${words[ki]}"; break ;;
-                esac
-                (( ki++ ))
-            done
-            if [[ -z "$key_sub" ]]; then
-                _describe -t key-commands 'key subcommand' key_commands
-                return
-            fi
-            case "$key_sub" in
-                passwd)
-                    _arguments $global_flags \
-                        '-new-password[New repository password]:password:'
-                    ;;
-                *)
-                    _arguments $global_flags
-                    ;;
-            esac
-            ;;
-        cat)
-            _arguments $global_flags \
-                '-raw[Output raw, unformatted data]' \
-                '*:object key:'
-            ;;
-        completion)
-            _arguments ':shell:(bash zsh fish)'
-            ;;
-    esac
+    case "$root" in
+`)
+	for _, root := range publicRootCommands() {
+		if len(root.children) == 0 {
+			continue
+		}
+		_, _ = fmt.Fprintf(w, "        %s)\n", root.name)
+		_, _ = fmt.Fprint(w, "            sub=\"${words[root_index+1]}\"\n")
+		_, _ = fmt.Fprint(w, "            subcommands=(\n")
+		for _, child := range root.children {
+			if !child.hidden {
+				_, _ = fmt.Fprintf(w, "                %s:%s\n", zshQuote(child.name), zshQuote(child.summary))
+			}
+		}
+		_, _ = fmt.Fprint(w, "            )\n")
+		_, _ = fmt.Fprint(w, "            if (( CURRENT == root_index + 1 )); then _describe -t subcommands 'subcommand' subcommands; return; fi\n")
+		_, _ = fmt.Fprint(w, "            path=\"$root $sub\" ;;\n")
+	}
+	_, _ = fmt.Fprint(w, `    esac
+
+    case "$path" in
+`)
+	for _, command := range publicLeafCommands() {
+		_, _ = fmt.Fprintf(w, "        %s)\n", zshQuote(command.path()))
+		_, _ = fmt.Fprint(w, "            specs=(\n")
+		for _, spec := range command.effectiveFlags() {
+			_, _ = fmt.Fprintf(w, "                %s\n", zshQuote(zshFlagSpec(spec)))
+		}
+		if len(command.argumentValues) != 0 {
+			_, _ = fmt.Fprintf(w, "                %s\n", zshQuote("1:"+command.argumentName+":("+strings.Join(command.argumentValues, " ")+")"))
+		}
+		_, _ = fmt.Fprint(w, "            ) ;;\n")
+	}
+	_, _ = fmt.Fprint(w, `    esac
+    (( ${#specs} )) && _arguments $specs
 }
 
 compdef _cloudstic cloudstic
 `)
 }
 
-// completionFish writes a fish completion script to w.
+func zshFlagSpec(spec flagSpec) string {
+	result := "-" + spec.name + "[" + strings.ReplaceAll(spec.description, "]", "\\]") + "]"
+	if !spec.takesValue() {
+		return result
+	}
+	result += ":" + spec.value + ":"
+	if len(spec.completionValues) != 0 {
+		return result + "(" + strings.Join(spec.completionValues, " ") + ")"
+	}
+	switch spec.completion {
+	case completionFile:
+		return result + "_files"
+	case completionProfile:
+		return result + "_cloudstic_profile_names"
+	case completionAuth:
+		return result + "_cloudstic_auth_names"
+	default:
+		return result
+	}
+}
+
+func zshQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
 func completionFish(w io.Writer) {
 	_, _ = fmt.Fprint(w, `# fish completion for cloudstic
+complete -c cloudstic -f
 
 function __fish_cloudstic_query
     set -l kind $argv[1]
-    cloudstic __complete $kind (commandline -ct) (commandline -opc) 2>/dev/null
+    cloudstic __complete $kind (commandline -ct) (commandline -opc)[2..-1] 2>/dev/null
 end
 
-# Disable file completions by default
-complete -c cloudstic -f
-
-# Subcommands
-complete -c cloudstic -n __fish_use_subcommand -a init -d 'Initialize a new repository'
-complete -c cloudstic -n __fish_use_subcommand -a backup -d 'Create a new backup snapshot'
-complete -c cloudstic -n __fish_use_subcommand -a auth -d 'Manage reusable cloud auth entries'
-complete -c cloudstic -n __fish_use_subcommand -a profile -d 'Manage backup profiles'
-complete -c cloudstic -n __fish_use_subcommand -a source -d 'Discover source candidates for onboarding'
-complete -c cloudstic -n __fish_use_subcommand -a setup -d 'Guided setup and onboarding flows'
-complete -c cloudstic -n __fish_use_subcommand -a tui -d 'Launch the interactive terminal dashboard'
-complete -c cloudstic -n __fish_use_subcommand -a restore -d 'Restore files from a snapshot'
-complete -c cloudstic -n __fish_use_subcommand -a list -d 'List all backup snapshots'
-complete -c cloudstic -n __fish_use_subcommand -a ls -d 'List files within a snapshot'
-complete -c cloudstic -n __fish_use_subcommand -a prune -d 'Remove unused data chunks'
-complete -c cloudstic -n __fish_use_subcommand -a forget -d 'Remove a snapshot from history'
-complete -c cloudstic -n __fish_use_subcommand -a diff -d 'Compare two snapshots'
-complete -c cloudstic -n __fish_use_subcommand -a break-lock -d 'Remove a stale repository lock'
-complete -c cloudstic -n __fish_use_subcommand -a key -d 'Manage encryption key slots'
-complete -c cloudstic -n __fish_use_subcommand -a cat -d 'Display raw JSON of repository objects'
-complete -c cloudstic -n __fish_use_subcommand -a completion -d 'Generate shell completion scripts'
-complete -c cloudstic -n __fish_use_subcommand -a version -d 'Print version information'
-complete -c cloudstic -n __fish_use_subcommand -a help -d 'Show usage information'
-
-# Global flags (available for all subcommands)
-complete -c cloudstic -o store -l store -x -a 'local: s3: b2: sftp://' -d 'Storage backend URI (local:<path>, s3:<bucket>[/<prefix>], b2:<bucket>[/<prefix>], sftp://[user@]host[:port]/<path>)'
-complete -c cloudstic -o profile -l profile -x -a '(__fish_cloudstic_query profile-names)' -d 'Profile name from profiles.yaml'
-complete -c cloudstic -o profiles-file -l profiles-file -r -F -d 'Path to profiles YAML file'
-complete -c cloudstic -l s3-endpoint -x -d 'S3 compatible endpoint URL'
-complete -c cloudstic -l s3-region -x -d 'S3 region'
-complete -c cloudstic -l s3-profile -x -d 'AWS shared config profile for S3 auth'
-complete -c cloudstic -l s3-access-key -x -d 'S3 access key ID'
-complete -c cloudstic -l s3-secret-key -x -d 'S3 secret access key'
-complete -c cloudstic -l source-sftp-password -x -d 'SFTP source password'
-complete -c cloudstic -l source-sftp-key -r -F -d 'Path to SSH private key for SFTP source'
-complete -c cloudstic -l source-sftp-known-hosts -r -F -d 'Path to known_hosts file for SFTP source'
-complete -c cloudstic -l source-sftp-insecure -d 'Skip host key validation for SFTP source (INSECURE)'
-complete -c cloudstic -l store-sftp-password -x -d 'SFTP store password'
-complete -c cloudstic -l store-sftp-key -r -F -d 'Path to SSH private key for SFTP store'
-complete -c cloudstic -l store-sftp-known-hosts -r -F -d 'Path to known_hosts file for SFTP store'
-complete -c cloudstic -l store-sftp-insecure -d 'Skip host key validation for SFTP store (INSECURE)'
-complete -c cloudstic -l encryption-key -x -d 'Platform key (hex-encoded)'
-complete -c cloudstic -l password -x -d 'Repository password'
-complete -c cloudstic -l recovery-key -x -d 'Recovery key (24-word mnemonic)'
-complete -c cloudstic -l kms-key-arn -x -d 'AWS KMS key ARN'
-complete -c cloudstic -l kms-region -x -d 'AWS KMS region'
-complete -c cloudstic -l kms-endpoint -x -d 'Custom AWS KMS endpoint'
-complete -c cloudstic -l disable-packfile -d 'Disable bundling small objects into packs'
-complete -c cloudstic -l prompt -d 'Prompt for password interactively'
-complete -c cloudstic -l no-prompt -d 'Disable interactive prompts (for scripts and CI)'
-complete -c cloudstic -l verbose -d 'Log detailed operations'
-complete -c cloudstic -l quiet -d 'Suppress progress bars'
-complete -c cloudstic -l json -d 'Write command result as JSON to stdout'
-complete -c cloudstic -l debug -d 'Log every store request'
-
-# init
-complete -c cloudstic -n '__fish_seen_subcommand_from init' -l add-recovery-key -d 'Generate a 24-word recovery key'
-complete -c cloudstic -n '__fish_seen_subcommand_from init' -l no-encryption -d 'Create an unencrypted repository'
-complete -c cloudstic -n '__fish_seen_subcommand_from init' -l adopt-slots -d 'Adopt existing key slots'
-
-# backup
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -o source -l source -x -a 'local: sftp:// gdrive gdrive-changes onedrive onedrive-changes' -d 'Source URI'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -o profile -l profile -x -a '(__fish_cloudstic_query profile-names)' -d 'Backup profile name'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -o all-profiles -l all-profiles -d 'Run all enabled backup profiles'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -o auth-ref -l auth-ref -x -a '(__fish_cloudstic_query auth-names)' -d 'Use named auth entry from profiles.yaml'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -o profiles-file -l profiles-file -r -F -d 'Path to profiles YAML file'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-native-files -d 'Exclude Google-native files'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l google-credentials -r -F -d 'Google service account credentials JSON'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l google-credentials-ref -x -d 'Secret reference to Google credentials'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l google-credentials-json -x -d 'Inline Google credentials JSON'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l google-token-file -r -F -d 'Google OAuth token file'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l google-token-ref -x -d 'Secret reference to Google OAuth token'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l onedrive-client-id -x -d 'OneDrive OAuth client ID'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l onedrive-token-file -r -F -d 'OneDrive OAuth token file'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l onedrive-token-ref -x -d 'Secret reference to OneDrive OAuth token'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l tag -x -d 'Tag for the snapshot'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l ignore-empty-snapshot -d 'Skip creating a new snapshot when nothing changed'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -o dry-run -l dry-run -d 'Scan without writing'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-mode -d 'Skip POSIX mode/uid/gid/btime/flags'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-flags -d 'Skip file flags collection'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-xattrs -d 'Skip extended attribute collection'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l xattr-namespaces -x -d 'Restrict xattr collection to prefixes'
-
-# profile subcommands
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and not __fish_seen_subcommand_from list show new' -a list -d 'List stores, auth entries, and backup profiles'
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and not __fish_seen_subcommand_from list show new' -a show -d 'Show one profile and resolved refs'
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and not __fish_seen_subcommand_from list show new' -a new -d 'Create or update backup profile'
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from list' -l profiles-file -r -F -d 'Path to profiles YAML file'
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from show' -l profiles-file -r -F -d 'Path to profiles YAML file'
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l profiles-file -r -F -d 'Path to profiles YAML file'
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l name -x -d 'Profile name'
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l source -x -a 'local: sftp:// gdrive gdrive-changes onedrive onedrive-changes' -d 'Source URI'
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l store-ref -x -d 'Store reference name'
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l store -x -d 'Store URI'
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l auth-ref -x -a '(__fish_cloudstic_query auth-names)' -d 'Auth reference name'
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l tag -x -d 'Tag for snapshots'
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l exclude -x -d 'Exclude pattern'
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l exclude-file -r -F -d 'Path to exclude file'
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l ignore-empty-snapshot -d 'Skip creating a new snapshot when nothing changed'
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l skip-native-files -d 'Exclude Google-native files'
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l volume-uuid -x -d 'Volume UUID override'
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l google-credentials -r -F -d 'Google service account credentials JSON'
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l google-credentials-ref -x -d 'Secret reference to Google credentials'
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l google-credentials-json -x -d 'Inline Google credentials JSON'
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l google-token-file -r -F -d 'Google OAuth token file'
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l google-token-ref -x -d 'Secret reference to Google OAuth token'
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l onedrive-client-id -x -d 'OneDrive OAuth client ID'
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l onedrive-token-file -r -F -d 'OneDrive OAuth token file'
-complete -c cloudstic -n '__fish_seen_subcommand_from profile; and __fish_seen_subcommand_from new' -l onedrive-token-ref -x -d 'Secret reference to OneDrive OAuth token'
-
-# store subcommands
-complete -c cloudstic -n '__fish_seen_subcommand_from store; and not __fish_seen_subcommand_from list show new verify init' -a list -d 'List configured stores'
-complete -c cloudstic -n '__fish_seen_subcommand_from store; and not __fish_seen_subcommand_from list show new verify init' -a show -d 'Show one store and its configuration'
-complete -c cloudstic -n '__fish_seen_subcommand_from store; and not __fish_seen_subcommand_from list show new verify init' -a new -d 'Create or update a store entry'
-complete -c cloudstic -n '__fish_seen_subcommand_from store; and not __fish_seen_subcommand_from list show new verify init' -a verify -d 'Verify store credentials and connectivity'
-complete -c cloudstic -n '__fish_seen_subcommand_from store; and not __fish_seen_subcommand_from list show new verify init' -a init -d 'Initialize a store by reference'
-complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from list' -l profiles-file -r -F -d 'Path to profiles YAML file'
-complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from show' -l profiles-file -r -F -d 'Path to profiles YAML file'
-complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from new' -l profiles-file -r -F -d 'Path to profiles YAML file'
-complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from new' -l store-sftp-password -x -d 'SFTP store password'
-complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from new' -l store-sftp-key -r -F -d 'Path to SSH private key for SFTP store'
-complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from new' -l store-sftp-known-hosts -r -F -d 'Path to known_hosts file for SFTP store'
-complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from new' -l store-sftp-insecure -d 'Skip host key validation for SFTP store (INSECURE)'
-complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from verify' -l profiles-file -r -F -d 'Path to profiles YAML file'
-complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from init' -l profiles-file -r -F -d 'Path to profiles YAML file'
-complete -c cloudstic -n '__fish_seen_subcommand_from store; and __fish_seen_subcommand_from init' -l yes -d 'Initialize without confirmation prompt'
-
-# source subcommands
-complete -c cloudstic -n '__fish_seen_subcommand_from source; and not __fish_seen_subcommand_from discover' -a discover -d 'Discover local source candidates'
-complete -c cloudstic -n '__fish_seen_subcommand_from source; and __fish_seen_subcommand_from discover' -l portable-only -d 'Only show portable or external source candidates'
-complete -c cloudstic -n '__fish_seen_subcommand_from source; and __fish_seen_subcommand_from discover' -l json -d 'Write discovered sources as JSON'
-
-# setup subcommands
-complete -c cloudstic -n '__fish_seen_subcommand_from setup; and not __fish_seen_subcommand_from workstation' -a workstation -d 'Preview workstation onboarding plan'
-complete -c cloudstic -n '__fish_seen_subcommand_from setup; and __fish_seen_subcommand_from workstation' -l dry-run -d 'Preview generated profiles without writing configuration'
-complete -c cloudstic -n '__fish_seen_subcommand_from setup; and __fish_seen_subcommand_from workstation' -l yes -d 'Accept default selections without prompting'
-complete -c cloudstic -n '__fish_seen_subcommand_from setup; and __fish_seen_subcommand_from workstation' -l profiles-file -r -F -d 'Path to profiles YAML file'
-complete -c cloudstic -n '__fish_seen_subcommand_from setup; and __fish_seen_subcommand_from workstation' -l store-ref -x -d 'Existing store reference to attach'
-complete -c cloudstic -n '__fish_seen_subcommand_from setup; and __fish_seen_subcommand_from workstation' -l json -d 'Write onboarding plan as JSON'
-
-# auth subcommands
-complete -c cloudstic -n '__fish_seen_subcommand_from auth; and not __fish_seen_subcommand_from list show new login' -a list -d 'List auth entries from profiles.yaml'
-complete -c cloudstic -n '__fish_seen_subcommand_from auth; and not __fish_seen_subcommand_from list show new login' -a show -d 'Show one auth entry'
-complete -c cloudstic -n '__fish_seen_subcommand_from auth; and not __fish_seen_subcommand_from list show new login' -a new -d 'Create or update reusable auth entry'
-complete -c cloudstic -n '__fish_seen_subcommand_from auth; and not __fish_seen_subcommand_from list show new login' -a login -d 'Run OAuth login flow for auth entry'
-complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from list' -l profiles-file -r -F -d 'Path to profiles YAML file'
-complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from show' -l profiles-file -r -F -d 'Path to profiles YAML file'
-complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l profiles-file -r -F -d 'Path to profiles YAML file'
-complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l name -x -d 'Auth reference name'
-complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l provider -x -a 'google onedrive' -d 'Auth provider'
-complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l google-credentials -r -F -d 'Google service account credentials JSON'
-complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l google-credentials-ref -x -d 'Secret reference to Google credentials'
-complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l google-credentials-json -x -d 'Inline Google credentials JSON'
-complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l google-token-file -r -F -d 'Google OAuth token file'
-complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l google-token-ref -x -d 'Secret reference to Google OAuth token'
-complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l onedrive-client-id -x -d 'OneDrive OAuth client ID'
-complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l onedrive-token-file -r -F -d 'OneDrive OAuth token file'
-complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from new' -l onedrive-token-ref -x -d 'Secret reference to OneDrive OAuth token'
-complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from login' -l profiles-file -r -F -d 'Path to profiles YAML file'
-complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from login' -l name -x -d 'Auth reference name'
-
-# restore
-complete -c cloudstic -n '__fish_seen_subcommand_from restore' -l output -r -F -d 'Output ZIP file path'
-complete -c cloudstic -n '__fish_seen_subcommand_from restore' -l dry-run -d 'Show what would be restored'
-
-# list
-complete -c cloudstic -n '__fish_seen_subcommand_from list' -l group -d 'Group output by source identity'
-
-# prune
-complete -c cloudstic -n '__fish_seen_subcommand_from prune' -l dry-run -d 'Show what would be deleted'
-
-# forget
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l prune -d 'Run prune after forgetting'
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l dry-run -d 'Show what would be removed'
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l keep-last -x -d 'Keep N most recent snapshots'
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l keep-hourly -x -d 'Keep N hourly snapshots'
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l keep-daily -x -d 'Keep N daily snapshots'
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l keep-weekly -x -d 'Keep N weekly snapshots'
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l keep-monthly -x -d 'Keep N monthly snapshots'
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l keep-yearly -x -d 'Keep N yearly snapshots'
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l tag -x -d 'Filter by tag'
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l source -x -d 'Filter by source URI (e.g. local:./docs, gdrive)'
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l account -x -d 'Filter by account'
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l group-by -x -d 'Group snapshots by fields'
-
-# key subcommands
-complete -c cloudstic -n '__fish_seen_subcommand_from key; and not __fish_seen_subcommand_from list add-recovery passwd' -a list -d 'List all encryption key slots'
-complete -c cloudstic -n '__fish_seen_subcommand_from key; and not __fish_seen_subcommand_from list add-recovery passwd' -a add-recovery -d 'Generate a 24-word recovery key'
-complete -c cloudstic -n '__fish_seen_subcommand_from key; and not __fish_seen_subcommand_from list add-recovery passwd' -a passwd -d 'Change the repository password'
-complete -c cloudstic -n '__fish_seen_subcommand_from key; and __fish_seen_subcommand_from passwd' -l new-password -x -d 'New repository password'
-
-# cat
-complete -c cloudstic -n '__fish_seen_subcommand_from cat' -l raw -d 'Output raw, unformatted data'
-
-# completion
-complete -c cloudstic -n '__fish_seen_subcommand_from completion' -a 'bash zsh fish' -d 'Shell type'
 `)
+	for _, root := range publicRootCommands() {
+		_, _ = fmt.Fprintf(w, "complete -c cloudstic -n __fish_use_subcommand -a %s -d %s\n", fishQuote(root.name), fishQuote(root.summary))
+	}
+	for _, spec := range globalFlagSpecs {
+		writeFishFlag(w, "__fish_use_subcommand", spec)
+	}
+	for _, root := range publicRootCommands() {
+		for _, child := range root.children {
+			if child.hidden {
+				continue
+			}
+			condition := fmt.Sprintf("__fish_seen_subcommand_from %s; and not __fish_seen_subcommand_from %s", root.name, commandWords(root.children))
+			_, _ = fmt.Fprintf(w, "complete -c cloudstic -n %s -a %s -d %s\n", fishQuote(condition), fishQuote(child.name), fishQuote(child.summary))
+		}
+	}
+	for _, command := range publicLeafCommands() {
+		condition := fishCommandCondition(command)
+		for _, spec := range command.effectiveFlags() {
+			writeFishFlag(w, condition, spec)
+		}
+		if len(command.argumentValues) != 0 {
+			_, _ = fmt.Fprintf(w, "complete -c cloudstic -n %s -a %s\n", fishQuote(condition), fishQuote(strings.Join(command.argumentValues, " ")))
+		}
+	}
+}
+
+func writeFishFlag(w io.Writer, condition string, spec flagSpec) {
+	_, _ = fmt.Fprintf(w, "complete -c cloudstic -n %s -l %s", fishQuote(condition), spec.name)
+	if spec.takesValue() {
+		_, _ = fmt.Fprint(w, " -r")
+	}
+	if len(spec.completionValues) != 0 {
+		_, _ = fmt.Fprintf(w, " -a %s", fishQuote(strings.Join(spec.completionValues, " ")))
+	} else {
+		switch spec.completion {
+		case completionFile:
+			_, _ = fmt.Fprint(w, " -F")
+		case completionProfile:
+			_, _ = fmt.Fprint(w, " -a '(__fish_cloudstic_query profile-names)'")
+		case completionAuth:
+			_, _ = fmt.Fprint(w, " -a '(__fish_cloudstic_query auth-names)'")
+		}
+	}
+	_, _ = fmt.Fprintf(w, " -d %s\n", fishQuote(spec.description))
+}
+
+func fishCommandCondition(command *commandSpec) string {
+	if command.parent == nil {
+		return "__fish_seen_subcommand_from " + command.name
+	}
+	return "__fish_seen_subcommand_from " + command.parent.name + "; and __fish_seen_subcommand_from " + command.name
+}
+
+func fishQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "\\'") + "'"
 }

@@ -33,6 +33,16 @@ type forgetArgs struct {
 	hasPolicy     bool
 }
 
+func forgetCommandSpec() *commandSpec {
+	return leaf("forget", "Remove snapshots from history", "[snapshot_id]", runForget,
+		boolFlag("prune", "Prune after forgetting"), boolFlag("dry-run", "Preview without removing"),
+		valueFlag("keep-last", "n", "Keep recent snapshots", completionNone), valueFlag("keep-hourly", "n", "Keep hourly snapshots", completionNone),
+		valueFlag("keep-daily", "n", "Keep daily snapshots", completionNone), valueFlag("keep-weekly", "n", "Keep weekly snapshots", completionNone),
+		valueFlag("keep-monthly", "n", "Keep monthly snapshots", completionNone), valueFlag("keep-yearly", "n", "Keep yearly snapshots", completionNone),
+		valueFlag("tag", "tag", "Filter by tag", completionNone), sourceURIFlag("source", "Filter by source"),
+		valueFlag("account", "id", "Filter by account", completionNone), valueFlag("group-by", "fields", "Grouping fields", completionNone)).withGlobalFlags()
+}
+
 func parseForgetArgs(args []string) (*forgetArgs, error) {
 	fs := flag.NewFlagSet("forget", flag.ContinueOnError)
 	a := &forgetArgs{}
@@ -49,7 +59,7 @@ func parseForgetArgs(args []string) (*forgetArgs, error) {
 	filterSource := fs.String("source", "", "Filter by source URI (e.g. local:./docs, gdrive)")
 	filterAccount := fs.String("account", "", "Filter by account")
 	groupBy := fs.String("group-by", "source,account,path", "Group snapshots by fields (comma-separated)")
-	if err := parseFlags(fs, args); err != nil {
+	if err := parseFlags(fs, args, forgetCommandSpec()); err != nil {
 		return nil, err
 	}
 	fs.Visit(func(f *flag.Flag) {

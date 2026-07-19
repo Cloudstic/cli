@@ -18,12 +18,18 @@ type catArgs struct {
 	raw  bool
 }
 
+func catCommandSpec() *commandSpec {
+	return leaf("cat", "Display raw repository objects", "<object_key> [object_key...]", runCat,
+		boolFlag("raw", "Output raw data")).withGlobalFlags().withNotes(
+		"Object keys include snapshot/, filemeta/, content/, node/, chunk/, config, index/latest, and keys/.")
+}
+
 func parseCatArgs(args []string) (*catArgs, error) {
 	fs := flag.NewFlagSet("cat", flag.ContinueOnError)
 	a := &catArgs{}
 	a.g = addGlobalFlags(fs)
 	rawFlag := fs.Bool("raw", false, "Output raw, unformatted data (useful for hashing)")
-	if err := parseFlags(fs, args); err != nil {
+	if err := parseFlags(fs, args, catCommandSpec()); err != nil {
 		return nil, err
 	}
 	if fs.NArg() < 1 {

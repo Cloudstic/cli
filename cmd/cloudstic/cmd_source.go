@@ -9,29 +9,21 @@ import (
 	"github.com/jedib0t/go-pretty/v6/table"
 )
 
-func runSource(r *runner, ctx context.Context) int {
-	if len(r.args) < 1 {
-		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic source <subcommand> [options]")
-		_, _ = fmt.Fprintln(r.errOut, "")
-		_, _ = fmt.Fprintln(r.errOut, "Available subcommands: discover")
-		return 1
-	}
+func sourceCommandSpec() *commandSpec {
+	return group("source", "Discover source candidates for onboarding", sourceDiscoverCommandSpec())
+}
 
-	subcommand := r.args[0]
-	subRunner := r.withArgs(r.args[1:])
-	switch subcommand {
-	case "discover":
-		return runSourceDiscover(subRunner, ctx)
-	default:
-		return r.fail("Unknown source subcommand: %s", subcommand)
-	}
+func sourceDiscoverCommandSpec() *commandSpec {
+	return leaf("discover", "Discover local source candidates", "", runSourceDiscover,
+		boolFlag("portable-only", "Only show portable source candidates"),
+		boolFlag("json", "Write sources as JSON"))
 }
 
 func runSourceDiscover(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("source discover", flag.ContinueOnError)
 	portableOnly := fs.Bool("portable-only", false, "Only show portable/external source candidates")
 	jsonOutput := fs.Bool("json", false, "Write discovered sources as JSON")
-	if err := parseFlags(fs, r.args); err != nil {
+	if err := parseFlags(fs, r.args, sourceDiscoverCommandSpec()); err != nil {
 		return r.parseError(err)
 	}
 

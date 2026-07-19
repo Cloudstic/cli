@@ -20,6 +20,13 @@ type initArgs struct {
 	adoptSlots   bool
 }
 
+func initCommandSpec() *commandSpec {
+	return leaf("init", "Initialize a new repository", "", runInit,
+		boolFlag("add-recovery-key", "Generate a 24-word recovery key"),
+		boolFlag("no-encryption", "Create an unencrypted repository"),
+		boolFlag("adopt-slots", "Adopt existing key slots")).withGlobalFlags()
+}
+
 func parseInitArgs(args []string) (*initArgs, error) {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	a := &initArgs{}
@@ -27,7 +34,7 @@ func parseInitArgs(args []string) (*initArgs, error) {
 	recovery := fs.Bool("add-recovery-key", false, "Generate a recovery key (24-word seed phrase) during init")
 	noEncryption := fs.Bool("no-encryption", false, "Create an unencrypted repository (NOT recommended)")
 	adoptSlots := fs.Bool("adopt-slots", false, "Initialize by adopting existing key slots if found (prevents error if already has slots)")
-	if err := parseFlags(fs, args); err != nil {
+	if err := parseFlags(fs, args, initCommandSpec()); err != nil {
 		return nil, err
 	}
 	a.recovery = *recovery

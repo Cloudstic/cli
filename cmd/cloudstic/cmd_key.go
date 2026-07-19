@@ -14,30 +14,24 @@ import (
 	"github.com/moby/term"
 )
 
-func runKey(r *runner, ctx context.Context) int {
-	if len(r.args) < 1 {
-		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic key <subcommand>")
-		_, _ = fmt.Fprintln(r.errOut)
-		_, _ = fmt.Fprintln(r.errOut, "Subcommands:")
-		_, _ = fmt.Fprintln(r.errOut, "  list           List all encryption key slots in the repository")
-		_, _ = fmt.Fprintln(r.errOut, "  add-recovery   Generate a 24-word recovery key")
-		_, _ = fmt.Fprintln(r.errOut, "  passwd         Change the repository password")
-		return 1
-	}
+func keyCommandSpec() *commandSpec {
+	return group("key", "Manage encryption key slots",
+		keyListCommandSpec(), keyAddRecoveryCommandSpec(), keyPasswdCommandSpec())
+}
 
-	sub := r.args[0]
-	subRunner := r.withArgs(r.args[1:])
+func keyListCommandSpec() *commandSpec {
+	return leaf("list", "List encryption key slots", "", runKeyList).withGlobalFlags()
+}
 
-	switch sub {
-	case "list":
-		return runKeyList(subRunner, ctx)
-	case "add-recovery":
-		return runAddRecoveryKey(subRunner, ctx)
-	case "passwd":
-		return runKeyPasswd(subRunner, ctx)
-	default:
-		return r.fail("Unknown key subcommand: %s", sub)
-	}
+func keyAddRecoveryCommandSpec() *commandSpec {
+	return leaf("add-recovery", "Generate a 24-word recovery key", "", runAddRecoveryKey).withGlobalFlags().withNotes(
+		"Requires repository unlock credentials and prints a new 24-word recovery key.")
+}
+
+func keyPasswdCommandSpec() *commandSpec {
+	return leaf("passwd", "Change the repository password", "", runKeyPasswd,
+		valueFlag("new-password", "password", "New repository password", completionNone)).withGlobalFlags().withNotes(
+		"Current repository credentials are required to replace the password slot.")
 }
 
 type keyListArgs struct {
@@ -47,7 +41,7 @@ type keyListArgs struct {
 func parseKeyListArgs(args []string) (*keyListArgs, error) {
 	fs := flag.NewFlagSet("key list", flag.ContinueOnError)
 	a := &keyListArgs{g: addGlobalFlags(fs)}
-	if err := parseFlags(fs, args); err != nil {
+	if err := parseFlags(fs, args, keyListCommandSpec()); err != nil {
 		return nil, err
 	}
 	return a, nil
@@ -105,7 +99,7 @@ func parseKeyPasswdArgs(args []string) (*keyPasswdArgs, error) {
 	a := &keyPasswdArgs{}
 	a.g = addGlobalFlags(fs)
 	newPassword := fs.String("new-password", "", "New repository password (prompted interactively if not set)")
-	if err := parseFlags(fs, args); err != nil {
+	if err := parseFlags(fs, args, keyPasswdCommandSpec()); err != nil {
 		return nil, err
 	}
 	a.newPassword = *newPassword
@@ -161,7 +155,7 @@ type addRecoveryKeyArgs struct {
 func parseAddRecoveryKeyArgs(args []string) (*addRecoveryKeyArgs, error) {
 	fs := flag.NewFlagSet("add-recovery-key", flag.ContinueOnError)
 	a := &addRecoveryKeyArgs{g: addGlobalFlags(fs)}
-	if err := parseFlags(fs, args); err != nil {
+	if err := parseFlags(fs, args, keyAddRecoveryCommandSpec()); err != nil {
 		return nil, err
 	}
 	return a, nil

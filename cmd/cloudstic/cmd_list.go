@@ -14,13 +14,18 @@ type listArgs struct {
 	group *bool
 }
 
+func listCommandSpec() *commandSpec {
+	return leaf("list", "List all backup snapshots", "", runList,
+		boolFlag("group", "Group snapshots by source identity")).withGlobalFlags()
+}
+
 func parseListArgs(args []string) (*listArgs, error) {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	a := &listArgs{
 		g:     addGlobalFlags(fs),
 		group: fs.Bool("group", false, "Group snapshots by source identity"),
 	}
-	if err := parseFlags(fs, args); err != nil {
+	if err := parseFlags(fs, args, listCommandSpec()); err != nil {
 		return nil, err
 	}
 	return a, nil

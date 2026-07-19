@@ -13,6 +13,10 @@ import (
 
 var completionLoadProfilesFile = cloudstic.LoadProfilesFile
 
+func completionQueryCommandSpec() *commandSpec {
+	return leaf("__complete", "", "", runCompletionQuery, profilesFileFlag()).hide().withoutFlagProbe()
+}
+
 func runCompletionQuery(r *runner, ctx context.Context) int {
 	if len(r.args) < 1 {
 		return 0
@@ -76,17 +80,19 @@ func completionLoadProfilesConfig(path string) (*cloudstic.ProfilesConfig, error
 }
 
 func completionProfilesPath(args []string) string {
+	command := completionQueryCommandSpec()
 	fs := flag.NewFlagSet("__complete", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	defaultPath := envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback())
-	profilesFile := fs.String("profiles-file", defaultPath, "")
-	_ = fs.Parse(filterCompletionFlags(args, map[string]bool{
-		"profiles-file": true,
-	}))
+	profilesFile := fs.String("profiles-file", defaultProfilesPathFallback(), "")
+	_ = parseFlags(fs, filterCompletionFlags(args, command.flags), command)
 	return *profilesFile
 }
 
-func filterCompletionFlags(args []string, specs map[string]bool) []string {
+func filterCompletionFlags(args []string, flagSpecs []flagSpec) []string {
+	specs := make(map[string]bool, len(flagSpecs))
+	for _, spec := range flagSpecs {
+		specs[spec.name] = spec.takesValue()
+	}
 	filtered := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		arg := args[i]

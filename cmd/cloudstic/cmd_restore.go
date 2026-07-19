@@ -21,6 +21,14 @@ type restoreArgs struct {
 	snapshotRef string
 }
 
+func restoreCommandSpec() *commandSpec {
+	return leaf("restore", "Restore files from a backup snapshot", "[snapshot_id]", runRestore,
+		valueFlag("output", "path", "Restore output path", completionFile),
+		valueFlag("format", "format", "Restore format", completionNone).withCompletionValues("zip", "dir"),
+		valueFlag("path", "path", "File or subtree to restore", completionNone),
+		boolFlag("dry-run", "Preview without writing output")).withGlobalFlags()
+}
+
 func parseRestoreArgs(args []string) (*restoreArgs, error) {
 	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
 	a := &restoreArgs{}
@@ -29,7 +37,7 @@ func parseRestoreArgs(args []string) (*restoreArgs, error) {
 	format := fs.String("format", "", "Restore format: zip or dir (default: auto from -output)")
 	dryRun := fs.Bool("dry-run", false, "Show what would be restored without writing output")
 	pathFilter := fs.String("path", "", "Restore only the given file or subtree (e.g. Documents/report.pdf or Documents/)")
-	if err := parseFlags(fs, args); err != nil {
+	if err := parseFlags(fs, args, restoreCommandSpec()); err != nil {
 		return nil, err
 	}
 	a.output = *output

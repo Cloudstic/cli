@@ -19,11 +19,16 @@ type lsArgs struct {
 	snapshotID string
 }
 
+func lsCommandSpec() *commandSpec {
+	return leaf("ls", "List files within a snapshot", "[snapshot_id]", runLsSnapshot).withGlobalFlags().withNotes(
+		"Defaults to the latest snapshot.")
+}
+
 func parseLsArgs(args []string) (*lsArgs, error) {
 	fs := flag.NewFlagSet("ls", flag.ContinueOnError)
 	a := &lsArgs{}
 	a.g = addGlobalFlags(fs)
-	if err := parseFlags(fs, args); err != nil {
+	if err := parseFlags(fs, args, lsCommandSpec()); err != nil {
 		return nil, err
 	}
 	a.snapshotID = "latest"

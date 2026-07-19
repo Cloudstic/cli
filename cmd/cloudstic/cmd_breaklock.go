@@ -13,10 +13,15 @@ type breakLockArgs struct {
 	g *globalFlags
 }
 
+func breakLockCommandSpec() *commandSpec {
+	return leaf("break-lock", "Remove a stale repository lock", "", runBreakLock).withGlobalFlags().withNotes(
+		"Only use this when no other repository operation is running.")
+}
+
 func parseBreakLockArgs(args []string) (*breakLockArgs, error) {
 	fs := flag.NewFlagSet("break-lock", flag.ContinueOnError)
 	a := &breakLockArgs{g: addGlobalFlags(fs)}
-	if err := parseFlags(fs, args); err != nil {
+	if err := parseFlags(fs, args, breakLockCommandSpec()); err != nil {
 		return nil, err
 	}
 	return a, nil

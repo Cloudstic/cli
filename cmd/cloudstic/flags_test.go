@@ -10,7 +10,7 @@ func TestReorderArgs_PreservesTerminator(t *testing.T) {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	jsonOutput := fs.Bool("json", false, "")
 
-	if err := parseFlags(fs, []string{"object", "-json", "--", "-no-prompt"}); err != nil {
+	if err := parseFlags(fs, []string{"object", "-json", "--", "-no-prompt"}, nil); err != nil {
 		t.Fatalf("parseFlags() error = %v", err)
 	}
 	if !*jsonOutput {
@@ -51,17 +51,17 @@ func TestGlobalFlagScans_StopAtTerminator(t *testing.T) {
 
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	g := addGlobalFlags(fs)
-	if err := parseFlags(fs, []string{"--", "-store"}); err != nil {
+	if err := parseFlags(fs, []string{"--", "-store"}, nil); err != nil {
 		t.Fatalf("parseFlags() error = %v", err)
 	}
-	if g.flagProvided("store") {
-		t.Fatal("globalFlags.flagProvided() treated a positional argument as a flag")
+	if g.valueSource("store") != valueSourceDefault {
+		t.Fatal("globalFlags.valueSource() treated a positional argument as a flag")
 	}
 }
 
 func TestParseFlags_AcceptsNoPromptForNestedCommands(t *testing.T) {
 	fs := flag.NewFlagSet("nested", flag.ContinueOnError)
-	if err := parseFlags(fs, []string{"-no-prompt"}); err != nil {
+	if err := parseFlags(fs, []string{"-no-prompt"}, nil); err != nil {
 		t.Fatalf("parseFlags() error = %v", err)
 	}
 }

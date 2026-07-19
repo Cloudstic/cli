@@ -3,9 +3,40 @@ package main
 import (
 	"bytes"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 )
+
+func TestStaticCompletionValuesComeFromFlagSpecs(t *testing.T) {
+	tests := []struct {
+		name string
+		spec flagSpec
+		want []string
+	}{
+		{"global store", globalFlagByName("store"), []string{"local:", "s3:", "b2:", "sftp://"}},
+		{"backup source", mustCommandFlag(t, backupCommandSpec(), "source"), []string{"local:", "sftp://", "gdrive", "gdrive-changes", "onedrive", "onedrive-changes"}},
+		{"store new uri", mustCommandFlag(t, storeNewCommandSpec(), "uri"), []string{"local:", "s3:", "b2:", "sftp://"}},
+		{"forget source", mustCommandFlag(t, forgetCommandSpec(), "source"), []string{"local:", "sftp://", "gdrive", "gdrive-changes", "onedrive", "onedrive-changes"}},
+		{"restore format", mustCommandFlag(t, restoreCommandSpec(), "format"), []string{"zip", "dir"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if !slices.Equal(test.spec.completionValues, test.want) {
+				t.Fatalf("completion values = %v, want %v", test.spec.completionValues, test.want)
+			}
+		})
+	}
+}
+
+func mustCommandFlag(t *testing.T, command *commandSpec, name string) flagSpec {
+	t.Helper()
+	spec, ok := command.flag(name)
+	if !ok {
+		t.Fatalf("command %s is missing -%s", command.path(), name)
+	}
+	return spec
+}
 
 func TestRunCompletion(t *testing.T) {
 	for _, shell := range []string{"bash", "zsh", "fish"} {
@@ -19,171 +50,90 @@ func TestRunCompletion(t *testing.T) {
 
 	var errOut bytes.Buffer
 	if code := runCompletion(&runner{out: io.Discard, errOut: &errOut}); code != 1 {
-		t.Fatalf("runCompletion() without a shell exit code = %d, want 1", code)
+		t.Fatalf("runCompletion() without shell exit code = %d, want 1", code)
 	}
 	if !strings.Contains(errOut.String(), "Usage: cloudstic completion <shell>") {
 		t.Fatalf("unexpected usage output: %q", errOut.String())
 	}
 }
 
-func TestCompletionBash(t *testing.T) {
-	var buf bytes.Buffer
-	completionBash(&buf)
-	out := buf.String()
-
-	if out == "" {
-		t.Fatal("bash completion output is empty")
+func TestGeneratedCompletionsContainRegistry(t *testing.T) {
+	tests := []struct {
+		name     string
+		generate func(io.Writer)
+		markers  []string
+	}{
+		{name: "bash", generate: completionBash, markers: []string{"_cloudstic()", "complete -F _cloudstic cloudstic", "profile-names", "auth-names"}},
+		{name: "zsh", generate: completionZsh, markers: []string{"#compdef cloudstic", "_cloudstic()", "compdef _cloudstic cloudstic", "_cloudstic_profile_names", "_cloudstic_auth_names"}},
+		{name: "fish", generate: completionFish, markers: []string{"complete -c cloudstic -f", "function __fish_cloudstic_query", "profile-names", "auth-names"}},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			tt.generate(&out)
+			script := out.String()
+			for _, marker := range tt.markers {
+				if !strings.Contains(script, marker) {
+					t.Errorf("completion missing marker %q", marker)
+				}
+			}
+			for _, root := range publicRootCommands() {
+				if !strings.Contains(script, root.name) {
+					t.Errorf("completion missing root command %q", root.name)
+				}
+			}
+			for _, command := range publicLeafCommands() {
+				for _, spec := range command.effectiveFlags() {
+					if !strings.Contains(script, spec.name) {
+						t.Errorf("completion missing %q flag %q", command.path(), spec.name)
+					}
+				}
+			}
+			if strings.Contains(script, "__complete:Display") || strings.Contains(script, "--version:Display") {
+				t.Error("completion exposes a hidden command or alias")
+			}
+		})
+	}
+}
 
-	// Verify it's a valid bash completion script
-	for _, marker := range []string{
-		"_cloudstic()",
-		"_cloudstic_query()",
-		"complete -F _cloudstic cloudstic",
-		// All commands are listed
-		"init", "backup", "auth", "profile", "store", "source", "setup", "tui", "restore", "list", "ls", "prune", "forget",
-		"diff", "break-lock", "key", "cat", "completion",
-		// Key subcommands
-		"list add-recovery passwd",
-		// Global flags
-		"-store", "-password", "-verbose",
-		// Command-specific flags
-		"-dry-run", "-add-recovery-key", "-source", "-output",
-		"-profiles-file",
-		"-profile", "-all-profiles",
-		"-auth-ref",
-		"profile-names",
-		"auth-names",
-		"-ignore-empty-snapshot",
-		"workstation",
-		"-store-ref",
-		// Value completions
-		"local: s3: b2: sftp://",
-		"gdrive", "onedrive",
-	} {
-		if !strings.Contains(out, marker) {
-			t.Errorf("bash completion missing expected marker: %q", marker)
+func TestBashCompletionBooleanSFTPFlags(t *testing.T) {
+	var out bytes.Buffer
+	completionBash(&out)
+	script := out.String()
+	for _, name := range []string{"source-sftp-insecure", "store-sftp-insecure"} {
+		if !strings.Contains(script, "-"+name) {
+			t.Fatalf("bash completion missing -%s", name)
+		}
+		for _, line := range strings.Split(script, "\n") {
+			_, valueList, ok := strings.Cut(line, "value_flags=")
+			if ok && strings.Contains(valueList, "-"+name) {
+				t.Errorf("boolean flag -%s appears in value-taking list: %s", name, line)
+			}
+		}
+	}
+	if !strings.Contains(script, `if [[ -z "$root" ]]`) {
+		t.Error("bash completion does not handle partial root commands")
+	}
+	if !strings.Contains(script, "for value_flag in $value_flags") {
+		t.Error("bash completion does not skip values using the generated value flag list")
+	}
+}
+
+func TestStoreNewCompletionOmitsUnsupportedHostKeyFlags(t *testing.T) {
+	storeNew := findCommand(rootCommand("store").children, "new")
+	for _, spec := range storeNew.effectiveFlags() {
+		if spec.name == "store-sftp-known-hosts" || spec.name == "store-sftp-insecure" {
+			t.Errorf("store new still advertises unsupported flag %q", spec.name)
 		}
 	}
 }
 
-func TestCompletionZsh(t *testing.T) {
-	var buf bytes.Buffer
-	completionZsh(&buf)
-	out := buf.String()
-
-	if out == "" {
-		t.Fatal("zsh completion output is empty")
+func TestCompletionProfilesPathUsesSpecEnvironmentAndFlagPrecedence(t *testing.T) {
+	t.Setenv("CLOUDSTIC_PROFILES_FILE", "/environment/profiles.yaml")
+	if got := completionProfilesPath(nil); got != "/environment/profiles.yaml" {
+		t.Fatalf("environment profiles path = %q", got)
 	}
-
-	for _, marker := range []string{
-		"#compdef cloudstic",
-		"_cloudstic()",
-		"_cloudstic_query()",
-		"_cloudstic_profile_names",
-		"_cloudstic_auth_names",
-		"_cloudstic_store_prefixes()",
-		"compdef _cloudstic cloudstic",
-		// Commands with descriptions
-		"init:Initialize a new repository",
-		"backup:Create a new backup snapshot",
-		"auth:Manage reusable cloud auth entries",
-		"profile:Manage backup profiles",
-		"tui:Launch the interactive terminal dashboard",
-		"new:Create or update a backup profile",
-		"show:Show one profile and resolved store/auth references",
-		"new:Create or update a reusable cloud auth entry",
-		"login:Run OAuth login flow for one auth entry",
-		"key:Manage encryption key slots",
-		"completion:Generate shell completion scripts",
-		"source:Discover source candidates for onboarding",
-		"discover:Discover local source candidates",
-		"setup:Guided setup and onboarding flows",
-		"workstation:Preview workstation onboarding plan",
-		// Key subcommands
-		"list:List all encryption key slots",
-		"add-recovery:Generate a 24-word recovery key",
-		"passwd:Change the repository password",
-		"-new-password[New repository password]",
-		// Global flags with descriptions
-		"-store[Storage backend URI]:uri:_cloudstic_store_prefixes",
-		"-verbose[Log detailed operations]",
-		// Subcommand-specific flags
-		"-add-recovery-key[Generate a 24-word recovery key]",
-		"-dry-run[Scan without writing]",
-		"-keep-last[Keep N most recent snapshots]",
-		"list:List stores, auth entries, and backup profiles",
-		"-profile[Backup profile name]",
-		"-all-profiles[Run all enabled backup profiles]",
-		"-auth-ref[Use named auth entry from profiles.yaml]",
-		"-ignore-empty-snapshot[Skip creating a new snapshot when nothing changed]",
-		"-store-ref[Existing store reference to attach]",
-		// Value completions (source type list still present)
-		"(local: sftp:// gdrive gdrive-changes onedrive onedrive-changes)",
-		"(bash zsh fish)",
-	} {
-		if !strings.Contains(out, marker) {
-			t.Errorf("zsh completion missing expected marker: %q", marker)
-		}
-	}
-}
-
-func TestCompletionFish(t *testing.T) {
-	var buf bytes.Buffer
-	completionFish(&buf)
-	out := buf.String()
-
-	if out == "" {
-		t.Fatal("fish completion output is empty")
-	}
-
-	for _, marker := range []string{
-		"complete -c cloudstic -f",
-		"function __fish_cloudstic_query",
-		// Subcommands
-		"complete -c cloudstic -n __fish_use_subcommand -a init",
-		"complete -c cloudstic -n __fish_use_subcommand -a backup",
-		"complete -c cloudstic -n __fish_use_subcommand -a profile",
-		"complete -c cloudstic -n __fish_use_subcommand -a auth",
-		"complete -c cloudstic -n __fish_use_subcommand -a source",
-		"complete -c cloudstic -n __fish_use_subcommand -a setup",
-		"complete -c cloudstic -n __fish_use_subcommand -a tui",
-		"complete -c cloudstic -n __fish_use_subcommand -a key",
-		"complete -c cloudstic -n __fish_use_subcommand -a completion",
-		// Key subcommands
-		"-a list -d 'List all encryption key slots'",
-		"-a add-recovery -d 'Generate a 24-word recovery key'",
-		"-a passwd -d 'Change the repository password'",
-		"-l new-password",
-		// Global flags
-		"complete -c cloudstic -o store -l store -x",
-		"complete -c cloudstic -l verbose",
-		// Command-specific flags
-		"__fish_seen_subcommand_from init",
-		"__fish_seen_subcommand_from backup",
-		"__fish_seen_subcommand_from forget",
-		"__fish_seen_subcommand_from profile",
-		"-l dry-run",
-		"-l keep-last",
-		"-l profiles-file",
-		"-l profile",
-		"-l all-profiles",
-		"-l auth-ref",
-		"(__fish_cloudstic_query profile-names)",
-		"(__fish_cloudstic_query auth-names)",
-		"-l ignore-empty-snapshot",
-		"-a workstation -d 'Preview workstation onboarding plan'",
-		"-l store-ref",
-		"-a show -d 'Show one profile and resolved refs'",
-		"-a new -d 'Create or update backup profile'",
-		"-a login -d 'Run OAuth login flow for auth entry'",
-		"-l add-recovery-key",
-		// Value completions (source type list still present)
-		"'local: sftp:// gdrive gdrive-changes onedrive onedrive-changes'",
-		"'bash zsh fish'",
-	} {
-		if !strings.Contains(out, marker) {
-			t.Errorf("fish completion missing expected marker: %q", marker)
-		}
+	if got := completionProfilesPath([]string{"-profiles-file", "/flag/profiles.yaml"}); got != "/flag/profiles.yaml" {
+		t.Fatalf("flag profiles path = %q", got)
 	}
 }

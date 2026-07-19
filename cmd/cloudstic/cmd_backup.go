@@ -77,10 +77,10 @@ func parseBackupArgs() *backupArgs {
 	fs.Var(&a.excludes, "exclude", "Exclude pattern (gitignore syntax, repeatable)")
 	mustParse(fs)
 	a.sourceURI = *sourceURI
-	a.profile = *a.g.profile
+	a.profile = a.g.profile
 	a.allProfiles = *allProfiles
 	a.authRef = *authRef
-	a.profilesFile = *a.g.profilesFile
+	a.profilesFile = a.g.profilesFile
 	a.dryRun = *dryRun
 	a.ignoreEmpty = *ignoreEmpty
 	a.skipNativeFiles = *skipNativeFiles
@@ -469,134 +469,88 @@ func applyProfileAuthToBackupArgs(a *backupArgs, auth cloudstic.ProfileAuth) err
 	return nil
 }
 
+// cloneGlobalFlags returns an independent copy of src: globalFlags holds only
+// value fields (plus the shared *ui.SafeLogWriter debug log), so a shallow
+// struct copy is a complete, correct clone.
 func cloneGlobalFlags(src *globalFlags) *globalFlags {
 	clone := *src
-
-	store := *src.store
-	profile := *src.profile
-	profilesFile := *src.profilesFile
-	s3Endpoint := *src.s3Endpoint
-	s3Region := *src.s3Region
-	s3Profile := *src.s3Profile
-	s3AccessKey := *src.s3AccessKey
-	s3SecretKey := *src.s3SecretKey
-	sourceSFTPPassword := *src.sourceSFTPPassword
-	sourceSFTPKey := *src.sourceSFTPKey
-	storeSFTPPassword := *src.storeSFTPPassword
-	storeSFTPKey := *src.storeSFTPKey
-	encryptionKey := *src.encryptionKey
-	password := *src.password
-	recoveryKey := *src.recoveryKey
-	kmsKeyARN := *src.kmsKeyARN
-	kmsRegion := *src.kmsRegion
-	kmsEndpoint := *src.kmsEndpoint
-	disablePackfile := *src.disablePackfile
-	prompt := *src.prompt
-	verbose := *src.verbose
-	quiet := *src.quiet
-	debug := *src.debug
-
-	clone.store = &store
-	clone.profile = &profile
-	clone.profilesFile = &profilesFile
-	clone.s3Endpoint = &s3Endpoint
-	clone.s3Region = &s3Region
-	clone.s3Profile = &s3Profile
-	clone.s3AccessKey = &s3AccessKey
-	clone.s3SecretKey = &s3SecretKey
-	clone.sourceSFTPPassword = &sourceSFTPPassword
-	clone.sourceSFTPKey = &sourceSFTPKey
-	clone.storeSFTPPassword = &storeSFTPPassword
-	clone.storeSFTPKey = &storeSFTPKey
-	clone.encryptionKey = &encryptionKey
-	clone.password = &password
-	clone.recoveryKey = &recoveryKey
-	clone.kmsKeyARN = &kmsKeyARN
-	clone.kmsRegion = &kmsRegion
-	clone.kmsEndpoint = &kmsEndpoint
-	clone.disablePackfile = &disablePackfile
-	clone.prompt = &prompt
-	clone.verbose = &verbose
-	clone.quiet = &quiet
-	clone.debug = &debug
-
 	return &clone
 }
 
 func applyProfileStoreToGlobalFlags(g *globalFlags, s cloudstic.ProfileStore, flagsSet map[string]bool) error {
 	if !flagsSet["store"] && s.URI != "" {
-		*g.store = s.URI
+		g.store = s.URI
 	}
 	if !flagsSet["s3-endpoint"] && s.S3Endpoint != "" {
-		*g.s3Endpoint = s.S3Endpoint
+		g.s3Endpoint = s.S3Endpoint
 	}
 	if !flagsSet["s3-region"] && s.S3Region != "" {
-		*g.s3Region = s.S3Region
+		g.s3Region = s.S3Region
 	}
 	if !flagsSet["s3-profile"] {
 		v, err := resolveProfileStoreValue("s3_profile", s.S3Profile, "")
 		if err != nil {
 			return err
 		}
-		*g.s3Profile = v
+		g.s3Profile = v
 	}
 	if !flagsSet["s3-access-key"] {
 		v, err := resolveProfileStoreValue("s3_access_key", s.S3AccessKey, s.S3AccessKeySecret)
 		if err != nil {
 			return err
 		}
-		*g.s3AccessKey = v
+		g.s3AccessKey = v
 	}
 	if !flagsSet["s3-secret-key"] {
 		v, err := resolveProfileStoreValue("s3_secret_key", s.S3SecretKey, s.S3SecretKeySecret)
 		if err != nil {
 			return err
 		}
-		*g.s3SecretKey = v
+		g.s3SecretKey = v
 	}
 	if !flagsSet["store-sftp-password"] {
 		v, err := resolveProfileStoreValue("store_sftp_password", s.StoreSFTPPassword, s.StoreSFTPPasswordSecret)
 		if err != nil {
 			return err
 		}
-		*g.storeSFTPPassword = v
+		g.storeSFTPPassword = v
 	}
 	if !flagsSet["store-sftp-key"] {
 		v, err := resolveProfileStoreValue("store_sftp_key", s.StoreSFTPKey, s.StoreSFTPKeySecret)
 		if err != nil {
 			return err
 		}
-		*g.storeSFTPKey = v
+		g.storeSFTPKey = v
 	}
 	if !flagsSet["password"] {
 		v, err := resolveProfileStoreValue("password", "", s.PasswordSecret)
 		if err != nil {
 			return err
 		}
-		*g.password = v
+		g.password = v
 	}
 	if !flagsSet["encryption-key"] {
 		v, err := resolveProfileStoreValue("encryption_key", "", s.EncryptionKeySecret)
 		if err != nil {
 			return err
 		}
-		*g.encryptionKey = v
+		g.encryptionKey = v
 	}
 	if !flagsSet["recovery-key"] {
 		v, err := resolveProfileStoreValue("recovery_key", "", s.RecoveryKeySecret)
 		if err != nil {
 			return err
 		}
-		*g.recoveryKey = v
+		g.recoveryKey = v
 	}
 	if !flagsSet["kms-key-arn"] && s.KMSKeyARN != "" {
-		*g.kmsKeyARN = s.KMSKeyARN
+		g.kmsKeyARN = s.KMSKeyARN
 	}
 	if !flagsSet["kms-region"] && s.KMSRegion != "" {
-		*g.kmsRegion = s.KMSRegion
+		g.kmsRegion = s.KMSRegion
 	}
 	if !flagsSet["kms-endpoint"] && s.KMSEndpoint != "" {
-		*g.kmsEndpoint = s.KMSEndpoint
+		g.kmsEndpoint = s.KMSEndpoint
 	}
 	return nil
 }
@@ -615,7 +569,7 @@ func parseExcludePatterns(a *backupArgs) ([]string, error) {
 
 func buildBackupOpts(a *backupArgs, excludePatterns []string) []cloudstic.BackupOption {
 	var opts []cloudstic.BackupOption
-	if *a.g.verbose {
+	if a.g.verbose {
 		opts = append(opts, cloudstic.WithVerbose())
 	}
 	if a.dryRun {

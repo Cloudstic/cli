@@ -171,15 +171,15 @@ func TestApplyDebug_Enabled(t *testing.T) {
 	}
 }
 
-func TestApplyDebug_NilDebugField(t *testing.T) {
+func TestApplyDebug_DebugFieldFalse(t *testing.T) {
 	logger.Writer = nil
 
-	g := &globalFlags{} // debug field is nil
+	g := &globalFlags{} // debug field defaults to false
 	inner := newTestLocalStore(t)
 	result := g.applyDebug(inner)
 
-	// With nil debug pointer, the store should be returned as-is.
+	// With debug disabled, the store should be returned as-is.
 	if result != inner {
-		t.Error("Expected applyDebug to return the original store when debug is nil")
+		t.Error("Expected applyDebug to return the original store when debug is false")
 	}
 }

@@ -437,23 +437,23 @@ func TestGlobalFlagsFromProfileStore_ResolvesEnvVars(t *testing.T) {
 	if err != nil {
 		t.Fatalf("globalFlagsFromProfileStore: %v", err)
 	}
-	if *g.store != "s3:bucket/prefix" {
-		t.Fatalf("store=%q", *g.store)
+	if g.store != "s3:bucket/prefix" {
+		t.Fatalf("store=%q", g.store)
 	}
-	if *g.s3Region != "eu-west-1" {
-		t.Fatalf("s3Region=%q", *g.s3Region)
+	if g.s3Region != "eu-west-1" {
+		t.Fatalf("s3Region=%q", g.s3Region)
 	}
-	if *g.s3AccessKey != "my-access-key" {
-		t.Fatalf("s3AccessKey=%q", *g.s3AccessKey)
+	if g.s3AccessKey != "my-access-key" {
+		t.Fatalf("s3AccessKey=%q", g.s3AccessKey)
 	}
-	if *g.s3SecretKey != "my-secret-key" {
-		t.Fatalf("s3SecretKey=%q", *g.s3SecretKey)
+	if g.s3SecretKey != "my-secret-key" {
+		t.Fatalf("s3SecretKey=%q", g.s3SecretKey)
 	}
-	if *g.password != "s3cret" {
-		t.Fatalf("password=%q", *g.password)
+	if g.password != "s3cret" {
+		t.Fatalf("password=%q", g.password)
 	}
-	if *g.kmsKeyARN != "arn:aws:kms:us-east-1:123:key/abc" {
-		t.Fatalf("kmsKeyARN=%q", *g.kmsKeyARN)
+	if g.kmsKeyARN != "arn:aws:kms:us-east-1:123:key/abc" {
+		t.Fatalf("kmsKeyARN=%q", g.kmsKeyARN)
 	}
 }
 
@@ -469,8 +469,8 @@ func TestGlobalFlagsFromProfileStore_ResolvesSecretRef(t *testing.T) {
 	if err != nil {
 		t.Fatalf("globalFlagsFromProfileStore: %v", err)
 	}
-	if *g.s3AccessKey != "secret-ak" {
-		t.Fatalf("s3AccessKey=%q want secret-ak", *g.s3AccessKey)
+	if g.s3AccessKey != "secret-ak" {
+		t.Fatalf("s3AccessKey=%q want secret-ak", g.s3AccessKey)
 	}
 }
 
@@ -1387,8 +1387,8 @@ func TestGlobalFlagsFromProfileStore_DefaultRegion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("globalFlagsFromProfileStore: %v", err)
 	}
-	if *g.s3Region != "us-east-1" {
-		t.Fatalf("expected default region us-east-1, got %q", *g.s3Region)
+	if g.s3Region != "us-east-1" {
+		t.Fatalf("expected default region us-east-1, got %q", g.s3Region)
 	}
 }
 
@@ -1402,10 +1402,10 @@ func TestGlobalFlagsFromProfileStore_SFTPFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("globalFlagsFromProfileStore: %v", err)
 	}
-	if *g.storeSFTPPassword != "direct-pw" {
-		t.Fatalf("expected storeSFTPPassword=direct-pw, got %q", *g.storeSFTPPassword)
+	if g.storeSFTPPassword != "direct-pw" {
+		t.Fatalf("expected storeSFTPPassword=direct-pw, got %q", g.storeSFTPPassword)
 	}
-	if *g.storeSFTPKey != "/path/to/key" {
-		t.Fatalf("expected storeSFTPKey=/path/to/key, got %q", *g.storeSFTPKey)
+	if g.storeSFTPKey != "/path/to/key" {
+		t.Fatalf("expected storeSFTPKey=/path/to/key, got %q", g.storeSFTPKey)
 	}
 }

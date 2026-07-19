@@ -50,7 +50,7 @@ func runCat(r *runner, ctx context.Context) int {
 		return r.failJSONFlagConflict("-json", "-raw")
 	}
 
-	quiet := *a.g.quiet || a.g.jsonEnabled()
+	quiet := a.g.quiet || a.g.jsonEnabled()
 
 	results, err := r.client.Cat(ctx, a.keys...)
 	if err != nil {

@@ -35,7 +35,7 @@ func (g *globalFlags) openStore(ctx context.Context) (store.ObjectStore, error) 
 // applyDebug wraps a store with a DebugStore and enables the global debug
 // logger when --debug is set. It returns the (possibly wrapped) store.
 func (g *globalFlags) applyDebug(s store.ObjectStore) store.ObjectStore {
-	if g.debug == nil || !*g.debug {
+	if !g.debug {
 		return s
 	}
 	if g.debugLog == nil {
@@ -59,11 +59,11 @@ func (g *globalFlags) openClientWithReporter(ctx context.Context, reporterOverri
 	}
 	raw = g.applyDebug(raw)
 
-	packfileEnabled := g.disablePackfile == nil || !*g.disablePackfile
+	packfileEnabled := !g.disablePackfile
 
 	reporter := reporterOverride
 	if reporter == nil {
-		if *g.quiet || g.jsonEnabled() {
+		if g.quiet || g.jsonEnabled() {
 			reporter = ui.NewNoOpReporter()
 		} else {
 			cr := ui.NewConsoleReporter()
@@ -87,27 +87,27 @@ func (g *globalFlags) openClientWithReporter(ctx context.Context, reporterOverri
 }
 
 func (g *globalFlags) applyProfileStoreOverrides() error {
-	if g.profile == nil || *g.profile == "" {
+	if g.profile == "" {
 		return nil
 	}
 	profilesFile := defaultProfilesFilename
-	if g.profilesFile != nil && *g.profilesFile != "" {
-		profilesFile = *g.profilesFile
+	if g.profilesFile != "" {
+		profilesFile = g.profilesFile
 	}
 	cfg, err := cloudstic.LoadProfilesFile(profilesFile)
 	if err != nil {
 		return fmt.Errorf("load profiles file %q: %w", profilesFile, err)
 	}
-	p, ok := cfg.Profiles[*g.profile]
+	p, ok := cfg.Profiles[g.profile]
 	if !ok {
-		return fmt.Errorf("unknown profile %q", *g.profile)
+		return fmt.Errorf("unknown profile %q", g.profile)
 	}
 	if p.Store == "" {
 		return nil
 	}
 	s, ok := cfg.Stores[p.Store]
 	if !ok {
-		return fmt.Errorf("profile %q references unknown store %q", *g.profile, p.Store)
+		return fmt.Errorf("profile %q references unknown store %q", g.profile, p.Store)
 	}
 	flagsSet := map[string]bool{}
 	for _, name := range []string{
@@ -118,7 +118,7 @@ func (g *globalFlags) applyProfileStoreOverrides() error {
 		flagsSet[name] = cliFlagProvided(name)
 	}
 	if err := applyProfileStoreToGlobalFlags(g, s, flagsSet); err != nil {
-		return fmt.Errorf("profile %q store %q: %w", *g.profile, p.Store, err)
+		return fmt.Errorf("profile %q store %q: %w", g.profile, p.Store, err)
 	}
 	return nil
 }
@@ -126,17 +126,17 @@ func (g *globalFlags) applyProfileStoreOverrides() error {
 // buildKMSClient creates an AWS KMS client if -kms-key-arn is set, otherwise
 // returns nil. The returned client implements both KMSEncrypter and KMSDecrypter.
 func (g *globalFlags) buildKMSClient(ctx context.Context) (crypto.KMSClient, error) {
-	if g.kmsKeyARN == nil || *g.kmsKeyARN == "" {
+	if g.kmsKeyARN == "" {
 		return nil, nil
 	}
 	var opts []crypto.KMSClientOption
-	if g.kmsRegion != nil && *g.kmsRegion != "" {
-		opts = append(opts, crypto.WithKMSRegion(*g.kmsRegion))
+	if g.kmsRegion != "" {
+		opts = append(opts, crypto.WithKMSRegion(g.kmsRegion))
 	}
-	if g.kmsEndpoint != nil && *g.kmsEndpoint != "" {
-		opts = append(opts, crypto.WithKMSEndpoint(*g.kmsEndpoint))
+	if g.kmsEndpoint != "" {
+		opts = append(opts, crypto.WithKMSEndpoint(g.kmsEndpoint))
 	}
-	client, err := crypto.NewAWSKMSClient(ctx, *g.kmsKeyARN, opts...)
+	client, err := crypto.NewAWSKMSClient(ctx, g.kmsKeyARN, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("init KMS client: %w", err)
 	}
@@ -163,13 +163,13 @@ func (g *globalFlags) buildKeychain(ctx context.Context) (keychain.Chain, error)
 	if len(platformKey) > 0 {
 		chain = append(chain, keychain.WithPlatformKey(platformKey))
 	}
-	if *g.password != "" {
-		chain = append(chain, keychain.WithPassword(*g.password))
+	if g.password != "" {
+		chain = append(chain, keychain.WithPassword(g.password))
 	}
-	if *g.recoveryKey != "" {
-		chain = append(chain, keychain.WithRecoveryKey(*g.recoveryKey))
+	if g.recoveryKey != "" {
+		chain = append(chain, keychain.WithRecoveryKey(g.recoveryKey))
 	}
-	promptRequested := g.prompt != nil && *g.prompt
+	promptRequested := g.prompt
 	if (len(chain) == 0 || promptRequested) && !hasGlobalFlag("no-prompt") && term.IsTerminal(os.Stdin.Fd()) {
 		chain = append(chain, keychain.WithPrompt(
 			func() (string, error) { return ui.PromptPassword("Repository password") },
@@ -181,7 +181,7 @@ func (g *globalFlags) buildKeychain(ctx context.Context) (keychain.Chain, error)
 }
 
 func (g *globalFlags) parsePlatformKey() ([]byte, error) {
-	encKeyHex := *g.encryptionKey
+	encKeyHex := g.encryptionKey
 	if encKeyHex == "" {
 		return nil, nil
 	}
@@ -267,7 +267,7 @@ func parseStoreURI(raw string) (*storeURIParts, error) {
 }
 
 func (g *globalFlags) initObjectStore(ctx context.Context) (store.ObjectStore, error) {
-	uri, err := parseStoreURI(*g.store)
+	uri, err := parseStoreURI(g.store)
 	if err != nil {
 		return nil, err
 	}
@@ -287,10 +287,10 @@ func (g *globalFlags) initObjectStore(ctx context.Context) (store.ObjectStore, e
 		inner, err = store.NewS3Store(
 			ctx,
 			uri.bucket,
-			store.WithS3Endpoint(*g.s3Endpoint),
-			store.WithS3Region(*g.s3Region),
-			store.WithS3Profile(*g.s3Profile),
-			store.WithS3Credentials(*g.s3AccessKey, *g.s3SecretKey),
+			store.WithS3Endpoint(g.s3Endpoint),
+			store.WithS3Region(g.s3Region),
+			store.WithS3Profile(g.s3Profile),
+			store.WithS3Credentials(g.s3AccessKey, g.s3SecretKey),
 			store.WithS3Prefix(uri.prefix),
 		)
 	case "sftp":
@@ -316,17 +316,17 @@ func (g *globalFlags) buildSFTPStoreOpts(uri *storeURIParts) []store.SFTPStoreOp
 	if uri.user != "" {
 		opts = append(opts, store.WithSFTPUser(uri.user))
 	}
-	if pw := *g.storeSFTPPassword; pw != "" {
+	if pw := g.storeSFTPPassword; pw != "" {
 		opts = append(opts, store.WithSFTPPassword(pw))
 	}
-	if k := *g.storeSFTPKey; k != "" {
+	if k := g.storeSFTPKey; k != "" {
 		opts = append(opts, store.WithSFTPKey(k))
 	}
-	if *g.storeSFTPInsecure {
+	if g.storeSFTPInsecure {
 		opts = append(opts, store.WithSFTPHostKeyCallback(ssh.InsecureIgnoreHostKey())) //nolint:gosec // explicitly requested by user
 	}
-	if *g.storeSFTPKnownHosts != "" {
-		opts = append(opts, store.WithSFTPKnownHosts(*g.storeSFTPKnownHosts))
+	if g.storeSFTPKnownHosts != "" {
+		opts = append(opts, store.WithSFTPKnownHosts(g.storeSFTPKnownHosts))
 	}
 	return opts
 }
@@ -431,17 +431,17 @@ func (g *globalFlags) buildSFTPSourceOpts(uri *sourceURIParts) []source.SFTPOpti
 	if uri.user != "" {
 		opts = append(opts, source.WithSFTPSourceUser(uri.user))
 	}
-	if pw := *g.sourceSFTPPassword; pw != "" {
+	if pw := g.sourceSFTPPassword; pw != "" {
 		opts = append(opts, source.WithSFTPSourcePassword(pw))
 	}
-	if k := *g.sourceSFTPKey; k != "" {
+	if k := g.sourceSFTPKey; k != "" {
 		opts = append(opts, source.WithSFTPSourceKey(k))
 	}
-	if *g.sourceSFTPInsecure {
+	if g.sourceSFTPInsecure {
 		opts = append(opts, source.WithSFTPSourceHostKeyCallback(ssh.InsecureIgnoreHostKey())) //nolint:gosec // explicitly requested by user
 	}
-	if *g.sourceSFTPKnownHosts != "" {
-		opts = append(opts, source.WithSFTPSourceKnownHosts(*g.sourceSFTPKnownHosts))
+	if g.sourceSFTPKnownHosts != "" {
+		opts = append(opts, source.WithSFTPSourceKnownHosts(g.sourceSFTPKnownHosts))
 	}
 	return opts
 }

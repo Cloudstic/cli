@@ -49,7 +49,7 @@ func (b tuiCLIBackend) InitProfile(ctx context.Context, profilesFile, profileNam
 		return fmt.Errorf("profile %q references unknown store %q", profileName, profileCfg.Store)
 	}
 	g := tuiStoreFlags(profilesFile, storeCfg)
-	*g.quiet = false
+	g.quiet = false
 	if code := runInitWithArgs(b.r, ctx, &initArgs{g: g}); code != 0 {
 		return fmt.Errorf("init failed")
 	}
@@ -63,7 +63,7 @@ func (b tuiCLIBackend) BackupProfile(ctx context.Context, profilesFile, profileN
 		profilesFile: profilesFile,
 		flagsSet:     map[string]bool{},
 	}
-	*base.g.profilesFile = profilesFile
+	base.g.profilesFile = profilesFile
 	effective, err := mergeProfileBackupArgs(base, profileName, profileCfg, cfg)
 	if err != nil {
 		return err

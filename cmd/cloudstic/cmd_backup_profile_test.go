@@ -41,11 +41,11 @@ func TestMergeProfileBackupArgs_AppliesProfileAndStore(t *testing.T) {
 	if eff.sourceURI != "local:/data" {
 		t.Fatalf("sourceURI=%q want local:/data", eff.sourceURI)
 	}
-	if *eff.g.store != "s3:bucket/prefix" {
-		t.Fatalf("store=%q want s3:bucket/prefix", *eff.g.store)
+	if eff.g.store != "s3:bucket/prefix" {
+		t.Fatalf("store=%q want s3:bucket/prefix", eff.g.store)
 	}
-	if *eff.g.s3Region != "eu-west-1" {
-		t.Fatalf("s3Region=%q want eu-west-1", *eff.g.s3Region)
+	if eff.g.s3Region != "eu-west-1" {
+		t.Fatalf("s3Region=%q want eu-west-1", eff.g.s3Region)
 	}
 	if len(eff.tags) != 1 || eff.tags[0] != "daily" {
 		t.Fatalf("tags=%v want [daily]", eff.tags)
@@ -64,7 +64,7 @@ func TestMergeProfileBackupArgs_CLIFlagsWin(t *testing.T) {
 		g:         newTestGlobalFlags(),
 		flagsSet:  map[string]bool{"source": true, "store": true},
 	}
-	*base.g.store = "local:/cli-store"
+	base.g.store = "local:/cli-store"
 
 	cfg := &cloudstic.ProfilesConfig{
 		Stores: map[string]cloudstic.ProfileStore{"s": {URI: "s3:bucket"}},
@@ -78,8 +78,8 @@ func TestMergeProfileBackupArgs_CLIFlagsWin(t *testing.T) {
 	if eff.sourceURI != "local:/cli" {
 		t.Fatalf("sourceURI=%q want local:/cli", eff.sourceURI)
 	}
-	if *eff.g.store != "local:/cli-store" {
-		t.Fatalf("store=%q want local:/cli-store", *eff.g.store)
+	if eff.g.store != "local:/cli-store" {
+		t.Fatalf("store=%q want local:/cli-store", eff.g.store)
 	}
 }
 
@@ -274,31 +274,31 @@ func TestApplyProfileAuthToBackupArgs_CLIFlagsPreserved(t *testing.T) {
 
 func TestCloneGlobalFlags_Independence(t *testing.T) {
 	orig := newTestGlobalFlags()
-	*orig.store = "original-store"
-	*orig.profile = "orig-profile"
-	*orig.profilesFile = "/tmp/orig-profiles.yaml"
-	*orig.s3Profile = "orig-s3-profile"
+	orig.store = "original-store"
+	orig.profile = "orig-profile"
+	orig.profilesFile = "/tmp/orig-profiles.yaml"
+	orig.s3Profile = "orig-s3-profile"
 
 	clone := cloneGlobalFlags(orig)
-	*clone.store = "modified-store"
-	*clone.profile = "clone-profile"
-	*clone.profilesFile = "/tmp/clone-profiles.yaml"
-	*clone.s3Profile = "clone-s3-profile"
+	clone.store = "modified-store"
+	clone.profile = "clone-profile"
+	clone.profilesFile = "/tmp/clone-profiles.yaml"
+	clone.s3Profile = "clone-s3-profile"
 
-	if *orig.store != "original-store" {
-		t.Fatalf("original store=%q want original-store", *orig.store)
+	if orig.store != "original-store" {
+		t.Fatalf("original store=%q want original-store", orig.store)
 	}
-	if *clone.store != "modified-store" {
-		t.Fatalf("clone store=%q want modified-store", *clone.store)
+	if clone.store != "modified-store" {
+		t.Fatalf("clone store=%q want modified-store", clone.store)
 	}
-	if *orig.profile != "orig-profile" {
-		t.Fatalf("original profile=%q want orig-profile", *orig.profile)
+	if orig.profile != "orig-profile" {
+		t.Fatalf("original profile=%q want orig-profile", orig.profile)
 	}
-	if *orig.profilesFile != "/tmp/orig-profiles.yaml" {
-		t.Fatalf("original profilesFile=%q want /tmp/orig-profiles.yaml", *orig.profilesFile)
+	if orig.profilesFile != "/tmp/orig-profiles.yaml" {
+		t.Fatalf("original profilesFile=%q want /tmp/orig-profiles.yaml", orig.profilesFile)
 	}
-	if *orig.s3Profile != "orig-s3-profile" {
-		t.Fatalf("original s3Profile=%q want orig-s3-profile", *orig.s3Profile)
+	if orig.s3Profile != "orig-s3-profile" {
+		t.Fatalf("original s3Profile=%q want orig-s3-profile", orig.s3Profile)
 	}
 }
 
@@ -330,53 +330,53 @@ func TestApplyProfileStoreToGlobalFlags_AllFields(t *testing.T) {
 		t.Fatalf("applyProfileStoreToGlobalFlags: %v", err)
 	}
 
-	if *g.store != "s3:my-bucket/prefix" {
-		t.Fatalf("store=%q want s3:my-bucket/prefix", *g.store)
+	if g.store != "s3:my-bucket/prefix" {
+		t.Fatalf("store=%q want s3:my-bucket/prefix", g.store)
 	}
-	if *g.s3Region != "us-east-1" {
-		t.Fatalf("s3Region=%q want us-east-1", *g.s3Region)
+	if g.s3Region != "us-east-1" {
+		t.Fatalf("s3Region=%q want us-east-1", g.s3Region)
 	}
-	if *g.s3Endpoint != "https://s3.example.com" {
-		t.Fatalf("s3Endpoint=%q want https://s3.example.com", *g.s3Endpoint)
+	if g.s3Endpoint != "https://s3.example.com" {
+		t.Fatalf("s3Endpoint=%q want https://s3.example.com", g.s3Endpoint)
 	}
-	if *g.s3Profile != "prod" {
-		t.Fatalf("s3Profile=%q want prod", *g.s3Profile)
+	if g.s3Profile != "prod" {
+		t.Fatalf("s3Profile=%q want prod", g.s3Profile)
 	}
-	if *g.s3AccessKey != "AKIATEST" {
-		t.Fatalf("s3AccessKey=%q want AKIATEST", *g.s3AccessKey)
+	if g.s3AccessKey != "AKIATEST" {
+		t.Fatalf("s3AccessKey=%q want AKIATEST", g.s3AccessKey)
 	}
-	if *g.s3SecretKey != "SECRETTEST" {
-		t.Fatalf("s3SecretKey=%q want SECRETTEST", *g.s3SecretKey)
+	if g.s3SecretKey != "SECRETTEST" {
+		t.Fatalf("s3SecretKey=%q want SECRETTEST", g.s3SecretKey)
 	}
-	if *g.storeSFTPPassword != "sftp-pw" {
-		t.Fatalf("storeSFTPPassword=%q want sftp-pw", *g.storeSFTPPassword)
+	if g.storeSFTPPassword != "sftp-pw" {
+		t.Fatalf("storeSFTPPassword=%q want sftp-pw", g.storeSFTPPassword)
 	}
-	if *g.storeSFTPKey != "/tmp/sftp.key" {
-		t.Fatalf("storeSFTPKey=%q want /tmp/sftp.key", *g.storeSFTPKey)
+	if g.storeSFTPKey != "/tmp/sftp.key" {
+		t.Fatalf("storeSFTPKey=%q want /tmp/sftp.key", g.storeSFTPKey)
 	}
-	if *g.password != "secret-pw" {
-		t.Fatalf("password=%q want secret-pw", *g.password)
+	if g.password != "secret-pw" {
+		t.Fatalf("password=%q want secret-pw", g.password)
 	}
-	if *g.encryptionKey != "enc-key-val" {
-		t.Fatalf("encryptionKey=%q want enc-key-val", *g.encryptionKey)
+	if g.encryptionKey != "enc-key-val" {
+		t.Fatalf("encryptionKey=%q want enc-key-val", g.encryptionKey)
 	}
-	if *g.recoveryKey != "rec-key-val" {
-		t.Fatalf("recoveryKey=%q want rec-key-val", *g.recoveryKey)
+	if g.recoveryKey != "rec-key-val" {
+		t.Fatalf("recoveryKey=%q want rec-key-val", g.recoveryKey)
 	}
-	if *g.kmsKeyARN != "arn:aws:kms:us-east-1:123:key/abc" {
-		t.Fatalf("kmsKeyARN=%q want arn:aws:kms:us-east-1:123:key/abc", *g.kmsKeyARN)
+	if g.kmsKeyARN != "arn:aws:kms:us-east-1:123:key/abc" {
+		t.Fatalf("kmsKeyARN=%q want arn:aws:kms:us-east-1:123:key/abc", g.kmsKeyARN)
 	}
-	if *g.kmsRegion != "us-east-1" {
-		t.Fatalf("kmsRegion=%q want us-east-1", *g.kmsRegion)
+	if g.kmsRegion != "us-east-1" {
+		t.Fatalf("kmsRegion=%q want us-east-1", g.kmsRegion)
 	}
-	if *g.kmsEndpoint != "https://kms.example.com" {
-		t.Fatalf("kmsEndpoint=%q want https://kms.example.com", *g.kmsEndpoint)
+	if g.kmsEndpoint != "https://kms.example.com" {
+		t.Fatalf("kmsEndpoint=%q want https://kms.example.com", g.kmsEndpoint)
 	}
 }
 
 func TestApplyProfileStoreToGlobalFlags_CLIFlagOverrides(t *testing.T) {
 	g := newTestGlobalFlags()
-	*g.store = "local:/cli-store"
+	g.store = "local:/cli-store"
 	flagsSet := map[string]bool{"store": true}
 	s := cloudstic.ProfileStore{URI: "s3:profile-bucket"}
 
@@ -384,8 +384,8 @@ func TestApplyProfileStoreToGlobalFlags_CLIFlagOverrides(t *testing.T) {
 		t.Fatalf("applyProfileStoreToGlobalFlags: %v", err)
 	}
 
-	if *g.store != "local:/cli-store" {
-		t.Fatalf("store=%q want local:/cli-store", *g.store)
+	if g.store != "local:/cli-store" {
+		t.Fatalf("store=%q want local:/cli-store", g.store)
 	}
 }
 
@@ -401,8 +401,8 @@ func TestApplyProfileStoreToGlobalFlags_SecretRef(t *testing.T) {
 	if err := applyProfileStoreToGlobalFlags(g, s, flagsSet); err != nil {
 		t.Fatalf("applyProfileStoreToGlobalFlags: %v", err)
 	}
-	if *g.password != "from-secret-ref" {
-		t.Fatalf("password=%q want from-secret-ref", *g.password)
+	if g.password != "from-secret-ref" {
+		t.Fatalf("password=%q want from-secret-ref", g.password)
 	}
 }
 

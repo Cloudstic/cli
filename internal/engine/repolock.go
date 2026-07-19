@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -43,6 +44,7 @@ func (ref *RepoLock) ownsLock(current *RepoLock) bool {
 // supporting arbitrarily long operations.
 type LockHandle struct {
 	store  store.ObjectStore
+	key    string
 	lock   RepoLock
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -56,18 +58,12 @@ func (h *LockHandle) Release() {
 	h.wg.Wait()
 	ctx := context.Background()
 
-	key := exclusiveLockKey
-	if h.lock.IsShared {
-		// Use the specific shared lock key for releasing
-		key = fmt.Sprintf("%s%s", sharedLockPrefix, h.lock.AcquiredAt) // or we could store the key in LockHandle
-	}
-
-	current, err := readLockByKey(ctx, h.store, key)
+	current, err := readLockByKey(ctx, h.store, h.key)
 	if err != nil {
 		return
 	}
 	if h.lock.ownsLock(current) {
-		_ = h.store.Delete(ctx, key)
+		_ = h.store.Delete(ctx, h.key)
 	}
 }
 
@@ -117,7 +113,7 @@ func AcquireRepoLock(ctx context.Context, s store.ObjectStore, operation string)
 	}
 
 	refreshCtx, cancel := context.WithCancel(ctx)
-	h := &LockHandle{store: s, lock: lock, cancel: cancel}
+	h := &LockHandle{store: s, key: exclusiveLockKey, lock: lock, cancel: cancel}
 	h.wg.Add(1)
 	go h.refreshLoop(refreshCtx)
 
@@ -142,8 +138,10 @@ func AcquireSharedLock(ctx context.Context, s store.ObjectStore, operation strin
 	// 2. Write our shared lock
 	holder := lockHolder()
 	now := time.Now()
-	// Use crypto rand or just timestamp+pid for uniqueness
-	sharedLockKey := fmt.Sprintf("%s%s", sharedLockPrefix, now.Format(time.RFC3339Nano))
+	sharedLockKey, err := newSharedLockKey()
+	if err != nil {
+		return nil, err
+	}
 
 	lock := RepoLock{
 		Operation:  operation,
@@ -171,11 +169,19 @@ func AcquireSharedLock(ctx context.Context, s store.ObjectStore, operation strin
 	}
 
 	refreshCtx, cancel := context.WithCancel(ctx)
-	h := &LockHandle{store: s, lock: lock, cancel: cancel}
+	h := &LockHandle{store: s, key: sharedLockKey, lock: lock, cancel: cancel}
 	h.wg.Add(1)
 	go h.refreshLoop(refreshCtx)
 
 	return h, nil
+}
+
+func newSharedLockKey() (string, error) {
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return "", fmt.Errorf("generate shared lock key: %w", err)
+	}
+	return fmt.Sprintf("%s%x", sharedLockPrefix, nonce), nil
 }
 
 const maxRefreshFailures = 3
@@ -185,18 +191,13 @@ func (h *LockHandle) refreshLoop(ctx context.Context) {
 	ticker := time.NewTicker(refreshRate)
 	defer ticker.Stop()
 
-	key := exclusiveLockKey
-	if h.lock.IsShared {
-		key = fmt.Sprintf("%s%s", sharedLockPrefix, h.lock.AcquiredAt)
-	}
-
 	consecutiveFailures := 0
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			current, err := readLockByKey(ctx, h.store, key)
+			current, err := readLockByKey(ctx, h.store, h.key)
 			if err != nil {
 				consecutiveFailures++
 				if consecutiveFailures >= maxRefreshFailures {
@@ -208,7 +209,7 @@ func (h *LockHandle) refreshLoop(ctx context.Context) {
 				return
 			}
 			h.lock.ExpiresAt = time.Now().Add(lockTTL).Format(time.RFC3339Nano)
-			if err := writeLockByKey(ctx, h.store, key, h.lock); err != nil {
+			if err := writeLockByKey(ctx, h.store, h.key, h.lock); err != nil {
 				consecutiveFailures++
 				if consecutiveFailures >= maxRefreshFailures {
 					return

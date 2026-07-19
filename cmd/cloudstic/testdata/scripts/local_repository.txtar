@@ -1,0 +1,25 @@
+# Initialize a hermetic local repository.
+exec cloudstic init -store local:$WORK/repo -no-encryption -no-prompt
+stderr 'Repository initialized \(encrypted: false\)'
+
+# Back up a local source and list its snapshot.
+exec cloudstic backup -store local:$WORK/repo -source local:$WORK/source -no-prompt
+stdout 'Snapshot .* saved'
+exec cloudstic list -store local:$WORK/repo -no-prompt
+stdout '1 snapshot'
+
+# Restore the latest snapshot and verify its contents.
+exec cloudstic restore latest -store local:$WORK/repo -output $WORK/restored -format dir -no-prompt
+stdout 'Restore complete'
+cmp source/hello.txt restored/hello.txt
+
+# Forget the snapshot, then verify both the empty list and failure exit path.
+exec cloudstic forget latest -store local:$WORK/repo -no-prompt
+stdout 'Snapshot removed\.'
+exec cloudstic list -store local:$WORK/repo -no-prompt
+stdout '0 snapshots'
+! exec cloudstic restore latest -store local:$WORK/repo -output $WORK/missing -format dir -json -no-prompt
+stderr '"error":"Restore failed:'
+
+-- source/hello.txt --
+hello from testscript

@@ -41,7 +41,7 @@ func parseRestoreArgs() *restoreArgs {
 	return a
 }
 
-func (r *runner) runRestore(ctx context.Context) int {
+func runRestore(r *runner, ctx context.Context) int {
 	a := parseRestoreArgs()
 	format, err := resolveRestoreFormat(a.format, a.output)
 	if err != nil {
@@ -55,10 +55,10 @@ func (r *runner) runRestore(ctx context.Context) int {
 
 	restoreOpts := buildRestoreOpts(a)
 
-	return r.execRestore(ctx, a, restoreOpts)
+	return execRestore(r, ctx, a, restoreOpts)
 }
 
-func (r *runner) execRestore(ctx context.Context, a *restoreArgs, opts []cloudstic.RestoreOption) int {
+func execRestore(r *runner, ctx context.Context, a *restoreArgs, opts []cloudstic.RestoreOption) int {
 	if a.dryRun {
 		result, err := r.client.Restore(ctx, io.Discard, a.snapshotRef, opts...)
 		if err != nil {
@@ -67,7 +67,7 @@ func (r *runner) execRestore(ctx context.Context, a *restoreArgs, opts []cloudst
 		if a.g.jsonEnabled() {
 			return r.writeJSON(result)
 		}
-		r.printRestoreSummary(result, "")
+		printRestoreSummary(r.out, result, "")
 		return 0
 	}
 
@@ -79,7 +79,7 @@ func (r *runner) execRestore(ctx context.Context, a *restoreArgs, opts []cloudst
 		if a.g.jsonEnabled() {
 			return r.writeJSON(result)
 		}
-		r.printRestoreSummary(result, a.output)
+		printRestoreSummary(r.out, result, a.output)
 		return 0
 	}
 
@@ -97,7 +97,7 @@ func (r *runner) execRestore(ctx context.Context, a *restoreArgs, opts []cloudst
 	if a.g.jsonEnabled() {
 		return r.writeJSON(result)
 	}
-	r.printRestoreSummary(result, a.output)
+	printRestoreSummary(r.out, result, a.output)
 	return 0
 }
 
@@ -115,23 +115,23 @@ func buildRestoreOpts(a *restoreArgs) []cloudstic.RestoreOption {
 	return restoreOpts
 }
 
-func (r *runner) printRestoreSummary(result *engine.RestoreResult, output string) {
+func printRestoreSummary(out io.Writer, result *engine.RestoreResult, output string) {
 	if result.DryRun {
-		_, _ = fmt.Fprintf(r.out, "\nRestore dry run complete. Snapshot: %s\n", result.SnapshotRef)
-		_, _ = fmt.Fprintf(r.out, "  Files: %d, Dirs: %d\n", result.FilesWritten, result.DirsWritten)
-		_, _ = fmt.Fprintf(r.out, "  Estimated size: %s\n", formatBytes(result.BytesWritten))
+		_, _ = fmt.Fprintf(out, "\nRestore dry run complete. Snapshot: %s\n", result.SnapshotRef)
+		_, _ = fmt.Fprintf(out, "  Files: %d, Dirs: %d\n", result.FilesWritten, result.DirsWritten)
+		_, _ = fmt.Fprintf(out, "  Estimated size: %s\n", formatBytes(result.BytesWritten))
 		return
 	}
-	_, _ = fmt.Fprintf(r.out, "\nRestore complete. Snapshot: %s\n", result.SnapshotRef)
-	_, _ = fmt.Fprintf(r.out, "  Files: %d, Dirs: %d", result.FilesWritten, result.DirsWritten)
+	_, _ = fmt.Fprintf(out, "\nRestore complete. Snapshot: %s\n", result.SnapshotRef)
+	_, _ = fmt.Fprintf(out, "  Files: %d, Dirs: %d", result.FilesWritten, result.DirsWritten)
 	if result.Warnings > 0 {
-		_, _ = fmt.Fprintf(r.out, ", Warnings: %d", result.Warnings)
+		_, _ = fmt.Fprintf(out, ", Warnings: %d", result.Warnings)
 	}
 	if result.Errors > 0 {
-		_, _ = fmt.Fprintf(r.out, ", Errors: %d", result.Errors)
+		_, _ = fmt.Fprintf(out, ", Errors: %d", result.Errors)
 	}
-	_, _ = fmt.Fprintln(r.out)
-	_, _ = fmt.Fprintf(r.out, "  Output: %s (%s)\n", output, formatBytes(result.BytesWritten))
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintf(out, "  Output: %s (%s)\n", output, formatBytes(result.BytesWritten))
 }
 
 func resolveRestoreFormat(explicitFormat, output string) (string, error) {

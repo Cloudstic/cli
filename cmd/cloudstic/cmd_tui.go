@@ -32,7 +32,7 @@ func printTUIUsage(w io.Writer) {
 	_, _ = fmt.Fprintf(w, "  -profiles-file <path>  Path to profiles YAML file (default %s)\n", defaultProfilesPathNoCreate())
 }
 
-func (r *runner) runTUI(ctx context.Context) int {
+func runTUI(r *runner, ctx context.Context) int {
 	for _, arg := range os.Args[2:] {
 		if arg == "-h" || arg == "--help" || arg == "help" {
 			printTUIUsage(r.out)

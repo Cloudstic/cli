@@ -24,7 +24,7 @@ func defaultProfilesPath() (string, error) {
 	return filepath.Join(configDir, defaultProfilesFilename), nil
 }
 
-func (r *runner) runProfile(ctx context.Context) int {
+func runProfile(r *runner, ctx context.Context) int {
 	if len(os.Args) < 3 {
 		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic profile <subcommand> [options]")
 		_, _ = fmt.Fprintln(r.errOut, "")
@@ -34,11 +34,11 @@ func (r *runner) runProfile(ctx context.Context) int {
 
 	switch os.Args[2] {
 	case "list":
-		return r.runProfileList(ctx)
+		return runProfileList(r, ctx)
 	case "show":
-		return r.runProfileShow(ctx)
+		return runProfileShow(r, ctx)
 	case "new":
-		return r.runProfileNew(ctx)
+		return runProfileNew(r, ctx)
 	default:
 		return r.fail("Unknown profile subcommand: %s", os.Args[2])
 	}
@@ -68,7 +68,7 @@ func parseProfileShowArgs() (*profileShowArgs, error) {
 	return a, nil
 }
 
-func (r *runner) runProfileShow(ctx context.Context) int {
+func runProfileShow(r *runner, ctx context.Context) int {
 	a, err := parseProfileShowArgs()
 	if err != nil {
 		return r.fail("%v", err)
@@ -92,7 +92,7 @@ func (r *runner) runProfileShow(ctx context.Context) int {
 	if !ok {
 		return r.fail("Unknown profile %q", a.name)
 	}
-	r.renderProfileShow(cfg, a.name, p)
+	renderProfileShow(r.out, cfg, a.name, p)
 	return 0
 }
 
@@ -126,7 +126,7 @@ func parseProfileListArgs() *profileListArgs {
 	return a
 }
 
-func (r *runner) runProfileList(ctx context.Context) int {
+func runProfileList(r *runner, ctx context.Context) int {
 	a := parseProfileListArgs()
 	cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
 	if err != nil {
@@ -136,11 +136,11 @@ func (r *runner) runProfileList(ctx context.Context) int {
 		return r.fail("Failed to load profiles: %v", err)
 	}
 
-	r.renderStoreList(cfg)
+	renderStoreList(r.out, cfg)
 	_, _ = fmt.Fprintln(r.out)
-	r.renderAuthList(cfg)
+	renderAuthList(r.out, cfg)
 	_, _ = fmt.Fprintln(r.out)
-	r.renderProfileList(cfg)
+	renderProfileList(r.out, cfg)
 
 	return 0
 }
@@ -223,7 +223,7 @@ func parseProfileNewArgs() *profileNewArgs {
 	return a
 }
 
-func (r *runner) runProfileNew(ctx context.Context) int {
+func runProfileNew(r *runner, ctx context.Context) int {
 	a := parseProfileNewArgs()
 	if a.name == "" {
 		if r.canPrompt() {
@@ -326,7 +326,7 @@ func (r *runner) runProfileNew(ctx context.Context) int {
 		if !storeHasExplicitEncryption(s) {
 			r.promptEncryptionConfig(ctx, cfg, a.storeRef, a.profilesFile)
 		}
-		if err := r.checkOrInitStoreWithRecovery(ctx, cfg, a.storeRef, a.profilesFile, checkOrInitOptions{
+		if err := checkOrInitStoreWithRecovery(r, ctx, cfg, a.storeRef, a.profilesFile, checkOrInitOptions{
 			allowMissingSecrets:  true,
 			warnOnMissingSecrets: true,
 			offerInit:            true,

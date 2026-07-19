@@ -33,7 +33,7 @@ func TestFormatBytes(t *testing.T) {
 func TestRenderSnapshotTable_Empty(t *testing.T) {
 	r := &runner{out: &strings.Builder{}, errOut: &strings.Builder{}}
 	// Should not panic with empty entries.
-	r.renderSnapshotTable(nil, nil)
+	renderSnapshotTable(r.out, nil, nil)
 }
 
 func TestRenderSnapshotTable_WithEntries(t *testing.T) {
@@ -55,7 +55,7 @@ func TestRenderSnapshotTable_WithEntries(t *testing.T) {
 			},
 		},
 	}
-	r.renderSnapshotTable(entries, nil)
+	renderSnapshotTable(r.out, entries, nil)
 
 	got := out.String()
 	if !strings.Contains(got, "abc123") {
@@ -75,7 +75,7 @@ func TestRenderSnapshotTable_WithReasons(t *testing.T) {
 		{Ref: ref, Snap: core.Snapshot{Seq: 1, Created: time.Now().Format(time.RFC3339)}},
 	}
 	reasons := map[string]string{ref: "keep-last"}
-	r.renderSnapshotTable(entries, reasons)
+	renderSnapshotTable(r.out, entries, reasons)
 
 	got := out.String()
 	if !strings.Contains(got, "keep-last") {
@@ -105,7 +105,7 @@ func TestRenderSnapshotTable_DriveName(t *testing.T) {
 			},
 		},
 	}
-	r.renderSnapshotTable(entries, nil)
+	renderSnapshotTable(r.out, entries, nil)
 
 	got := out.String()
 	if !strings.Contains(got, "gdrive (My Drive)") {
@@ -205,7 +205,7 @@ func TestRenderGroupedSnapshotTables(t *testing.T) {
 		},
 	}
 
-	r.renderGroupedSnapshotTables(entries)
+	renderGroupedSnapshotTables(r.out, entries)
 
 	got := out.String()
 	// Should have two group headers.

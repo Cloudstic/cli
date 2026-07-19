@@ -11,7 +11,7 @@ import (
 func TestPrintKeySlots_Empty(t *testing.T) {
 	var out, errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	r.printKeySlots(nil)
+	printKeySlots(r.out, r.errOut, nil)
 
 	if !strings.Contains(errOut.String(), "No key slots found") {
 		t.Errorf("expected 'No key slots found', got:\n%s", errOut.String())
@@ -29,7 +29,7 @@ func TestPrintKeySlots_WithSlots(t *testing.T) {
 		{SlotType: "recovery", Label: "backup", KDFParams: nil},
 	}
 
-	r.printKeySlots(slots)
+	printKeySlots(r.out, r.errOut, slots)
 
 	tableOut := out.String()
 	if !strings.Contains(tableOut, "password") {

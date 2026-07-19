@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	cloudstic "github.com/cloudstic/cli"
@@ -13,7 +14,7 @@ import (
 	"github.com/moby/term"
 )
 
-func (r *runner) runKey(ctx context.Context) int {
+func runKey(r *runner, ctx context.Context) int {
 	if len(os.Args) < 3 {
 		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic key <subcommand>")
 		_, _ = fmt.Fprintln(r.errOut)
@@ -29,11 +30,11 @@ func (r *runner) runKey(ctx context.Context) int {
 
 	switch sub {
 	case "list":
-		return r.runKeyList(ctx)
+		return runKeyList(r, ctx)
 	case "add-recovery":
-		return r.runAddRecoveryKey(ctx)
+		return runAddRecoveryKey(r, ctx)
 	case "passwd":
-		return r.runKeyPasswd(ctx)
+		return runKeyPasswd(r, ctx)
 	default:
 		return r.fail("Unknown key subcommand: %s", sub)
 	}
@@ -50,7 +51,7 @@ func parseKeyListArgs() *keyListArgs {
 	return a
 }
 
-func (r *runner) runKeyList(ctx context.Context) int {
+func runKeyList(r *runner, ctx context.Context) int {
 	a := parseKeyListArgs()
 
 	raw, err := a.g.openStore(ctx)
@@ -66,17 +67,17 @@ func (r *runner) runKeyList(ctx context.Context) int {
 	if a.g.jsonEnabled() {
 		return r.writeJSON(slots)
 	}
-	r.printKeySlots(slots)
+	printKeySlots(r.out, r.errOut, slots)
 	return 0
 }
 
-func (r *runner) printKeySlots(slots []cloudstic.KeySlot) {
+func printKeySlots(out io.Writer, errOut io.Writer, slots []cloudstic.KeySlot) {
 	if len(slots) == 0 {
-		_, _ = fmt.Fprintln(r.errOut, "No key slots found.")
+		_, _ = fmt.Fprintln(errOut, "No key slots found.")
 		return
 	}
 	t := table.NewWriter()
-	t.SetOutputMirror(r.out)
+	t.SetOutputMirror(out)
 	t.AppendHeader(table.Row{"Type", "Label", "KDF"})
 	for _, slot := range slots {
 		kdf := "—"
@@ -86,7 +87,7 @@ func (r *runner) printKeySlots(slots []cloudstic.KeySlot) {
 		t.AppendRow(table.Row{slot.SlotType, slot.Label, kdf})
 	}
 	t.Render()
-	_, _ = fmt.Fprintf(r.errOut, "\n%d key slot(s) found.\n", len(slots))
+	_, _ = fmt.Fprintf(errOut, "\n%d key slot(s) found.\n", len(slots))
 }
 
 type keyPasswdArgs struct {
@@ -104,7 +105,7 @@ func parseKeyPasswdArgs() *keyPasswdArgs {
 	return a
 }
 
-func (r *runner) runKeyPasswd(ctx context.Context) int {
+func runKeyPasswd(r *runner, ctx context.Context) int {
 	a := parseKeyPasswdArgs()
 
 	raw, err := a.g.openStore(ctx)
@@ -154,7 +155,7 @@ func parseAddRecoveryKeyArgs() *addRecoveryKeyArgs {
 	return a
 }
 
-func (r *runner) runAddRecoveryKey(ctx context.Context) int {
+func runAddRecoveryKey(r *runner, ctx context.Context) int {
 	a := parseAddRecoveryKeyArgs()
 
 	raw, err := a.g.openStore(ctx)
@@ -175,7 +176,7 @@ func (r *runner) runAddRecoveryKey(ctx context.Context) int {
 	if a.g.jsonEnabled() {
 		return r.writeJSON(&recoveryKeyJSONResult{RecoveryKey: mnemonic})
 	}
-	r.printRecoveryKey(mnemonic)
+	printRecoveryKey(r.errOut, mnemonic)
 	_, _ = fmt.Fprintln(r.errOut, "Recovery key slot has been added to the repository.")
 	return 0
 }

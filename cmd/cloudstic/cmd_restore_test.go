@@ -11,7 +11,7 @@ func TestPrintRestoreSummary_Normal(t *testing.T) {
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}}
 
-	r.printRestoreSummary(&cloudstic.RestoreResult{
+	printRestoreSummary(r.out, &cloudstic.RestoreResult{
 		SnapshotRef:  "abc123",
 		FilesWritten: 42,
 		DirsWritten:  7,
@@ -32,7 +32,7 @@ func TestPrintRestoreSummary_WithErrors(t *testing.T) {
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}}
 
-	r.printRestoreSummary(&cloudstic.RestoreResult{
+	printRestoreSummary(r.out, &cloudstic.RestoreResult{
 		SnapshotRef:  "xyz",
 		FilesWritten: 10,
 		DirsWritten:  2,
@@ -50,7 +50,7 @@ func TestPrintRestoreSummary_WithWarnings(t *testing.T) {
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}}
 
-	r.printRestoreSummary(&cloudstic.RestoreResult{
+	printRestoreSummary(r.out, &cloudstic.RestoreResult{
 		SnapshotRef:  "warn",
 		FilesWritten: 1,
 		DirsWritten:  1,
@@ -67,7 +67,7 @@ func TestPrintRestoreSummary_DryRun(t *testing.T) {
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}}
 
-	r.printRestoreSummary(&cloudstic.RestoreResult{
+	printRestoreSummary(r.out, &cloudstic.RestoreResult{
 		SnapshotRef:  "dry123",
 		FilesWritten: 5,
 		DirsWritten:  1,

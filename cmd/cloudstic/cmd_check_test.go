@@ -22,7 +22,7 @@ func TestRunCheck_Healthy(t *testing.T) {
 		},
 	}}
 
-	r.runCheck(context.Background())
+	runCheck(r, context.Background())
 
 	got := errOut.String()
 	if !strings.Contains(got, "No errors found") {
@@ -46,7 +46,7 @@ func TestRunCheck_JSONWithErrorsReturnsExitOne(t *testing.T) {
 		},
 	}}
 
-	if exit := r.runCheck(context.Background()); exit != 1 {
+	if exit := runCheck(r, context.Background()); exit != 1 {
 		t.Fatalf("runCheck() exit = %d, want 1", exit)
 	}
 
@@ -63,7 +63,7 @@ func TestPrintCheckResult_Healthy(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &strings.Builder{}, errOut: &errOut}
 
-	hasErrors := r.printCheckResult(&cloudstic.CheckResult{
+	hasErrors := printCheckResult(r.errOut, &cloudstic.CheckResult{
 		SnapshotsChecked: 10,
 		ObjectsVerified:  300,
 	})
@@ -81,7 +81,7 @@ func TestPrintCheckResult_WithErrors(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &strings.Builder{}, errOut: &errOut}
 
-	hasErrors := r.printCheckResult(&cloudstic.CheckResult{
+	hasErrors := printCheckResult(r.errOut, &cloudstic.CheckResult{
 		SnapshotsChecked: 2,
 		ObjectsVerified:  40,
 		Errors: []engine.CheckError{

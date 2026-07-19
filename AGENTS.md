@@ -44,7 +44,8 @@ Docker-based hermetic tests (MinIO store, SFTP source/store) are automatically s
 
 - `client.go` (root) — Public `Client` API. Re-exports types from internal packages using Go type aliases. This is the library entry point for programmatic use.
 - `cmd/cloudstic/` — CLI entry point (`package main`). `main.go`'s `runCmd()` dispatches each subcommand to a `run*()` function that lives in its own `cmd_*.go` file (e.g. `cmd_backup.go`, `cmd_key.go`). Subcommands: `init`, `backup`, `restore`, `list`, `ls`, `prune`, `forget`, `diff`, `break-lock`, `key` (with `list`/`add-recovery`/`passwd`), `check`, `cat`, `profile`, `auth`, `store`, `source`, `setup`, `tui`, `completion`. Uses Go's `flag` package (no cobra/viper); `reorderArgs()` in `flags.go` allows flags after positional args. The interactive terminal UI lives in `cmd_tui*.go`.
-  - Each command splits into a thin `run*()` entry (parses flags, opens the client, calls `os.Exit`) and a `(r *runner) exec*()` method holding the testable logic. The `runner` struct (`runner.go`) carries `out`/`errOut` writers and the client, so command output is capturable in tests.
+  - Commands are free functions taking the dependency container first: `run<Name>(r *runner, ctx, ...)` (and `exec<Name>(r, ctx, ...)` for testable sub-steps). The `runner` struct (`runner.go`) carries `out`/`errOut` writers and the client, so command output is capturable in tests; only I/O primitives (`fail`, `writeJSON`, `openClient`, `prompt*`) remain methods on it.
+  - Presentation is separate from orchestration: `print*`/`render*` helpers are free functions taking an `io.Writer` first (`printBackupSummary(out, res)`), so result formatting cannot reach the client or command flow.
   - `cloudsticClient` (`client_iface.go`) is the interface `runner` depends on — satisfied by the real `*Client` and by `stubClient` (`stub_client_test.go`) in unit tests.
 - `internal/engine/` — Business logic for each operation (backup, restore, prune, forget, diff, list). Each operation has a `*Manager` struct (e.g. `BackupManager`, `RestoreManager`) with a `Run(ctx)` method.
 - `internal/core/` — Domain types: `Snapshot`, `FileMeta`, `Content`, `HAMTNode`, `RepoConfig`, `SourceInfo`. Also contains `ComputeJSONHash` which is the canonical content-addressing function.
@@ -177,11 +178,12 @@ When implementing new functionality, always consider the following:
    - Follow the pattern: define types/options, add a `Client.*()` method, implement in `internal/engine/` if complex.
 
 4. **CLI Integration** — For new commands:
-   - Add a `cmd_<name>.go` file with a thin `run<Name>()` entry plus a testable `(r *runner) exec<Name>()` method (see existing `cmd_*.go` for the pattern).
+   - Add a `cmd_<name>.go` file with a `run<Name>(r *runner, ctx context.Context) int` free function (plus `exec<Name>(r, ctx, ...)` for testable sub-steps — see existing `cmd_*.go` for the pattern).
    - Add the command to the switch in `runCmd()` in `main.go`.
    - Add command documentation to `printUsage()` in `usage.go`.
    - Use the `reorderArgs()` helper (`flags.go`) so flags may follow positional args.
    - Write output via `r.out`/`r.errOut` (not `fmt.Print`) so it is capturable, and unit-test against `stubClient`.
+   - Keep result rendering in `print*`/`render*` free functions that take an `io.Writer` first — never give presentation code access to `runner`.
 
 5. **Error Handling** — Return descriptive errors:
    - Wrap errors with context using `fmt.Errorf("context: %w", err)`.

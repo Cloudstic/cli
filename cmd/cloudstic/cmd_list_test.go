@@ -24,7 +24,7 @@ func TestRunList_Success(t *testing.T) {
 		},
 	}}
 
-	r.runList(context.Background())
+	runList(r, context.Background())
 
 	got := out.String()
 	if !strings.Contains(got, "2 snapshots") {
@@ -43,7 +43,7 @@ func TestRunList_JSON(t *testing.T) {
 		},
 	}}
 
-	if exit := r.runList(context.Background()); exit != 0 {
+	if exit := runList(r, context.Background()); exit != 0 {
 		t.Fatalf("runList() exit = %d, want 0", exit)
 	}
 
@@ -63,7 +63,7 @@ func TestRunList_Empty(t *testing.T) {
 		listResult: &cloudstic.ListResult{Snapshots: nil},
 	}}
 
-	r.runList(context.Background())
+	runList(r, context.Background())
 
 	if !strings.Contains(out.String(), "0 snapshots") {
 		t.Errorf("expected '0 snapshots', got: %s", out.String())
@@ -94,7 +94,7 @@ func TestRunList_Group(t *testing.T) {
 		},
 	}}
 
-	r.runList(context.Background())
+	runList(r, context.Background())
 
 	got := out.String()
 	if !strings.Contains(got, "2 snapshots") {

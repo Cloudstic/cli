@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	cloudstic "github.com/cloudstic/cli"
@@ -33,12 +34,12 @@ func parseInitArgs() *initArgs {
 	return a
 }
 
-func (r *runner) runInit(ctx context.Context) int {
+func runInit(r *runner, ctx context.Context) int {
 	a := parseInitArgs()
-	return r.runInitWithArgs(ctx, a)
+	return runInitWithArgs(r, ctx, a)
 }
 
-func (r *runner) runInitWithArgs(ctx context.Context, a *initArgs) int {
+func runInitWithArgs(r *runner, ctx context.Context, a *initArgs) int {
 	raw, err := a.g.openStore(ctx)
 	if err != nil {
 		return r.fail("Failed to init store: %v", err)
@@ -76,7 +77,7 @@ func (r *runner) runInitWithArgs(ctx context.Context, a *initArgs) int {
 	if a.g.jsonEnabled() {
 		return r.writeJSON(result)
 	}
-	r.printInitResult(result)
+	printInitResult(r.errOut, result)
 	return 0
 }
 
@@ -97,35 +98,35 @@ func buildInitOpts(a *initArgs, kc keychain.Chain) []cloudstic.InitOption {
 	return initOpts
 }
 
-func (r *runner) printInitResult(result *cloudstic.InitResult) {
+func printInitResult(errOut io.Writer, result *cloudstic.InitResult) {
 	if result.Encrypted {
 		if result.AdoptedSlots {
-			_, _ = fmt.Fprintln(r.errOut, "Adopted existing encryption key slots.")
+			_, _ = fmt.Fprintln(errOut, "Adopted existing encryption key slots.")
 		} else {
-			_, _ = fmt.Fprintln(r.errOut, "Created new encryption key slots.")
+			_, _ = fmt.Fprintln(errOut, "Created new encryption key slots.")
 		}
 		if result.RecoveryKey != "" {
-			r.printRecoveryKey(result.RecoveryKey)
+			printRecoveryKey(errOut, result.RecoveryKey)
 		}
 	} else {
-		_, _ = fmt.Fprintln(r.errOut, "WARNING: creating unencrypted repository. Your backups will NOT be encrypted at rest.")
+		_, _ = fmt.Fprintln(errOut, "WARNING: creating unencrypted repository. Your backups will NOT be encrypted at rest.")
 	}
-	_, _ = fmt.Fprintf(r.errOut, "Repository initialized (encrypted: %v).\n", result.Encrypted)
+	_, _ = fmt.Fprintf(errOut, "Repository initialized (encrypted: %v).\n", result.Encrypted)
 }
 
-func (r *runner) printRecoveryKey(mnemonic string) {
-	_, _ = fmt.Fprintln(r.errOut)
-	_, _ = fmt.Fprintln(r.errOut, "╔══════════════════════════════════════════════════════════════╗")
-	_, _ = fmt.Fprintln(r.errOut, "║                      RECOVERY KEY                           ║")
-	_, _ = fmt.Fprintln(r.errOut, "╠══════════════════════════════════════════════════════════════╣")
-	_, _ = fmt.Fprintln(r.errOut, "║                                                              ║")
-	_, _ = fmt.Fprintf(r.errOut, "║  %s\n", mnemonic)
-	_, _ = fmt.Fprintln(r.errOut, "║                                                              ║")
-	_, _ = fmt.Fprintln(r.errOut, "║  Write down these 24 words and store them in a safe place.   ║")
-	_, _ = fmt.Fprintln(r.errOut, "║  This is the ONLY time the recovery key will be displayed.   ║")
-	_, _ = fmt.Fprintln(r.errOut, "║  If you lose your password, this key is your only way to     ║")
-	_, _ = fmt.Fprintln(r.errOut, "║  recover your encrypted backups.                             ║")
-	_, _ = fmt.Fprintln(r.errOut, "║                                                              ║")
-	_, _ = fmt.Fprintln(r.errOut, "╚══════════════════════════════════════════════════════════════╝")
-	_, _ = fmt.Fprintln(r.errOut)
+func printRecoveryKey(errOut io.Writer, mnemonic string) {
+	_, _ = fmt.Fprintln(errOut)
+	_, _ = fmt.Fprintln(errOut, "╔══════════════════════════════════════════════════════════════╗")
+	_, _ = fmt.Fprintln(errOut, "║                      RECOVERY KEY                           ║")
+	_, _ = fmt.Fprintln(errOut, "╠══════════════════════════════════════════════════════════════╣")
+	_, _ = fmt.Fprintln(errOut, "║                                                              ║")
+	_, _ = fmt.Fprintf(errOut, "║  %s\n", mnemonic)
+	_, _ = fmt.Fprintln(errOut, "║                                                              ║")
+	_, _ = fmt.Fprintln(errOut, "║  Write down these 24 words and store them in a safe place.   ║")
+	_, _ = fmt.Fprintln(errOut, "║  This is the ONLY time the recovery key will be displayed.   ║")
+	_, _ = fmt.Fprintln(errOut, "║  If you lose your password, this key is your only way to     ║")
+	_, _ = fmt.Fprintln(errOut, "║  recover your encrypted backups.                             ║")
+	_, _ = fmt.Fprintln(errOut, "║                                                              ║")
+	_, _ = fmt.Fprintln(errOut, "╚══════════════════════════════════════════════════════════════╝")
+	_, _ = fmt.Fprintln(errOut)
 }

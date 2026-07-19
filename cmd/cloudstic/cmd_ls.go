@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"sort"
 	"time"
 
@@ -30,7 +31,7 @@ func parseLsArgs() *lsArgs {
 	return a
 }
 
-func (r *runner) runLsSnapshot(ctx context.Context) int {
+func runLsSnapshot(r *runner, ctx context.Context) int {
 	a := parseLsArgs()
 	if err := r.openClient(ctx, a.g); err != nil {
 		return r.fail("Failed to init store: %v", err)
@@ -46,7 +47,7 @@ func (r *runner) runLsSnapshot(ctx context.Context) int {
 	if a.g.jsonEnabled() {
 		return r.writeJSON(result)
 	}
-	r.printLsResult(result, time.Since(start))
+	printLsResult(r.out, result, time.Since(start))
 	return 0
 }
 
@@ -58,15 +59,15 @@ func buildLsOpts(a *lsArgs) []cloudstic.LsSnapshotOption {
 	return lsOpts
 }
 
-func (r *runner) printLsResult(result *engine.LsSnapshotResult, elapsed time.Duration) {
-	_, _ = fmt.Fprintf(r.out, "Listing files for snapshot: %s (Created: %s)\n", result.Ref, result.Snapshot.Created)
-	r.renderSnapshotTree(result)
-	_, _ = fmt.Fprintf(r.out, "\n%d entries listed in %s\n", len(result.RefToMeta), elapsed.Round(time.Millisecond))
+func printLsResult(out io.Writer, result *engine.LsSnapshotResult, elapsed time.Duration) {
+	_, _ = fmt.Fprintf(out, "Listing files for snapshot: %s (Created: %s)\n", result.Ref, result.Snapshot.Created)
+	renderSnapshotTree(out, result)
+	_, _ = fmt.Fprintf(out, "\n%d entries listed in %s\n", len(result.RefToMeta), elapsed.Round(time.Millisecond))
 }
 
-func (r *runner) renderSnapshotTree(result *engine.LsSnapshotResult) {
+func renderSnapshotTree(out io.Writer, result *engine.LsSnapshotResult) {
 	l := list.NewWriter()
-	l.SetOutputMirror(r.out)
+	l.SetOutputMirror(out)
 	for _, rootRef := range result.RootRefs {
 		appendTreeNode(l, rootRef, result.RefToMeta, result.ChildRefs)
 	}

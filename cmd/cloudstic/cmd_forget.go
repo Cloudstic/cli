@@ -154,19 +154,19 @@ func validateForgetArgs(a *forgetArgs) error {
 	return nil
 }
 
-func (r *runner) runForget(ctx context.Context) int {
+func runForget(r *runner, ctx context.Context) int {
 	a := parseForgetArgs()
 	if err := r.openClient(ctx, a.g); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 
 	if a.hasPolicy {
-		return r.execForgetPolicy(ctx, a)
+		return execForgetPolicy(r, ctx, a)
 	}
-	return r.execForgetSingle(ctx, a)
+	return execForgetSingle(r, ctx, a)
 }
 
-func (r *runner) execForgetSingle(ctx context.Context, a *forgetArgs) int {
+func execForgetSingle(r *runner, ctx context.Context, a *forgetArgs) int {
 	var forgetOpts []cloudstic.ForgetOption
 	if a.prune {
 		forgetOpts = append(forgetOpts, cloudstic.WithPrune())
@@ -187,13 +187,13 @@ func (r *runner) execForgetSingle(ctx context.Context, a *forgetArgs) int {
 	_, _ = fmt.Fprintln(r.out)
 	_, _ = fmt.Fprintln(r.out, "Snapshot removed.")
 	if result.Prune != nil {
-		r.printPruneStats(result.Prune)
+		printPruneStats(r.out, result.Prune)
 	}
 	return 0
 }
 
-func (r *runner) execForgetPolicy(ctx context.Context, a *forgetArgs) int {
-	opts := r.buildForgetPolicyOpts(a)
+func execForgetPolicy(r *runner, ctx context.Context, a *forgetArgs) int {
+	opts := buildForgetPolicyOpts(a)
 	result, err := r.client.ForgetPolicy(ctx, opts...)
 	if err != nil {
 		return r.fail("Forget failed: %v", err)
@@ -201,11 +201,11 @@ func (r *runner) execForgetPolicy(ctx context.Context, a *forgetArgs) int {
 	if a.g.jsonEnabled() {
 		return r.writeJSON(makeForgetPolicyJSONResult(result, a.dryRun))
 	}
-	r.printPolicyResult(result, a.dryRun)
+	printPolicyResult(r.out, result, a.dryRun)
 	return 0
 }
 
-func (r *runner) buildForgetPolicyOpts(a *forgetArgs) []cloudstic.ForgetOption {
+func buildForgetPolicyOpts(a *forgetArgs) []cloudstic.ForgetOption {
 	var opts []cloudstic.ForgetOption
 	if a.prune {
 		opts = append(opts, cloudstic.WithPrune())
@@ -250,19 +250,19 @@ func (r *runner) buildForgetPolicyOpts(a *forgetArgs) []cloudstic.ForgetOption {
 	return opts
 }
 
-func (r *runner) printPolicyResult(result *cloudstic.PolicyResult, dryRun bool) {
+func printPolicyResult(out io.Writer, result *cloudstic.PolicyResult, dryRun bool) {
 	for _, group := range result.Groups {
-		_, _ = fmt.Fprintf(r.out, "\nSnapshots for %s:\n", group.Key)
+		_, _ = fmt.Fprintf(out, "\nSnapshots for %s:\n", group.Key)
 
 		if len(group.Keep) > 0 {
-			_, _ = fmt.Fprintf(r.out, "\nkeep %d snapshots:\n", len(group.Keep))
+			_, _ = fmt.Fprintf(out, "\nkeep %d snapshots:\n", len(group.Keep))
 			reasons := make(map[string]string, len(group.Keep))
 			entries := make([]engine.SnapshotEntry, 0, len(group.Keep))
 			for _, k := range group.Keep {
 				entries = append(entries, k.Entry)
 				reasons[k.Entry.Ref] = strings.Join(k.Reasons, ", ")
 			}
-			r.renderSnapshotTable(entries, reasons)
+			renderSnapshotTable(out, entries, reasons)
 		}
 
 		if len(group.Remove) > 0 {
@@ -270,8 +270,8 @@ func (r *runner) printPolicyResult(result *cloudstic.PolicyResult, dryRun bool) 
 			if dryRun {
 				action = "would remove"
 			}
-			_, _ = fmt.Fprintf(r.out, "\n%s %d snapshots:\n", action, len(group.Remove))
-			r.renderSnapshotTable(group.Remove, nil)
+			_, _ = fmt.Fprintf(out, "\n%s %d snapshots:\n", action, len(group.Remove))
+			renderSnapshotTable(out, group.Remove, nil)
 		}
 	}
 
@@ -280,15 +280,15 @@ func (r *runner) printPolicyResult(result *cloudstic.PolicyResult, dryRun bool) 
 		totalRemoved += len(g.Remove)
 	}
 
-	_, _ = fmt.Fprintln(r.out)
+	_, _ = fmt.Fprintln(out)
 	if dryRun {
-		_, _ = fmt.Fprintf(r.out, "%d snapshots would be removed (dry run)\n", totalRemoved)
+		_, _ = fmt.Fprintf(out, "%d snapshots would be removed (dry run)\n", totalRemoved)
 	} else if totalRemoved > 0 {
-		_, _ = fmt.Fprintf(r.out, "%d snapshots have been removed\n", totalRemoved)
+		_, _ = fmt.Fprintf(out, "%d snapshots have been removed\n", totalRemoved)
 		if result.Prune != nil {
-			r.printPruneStats(result.Prune)
+			printPruneStats(out, result.Prune)
 		}
 	} else {
-		_, _ = fmt.Fprintln(r.out, "No snapshots to remove")
+		_, _ = fmt.Fprintln(out, "No snapshots to remove")
 	}
 }

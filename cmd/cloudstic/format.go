@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/cloudstic/cli/internal/core"
@@ -33,9 +34,9 @@ func formatBytes(b int64) string {
 
 // renderSnapshotTable prints a table of snapshot entries to w. If reasons
 // is non-nil, a "Reasons" column is appended with the value for each ref.
-func (r *runner) renderSnapshotTable(entries []engine.SnapshotEntry, reasons map[string]string) {
+func renderSnapshotTable(out io.Writer, entries []engine.SnapshotEntry, reasons map[string]string) {
 	t := table.NewWriter()
-	t.SetOutputMirror(r.out)
+	t.SetOutputMirror(out)
 
 	header := table.Row{"Seq", "Created", "Snapshot Hash", "Source", "Account", "Path", "Tags"}
 	if reasons != nil {
@@ -107,7 +108,7 @@ func sourceGroupLabel(s *core.SourceInfo) string {
 }
 
 // renderGroupedSnapshotTables prints one table per source group.
-func (r *runner) renderGroupedSnapshotTables(entries []engine.SnapshotEntry) {
+func renderGroupedSnapshotTables(out io.Writer, entries []engine.SnapshotEntry) {
 	// Collect groups preserving first-seen order.
 	type group struct {
 		key     string
@@ -133,9 +134,9 @@ func (r *runner) renderGroupedSnapshotTables(entries []engine.SnapshotEntry) {
 
 	for i, g := range groups {
 		if i > 0 {
-			_, _ = fmt.Fprintln(r.out)
+			_, _ = fmt.Fprintln(out)
 		}
-		_, _ = fmt.Fprintf(r.out, "── %s (%d snapshots)\n", g.label, len(g.entries))
-		r.renderSnapshotTable(g.entries, nil)
+		_, _ = fmt.Fprintf(out, "── %s (%d snapshots)\n", g.label, len(g.entries))
+		renderSnapshotTable(out, g.entries, nil)
 	}
 }

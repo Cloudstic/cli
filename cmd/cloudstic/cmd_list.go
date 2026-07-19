@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 
 	cloudstic "github.com/cloudstic/cli"
 )
@@ -23,7 +24,7 @@ func parseListArgs() *listArgs {
 	return a
 }
 
-func (r *runner) runList(ctx context.Context) int {
+func runList(r *runner, ctx context.Context) int {
 	a := parseListArgs()
 	if err := r.openClient(ctx, a.g); err != nil {
 		return r.fail("Failed to init store: %v", err)
@@ -38,7 +39,7 @@ func (r *runner) runList(ctx context.Context) int {
 	if a.g.jsonEnabled() {
 		return r.writeJSON(result)
 	}
-	r.printListResult(result, *a.group)
+	printListResult(r.out, result, *a.group)
 	return 0
 }
 
@@ -50,11 +51,11 @@ func buildListOpts(a *listArgs) []cloudstic.ListOption {
 	return listOpts
 }
 
-func (r *runner) printListResult(result *cloudstic.ListResult, group bool) {
-	_, _ = fmt.Fprintf(r.out, "%d snapshots\n", len(result.Snapshots))
+func printListResult(out io.Writer, result *cloudstic.ListResult, group bool) {
+	_, _ = fmt.Fprintf(out, "%d snapshots\n", len(result.Snapshots))
 	if group {
-		r.renderGroupedSnapshotTables(result.Snapshots)
+		renderGroupedSnapshotTables(out, result.Snapshots)
 	} else {
-		r.renderSnapshotTable(result.Snapshots, nil)
+		renderSnapshotTable(out, result.Snapshots, nil)
 	}
 }

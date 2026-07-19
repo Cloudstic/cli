@@ -55,7 +55,7 @@ func TestRunStoreNewAndListAndShow(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runStore(context.Background()); code != 0 {
+	if code := runStore(r, context.Background()); code != 0 {
 		t.Fatalf("store new failed: %s", errOut.String())
 	}
 	if !strings.Contains(out.String(), `"prod-s3" saved`) {
@@ -66,7 +66,7 @@ func TestRunStoreNewAndListAndShow(t *testing.T) {
 	os.Args = []string{"cloudstic", "store", "list", "-profiles-file", profilesPath}
 	out.Reset()
 	errOut.Reset()
-	if code := r.runStore(context.Background()); code != 0 {
+	if code := runStore(r, context.Background()); code != 0 {
 		t.Fatalf("store list failed: %s", errOut.String())
 	}
 	if !strings.Contains(out.String(), "Stores") || !strings.Contains(out.String(), "prod-s3") || !strings.Contains(out.String(), "AUTH") {
@@ -77,7 +77,7 @@ func TestRunStoreNewAndListAndShow(t *testing.T) {
 	os.Args = []string{"cloudstic", "store", "show", "-profiles-file", profilesPath, "prod-s3"}
 	out.Reset()
 	errOut.Reset()
-	if code := r.runStore(context.Background()); code != 0 {
+	if code := runStore(r, context.Background()); code != 0 {
 		t.Fatalf("store show failed: %s", errOut.String())
 	}
 	got := out.String()
@@ -104,7 +104,7 @@ func TestRunStoreNew_RequiresNameAndURI(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runStore(context.Background()); code == 0 {
+	if code := runStore(r, context.Background()); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "-uri is required") {
@@ -140,7 +140,7 @@ func TestRunStoreNew_ExistingStorePrefillsUnsetValues(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runStore(context.Background()); code != 0 {
+	if code := runStore(r, context.Background()); code != 0 {
 		t.Fatalf("store new failed: %s", errOut.String())
 	}
 
@@ -198,7 +198,7 @@ func TestRunStoreShow_UnknownStore(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runStore(context.Background()); code == 0 {
+	if code := runStore(r, context.Background()); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "Unknown store") {
@@ -229,7 +229,7 @@ profiles:
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runStore(context.Background()); code != 0 {
+	if code := runStore(r, context.Background()); code != 0 {
 		t.Fatalf("store show failed: %s", errOut.String())
 	}
 	got := out.String()
@@ -243,7 +243,7 @@ func TestRunStoreList_MissingFile(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runStore(context.Background()); code != 0 {
+	if code := runStore(r, context.Background()); code != 0 {
 		t.Fatalf("expected zero exit code, got err=%s", errOut.String())
 	}
 }
@@ -264,7 +264,7 @@ func TestRunStoreNew_WithEncryption(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runStore(context.Background()); code != 0 {
+	if code := runStore(r, context.Background()); code != 0 {
 		t.Fatalf("store new failed: %s", errOut.String())
 	}
 
@@ -272,7 +272,7 @@ func TestRunStoreNew_WithEncryption(t *testing.T) {
 	os.Args = []string{"cloudstic", "store", "show", "-profiles-file", profilesPath, "encrypted-s3"}
 	out.Reset()
 	errOut.Reset()
-	if code := r.runStore(context.Background()); code != 0 {
+	if code := runStore(r, context.Background()); code != 0 {
 		t.Fatalf("store show failed: %s", errOut.String())
 	}
 	got := out.String()
@@ -334,7 +334,7 @@ func TestCheckOrInitStore_AlreadyInitialized(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if err := r.checkOrInitStore(context.Background(), cfg, "test", profilesPath, checkOrInitOptions{warnOnMissingSecrets: true, offerInit: true}); err != nil {
+	if err := checkOrInitStore(r, context.Background(), cfg, "test", profilesPath, checkOrInitOptions{warnOnMissingSecrets: true, offerInit: true}); err != nil {
 		t.Fatalf("checkOrInitStore: %v", err)
 	}
 
@@ -372,7 +372,7 @@ func TestCheckOrInitStore_InitializedEncrypted_ValidCredentials(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if err := r.checkOrInitStore(context.Background(), cfg, "test", "profiles.yaml", checkOrInitOptions{warnOnMissingSecrets: true, offerInit: true}); err != nil {
+	if err := checkOrInitStore(r, context.Background(), cfg, "test", "profiles.yaml", checkOrInitOptions{warnOnMissingSecrets: true, offerInit: true}); err != nil {
 		t.Fatalf("checkOrInitStore: %v", err)
 	}
 	if !strings.Contains(out.String(), "Repository is encrypted; verifying configured credentials") {
@@ -410,7 +410,7 @@ func TestCheckOrInitStore_InitializedEncrypted_InvalidCredentials(t *testing.T) 
 	}}
 
 	r := &runner{out: &strings.Builder{}, errOut: &strings.Builder{}}
-	err = r.checkOrInitStore(context.Background(), cfg, "test", "profiles.yaml", checkOrInitOptions{warnOnMissingSecrets: true, offerInit: true})
+	err = checkOrInitStore(r, context.Background(), cfg, "test", "profiles.yaml", checkOrInitOptions{warnOnMissingSecrets: true, offerInit: true})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -497,7 +497,7 @@ func TestRunStoreNew_InvalidURI(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runStore(context.Background()); code == 0 {
+	if code := runStore(r, context.Background()); code == 0 {
 		t.Fatal("expected non-zero exit code for invalid URI")
 	}
 	if !strings.Contains(errOut.String(), "invalid store URI") {
@@ -513,7 +513,7 @@ func TestRunStoreNew_InvalidName(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runStore(context.Background()); code == 0 {
+	if code := runStore(r, context.Background()); code == 0 {
 		t.Fatal("expected non-zero exit code for invalid name")
 	}
 	if !strings.Contains(errOut.String(), "invalid store name") {
@@ -526,7 +526,7 @@ func TestRunStore_UnknownSubcommand(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runStore(context.Background()); code == 0 {
+	if code := runStore(r, context.Background()); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "Unknown store subcommand") {
@@ -556,7 +556,7 @@ stores:
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runStore(context.Background()); code != 0 {
+	if code := runStore(r, context.Background()); code != 0 {
 		t.Fatalf("store show failed: %s", errOut.String())
 	}
 	got := out.String()
@@ -598,7 +598,7 @@ stores:
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runStore(context.Background()); code != 0 {
+	if code := runStore(r, context.Background()); code != 0 {
 		t.Fatalf("store show failed: %s", errOut.String())
 	}
 	got := out.String()
@@ -633,7 +633,7 @@ stores:
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runStore(context.Background()); code != 0 {
+	if code := runStore(r, context.Background()); code != 0 {
 		t.Fatalf("store show failed: %s", errOut.String())
 	}
 	got := out.String()
@@ -666,7 +666,7 @@ func TestRunStoreNew_WithSFTPOptions(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runStore(context.Background()); code != 0 {
+	if code := runStore(r, context.Background()); code != 0 {
 		t.Fatalf("store new failed: %s", errOut.String())
 	}
 
@@ -674,7 +674,7 @@ func TestRunStoreNew_WithSFTPOptions(t *testing.T) {
 	os.Args = []string{"cloudstic", "store", "show", "-profiles-file", profilesPath, "sftp-new"}
 	out.Reset()
 	errOut.Reset()
-	if code := r.runStore(context.Background()); code != 0 {
+	if code := runStore(r, context.Background()); code != 0 {
 		t.Fatalf("store show failed: %s", errOut.String())
 	}
 	got := out.String()
@@ -708,7 +708,7 @@ func TestRunStoreNew_WithAllS3Options(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runStore(context.Background()); code != 0 {
+	if code := runStore(r, context.Background()); code != 0 {
 		t.Fatalf("store new failed: %s", errOut.String())
 	}
 
@@ -750,7 +750,7 @@ func TestRunStoreNew_WithSecretRefFlags(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runStore(context.Background()); code != 0 {
+	if code := runStore(r, context.Background()); code != 0 {
 		t.Fatalf("store new failed: %s", errOut.String())
 	}
 
@@ -995,7 +995,7 @@ func TestCheckOrInitStore_MissingSecretAllowed(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if err := r.checkOrInitStore(context.Background(), cfg, "test", "profiles.yaml", checkOrInitOptions{allowMissingSecrets: true, warnOnMissingSecrets: true, offerInit: true}); err != nil {
+	if err := checkOrInitStore(r, context.Background(), cfg, "test", "profiles.yaml", checkOrInitOptions{allowMissingSecrets: true, warnOnMissingSecrets: true, offerInit: true}); err != nil {
 		t.Fatalf("checkOrInitStore: %v", err)
 	}
 	if !strings.Contains(errOut.String(), "cloudstic store verify test") {
@@ -1014,7 +1014,7 @@ func TestCheckOrInitStore_MissingSecretAllowedSilent(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if err := r.checkOrInitStore(context.Background(), cfg, "test", "profiles.yaml", checkOrInitOptions{allowMissingSecrets: true, offerInit: true}); err != nil {
+	if err := checkOrInitStore(r, context.Background(), cfg, "test", "profiles.yaml", checkOrInitOptions{allowMissingSecrets: true, offerInit: true}); err != nil {
 		t.Fatalf("checkOrInitStore: %v", err)
 	}
 	if errOut.String() != "" {
@@ -1039,7 +1039,7 @@ func TestRunStoreVerify_MissingSecretFails(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runStore(context.Background()); code == 0 {
+	if code := runStore(r, context.Background()); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "could not resolve store credentials") {
@@ -1335,7 +1335,7 @@ stores:
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runStore(context.Background()); code != 0 {
+	if code := runStore(r, context.Background()); code != 0 {
 		t.Fatalf("store list failed: %s", errOut.String())
 	}
 	got := out.String()
@@ -1362,7 +1362,7 @@ func TestRunStoreNew_LocalStore(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := r.runStore(context.Background()); code != 0 {
+	if code := runStore(r, context.Background()); code != 0 {
 		t.Fatalf("store new failed: %s", errOut.String())
 	}
 	if !strings.Contains(out.String(), `"local-bk" saved`) {

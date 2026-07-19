@@ -19,7 +19,7 @@ func TestRunCat_SingleKey_JSON(t *testing.T) {
 		},
 	}}
 
-	r.runCat(context.Background())
+	runCat(r, context.Background())
 
 	got := out.String()
 	if !strings.Contains(got, `"version"`) {
@@ -37,7 +37,7 @@ func TestRunCat_MultipleKeys_HeadersShown(t *testing.T) {
 		},
 	}}
 
-	r.runCat(context.Background())
+	runCat(r, context.Background())
 
 	got := errOut.String()
 	if !strings.Contains(got, "==> config <==") {
@@ -59,7 +59,7 @@ func TestRunCat_JSON_NoHeadersAndStructuredOutput(t *testing.T) {
 		},
 	}}
 
-	if exit := r.runCat(context.Background()); exit != 0 {
+	if exit := runCat(r, context.Background()); exit != 0 {
 		t.Fatalf("runCat() exit = %d, want 0", exit)
 	}
 
@@ -87,7 +87,7 @@ func TestRunCat_RawMode(t *testing.T) {
 		catResults: []*cloudstic.CatResult{{Key: "config", Data: rawData}},
 	}}
 
-	r.runCat(context.Background())
+	runCat(r, context.Background())
 
 	if out.String() != string(rawData) {
 		t.Errorf("raw mode: expected %q, got %q", rawData, out.String())
@@ -101,7 +101,7 @@ func TestRunCat_InvalidJSON_PrintsRaw(t *testing.T) {
 		catResults: []*cloudstic.CatResult{{Key: "config", Data: []byte("not-json")}},
 	}}
 
-	r.runCat(context.Background())
+	runCat(r, context.Background())
 
 	if !strings.Contains(out.String(), "not-json") {
 		t.Errorf("expected raw fallback output, got:\n%s", out.String())
@@ -113,7 +113,7 @@ func TestRunCat_JSONAndRawConflict(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &strings.Builder{}, errOut: &errOut, client: &stubClient{}}
 
-	if exit := r.runCat(context.Background()); exit != 1 {
+	if exit := runCat(r, context.Background()); exit != 1 {
 		t.Fatalf("runCat() exit = %d, want 1", exit)
 	}
 	if !strings.Contains(errOut.String(), "-json cannot be combined with -raw") {

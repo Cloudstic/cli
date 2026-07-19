@@ -50,7 +50,7 @@ func (b tuiCLIBackend) InitProfile(ctx context.Context, profilesFile, profileNam
 	}
 	g := tuiStoreFlags(profilesFile, storeCfg)
 	*g.quiet = false
-	if code := b.r.runInitWithArgs(ctx, &initArgs{g: g}); code != 0 {
+	if code := runInitWithArgs(b.r, ctx, &initArgs{g: g}); code != 0 {
 		return fmt.Errorf("init failed")
 	}
 	return nil
@@ -74,7 +74,7 @@ func (b tuiCLIBackend) BackupProfile(ctx context.Context, profilesFile, profileN
 	}
 	b.r.client = client
 	defer func() { b.r.client = nil }()
-	if code := b.r.runSingleBackup(ctx, effective); code != 0 {
+	if code := runSingleBackup(b.r, ctx, effective); code != 0 {
 		return fmt.Errorf("backup failed")
 	}
 	return nil
@@ -94,7 +94,7 @@ func (b tuiCLIBackend) CheckProfile(ctx context.Context, profilesFile, profileNa
 	if err != nil {
 		return fmt.Errorf("check failed: %w", err)
 	}
-	if b.r.printCheckResult(result) {
+	if printCheckResult(b.r.errOut, result) {
 		return fmt.Errorf("repository check reported errors")
 	}
 	return nil

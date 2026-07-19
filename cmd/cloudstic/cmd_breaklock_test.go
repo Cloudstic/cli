@@ -15,7 +15,7 @@ func TestRunBreakLock_NoLock(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &strings.Builder{}, errOut: &errOut, client: &stubClient{breakLockResult: nil}}
 
-	r.runBreakLock(context.Background())
+	runBreakLock(r, context.Background())
 
 	if !strings.Contains(errOut.String(), "not locked") {
 		t.Errorf("expected 'not locked' message, got:\n%s", errOut.String())
@@ -31,7 +31,7 @@ func TestRunBreakLock_JSON(t *testing.T) {
 		},
 	}}
 
-	if exit := r.runBreakLock(context.Background()); exit != 0 {
+	if exit := runBreakLock(r, context.Background()); exit != 0 {
 		t.Fatalf("runBreakLock() exit = %d, want 0", exit)
 	}
 
@@ -59,7 +59,7 @@ func TestRunBreakLock_LocksRemoved(t *testing.T) {
 		},
 	}}
 
-	r.runBreakLock(context.Background())
+	runBreakLock(r, context.Background())
 
 	got := errOut.String()
 	if !strings.Contains(got, "Locks removed") {
@@ -76,7 +76,7 @@ func TestRunBreakLock_LocksRemoved(t *testing.T) {
 func TestPrintBreakLockResult_NoLock(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &strings.Builder{}, errOut: &errOut}
-	r.printBreakLockResult(nil)
+	printBreakLockResult(r.errOut, nil)
 
 	if !strings.Contains(errOut.String(), "not locked") {
 		t.Errorf("expected 'not locked', got:\n%s", errOut.String())
@@ -86,7 +86,7 @@ func TestPrintBreakLockResult_NoLock(t *testing.T) {
 func TestPrintBreakLockResult_MultipleLocks(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &strings.Builder{}, errOut: &errOut}
-	r.printBreakLockResult([]*cloudstic.RepoLock{
+	printBreakLockResult(r.errOut, []*cloudstic.RepoLock{
 		{Operation: "prune", Holder: "host-a"},
 		{Operation: "backup", Holder: "host-b"},
 	})

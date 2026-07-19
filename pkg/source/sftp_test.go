@@ -15,6 +15,7 @@ import (
 	intsftp "github.com/cloudstic/cli/internal/sftp"
 	"github.com/pkg/sftp"
 	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 	"github.com/testcontainers/testcontainers-go/wait"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -80,7 +81,7 @@ func writeKnownHosts(t *testing.T, ctx context.Context, container testcontainers
 	// Get all generated public host keys.
 	for _, keyType := range []string{"ed25519", "rsa", "ecdsa"} {
 		path := fmt.Sprintf("/etc/ssh/ssh_host_%s_key.pub", keyType)
-		exitCode, reader, err := container.Exec(ctx, []string{"cat", path})
+		exitCode, reader, err := container.Exec(ctx, []string{"cat", path}, tcexec.Multiplexed())
 		if err == nil && exitCode == 0 {
 			var buf bytes.Buffer
 			if _, err := buf.ReadFrom(reader); err == nil {

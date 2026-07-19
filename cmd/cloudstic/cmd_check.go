@@ -34,7 +34,7 @@ func parseCheckArgs(args []string) (*checkArgs, error) {
 func runCheck(r *runner, ctx context.Context) int {
 	a, err := parseCheckArgs(r.args)
 	if err != nil {
-		return parseErrorExitCode(err)
+		return r.parseError(err)
 	}
 	if err := r.openClient(ctx, a.g); err != nil {
 		return r.fail("Failed to init store: %v", err)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -33,12 +34,14 @@ func parseDiffArgs(args []string) (*diffArgs, error) {
 func runDiff(r *runner, ctx context.Context) int {
 	a, err := parseDiffArgs(r.args)
 	if err != nil {
-		if parseErrorExitCode(err) == 0 {
+		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
-		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic diff [options] <snapshot_id1> <snapshot_id2>")
-		_, _ = fmt.Fprintln(r.errOut, "       cloudstic diff [options] <snapshot_id1> latest")
-		return r.fail("Error: %v", err)
+		if !r.jsonEnabled() {
+			_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic diff [options] <snapshot_id1> <snapshot_id2>")
+			_, _ = fmt.Fprintln(r.errOut, "       cloudstic diff [options] <snapshot_id1> latest")
+		}
+		return r.parseError(err)
 	}
 	if err := r.openClient(ctx, a.g); err != nil {
 		return r.fail("Failed to init store: %v", err)

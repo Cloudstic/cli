@@ -46,7 +46,7 @@ func parseRestoreArgs(args []string) (*restoreArgs, error) {
 func runRestore(r *runner, ctx context.Context) int {
 	a, err := parseRestoreArgs(r.args)
 	if err != nil {
-		return parseErrorExitCode(err)
+		return r.parseError(err)
 	}
 	format, err := resolveRestoreFormat(a.format, a.output)
 	if err != nil {

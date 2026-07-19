@@ -77,7 +77,7 @@ func parseSetupWorkstationArgs(args []string) (*setupWorkstationArgs, error) {
 func runSetupWorkstation(r *runner, ctx context.Context) int {
 	args, err := parseSetupWorkstationArgs(r.args)
 	if err != nil {
-		return parseErrorExitCode(err)
+		return r.parseError(err)
 	}
 	cfg, err := loadProfilesOrInit(args.profilesFile)
 	if err != nil {

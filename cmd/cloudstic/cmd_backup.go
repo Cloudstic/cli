@@ -110,7 +110,7 @@ func parseBackupArgs(args []string) (*backupArgs, error) {
 func runBackup(r *runner, ctx context.Context) int {
 	a, err := parseBackupArgs(r.args)
 	if err != nil {
-		return parseErrorExitCode(err)
+		return r.parseError(err)
 	}
 
 	if a.profile != "" && a.allProfiles {

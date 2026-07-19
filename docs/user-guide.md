@@ -232,6 +232,11 @@ These flags apply to all commands:
 
 `-json` is available on the operational commands that return structured results, including `init`, `backup`, `restore`, `list`, `ls`, `diff`, `forget`, `prune`, `break-lock`, `check`, `key list`, `key add-recovery`, `key passwd`, and `cat`. When `-json` is set, Cloudstic suppresses progress output and writes a single JSON document to stdout instead of the usual human-readable summary.
 
+Failures in JSON mode are written to stderr as a single JSON object with an
+`error` field, for example `{"error":"store unavailable"}`. An operation
+interrupted by SIGINT or SIGTERM reports `Interrupted.` and exits with status
+130; other failures exit with status 1.
+
 ### init
 
 Initialize a new repository. Encryption is **required by default**.

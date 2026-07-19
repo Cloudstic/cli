@@ -45,7 +45,7 @@ func runStoreList(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("store list", flag.ContinueOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
 	if err := parseFlags(fs, r.args); err != nil {
-		return parseErrorExitCode(err)
+		return r.parseError(err)
 	}
 
 	cfg, err := cloudstic.LoadProfilesFile(*profilesFile)
@@ -64,7 +64,7 @@ func runStoreShow(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("store show", flag.ContinueOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
 	if err := parseFlags(fs, r.args); err != nil {
-		return parseErrorExitCode(err)
+		return r.parseError(err)
 	}
 	if fs.NArg() > 1 {
 		return r.fail("usage: cloudstic store show [-profiles-file <path>] <name>")
@@ -122,7 +122,7 @@ func runStoreNew(r *runner, ctx context.Context) int {
 	kmsRegion := fs.String("kms-region", "", "AWS KMS region")
 	kmsEndpoint := fs.String("kms-endpoint", "", "Custom AWS KMS endpoint URL")
 	if err := parseFlags(fs, r.args); err != nil {
-		return parseErrorExitCode(err)
+		return r.parseError(err)
 	}
 
 	flagsSet := map[string]bool{}
@@ -251,7 +251,7 @@ func runStoreVerify(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("store verify", flag.ContinueOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
 	if err := parseFlags(fs, r.args); err != nil {
-		return parseErrorExitCode(err)
+		return r.parseError(err)
 	}
 	if fs.NArg() > 1 {
 		return r.fail("usage: cloudstic store verify [-profiles-file <path>] <name>")
@@ -298,7 +298,7 @@ func runStoreInit(r *runner, ctx context.Context) int {
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
 	yes := fs.Bool("yes", false, "Initialize without confirmation prompt")
 	if err := parseFlags(fs, r.args); err != nil {
-		return parseErrorExitCode(err)
+		return r.parseError(err)
 	}
 	if fs.NArg() > 1 {
 		return r.fail("usage: cloudstic store init [-profiles-file <path>] [-yes] <name>")

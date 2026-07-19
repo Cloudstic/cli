@@ -91,9 +91,11 @@ func runCmd(r *runner, ctx context.Context, cmd string) int {
 		printUsage(r.out)
 		return 0
 	default:
-		_, _ = fmt.Fprintf(r.errOut, "Unknown command: %s\n", cmd)
-		printUsage(r.errOut)
-		return 1
+		exitCode := r.fail("Unknown command: %s", cmd)
+		if !r.jsonEnabled() {
+			printUsage(r.errOut)
+		}
+		return exitCode
 	}
 }
 

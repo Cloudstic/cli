@@ -56,7 +56,7 @@ func parseKeyListArgs(args []string) (*keyListArgs, error) {
 func runKeyList(r *runner, ctx context.Context) int {
 	a, err := parseKeyListArgs(r.args)
 	if err != nil {
-		return parseErrorExitCode(err)
+		return r.parseError(err)
 	}
 
 	raw, err := a.g.openStore(ctx)
@@ -115,7 +115,7 @@ func parseKeyPasswdArgs(args []string) (*keyPasswdArgs, error) {
 func runKeyPasswd(r *runner, ctx context.Context) int {
 	a, err := parseKeyPasswdArgs(r.args)
 	if err != nil {
-		return parseErrorExitCode(err)
+		return r.parseError(err)
 	}
 
 	raw, err := a.g.openStore(ctx)
@@ -170,7 +170,7 @@ func parseAddRecoveryKeyArgs(args []string) (*addRecoveryKeyArgs, error) {
 func runAddRecoveryKey(r *runner, ctx context.Context) int {
 	a, err := parseAddRecoveryKeyArgs(r.args)
 	if err != nil {
-		return parseErrorExitCode(err)
+		return r.parseError(err)
 	}
 
 	raw, err := a.g.openStore(ctx)

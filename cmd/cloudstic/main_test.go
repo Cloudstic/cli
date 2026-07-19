@@ -82,6 +82,20 @@ func TestRunCmdUnknownWritesToStderr(t *testing.T) {
 	}
 }
 
+func TestRunCmdUnknownWritesJSONErrorWithoutUsage(t *testing.T) {
+	var out, errOut bytes.Buffer
+	r := newRunner([]string{"--json"})
+	r.out, r.errOut = &out, &errOut
+
+	if code := runCmd(r, context.Background(), "wat"); code != exitFailure {
+		t.Fatalf("runCmd() exit code = %d, want %d", code, exitFailure)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", out.String())
+	}
+	assertJSONError(t, errOut.Bytes(), "Unknown command: wat")
+}
+
 func TestResolveBuildMetadataUsesBuildInfo(t *testing.T) {
 	info := &debug.BuildInfo{
 		Main: debug.Module{Version: "v1.2.3"},

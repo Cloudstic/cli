@@ -528,3 +528,87 @@ func TestCompletionSubcommandListsMatchTree(t *testing.T) {
 		}
 	}
 }
+
+// TestCompletionDeclaresEachFlagOnce catches leftovers from partially migrated
+// hand-written blocks. The coverage tests only assert a flag is *present*, so a
+// stale duplicate definition passes them while shells see the option twice —
+// which is exactly what happened when fish's global flags were generated but
+// the hand-written copies were left behind.
+func TestCompletionDeclaresEachFlagOnce(t *testing.T) {
+	scripts := completionScripts(t)
+
+	// fish: one `complete -c cloudstic ... -l <name>` per flag per scope.
+	fishLine := regexp.MustCompile(`(?m)^complete -c cloudstic (-n '[^']*' )?(?:-o [a-z0-9-]+ )?-l ([a-z0-9-]+)`)
+	seen := map[string]int{}
+	for _, m := range fishLine.FindAllStringSubmatch(scripts["fish"], -1) {
+		seen[m[1]+"|"+m[2]]++
+	}
+	for key, n := range seen {
+		if n > 1 {
+			scope, name, _ := strings.Cut(key, "|")
+			if scope == "" {
+				scope = "(global)"
+			}
+			t.Errorf("fish declares -%s %d times for scope %s; it must be declared once", name, n, scope)
+		}
+	}
+
+	// bash and zsh keep one global list each.
+	if got := strings.Count(scripts["bash"], "local global_flags="); got != 1 {
+		t.Errorf("bash declares global_flags %d times, want 1", got)
+	}
+	if got := strings.Count(scripts["zsh"], "global_flags=("); got != 1 {
+		t.Errorf("zsh declares global_flags %d times, want 1", got)
+	}
+}
+
+// TestCompletionTemplatesHaveNoStaleScaffold guards against section headers or
+// placeholders left behind when generated blocks replace hand-written ones.
+func TestCompletionTemplatesHaveNoStaleScaffold(t *testing.T) {
+	// A section header is a comment that opens a block: preceded by a blank
+	// line, and not a shell directive such as #!/... or #compdef.
+	isDirective := func(line string) bool {
+		return strings.HasPrefix(line, "#!") || strings.HasPrefix(line, "#compdef")
+	}
+
+	for shell, script := range completionScripts(t) {
+		if strings.Contains(script, "@@") {
+			t.Errorf("%s completion contains an unsubstituted placeholder", shell)
+		}
+
+		lines := strings.Split(script, "\n")
+		for i, raw := range lines {
+			line := strings.TrimSpace(raw)
+			if !strings.HasPrefix(line, "#") || isDirective(line) {
+				continue
+			}
+			if i > 0 && strings.TrimSpace(lines[i-1]) != "" {
+				continue // part of a multi-line comment block, not a header
+			}
+
+			// Scan to the next section header: content in between means the
+			// section is populated; hitting another header first means this
+			// one was left behind.
+			content := ""
+			for j, next := range lines[i+1:] {
+				trimmed := strings.TrimSpace(next)
+				if trimmed == "" {
+					continue
+				}
+				isHeader := strings.HasPrefix(trimmed, "#") && !isDirective(trimmed) &&
+					strings.TrimSpace(lines[i+1+j-1]) == ""
+				if isHeader {
+					break
+				}
+				if strings.HasPrefix(trimmed, "#") {
+					continue
+				}
+				content = trimmed
+				break
+			}
+			if content == "" {
+				t.Errorf("%s completion has an empty section under comment %q", shell, line)
+			}
+		}
+	}
+}

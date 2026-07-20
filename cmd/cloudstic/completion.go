@@ -240,60 +240,12 @@ complete -c cloudstic -f
 
 # Global flags (available for all subcommands)
 @@FISH_GLOBAL_FLAGS@@
-complete -c cloudstic -l s3-endpoint -x -d 'S3 compatible endpoint URL'
-complete -c cloudstic -l s3-region -x -d 'S3 region'
-complete -c cloudstic -l s3-profile -x -d 'AWS shared config profile for S3 auth'
-complete -c cloudstic -l s3-access-key -x -d 'S3 access key ID'
-complete -c cloudstic -l s3-secret-key -x -d 'S3 secret access key'
-complete -c cloudstic -l source-sftp-password -x -d 'SFTP source password'
-complete -c cloudstic -l source-sftp-key -r -F -d 'Path to SSH private key for SFTP source'
-complete -c cloudstic -l source-sftp-known-hosts -r -F -d 'Path to known_hosts file for SFTP source'
-complete -c cloudstic -l source-sftp-insecure -d 'Skip host key validation for SFTP source (INSECURE)'
-complete -c cloudstic -l store-sftp-password -x -d 'SFTP store password'
-complete -c cloudstic -l store-sftp-key -r -F -d 'Path to SSH private key for SFTP store'
-complete -c cloudstic -l store-sftp-known-hosts -r -F -d 'Path to known_hosts file for SFTP store'
-complete -c cloudstic -l store-sftp-insecure -d 'Skip host key validation for SFTP store (INSECURE)'
-complete -c cloudstic -l encryption-key -x -d 'Platform key (hex-encoded)'
-complete -c cloudstic -l password -x -d 'Repository password'
-complete -c cloudstic -l recovery-key -x -d 'Recovery key (24-word mnemonic)'
-complete -c cloudstic -l kms-key-arn -x -d 'AWS KMS key ARN'
-complete -c cloudstic -l kms-region -x -d 'AWS KMS region'
-complete -c cloudstic -l kms-endpoint -x -d 'Custom AWS KMS endpoint'
-complete -c cloudstic -l disable-packfile -d 'Disable bundling small objects into packs'
-complete -c cloudstic -l prompt -d 'Prompt for password interactively'
-complete -c cloudstic -l no-prompt -d 'Disable interactive prompts (for scripts and CI)'
-complete -c cloudstic -l verbose -d 'Log detailed operations'
-complete -c cloudstic -l quiet -d 'Suppress progress bars'
-complete -c cloudstic -l json -d 'Write command result as JSON to stdout'
-complete -c cloudstic -l debug -d 'Log every store request'
 
-# init
+# Flags for each top-level command
 @@FISH_CMD_FLAGS@@
 
-# backup
-
-# profile subcommands
+# Subcommands of grouped commands, and their flags
 @@FISH_GROUPS@@
-
-# store subcommands
-
-# source subcommands
-
-# setup subcommands
-
-# auth subcommands
-
-# restore
-
-# list
-
-# prune
-
-# forget
-
-# key subcommands
-
-# cat
 
 # completion
 complete -c cloudstic -n '__fish_seen_subcommand_from completion' -a 'bash zsh fish' -d 'Shell type'

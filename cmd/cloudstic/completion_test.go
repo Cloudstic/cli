@@ -161,7 +161,7 @@ func TestCompletionFish(t *testing.T) {
 		"-l new-password",
 		// Global flags
 		"complete -c cloudstic -o store -l store -x",
-		"complete -c cloudstic -l verbose",
+		"complete -c cloudstic -o verbose -l verbose",
 		// Command-specific flags
 		"__fish_seen_subcommand_from init",
 		"__fish_seen_subcommand_from backup",

@@ -311,7 +311,7 @@ func (p tuiReporterPhase) Error() {
 
 func tuiStoreFlags(profilesFile string, storeCfg cloudstic.ProfileStore) *globalFlags {
 	fs := flag.NewFlagSet("tui-store", flag.ContinueOnError)
-	g := addGlobalFlags(fs)
+	g := addGlobalFlags(fs, repoCommandGroups)
 	g.profilesFile = profilesFile
 	flagsSet := map[string]bool{}
 	_ = applyProfileStoreToGlobalFlags(g, storeCfg, flagsSet)

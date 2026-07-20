@@ -172,7 +172,7 @@ func TestMergeProfileBackupArgs_CLIAuthRefOverridesProfile(t *testing.T) {
 
 func newTestGlobalFlags(args ...string) *globalFlags {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	g := addGlobalFlags(fs)
+	g := addGlobalFlags(fs, repoCommandGroups)
 	_ = parseFlags(fs, args)
 	return g
 }

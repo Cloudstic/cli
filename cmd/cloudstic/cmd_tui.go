@@ -12,11 +12,18 @@ type tuiArgs struct {
 	profilesFile string
 }
 
+func tuiFlagSpecs(a *tuiArgs) []flagSpec {
+	return []flagSpec{
+		stringFlag(&a.profilesFile, "profiles-file", defaultProfilesPathNoCreate(), "Path to profiles YAML file",
+			withEnv("CLOUDSTIC_PROFILES_FILE"), withPlaceholder("<path>"), withCompleter("_files")),
+	}
+}
+
 func newTUIFlagSet() (*flag.FlagSet, *tuiArgs) {
 	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	a := &tuiArgs{}
-	fs.StringVar(&a.profilesFile, "profiles-file", defaultProfilesPathNoCreate(), "Path to profiles YAML file")
+	bindFlags(fs, tuiFlagSpecs(a))
 	return fs, a
 }
 

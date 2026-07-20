@@ -179,7 +179,9 @@ When implementing new functionality, always consider the following:
 
 4. **CLI Integration** — For new commands:
    - Add a `cmd_<name>.go` file with a `run<Name>(r *runner, ctx context.Context) int` free function (plus `exec<Name>(r, ctx, ...)` for testable sub-steps — see existing `cmd_*.go` for the pattern).
-   - Split flag construction from parsing: a `new<Name>FlagSet() (*flag.FlagSet, *<name>Args)` builder plus a `parse<Name>Args(args []string)` that calls it. The builder lets the registry and drift tests introspect the real flags.
+   - Declare the command's flags as data in a `<name>FlagSpecs(a *<name>Args) []flagSpec` function, using `stringFlag`/`boolFlag`/`intFlag`/`valueFlag` with options such as `withEnv`, `asSecret`, `asRepeatable`, `withCompleter`, and `withPlaceholder` (`flagspec.go`). Never call `fs.StringVar` directly — the declarative form is what carries environment-variable bindings and secret markers.
+   - Split flag construction from parsing: a `new<Name>FlagSet() (*flag.FlagSet, *<name>Args)` builder that calls `bindFlags(fs, <name>FlagSpecs(a))`, plus a `parse<Name>Args(args []string)` that calls it. The builder lets the registry and drift tests introspect the real flags.
+   - Opt into the global flag groups the command actually needs via `addGlobalFlags(fs, repoCommandGroups)` (or `backupCommandGroups` for commands that read a source). Groups are declared in `flags.go`; a command that never reads a source must not pull in `sourceSFTPFlagSpecs`, so its `-h` output stays relevant.
    - Register the command in `commandRegistry()` (`commands.go`). That single declaration drives dispatch in `runCmd()`, the `COMMANDS` listing in `printUsage()`, and the shell-completion command lists — do **not** edit `main.go` or `usage.go` for a new command.
    - Add the command's own flags to the per-command lists in `completion.go` (global flags and command names are generated; per-command flag lists are still hand-written). `TestCommandFlagsAppearInBashCompletion` fails if you forget.
    - Use the `reorderArgs()` helper (`flags.go`) so flags may follow positional args.

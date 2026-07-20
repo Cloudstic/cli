@@ -46,7 +46,7 @@ type keyListArgs struct {
 
 func newKeyListFlagSet() (*flag.FlagSet, *keyListArgs) {
 	fs := flag.NewFlagSet("key list", flag.ContinueOnError)
-	return fs, &keyListArgs{g: addGlobalFlags(fs)}
+	return fs, &keyListArgs{g: addGlobalFlags(fs, repoCommandGroups)}
 }
 
 func parseKeyListArgs(args []string) (*keyListArgs, error) {
@@ -104,11 +104,18 @@ type keyPasswdArgs struct {
 	newPassword string
 }
 
+func keyPasswdFlagSpecs(a *keyPasswdArgs) []flagSpec {
+	return []flagSpec{
+		stringFlag(&a.newPassword, "new-password", "", "New repository password (prompted interactively if not set)",
+			withPlaceholder("<pw>"), asSecret()),
+	}
+}
+
 func newKeyPasswdFlagSet() (*flag.FlagSet, *keyPasswdArgs) {
 	fs := flag.NewFlagSet("key passwd", flag.ContinueOnError)
 	a := &keyPasswdArgs{}
-	a.g = addGlobalFlags(fs)
-	fs.StringVar(&a.newPassword, "new-password", "", "New repository password (prompted interactively if not set)")
+	a.g = addGlobalFlags(fs, repoCommandGroups)
+	bindFlags(fs, keyPasswdFlagSpecs(a))
 	return fs, a
 }
 
@@ -168,7 +175,7 @@ type addRecoveryKeyArgs struct {
 
 func newAddRecoveryKeyFlagSet() (*flag.FlagSet, *addRecoveryKeyArgs) {
 	fs := flag.NewFlagSet("add-recovery-key", flag.ContinueOnError)
-	return fs, &addRecoveryKeyArgs{g: addGlobalFlags(fs)}
+	return fs, &addRecoveryKeyArgs{g: addGlobalFlags(fs, repoCommandGroups)}
 }
 
 func parseAddRecoveryKeyArgs(args []string) (*addRecoveryKeyArgs, error) {

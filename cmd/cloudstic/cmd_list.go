@@ -11,13 +11,19 @@ import (
 
 type listArgs struct {
 	g     *globalFlags
-	group *bool
+	group bool
+}
+
+func listFlagSpecs(a *listArgs) []flagSpec {
+	return []flagSpec{
+		boolFlag(&a.group, "group", false, "Group snapshots by source identity"),
+	}
 }
 
 func newListFlagSet() (*flag.FlagSet, *listArgs) {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
-	a := &listArgs{g: addGlobalFlags(fs)}
-	a.group = fs.Bool("group", false, "Group snapshots by source identity")
+	a := &listArgs{g: addGlobalFlags(fs, repoCommandGroups)}
+	bindFlags(fs, listFlagSpecs(a))
 	return fs, a
 }
 
@@ -47,7 +53,7 @@ func runList(r *runner, ctx context.Context) int {
 	if a.g.jsonEnabled() {
 		return r.writeJSON(result)
 	}
-	printListResult(r.out, result, *a.group)
+	printListResult(r.out, result, a.group)
 	return 0
 }
 

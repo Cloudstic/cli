@@ -50,7 +50,7 @@ func TestGlobalFlagScans_StopAtTerminator(t *testing.T) {
 	}
 
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	g := addGlobalFlags(fs)
+	g := addGlobalFlags(fs, repoCommandGroups)
 	if err := parseFlags(fs, []string{"--", "-store"}); err != nil {
 		t.Fatalf("parseFlags() error = %v", err)
 	}

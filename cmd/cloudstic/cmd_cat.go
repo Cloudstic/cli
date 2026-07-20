@@ -18,11 +18,17 @@ type catArgs struct {
 	raw  bool
 }
 
+func catFlagSpecs(a *catArgs) []flagSpec {
+	return []flagSpec{
+		boolFlag(&a.raw, "raw", false, "Output raw, unformatted data (useful for hashing)"),
+	}
+}
+
 func newCatFlagSet() (*flag.FlagSet, *catArgs) {
 	fs := flag.NewFlagSet("cat", flag.ContinueOnError)
 	a := &catArgs{}
-	a.g = addGlobalFlags(fs)
-	fs.BoolVar(&a.raw, "raw", false, "Output raw, unformatted data (useful for hashing)")
+	a.g = addGlobalFlags(fs, repoCommandGroups)
+	bindFlags(fs, catFlagSpecs(a))
 	return fs, a
 }
 

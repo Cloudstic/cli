@@ -96,24 +96,25 @@ func backupFlagSpecs(a *backupArgs) []flagSpec {
 	}
 }
 
-func newBackupFlagSet() (*flag.FlagSet, *backupArgs, []flagSpec) {
+func newBackupFlagSet() (boundFlagSet, *backupArgs) {
 	fs := flag.NewFlagSet("backup", flag.ContinueOnError)
 	a := &backupArgs{}
-	a.g = addGlobalFlags(fs, backupCommandGroups)
-	specs := backupFlagSpecs(a)
-	bindFlags(fs, specs)
-	return fs, a, specs
+	g, globalSpecs := addGlobalFlags(fs, backupCommandGroups)
+	a.g = g
+	own := backupFlagSpecs(a)
+	bindFlags(fs, own)
+	return boundFlagSet{set: fs, global: globalSpecs, own: own}, a
 }
 
 func parseBackupArgs(args []string) (*backupArgs, error) {
-	fs, a, _ := newBackupFlagSet()
-	if err := parseFlags(fs, args); err != nil {
+	b, a := newBackupFlagSet()
+	if err := parseFlags(b, args); err != nil {
 		return nil, err
 	}
 	a.profile = a.g.profile
 	a.profilesFile = a.g.profilesFile
 	a.flagsSet = map[string]bool{}
-	fs.Visit(func(f *flag.Flag) {
+	b.set.Visit(func(f *flag.Flag) {
 		a.flagsSet[f.Name] = true
 	})
 	return a, nil

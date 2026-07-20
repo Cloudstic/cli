@@ -58,21 +58,22 @@ func forgetFlagSpecs(a *forgetArgs) []flagSpec {
 	}
 }
 
-func newForgetFlagSet() (*flag.FlagSet, *forgetArgs, []flagSpec) {
+func newForgetFlagSet() (boundFlagSet, *forgetArgs) {
 	fs := flag.NewFlagSet("forget", flag.ContinueOnError)
 	a := &forgetArgs{}
-	a.g = addGlobalFlags(fs, repoCommandGroups)
-	specs := forgetFlagSpecs(a)
-	bindFlags(fs, specs)
-	return fs, a, specs
+	g, globalSpecs := addGlobalFlags(fs, repoCommandGroups)
+	a.g = g
+	own := forgetFlagSpecs(a)
+	bindFlags(fs, own)
+	return boundFlagSet{set: fs, global: globalSpecs, own: own}, a
 }
 
 func parseForgetArgs(args []string) (*forgetArgs, error) {
-	fs, a, _ := newForgetFlagSet()
-	if err := parseFlags(fs, args); err != nil {
+	b, a := newForgetFlagSet()
+	if err := parseFlags(b, args); err != nil {
 		return nil, err
 	}
-	fs.Visit(func(f *flag.Flag) {
+	b.set.Visit(func(f *flag.Flag) {
 		if f.Name == "group-by" {
 			a.groupBySet = true
 		}
@@ -94,7 +95,7 @@ func parseForgetArgs(args []string) (*forgetArgs, error) {
 	a.hasFilters = len(a.filterTags) > 0 || a.filterSource != "" || a.filterAccount != "" || a.filterPath != ""
 	a.hasPolicy = a.keepLast > 0 || a.keepHourly > 0 || a.keepDaily > 0 ||
 		a.keepWeekly > 0 || a.keepMonthly > 0 || a.keepYearly > 0
-	a.snapshotID = fs.Arg(0)
+	a.snapshotID = b.set.Arg(0)
 
 	if err := validateForgetArgs(a); err != nil {
 		return nil, err

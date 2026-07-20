@@ -53,8 +53,8 @@ func commandRegistry() []command {
 			name:    "init",
 			summary: "Initialize a new repository (must run before first backup)",
 			flags: func() (*flag.FlagSet, []flagSpec) {
-				fs, _, specs := newInitFlagSet()
-				return fs, specs
+				b, _ := newInitFlagSet()
+				return b.set, b.own
 			},
 			run: runInit,
 		},
@@ -62,8 +62,8 @@ func commandRegistry() []command {
 			name:    "backup",
 			summary: "Create a new backup snapshot from a source",
 			flags: func() (*flag.FlagSet, []flagSpec) {
-				fs, _, specs := newBackupFlagSet()
-				return fs, specs
+				b, _ := newBackupFlagSet()
+				return b.set, b.own
 			},
 			run: runBackup,
 		},
@@ -110,8 +110,8 @@ func commandRegistry() []command {
 			name:    "tui",
 			summary: "Launch the interactive terminal dashboard",
 			flags: func() (*flag.FlagSet, []flagSpec) {
-				fs, _, specs := newTUIFlagSet()
-				return fs, specs
+				b, _ := newTUIFlagSet()
+				return b.set, b.own
 			},
 			run: runTUI,
 		},
@@ -129,8 +129,8 @@ func commandRegistry() []command {
 			name:    "restore",
 			summary: "Restore files from a backup snapshot",
 			flags: func() (*flag.FlagSet, []flagSpec) {
-				fs, _, specs := newRestoreFlagSet()
-				return fs, specs
+				b, _ := newRestoreFlagSet()
+				return b.set, b.own
 			},
 			positional: []string{":snapshot ID:"},
 			run:        runRestore,
@@ -139,8 +139,8 @@ func commandRegistry() []command {
 			name:    "list",
 			summary: "List all backup snapshots in the repository",
 			flags: func() (*flag.FlagSet, []flagSpec) {
-				fs, _, specs := newListFlagSet()
-				return fs, specs
+				b, _ := newListFlagSet()
+				return b.set, b.own
 			},
 			run: runList,
 		},
@@ -148,8 +148,8 @@ func commandRegistry() []command {
 			name:    "ls",
 			summary: "List files within a specific snapshot",
 			flags: func() (*flag.FlagSet, []flagSpec) {
-				fs, _, specs := newLsFlagSet()
-				return fs, specs
+				b, _ := newLsFlagSet()
+				return b.set, b.own
 			},
 			positional: []string{":snapshot ID:"},
 			run:        runLsSnapshot,
@@ -158,8 +158,8 @@ func commandRegistry() []command {
 			name:    "prune",
 			summary: "Remove unused data chunks from the repository",
 			flags: func() (*flag.FlagSet, []flagSpec) {
-				fs, _, specs := newPruneFlagSet()
-				return fs, specs
+				b, _ := newPruneFlagSet()
+				return b.set, b.own
 			},
 			run: runPrune,
 		},
@@ -167,8 +167,8 @@ func commandRegistry() []command {
 			name:    "forget",
 			summary: "Remove a specific snapshot from history",
 			flags: func() (*flag.FlagSet, []flagSpec) {
-				fs, _, specs := newForgetFlagSet()
-				return fs, specs
+				b, _ := newForgetFlagSet()
+				return b.set, b.own
 			},
 			positional: []string{":snapshot ID:"},
 			run:        runForget,
@@ -177,8 +177,8 @@ func commandRegistry() []command {
 			name:    "diff",
 			summary: "Compare two snapshots or a snapshot against latest",
 			flags: func() (*flag.FlagSet, []flagSpec) {
-				fs, _, specs := newDiffFlagSet()
-				return fs, specs
+				b, _ := newDiffFlagSet()
+				return b.set, b.own
 			},
 			positional: []string{":snapshot 1:", ":snapshot 2:"},
 			run:        runDiff,
@@ -187,8 +187,8 @@ func commandRegistry() []command {
 			name:    "break-lock",
 			summary: "Remove a stale repository lock left by a crashed process",
 			flags: func() (*flag.FlagSet, []flagSpec) {
-				fs, _, specs := newBreakLockFlagSet()
-				return fs, specs
+				b, _ := newBreakLockFlagSet()
+				return b.set, b.own
 			},
 			run: runBreakLock,
 		},
@@ -206,8 +206,8 @@ func commandRegistry() []command {
 			name:    "check",
 			summary: "Verify repository integrity (reference chain, objects, data)",
 			flags: func() (*flag.FlagSet, []flagSpec) {
-				fs, _, specs := newCheckFlagSet()
-				return fs, specs
+				b, _ := newCheckFlagSet()
+				return b.set, b.own
 			},
 			positional: []string{":snapshot ID:"},
 			run:        runCheck,
@@ -216,8 +216,8 @@ func commandRegistry() []command {
 			name:    "cat",
 			summary: "Display raw JSON content of repository objects",
 			flags: func() (*flag.FlagSet, []flagSpec) {
-				fs, _, specs := newCatFlagSet()
-				return fs, specs
+				b, _ := newCatFlagSet()
+				return b.set, b.own
 			},
 			positional: []string{"*:object key:"},
 			run:        runCat,

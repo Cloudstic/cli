@@ -33,24 +33,25 @@ func restoreFlagSpecs(a *restoreArgs) []flagSpec {
 	}
 }
 
-func newRestoreFlagSet() (*flag.FlagSet, *restoreArgs, []flagSpec) {
+func newRestoreFlagSet() (boundFlagSet, *restoreArgs) {
 	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
 	a := &restoreArgs{}
-	a.g = addGlobalFlags(fs, repoCommandGroups)
-	specs := restoreFlagSpecs(a)
-	bindFlags(fs, specs)
-	return fs, a, specs
+	g, globalSpecs := addGlobalFlags(fs, repoCommandGroups)
+	a.g = g
+	own := restoreFlagSpecs(a)
+	bindFlags(fs, own)
+	return boundFlagSet{set: fs, global: globalSpecs, own: own}, a
 }
 
 func parseRestoreArgs(args []string) (*restoreArgs, error) {
-	fs, a, _ := newRestoreFlagSet()
-	if err := parseFlags(fs, args); err != nil {
+	b, a := newRestoreFlagSet()
+	if err := parseFlags(b, args); err != nil {
 		return nil, err
 	}
 	a.format = strings.TrimSpace(strings.ToLower(a.format))
 	a.snapshotRef = "latest"
-	if fs.NArg() > 0 {
-		a.snapshotRef = fs.Arg(0)
+	if b.set.NArg() > 0 {
+		a.snapshotRef = b.set.Arg(0)
 	}
 	return a, nil
 }

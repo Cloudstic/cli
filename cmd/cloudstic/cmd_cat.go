@@ -24,24 +24,25 @@ func catFlagSpecs(a *catArgs) []flagSpec {
 	}
 }
 
-func newCatFlagSet() (*flag.FlagSet, *catArgs, []flagSpec) {
+func newCatFlagSet() (boundFlagSet, *catArgs) {
 	fs := flag.NewFlagSet("cat", flag.ContinueOnError)
 	a := &catArgs{}
-	a.g = addGlobalFlags(fs, repoCommandGroups)
-	specs := catFlagSpecs(a)
-	bindFlags(fs, specs)
-	return fs, a, specs
+	g, globalSpecs := addGlobalFlags(fs, repoCommandGroups)
+	a.g = g
+	own := catFlagSpecs(a)
+	bindFlags(fs, own)
+	return boundFlagSet{set: fs, global: globalSpecs, own: own}, a
 }
 
 func parseCatArgs(args []string) (*catArgs, error) {
-	fs, a, _ := newCatFlagSet()
-	if err := parseFlags(fs, args); err != nil {
+	b, a := newCatFlagSet()
+	if err := parseFlags(b, args); err != nil {
 		return nil, err
 	}
-	if fs.NArg() < 1 {
+	if b.set.NArg() < 1 {
 		return nil, fmt.Errorf("at least one object key is required")
 	}
-	a.keys = fs.Args()
+	a.keys = b.set.Args()
 	return a, nil
 }
 

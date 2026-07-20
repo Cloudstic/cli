@@ -16,23 +16,24 @@ type diffArgs struct {
 	snap2 string
 }
 
-func newDiffFlagSet() (*flag.FlagSet, *diffArgs, []flagSpec) {
+func newDiffFlagSet() (boundFlagSet, *diffArgs) {
 	fs := flag.NewFlagSet("diff", flag.ContinueOnError)
 	a := &diffArgs{}
-	a.g = addGlobalFlags(fs, repoCommandGroups)
-	return fs, a, nil
+	g, globalSpecs := addGlobalFlags(fs, repoCommandGroups)
+	a.g = g
+	return boundFlagSet{set: fs, global: globalSpecs}, a
 }
 
 func parseDiffArgs(args []string) (*diffArgs, error) {
-	fs, a, _ := newDiffFlagSet()
-	if err := parseFlags(fs, args); err != nil {
+	b, a := newDiffFlagSet()
+	if err := parseFlags(b, args); err != nil {
 		return nil, err
 	}
-	if fs.NArg() < 2 {
+	if b.set.NArg() < 2 {
 		return nil, fmt.Errorf("two snapshot IDs are required")
 	}
-	a.snap1 = fs.Arg(0)
-	a.snap2 = fs.Arg(1)
+	a.snap1 = b.set.Arg(0)
+	a.snap2 = b.set.Arg(1)
 	return a, nil
 }
 

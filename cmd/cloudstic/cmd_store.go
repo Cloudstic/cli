@@ -44,7 +44,7 @@ func runStore(r *runner, ctx context.Context) int {
 func runStoreList(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("store list", flag.ContinueOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
-	if err := parseFlags(fs, r.args); err != nil {
+	if err := parseFlags(boundFlagSet{set: fs}, r.args); err != nil {
 		return r.parseError(err)
 	}
 
@@ -63,7 +63,7 @@ func runStoreList(r *runner, ctx context.Context) int {
 func runStoreShow(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("store show", flag.ContinueOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
-	if err := parseFlags(fs, r.args); err != nil {
+	if err := parseFlags(boundFlagSet{set: fs}, r.args); err != nil {
 		return r.parseError(err)
 	}
 	if fs.NArg() > 1 {
@@ -121,7 +121,7 @@ func runStoreNew(r *runner, ctx context.Context) int {
 	kmsKeyARN := fs.String("kms-key-arn", "", "AWS KMS key ARN")
 	kmsRegion := fs.String("kms-region", "", "AWS KMS region")
 	kmsEndpoint := fs.String("kms-endpoint", "", "Custom AWS KMS endpoint URL")
-	if err := parseFlags(fs, r.args); err != nil {
+	if err := parseFlags(boundFlagSet{set: fs}, r.args); err != nil {
 		return r.parseError(err)
 	}
 
@@ -250,7 +250,7 @@ func runStoreNew(r *runner, ctx context.Context) int {
 func runStoreVerify(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("store verify", flag.ContinueOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
-	if err := parseFlags(fs, r.args); err != nil {
+	if err := parseFlags(boundFlagSet{set: fs}, r.args); err != nil {
 		return r.parseError(err)
 	}
 	if fs.NArg() > 1 {
@@ -297,7 +297,7 @@ func runStoreInit(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("store init", flag.ContinueOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
 	yes := fs.Bool("yes", false, "Initialize without confirmation prompt")
-	if err := parseFlags(fs, r.args); err != nil {
+	if err := parseFlags(boundFlagSet{set: fs}, r.args); err != nil {
 		return r.parseError(err)
 	}
 	if fs.NArg() > 1 {

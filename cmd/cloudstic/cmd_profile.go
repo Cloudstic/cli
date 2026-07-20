@@ -59,7 +59,7 @@ func parseProfileShowArgs(args []string) (*profileShowArgs, error) {
 		defaultPath = defaultProfilesFilename
 	}
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultPath), "Path to profiles YAML file")
-	if err := parseFlags(fs, args); err != nil {
+	if err := parseFlags(boundFlagSet{set: fs}, args); err != nil {
 		return nil, err
 	}
 	a.profilesFile = *profilesFile
@@ -125,7 +125,7 @@ func parseProfileListArgs(args []string) (*profileListArgs, error) {
 		defaultPath = defaultProfilesFilename
 	}
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultPath), "Path to profiles YAML file")
-	if err := parseFlags(fs, args); err != nil {
+	if err := parseFlags(boundFlagSet{set: fs}, args); err != nil {
 		return nil, err
 	}
 	a.profilesFile = *profilesFile
@@ -205,7 +205,7 @@ func parseProfileNewArgs(args []string) (*profileNewArgs, error) {
 	onedriveTokenRef := fs.String("onedrive-token-ref", "", "Secret reference to OneDrive OAuth token")
 	fs.Var(&a.tags, "tag", "Tag to apply to snapshots (repeatable)")
 	fs.Var(&a.excludes, "exclude", "Exclude pattern (repeatable)")
-	if err := parseFlags(fs, args); err != nil {
+	if err := parseFlags(boundFlagSet{set: fs}, args); err != nil {
 		return nil, err
 	}
 

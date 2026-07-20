@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"strconv"
 )
@@ -42,8 +43,14 @@ type flagSpec struct {
 	// isBool reports whether the flag takes no value. Shells must not consume
 	// the following word for boolean flags.
 	isBool bool
-	// bind registers the flag on a flag set.
+	// bind registers the flag on a flag set, using only the built-in default.
+	// Environment values are applied after parsing so that help output can
+	// never render a live environment value (see applyEnvDefaults).
 	bind func(fs *flag.FlagSet)
+	// applyEnv sets the flag's target from a raw environment value, returning
+	// an actionable error when the value cannot be parsed. Nil when the flag
+	// has no environment binding.
+	applyEnv func(raw string) error
 }
 
 // flagOpt customises a flagSpec at construction time.
@@ -100,7 +107,11 @@ func stringFlag(target *string, name, def, usage string, opts ...flagOpt) flagSp
 	s := applyOpts(&flagSpec{name: name, usage: usage}, opts)
 	spec := *s
 	spec.bind = func(fs *flag.FlagSet) {
-		fs.StringVar(target, name, envDefault(spec.env, def), usage)
+		fs.StringVar(target, name, def, spec.bindUsage())
+	}
+	spec.applyEnv = func(raw string) error {
+		*target = raw
+		return nil
 	}
 	return spec
 }
@@ -110,7 +121,15 @@ func boolFlag(target *bool, name string, def bool, usage string, opts ...flagOpt
 	s := applyOpts(&flagSpec{name: name, usage: usage, isBool: true}, opts)
 	spec := *s
 	spec.bind = func(fs *flag.FlagSet) {
-		fs.BoolVar(target, name, envBoolDefault(spec.env, def), usage)
+		fs.BoolVar(target, name, def, spec.bindUsage())
+	}
+	spec.applyEnv = func(raw string) error {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			return fmt.Errorf("invalid boolean value %q: use true or false", raw)
+		}
+		*target = parsed
+		return nil
 	}
 	return spec
 }
@@ -120,7 +139,15 @@ func intFlag(target *int, name string, def int, usage string, opts ...flagOpt) f
 	s := applyOpts(&flagSpec{name: name, usage: usage}, opts)
 	spec := *s
 	spec.bind = func(fs *flag.FlagSet) {
-		fs.IntVar(target, name, envIntDefault(spec.env, def), usage)
+		fs.IntVar(target, name, def, spec.bindUsage())
+	}
+	spec.applyEnv = func(raw string) error {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil {
+			return fmt.Errorf("invalid integer value %q", raw)
+		}
+		*target = parsed
+		return nil
 	}
 	return spec
 }
@@ -131,13 +158,24 @@ func valueFlag(target flag.Value, name, usage string, opts ...flagOpt) flagSpec 
 	s := applyOpts(&flagSpec{name: name, usage: usage}, opts)
 	spec := *s
 	spec.bind = func(fs *flag.FlagSet) {
-		fs.Var(target, name, usage)
+		fs.Var(target, name, spec.bindUsage())
 	}
 	return spec
 }
 
+// bindUsage returns the usage text shown in help output. When a flag reads an
+// environment variable, the variable's *name* is appended so users can discover
+// it — its value is never rendered, which is what keeps secrets out of -h.
+func (s flagSpec) bindUsage() string {
+	if s.env == "" {
+		return s.usage
+	}
+	return s.usage + " [$" + s.env + "]"
+}
+
 // envDefault returns the environment value for key when set and non-empty,
-// otherwise fallback. An empty key means the flag has no environment binding.
+// otherwise fallback. Used for the few defaults that are computed before
+// binding rather than resolved after parsing.
 func envDefault(key, fallback string) string {
 	if key == "" {
 		return fallback
@@ -148,36 +186,57 @@ func envDefault(key, fallback string) string {
 	return fallback
 }
 
-// envBoolDefault resolves a boolean default from the environment.
-func envBoolDefault(key string, fallback bool) bool {
-	if key == "" {
-		return fallback
+// flagOrigin records where a resolved flag value came from.
+type flagOrigin int
+
+const (
+	originDefault flagOrigin = iota
+	originEnv
+	originFlag
+)
+
+func (o flagOrigin) String() string {
+	switch o {
+	case originFlag:
+		return "flag"
+	case originEnv:
+		return "environment"
+	default:
+		return "default"
 	}
-	v := lookupEnv(key)
-	if v == "" {
-		return fallback
-	}
-	parsed, err := strconv.ParseBool(v)
-	if err != nil {
-		return fallback
-	}
-	return parsed
 }
 
-// envIntDefault resolves an integer default from the environment.
-func envIntDefault(key string, fallback int) int {
-	if key == "" {
-		return fallback
+// applyEnvDefaults fills in values from the environment for every flag the user
+// did not pass explicitly, and reports where each resolved value came from.
+//
+// Precedence is unchanged from before — explicit flag, then environment, then
+// built-in default — but the environment is consulted *after* parsing rather
+// than baked into each flag's default. That is what allows help output to show
+// the built-in default and the variable name instead of a live secret.
+func applyEnvDefaults(fs *flag.FlagSet, specs []flagSpec) (map[string]flagOrigin, error) {
+	explicit := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+
+	origins := make(map[string]flagOrigin, len(specs))
+	for _, s := range specs {
+		switch {
+		case explicit[s.name]:
+			origins[s.name] = originFlag
+		case s.env != "" && s.applyEnv != nil:
+			raw := lookupEnv(s.env)
+			if raw == "" {
+				origins[s.name] = originDefault
+				continue
+			}
+			if err := s.applyEnv(raw); err != nil {
+				return nil, fmt.Errorf("environment variable %s: %w", s.env, err)
+			}
+			origins[s.name] = originEnv
+		default:
+			origins[s.name] = originDefault
+		}
 	}
-	v := lookupEnv(key)
-	if v == "" {
-		return fallback
-	}
-	parsed, err := strconv.Atoi(v)
-	if err != nil {
-		return fallback
-	}
-	return parsed
+	return origins, nil
 }
 
 // bindFlags registers every spec on fs, in declaration order.
@@ -194,4 +253,21 @@ func specNames(specs []flagSpec) []string {
 		names = append(names, s.name)
 	}
 	return names
+}
+
+// boundFlagSet pairs a flag set with the specifications bound into it, split
+// into the global groups a command opted into and its own flags. Parsing needs
+// all of them (to resolve environment values); completion generation needs
+// only the command's own.
+type boundFlagSet struct {
+	set    *flag.FlagSet
+	global []flagSpec
+	own    []flagSpec
+}
+
+// all returns every specification bound into the set.
+func (b boundFlagSet) all() []flagSpec {
+	specs := make([]flagSpec, 0, len(b.global)+len(b.own))
+	specs = append(specs, b.global...)
+	return append(specs, b.own...)
 }

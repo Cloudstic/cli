@@ -44,14 +44,15 @@ type keyListArgs struct {
 	g *globalFlags
 }
 
-func newKeyListFlagSet() (*flag.FlagSet, *keyListArgs) {
+func newKeyListFlagSet() (boundFlagSet, *keyListArgs) {
 	fs := flag.NewFlagSet("key list", flag.ContinueOnError)
-	return fs, &keyListArgs{g: addGlobalFlags(fs, repoCommandGroups)}
+	g, globalSpecs := addGlobalFlags(fs, repoCommandGroups)
+	return boundFlagSet{set: fs, global: globalSpecs}, &keyListArgs{g: g}
 }
 
 func parseKeyListArgs(args []string) (*keyListArgs, error) {
-	fs, a := newKeyListFlagSet()
-	if err := parseFlags(fs, args); err != nil {
+	b, a := newKeyListFlagSet()
+	if err := parseFlags(b, args); err != nil {
 		return nil, err
 	}
 	return a, nil
@@ -111,17 +112,19 @@ func keyPasswdFlagSpecs(a *keyPasswdArgs) []flagSpec {
 	}
 }
 
-func newKeyPasswdFlagSet() (*flag.FlagSet, *keyPasswdArgs) {
+func newKeyPasswdFlagSet() (boundFlagSet, *keyPasswdArgs) {
 	fs := flag.NewFlagSet("key passwd", flag.ContinueOnError)
 	a := &keyPasswdArgs{}
-	a.g = addGlobalFlags(fs, repoCommandGroups)
-	bindFlags(fs, keyPasswdFlagSpecs(a))
-	return fs, a
+	g, globalSpecs := addGlobalFlags(fs, repoCommandGroups)
+	a.g = g
+	own := keyPasswdFlagSpecs(a)
+	bindFlags(fs, own)
+	return boundFlagSet{set: fs, global: globalSpecs, own: own}, a
 }
 
 func parseKeyPasswdArgs(args []string) (*keyPasswdArgs, error) {
-	fs, a := newKeyPasswdFlagSet()
-	if err := parseFlags(fs, args); err != nil {
+	b, a := newKeyPasswdFlagSet()
+	if err := parseFlags(b, args); err != nil {
 		return nil, err
 	}
 	return a, nil
@@ -173,14 +176,15 @@ type addRecoveryKeyArgs struct {
 	g *globalFlags
 }
 
-func newAddRecoveryKeyFlagSet() (*flag.FlagSet, *addRecoveryKeyArgs) {
+func newAddRecoveryKeyFlagSet() (boundFlagSet, *addRecoveryKeyArgs) {
 	fs := flag.NewFlagSet("add-recovery-key", flag.ContinueOnError)
-	return fs, &addRecoveryKeyArgs{g: addGlobalFlags(fs, repoCommandGroups)}
+	g, globalSpecs := addGlobalFlags(fs, repoCommandGroups)
+	return boundFlagSet{set: fs, global: globalSpecs}, &addRecoveryKeyArgs{g: g}
 }
 
 func parseAddRecoveryKeyArgs(args []string) (*addRecoveryKeyArgs, error) {
-	fs, a := newAddRecoveryKeyFlagSet()
-	if err := parseFlags(fs, args); err != nil {
+	b, a := newAddRecoveryKeyFlagSet()
+	if err := parseFlags(b, args); err != nil {
 		return nil, err
 	}
 	return a, nil

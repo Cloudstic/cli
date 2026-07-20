@@ -96,16 +96,17 @@ func backupFlagSpecs(a *backupArgs) []flagSpec {
 	}
 }
 
-func newBackupFlagSet() (*flag.FlagSet, *backupArgs) {
+func newBackupFlagSet() (*flag.FlagSet, *backupArgs, []flagSpec) {
 	fs := flag.NewFlagSet("backup", flag.ContinueOnError)
 	a := &backupArgs{}
 	a.g = addGlobalFlags(fs, backupCommandGroups)
-	bindFlags(fs, backupFlagSpecs(a))
-	return fs, a
+	specs := backupFlagSpecs(a)
+	bindFlags(fs, specs)
+	return fs, a, specs
 }
 
 func parseBackupArgs(args []string) (*backupArgs, error) {
-	fs, a := newBackupFlagSet()
+	fs, a, _ := newBackupFlagSet()
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}

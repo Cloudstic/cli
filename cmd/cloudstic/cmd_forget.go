@@ -58,16 +58,17 @@ func forgetFlagSpecs(a *forgetArgs) []flagSpec {
 	}
 }
 
-func newForgetFlagSet() (*flag.FlagSet, *forgetArgs) {
+func newForgetFlagSet() (*flag.FlagSet, *forgetArgs, []flagSpec) {
 	fs := flag.NewFlagSet("forget", flag.ContinueOnError)
 	a := &forgetArgs{}
 	a.g = addGlobalFlags(fs, repoCommandGroups)
-	bindFlags(fs, forgetFlagSpecs(a))
-	return fs, a
+	specs := forgetFlagSpecs(a)
+	bindFlags(fs, specs)
+	return fs, a, specs
 }
 
 func parseForgetArgs(args []string) (*forgetArgs, error) {
-	fs, a := newForgetFlagSet()
+	fs, a, _ := newForgetFlagSet()
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}

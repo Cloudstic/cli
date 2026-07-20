@@ -29,16 +29,17 @@ func initFlagSpecs(a *initArgs) []flagSpec {
 	}
 }
 
-func newInitFlagSet() (*flag.FlagSet, *initArgs) {
+func newInitFlagSet() (*flag.FlagSet, *initArgs, []flagSpec) {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	a := &initArgs{}
 	a.g = addGlobalFlags(fs, repoCommandGroups)
-	bindFlags(fs, initFlagSpecs(a))
-	return fs, a
+	specs := initFlagSpecs(a)
+	bindFlags(fs, specs)
+	return fs, a, specs
 }
 
 func parseInitArgs(args []string) (*initArgs, error) {
-	fs, a := newInitFlagSet()
+	fs, a, _ := newInitFlagSet()
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}

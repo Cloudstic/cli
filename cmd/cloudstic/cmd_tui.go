@@ -19,16 +19,17 @@ func tuiFlagSpecs(a *tuiArgs) []flagSpec {
 	}
 }
 
-func newTUIFlagSet() (*flag.FlagSet, *tuiArgs) {
+func newTUIFlagSet() (*flag.FlagSet, *tuiArgs, []flagSpec) {
 	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	a := &tuiArgs{}
-	bindFlags(fs, tuiFlagSpecs(a))
-	return fs, a
+	specs := tuiFlagSpecs(a)
+	bindFlags(fs, specs)
+	return fs, a, specs
 }
 
 func parseTUIArgs(args []string) (*tuiArgs, error) {
-	fs, a := newTUIFlagSet()
+	fs, a, _ := newTUIFlagSet()
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}

@@ -21,16 +21,17 @@ func checkFlagSpecs(a *checkArgs) []flagSpec {
 	}
 }
 
-func newCheckFlagSet() (*flag.FlagSet, *checkArgs) {
+func newCheckFlagSet() (*flag.FlagSet, *checkArgs, []flagSpec) {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	a := &checkArgs{}
 	a.g = addGlobalFlags(fs, repoCommandGroups)
-	bindFlags(fs, checkFlagSpecs(a))
-	return fs, a
+	specs := checkFlagSpecs(a)
+	bindFlags(fs, specs)
+	return fs, a, specs
 }
 
 func parseCheckArgs(args []string) (*checkArgs, error) {
-	fs, a := newCheckFlagSet()
+	fs, a, _ := newCheckFlagSet()
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}

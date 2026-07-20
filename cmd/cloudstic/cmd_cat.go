@@ -24,16 +24,17 @@ func catFlagSpecs(a *catArgs) []flagSpec {
 	}
 }
 
-func newCatFlagSet() (*flag.FlagSet, *catArgs) {
+func newCatFlagSet() (*flag.FlagSet, *catArgs, []flagSpec) {
 	fs := flag.NewFlagSet("cat", flag.ContinueOnError)
 	a := &catArgs{}
 	a.g = addGlobalFlags(fs, repoCommandGroups)
-	bindFlags(fs, catFlagSpecs(a))
-	return fs, a
+	specs := catFlagSpecs(a)
+	bindFlags(fs, specs)
+	return fs, a, specs
 }
 
 func parseCatArgs(args []string) (*catArgs, error) {
-	fs, a := newCatFlagSet()
+	fs, a, _ := newCatFlagSet()
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}

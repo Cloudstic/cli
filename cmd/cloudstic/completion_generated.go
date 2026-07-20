@@ -117,7 +117,7 @@ const (
 func generatedFlagCommands() []command {
 	var out []command
 	for _, c := range visibleCommands() {
-		if c.ownFlags != nil {
+		if c.flags != nil {
 			out = append(out, c)
 		}
 	}
@@ -128,7 +128,7 @@ func generatedFlagCommands() []command {
 func bashCommandFlagCases() string {
 	var b strings.Builder
 	for _, c := range generatedFlagCommands() {
-		names := dashPrefixed(specNames(c.ownFlags()), " ")
+		names := dashPrefixed(specNames(ownSpecsOf(c)), " ")
 		fmt.Fprintf(&b, "        %s)\n            cmd_flags=%q ;;\n", c.name, names)
 	}
 	return strings.TrimRight(b.String(), "\n")
@@ -140,7 +140,7 @@ func zshCommandFlagCases() string {
 	var b strings.Builder
 	for _, c := range generatedFlagCommands() {
 		fmt.Fprintf(&b, "        %s)\n            _arguments $global_flags", c.name)
-		for _, s := range c.ownFlags() {
+		for _, s := range ownSpecsOf(c) {
 			fmt.Fprintf(&b, " \\\n                '%s'", zshFlagEntry(s))
 		}
 		for _, p := range c.positional {
@@ -177,7 +177,7 @@ func zshValueName(s flagSpec) string {
 func fishCommandFlagLines() string {
 	var b strings.Builder
 	for _, c := range generatedFlagCommands() {
-		for _, s := range c.ownFlags() {
+		for _, s := range ownSpecsOf(c) {
 			fmt.Fprintf(&b, "complete -c cloudstic -n '__fish_seen_subcommand_from %s' -o %s -l %s",
 				c.name, s.name, s.name)
 			if !s.isBool {

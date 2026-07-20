@@ -21,16 +21,17 @@ func pruneFlagSpecs(a *pruneArgs) []flagSpec {
 	}
 }
 
-func newPruneFlagSet() (*flag.FlagSet, *pruneArgs) {
+func newPruneFlagSet() (*flag.FlagSet, *pruneArgs, []flagSpec) {
 	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
 	a := &pruneArgs{}
 	a.g = addGlobalFlags(fs, repoCommandGroups)
-	bindFlags(fs, pruneFlagSpecs(a))
-	return fs, a
+	specs := pruneFlagSpecs(a)
+	bindFlags(fs, specs)
+	return fs, a, specs
 }
 
 func parsePruneArgs(args []string) (*pruneArgs, error) {
-	fs, a := newPruneFlagSet()
+	fs, a, _ := newPruneFlagSet()
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}

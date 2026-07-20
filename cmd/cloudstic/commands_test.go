@@ -174,10 +174,10 @@ func TestCompletionValueFlagsExcludeBooleans(t *testing.T) {
 // completion drift checks reason about real flags rather than a hand-copied list.
 func TestCommandFlagSetsAreIntrospectable(t *testing.T) {
 	for _, c := range commandRegistry() {
-		if c.newFlagSet == nil {
+		if c.flags == nil {
 			continue
 		}
-		fs := c.newFlagSet()
+		fs, _ := c.flags()
 		if fs == nil {
 			t.Errorf("command %q returned a nil flag set", c.name)
 			continue
@@ -198,10 +198,10 @@ func TestCommandFlagsAppearInBashCompletion(t *testing.T) {
 	}
 
 	for _, c := range commandRegistry() {
-		if c.newFlagSet == nil || c.hidden {
+		if c.flags == nil || c.hidden {
 			continue
 		}
-		for _, name := range flagNames(c.newFlagSet()) {
+		for _, name := range flagNamesOf(c) {
 			if globals[name] {
 				continue // covered by the global_flags list
 			}
@@ -216,8 +216,8 @@ func TestCommandFlagsAppearInBashCompletion(t *testing.T) {
 func allDeclaredSpecs() []flagSpec {
 	specs := globalFlagSpecsFor(&globalFlags{}, allGlobalGroups)
 	for _, c := range commandRegistry() {
-		if c.ownFlags != nil {
-			specs = append(specs, c.ownFlags()...)
+		if c.flags != nil {
+			specs = append(specs, ownSpecsOf(c)...)
 		}
 	}
 	return specs
@@ -257,10 +257,10 @@ func TestDeclaredCompletersHaveFishMapping(t *testing.T) {
 func TestGeneratedCommandFlagsMatchSpecs(t *testing.T) {
 	scripts := completionScripts(t)
 	for _, c := range commandRegistry() {
-		if c.ownFlags == nil || c.hidden {
+		if c.flags == nil || c.hidden {
 			continue
 		}
-		for _, s := range c.ownFlags() {
+		for _, s := range ownSpecsOf(c) {
 			for shell, script := range scripts {
 				// fish spells long options as "-l name"; bash and zsh use "-name".
 				token := "-" + s.name

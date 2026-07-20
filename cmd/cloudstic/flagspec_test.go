@@ -156,7 +156,7 @@ func TestSecretFlagsWithEnvAreConsistent(t *testing.T) {
 func TestCommandFlagGroupsAreScoped(t *testing.T) {
 	sourceOnly := specNames(sourceSFTPFlagSpecs(&globalFlags{}))
 
-	backupFS, _ := newBackupFlagSet()
+	backupFS, _, _ := newBackupFlagSet()
 	backupFlags := flagNames(backupFS)
 	for _, name := range sourceOnly {
 		if !slices.Contains(backupFlags, name) {
@@ -168,10 +168,10 @@ func TestCommandFlagGroupsAreScoped(t *testing.T) {
 		name string
 		fn   func() *flag.FlagSet
 	}{
-		{"list", func() *flag.FlagSet { fs, _ := newListFlagSet(); return fs }},
-		{"check", func() *flag.FlagSet { fs, _ := newCheckFlagSet(); return fs }},
-		{"prune", func() *flag.FlagSet { fs, _ := newPruneFlagSet(); return fs }},
-		{"cat", func() *flag.FlagSet { fs, _ := newCatFlagSet(); return fs }},
+		{"list", func() *flag.FlagSet { fs, _, _ := newListFlagSet(); return fs }},
+		{"check", func() *flag.FlagSet { fs, _, _ := newCheckFlagSet(); return fs }},
+		{"prune", func() *flag.FlagSet { fs, _, _ := newPruneFlagSet(); return fs }},
+		{"cat", func() *flag.FlagSet { fs, _, _ := newCatFlagSet(); return fs }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			names := flagNames(tc.fn())
@@ -192,10 +192,10 @@ func TestCommandFlagGroupsAreScoped(t *testing.T) {
 // flag set stay in agreement for every command that declares one.
 func TestFlagSpecsCoverRegisteredFlags(t *testing.T) {
 	for _, c := range commandRegistry() {
-		if c.newFlagSet == nil {
+		if c.flags == nil {
 			continue
 		}
-		fs := c.newFlagSet()
+		fs, _ := c.flags()
 		for _, name := range flagNames(fs) {
 			if fs.Lookup(name) == nil {
 				t.Errorf("command %q: flag -%s is not registered", c.name, name)

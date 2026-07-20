@@ -18,14 +18,13 @@ type command struct {
 	// subcommands lists the nested verbs for grouped commands such as
 	// "key list" or "store new". Empty for leaf commands.
 	subcommands []subcommand
-	// newFlagSet builds this command's flag set without parsing it, so tests
-	// can introspect the real flags. Nil for commands that take no flags of
-	// their own (grouped commands delegate to their subcommands).
-	newFlagSet func() *flag.FlagSet
-	// ownFlags returns this command's own flag specifications, excluding the
-	// global groups it opts into. Shell completion is generated from these.
-	// Nil for grouped commands, whose subcommands still build flags inline.
-	ownFlags func() []flagSpec
+	// flags builds this command's flag set together with its own flag
+	// specifications, from a single construction. The flag set covers the
+	// global groups the command opts into plus its own flags; the specs cover
+	// only its own, and carry the metadata (env, secret, completer) that usage
+	// and shell completion are generated from. Nil for grouped commands, whose
+	// subcommands still build flags inline.
+	flags func() (*flag.FlagSet, []flagSpec)
 	// positional describes the command's positional arguments for shell
 	// completion, as zsh _arguments specs (e.g. ":snapshot ID:"). Empty when
 	// the command takes none.
@@ -51,18 +50,22 @@ type subcommand struct {
 func commandRegistry() []command {
 	return []command{
 		{
-			name:       "init",
-			summary:    "Initialize a new repository (must run before first backup)",
-			newFlagSet: func() *flag.FlagSet { fs, _ := newInitFlagSet(); return fs },
-			ownFlags:   func() []flagSpec { return initFlagSpecs(&initArgs{}) },
-			run:        runInit,
+			name:    "init",
+			summary: "Initialize a new repository (must run before first backup)",
+			flags: func() (*flag.FlagSet, []flagSpec) {
+				fs, _, specs := newInitFlagSet()
+				return fs, specs
+			},
+			run: runInit,
 		},
 		{
-			name:       "backup",
-			summary:    "Create a new backup snapshot from a source",
-			newFlagSet: func() *flag.FlagSet { fs, _ := newBackupFlagSet(); return fs },
-			ownFlags:   func() []flagSpec { return backupFlagSpecs(&backupArgs{}) },
-			run:        runBackup,
+			name:    "backup",
+			summary: "Create a new backup snapshot from a source",
+			flags: func() (*flag.FlagSet, []flagSpec) {
+				fs, _, specs := newBackupFlagSet()
+				return fs, specs
+			},
+			run: runBackup,
 		},
 		{
 			name:    "auth",
@@ -104,11 +107,13 @@ func commandRegistry() []command {
 			run: runSetup,
 		},
 		{
-			name:       "tui",
-			summary:    "Launch the interactive terminal dashboard",
-			newFlagSet: func() *flag.FlagSet { fs, _ := newTUIFlagSet(); return fs },
-			ownFlags:   func() []flagSpec { return tuiFlagSpecs(&tuiArgs{}) },
-			run:        runTUI,
+			name:    "tui",
+			summary: "Launch the interactive terminal dashboard",
+			flags: func() (*flag.FlagSet, []flagSpec) {
+				fs, _, specs := newTUIFlagSet()
+				return fs, specs
+			},
+			run: runTUI,
 		},
 		{
 			name:    "profile",
@@ -121,54 +126,71 @@ func commandRegistry() []command {
 			run: runProfile,
 		},
 		{
-			name:       "restore",
-			summary:    "Restore files from a backup snapshot",
-			newFlagSet: func() *flag.FlagSet { fs, _ := newRestoreFlagSet(); return fs },
-			ownFlags:   func() []flagSpec { return restoreFlagSpecs(&restoreArgs{}) },
+			name:    "restore",
+			summary: "Restore files from a backup snapshot",
+			flags: func() (*flag.FlagSet, []flagSpec) {
+				fs, _, specs := newRestoreFlagSet()
+				return fs, specs
+			},
 			positional: []string{":snapshot ID:"},
 			run:        runRestore,
 		},
 		{
-			name:       "list",
-			summary:    "List all backup snapshots in the repository",
-			newFlagSet: func() *flag.FlagSet { fs, _ := newListFlagSet(); return fs },
-			ownFlags:   func() []flagSpec { return listFlagSpecs(&listArgs{}) },
-			run:        runList,
+			name:    "list",
+			summary: "List all backup snapshots in the repository",
+			flags: func() (*flag.FlagSet, []flagSpec) {
+				fs, _, specs := newListFlagSet()
+				return fs, specs
+			},
+			run: runList,
 		},
 		{
-			name:       "ls",
-			summary:    "List files within a specific snapshot",
-			newFlagSet: func() *flag.FlagSet { fs, _ := newLsFlagSet(); return fs },
+			name:    "ls",
+			summary: "List files within a specific snapshot",
+			flags: func() (*flag.FlagSet, []flagSpec) {
+				fs, _, specs := newLsFlagSet()
+				return fs, specs
+			},
 			positional: []string{":snapshot ID:"},
 			run:        runLsSnapshot,
 		},
 		{
-			name:       "prune",
-			summary:    "Remove unused data chunks from the repository",
-			newFlagSet: func() *flag.FlagSet { fs, _ := newPruneFlagSet(); return fs },
-			ownFlags:   func() []flagSpec { return pruneFlagSpecs(&pruneArgs{}) },
-			run:        runPrune,
+			name:    "prune",
+			summary: "Remove unused data chunks from the repository",
+			flags: func() (*flag.FlagSet, []flagSpec) {
+				fs, _, specs := newPruneFlagSet()
+				return fs, specs
+			},
+			run: runPrune,
 		},
 		{
-			name:       "forget",
-			summary:    "Remove a specific snapshot from history",
-			newFlagSet: func() *flag.FlagSet { fs, _ := newForgetFlagSet(); return fs },
-			ownFlags:   func() []flagSpec { return forgetFlagSpecs(&forgetArgs{}) },
+			name:    "forget",
+			summary: "Remove a specific snapshot from history",
+			flags: func() (*flag.FlagSet, []flagSpec) {
+				fs, _, specs := newForgetFlagSet()
+				return fs, specs
+			},
 			positional: []string{":snapshot ID:"},
 			run:        runForget,
 		},
 		{
-			name:       "diff",
-			summary:    "Compare two snapshots or a snapshot against latest",
-			newFlagSet: func() *flag.FlagSet { fs, _ := newDiffFlagSet(); return fs },
+			name:    "diff",
+			summary: "Compare two snapshots or a snapshot against latest",
+			flags: func() (*flag.FlagSet, []flagSpec) {
+				fs, _, specs := newDiffFlagSet()
+				return fs, specs
+			},
 			positional: []string{":snapshot 1:", ":snapshot 2:"},
 			run:        runDiff,
 		},
 		{
-			name:       "break-lock",
-			summary:    "Remove a stale repository lock left by a crashed process",
-			newFlagSet: func() *flag.FlagSet { fs, _ := newBreakLockFlagSet(); return fs },
-			run:        runBreakLock,
+			name:    "break-lock",
+			summary: "Remove a stale repository lock left by a crashed process",
+			flags: func() (*flag.FlagSet, []flagSpec) {
+				fs, _, specs := newBreakLockFlagSet()
+				return fs, specs
+			},
+			run: runBreakLock,
 		},
 		{
 			name:    "key",
@@ -181,18 +203,22 @@ func commandRegistry() []command {
 			run: runKey,
 		},
 		{
-			name:       "check",
-			summary:    "Verify repository integrity (reference chain, objects, data)",
-			newFlagSet: func() *flag.FlagSet { fs, _ := newCheckFlagSet(); return fs },
-			ownFlags:   func() []flagSpec { return checkFlagSpecs(&checkArgs{}) },
+			name:    "check",
+			summary: "Verify repository integrity (reference chain, objects, data)",
+			flags: func() (*flag.FlagSet, []flagSpec) {
+				fs, _, specs := newCheckFlagSet()
+				return fs, specs
+			},
 			positional: []string{":snapshot ID:"},
 			run:        runCheck,
 		},
 		{
-			name:       "cat",
-			summary:    "Display raw JSON content of repository objects",
-			newFlagSet: func() *flag.FlagSet { fs, _ := newCatFlagSet(); return fs },
-			ownFlags:   func() []flagSpec { return catFlagSpecs(&catArgs{}) },
+			name:    "cat",
+			summary: "Display raw JSON content of repository objects",
+			flags: func() (*flag.FlagSet, []flagSpec) {
+				fs, _, specs := newCatFlagSet()
+				return fs, specs
+			},
 			positional: []string{"*:object key:"},
 			run:        runCat,
 		},
@@ -256,6 +282,19 @@ func usageCommandRows() [][2]string {
 		}
 	}
 	return rows
+}
+
+// flagNamesOf returns every flag name a command registers, globals included.
+func flagNamesOf(c command) []string {
+	fs, _ := c.flags()
+	return flagNames(fs)
+}
+
+// ownSpecsOf returns a command's own flag specifications, excluding the global
+// groups it opts into.
+func ownSpecsOf(c command) []flagSpec {
+	_, specs := c.flags()
+	return specs
 }
 
 // flagNames returns the sorted flag names declared by fs.

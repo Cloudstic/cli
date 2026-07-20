@@ -6,11 +6,12 @@ import "fmt"
 // flagSpec, it binds parsed input into the command's args struct and also
 // carries the metadata needed by help and shell completion.
 type positionalSpec struct {
-	name       string
-	required   bool
-	repeatable bool
-	completer  string
-	bind       func([]string)
+	name         string
+	required     bool
+	repeatable   bool
+	defaultValue string
+	completer    string
+	bind         func([]string)
 }
 
 // requiredPositional binds exactly one required positional argument.
@@ -28,8 +29,9 @@ func requiredPositional(target *string, name string, completer ...string) positi
 func optionalPositional(target *string, name, def string, completer ...string) positionalSpec {
 	*target = def
 	return positionalSpec{
-		name:      name,
-		completer: firstCompleter(completer),
+		name:         name,
+		defaultValue: def,
+		completer:    firstCompleter(completer),
 		bind: func(values []string) {
 			if len(values) > 0 {
 				*target = values[0]

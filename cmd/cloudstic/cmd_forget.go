@@ -85,13 +85,6 @@ func prepareForgetArgs(a *forgetArgs) error {
 	return nil
 }
 
-func printForgetUsage(w io.Writer) {
-	_, _ = fmt.Fprintln(w, "Usage: cloudstic forget [options] <snapshot_id>")
-	_, _ = fmt.Fprintln(w, "       cloudstic forget --keep-last n [--tag X] [--source SRC] [--account NAME] [--prune] [--dry-run]")
-	_, _ = fmt.Fprintln(w, "       cloudstic forget --tag X [--tag Y] [--source SRC] [--account NAME] [--prune] [--dry-run]")
-	_, _ = fmt.Fprintln(w, "       cloudstic forget --source local:./docs [--tag X] [--prune] [--dry-run]")
-}
-
 func validateForgetArgs(a *forgetArgs) error {
 	if a.snapshotID == "" {
 		if !a.hasPolicy && !a.hasFilters {
@@ -148,7 +141,7 @@ func validateForgetArgs(a *forgetArgs) error {
 func runForget(r *runner, ctx context.Context, a *forgetArgs) int {
 	if err := prepareForgetArgs(a); err != nil {
 		if !r.jsonEnabled() {
-			printForgetUsage(r.errOut)
+			r.printUsage(r.errOut)
 		}
 		return r.parseError(err)
 	}
@@ -292,5 +285,5 @@ func printPolicyResult(out io.Writer, result *cloudstic.PolicyResult, dryRun boo
 // forgetCommand declares the `forget` command.
 func forgetCommand() command {
 	return leaf("forget", "Remove a specific snapshot from history",
-		repoCommandGroups, declareForgetArgs, runForget, withUsageOnError(printForgetUsage))
+		repoCommandGroups, declareForgetArgs, runForget)
 }

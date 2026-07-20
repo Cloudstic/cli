@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"io"
 )
 
 type tuiArgs struct {
@@ -17,15 +15,6 @@ func declareTUIArgs(_ *globalFlags) (*tuiArgs, commandInput) {
 		stringFlag(&a.profilesFile, "profiles-file", defaultProfilesPathNoCreate(), "Path to profiles YAML file",
 			withEnv("CLOUDSTIC_PROFILES_FILE"), withPlaceholder("<path>"), withCompleter("_files")),
 	}}
-}
-
-func printTUIUsage(w io.Writer) {
-	_, _ = fmt.Fprintln(w, "Usage: cloudstic tui [options]")
-	_, _ = fmt.Fprintln(w, "")
-	_, _ = fmt.Fprintln(w, "Launch the interactive terminal dashboard.")
-	_, _ = fmt.Fprintln(w, "")
-	_, _ = fmt.Fprintln(w, "Options:")
-	_, _ = fmt.Fprintf(w, "  -profiles-file <path>  Path to profiles YAML file (default %s)\n", defaultProfilesPathNoCreate())
 }
 
 func runTUI(r *runner, ctx context.Context, args *tuiArgs) int {
@@ -43,5 +32,5 @@ func runTUI(r *runner, ctx context.Context, args *tuiArgs) int {
 // tuiCommand declares the `tui` command.
 func tuiCommand() command {
 	return leaf("tui", "Launch the interactive terminal dashboard",
-		nil, declareTUIArgs, runTUI, withHelp(printTUIUsage))
+		nil, declareTUIArgs, runTUI)
 }

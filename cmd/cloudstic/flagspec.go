@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"strconv"
 )
@@ -279,12 +278,6 @@ func (c commandFlags) ownSpecs() []flagSpec { return c.own }
 
 // names returns every flag name registered, globals included.
 func (c commandFlags) names() []string { return flagNames(c.set) }
-
-// printDefaults writes the flag listing to w, as `-h` would.
-func (c commandFlags) printDefaults(w io.Writer) {
-	c.set.SetOutput(w)
-	c.set.PrintDefaults()
-}
 
 // lookup returns the registered flag with the given name, or nil.
 func (c commandFlags) lookup(name string) *flag.Flag { return c.set.Lookup(name) }

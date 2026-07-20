@@ -46,8 +46,14 @@ func (t TermWriter) Commands(cmds [][2]string) {
 }
 
 func (t TermWriter) Flags(flags [][2]string) {
+	width := 0
 	for _, f := range flags {
-		_, _ = fmt.Fprintf(t.W, "    %s%-22s%s %s\n", Cyan, f[0], Reset, f[1])
+		if len(f[0]) > width {
+			width = len(f[0])
+		}
+	}
+	for _, f := range flags {
+		_, _ = fmt.Fprintf(t.W, "    %s%-*s%s %s\n", Cyan, width, f[0], Reset, f[1])
 	}
 }
 

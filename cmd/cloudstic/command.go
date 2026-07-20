@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"fmt"
 	"io"
+	"strings"
 )
 
 // command is a node in the CLI command tree. The same type models both leaves
@@ -27,30 +27,15 @@ type command struct {
 	flags func() commandFlags
 	// positionals describe and bind the command's positional arguments.
 	positionals []positionalSpec
-	// run executes a leaf command. Nil for groups.
-	run func(r *runner, ctx context.Context) int
+	// run executes a leaf command. Nil for groups. path is the complete command
+	// path, including parent groups.
+	run func(r *runner, ctx context.Context, path string) int
 	// hidden keeps internal commands out of usage and completion output.
 	hidden bool
-	// usageOnError prints a command-specific usage banner before a parse error.
-	// Optional.
-	usageOnError func(io.Writer)
-	// help prints the command's own help, replacing the flag package's default
-	// listing when -h is given. Optional; the seam for richer per-command help.
-	help func(io.Writer)
 }
 
 // commandOpt customises a command at construction time.
 type commandOpt func(*command)
-
-// withUsageOnError prints a usage banner before a parse or validation error.
-func withUsageOnError(print func(io.Writer)) commandOpt {
-	return func(c *command) { c.usageOnError = print }
-}
-
-// withHelp installs a command-specific -h renderer.
-func withHelp(print func(io.Writer)) commandOpt {
-	return func(c *command) { c.help = print }
-}
 
 // asHidden keeps a command out of usage and completion output.
 func asHidden() commandOpt {
@@ -59,7 +44,7 @@ func asHidden() commandOpt {
 
 // group declares a command that only dispatches to nested commands.
 func group(name, summary string, children ...command) command {
-	return command{name: name, summary: summary, children: children, run: nil}
+	return command{name: name, summary: summary, children: children}
 }
 
 // isGroup reports whether the command dispatches to children.
@@ -94,12 +79,20 @@ func (c command) execute(r *runner, ctx context.Context, path string) int {
 		if c.run == nil {
 			return r.fail("Command %s is not runnable", path)
 		}
-		return c.run(r, ctx)
+		r = r.withUsage(func(w io.Writer) { printCommandSynopsis(w, c, path) })
+		return c.run(r, ctx, path)
+	}
+
+	// Only consume help at the group level when it is the complete argument
+	// list. A later help flag belongs to the selected child command.
+	if len(r.args) == 1 && (r.args[0] == "-h" || r.args[0] == "--help" || r.args[0] == "help") {
+		printCommandHelp(r.out, c, path)
+		return 0
 	}
 
 	if len(r.args) < 1 {
 		if !r.jsonEnabled() {
-			printGroupUsage(r.errOut, c, path)
+			printCommandHelp(r.errOut, c, path)
 		}
 		return exitFailure
 	}
@@ -110,21 +103,6 @@ func (c command) execute(r *runner, ctx context.Context, path string) int {
 		return r.fail("Unknown %s subcommand: %s", path, name)
 	}
 	return child.execute(r.withArgs(r.args[1:]), ctx, path+" "+name)
-}
-
-// printGroupUsage writes the subcommand listing for a group.
-func printGroupUsage(w io.Writer, c command, path string) {
-	_, _ = fmt.Fprintf(w, "Usage: cloudstic %s <subcommand> [options]\n\n", path)
-	_, _ = fmt.Fprintln(w, "Subcommands:")
-	width := 0
-	for _, child := range c.visibleChildren() {
-		if len(child.name) > width {
-			width = len(child.name)
-		}
-	}
-	for _, child := range c.visibleChildren() {
-		_, _ = fmt.Fprintf(w, "  %-*s  %s\n", width, child.name, child.summary)
-	}
 }
 
 // walk visits every command in the tree, passing the space-joined path of each.
@@ -197,15 +175,22 @@ func leaf[T any](
 		summary:     summary,
 		positionals: declared.positionals,
 		flags:       func() commandFlags { _, cf := build(); return cf },
-		run: func(r *runner, ctx context.Context) int {
-			if c.help != nil && hasHelpFlag(r.args) {
-				c.help(r.out)
+		run: func(r *runner, ctx context.Context, path string) int {
+			a, cf := build()
+			if commandHelpRequested(cf.set, r.args) {
+				printCommandHelp(r.out, c, path)
 				return 0
 			}
-			a, err := parseInto(name, groups, declare, r.args)
+			// The flag package's own error and usage output is discarded: the
+			// dispatcher reports parse failures itself, prefixed with the
+			// command's synopsis, so errors are not printed twice.
+			cf.set.SetOutput(io.Discard)
+			err := cf.parse(r.args)
 			if err != nil {
-				if c.usageOnError != nil && !r.jsonEnabled() && !errors.Is(err, flag.ErrHelp) {
-					c.usageOnError(r.errOut)
+				// Every parse failure shows the command's synopsis: it is
+				// shorter and more useful than re-listing every flag.
+				if !r.jsonEnabled() && !errors.Is(err, flag.ErrHelp) {
+					printCommandSynopsis(r.errOut, c, path)
 				}
 				return r.parseError(err)
 			}
@@ -218,14 +203,37 @@ func leaf[T any](
 	return c
 }
 
-// hasHelpFlag reports whether the arguments request help.
-func hasHelpFlag(args []string) bool {
-	for _, arg := range args {
+// commandHelpRequested recognizes help flags using the command's real flag
+// set, so a literal "-h" can still be consumed as another flag's value or as
+// a positional argument after "--".
+func commandHelpRequested(fs *flag.FlagSet, args []string) bool {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		if arg == "--" {
 			return false
 		}
-		if arg == "-h" || arg == "--help" || arg == "help" {
+		if len(arg) < 2 || arg[0] != '-' {
+			continue
+		}
+		name := arg[1:]
+		if name[0] == '-' {
+			name = name[1:]
+		}
+		if before, _, ok := strings.Cut(name, "="); ok {
+			name = before
+		}
+		if name == "h" || name == "help" {
 			return true
+		}
+		f := fs.Lookup(name)
+		if f == nil || strings.Contains(arg, "=") {
+			continue
+		}
+		if bf, ok := f.Value.(interface{ IsBoolFlag() bool }); ok && bf.IsBoolFlag() {
+			continue
+		}
+		if i+1 < len(args) {
+			i++
 		}
 	}
 	return false

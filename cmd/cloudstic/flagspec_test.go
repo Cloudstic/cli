@@ -235,7 +235,7 @@ func TestSecretEnvValuesNeverAppearInHelp(t *testing.T) {
 			return
 		}
 		var buf bytes.Buffer
-		c.flags().printDefaults(&buf)
+		printCommandHelp(&buf, c, path)
 		if strings.Contains(buf.String(), sentinel) {
 			t.Errorf("help output for %q leaks a secret environment value", path)
 		}
@@ -246,10 +246,10 @@ func TestSecretEnvValuesNeverAppearInHelp(t *testing.T) {
 // variable feeds a flag, even though the value is never shown.
 func TestHelpNamesEnvironmentVariables(t *testing.T) {
 	var buf bytes.Buffer
-	lookupCommandForTest(t, "backup").flags().printDefaults(&buf)
+	printCommandHelp(&buf, lookupCommandForTest(t, "backup"), "backup")
 	out := buf.String()
 
-	for _, want := range []string{"[$CLOUDSTIC_PASSWORD]", "[$CLOUDSTIC_STORE]", "[$CLOUDSTIC_SOURCE]"} {
+	for _, want := range []string{"[env: CLOUDSTIC_PASSWORD]", "[env: CLOUDSTIC_STORE]", "[env: CLOUDSTIC_SOURCE]"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("help output should name the environment variable %s", want)
 		}

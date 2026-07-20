@@ -22,7 +22,7 @@ func TestRunCompletion(t *testing.T) {
 	if code := runCmd(&runner{out: io.Discard, errOut: &errOut}, context.Background(), "completion"); code != 1 {
 		t.Fatalf("runCompletion() without a shell exit code = %d, want 1", code)
 	}
-	if !strings.Contains(errOut.String(), "Usage: cloudstic completion <shell>") {
+	if !strings.Contains(errOut.String(), "Usage: cloudstic completion [options] <shell>") {
 		t.Fatalf("unexpected usage output: %q", errOut.String())
 	}
 }

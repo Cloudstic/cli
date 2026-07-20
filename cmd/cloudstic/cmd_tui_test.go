@@ -344,7 +344,8 @@ func TestRunTUI_Help(t *testing.T) {
 	if code := tuiCommand().execute(r.withArgs(args), context.Background(), "tui"); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}
-	if !strings.Contains(out.String(), "Usage: cloudstic tui [options]") {
+	if !strings.Contains(out.String(), "cloudstic tui") ||
+		!strings.Contains(out.String(), "-profiles-file <path>") {
 		t.Fatalf("unexpected help output:\n%s", out.String())
 	}
 }

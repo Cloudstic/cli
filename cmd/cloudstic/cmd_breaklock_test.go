@@ -14,7 +14,7 @@ func TestRunBreakLock_NoLock(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &strings.Builder{}, errOut: &errOut, client: &stubClient{breakLockResult: nil}}
 
-	runBreakLock(r.withArgs(args), context.Background())
+	breakLockCommand().execute(r.withArgs(args), context.Background(), "break-lock")
 
 	if !strings.Contains(errOut.String(), "not locked") {
 		t.Errorf("expected 'not locked' message, got:\n%s", errOut.String())
@@ -30,7 +30,7 @@ func TestRunBreakLock_JSON(t *testing.T) {
 		},
 	}}
 
-	if exit := runBreakLock(r.withArgs(args), context.Background()); exit != 0 {
+	if exit := breakLockCommand().execute(r.withArgs(args), context.Background(), "break-lock"); exit != 0 {
 		t.Fatalf("runBreakLock() exit = %d, want 0", exit)
 	}
 
@@ -58,7 +58,7 @@ func TestRunBreakLock_LocksRemoved(t *testing.T) {
 		},
 	}}
 
-	runBreakLock(r.withArgs(args), context.Background())
+	breakLockCommand().execute(r.withArgs(args), context.Background(), "break-lock")
 
 	got := errOut.String()
 	if !strings.Contains(got, "Locks removed") {

@@ -94,7 +94,7 @@ func TestCompletionListsEveryRegisteredCommand(t *testing.T) {
 }
 
 // TestCompletionGlobalFlagsMatchFlagSet ensures the completion global-flag
-// lists match the flags actually registered by addGlobalFlags.
+// lists match the flags actually registered by the global flag groups.
 func TestCompletionGlobalFlagsMatchFlagSet(t *testing.T) {
 	scripts := completionScripts(t)
 
@@ -154,23 +154,22 @@ func TestCompletionValueFlagsExcludeBooleans(t *testing.T) {
 	}
 }
 
-// TestCommandFlagSetsAreIntrospectable ensures every command that declares a
-// flag-set builder produces a usable, non-empty flag set. This is what lets the
-// completion drift checks reason about real flags rather than a hand-copied list.
+// TestCommandFlagSetsAreIntrospectable ensures every runnable command produces
+// a usable, non-empty flag set. This is what lets help and completion reason
+// about real declarations rather than hand-copied lists.
 func TestCommandFlagSetsAreIntrospectable(t *testing.T) {
-	for _, c := range commandRegistry() {
+	walk(commandRegistry(), func(path string, c command) {
+		if c.isGroup() {
+			return
+		}
 		if c.flags == nil {
-			continue
+			t.Errorf("runnable command %q has no input declaration", path)
+			return
 		}
-		fs := c.flags().set
-		if fs == nil {
-			t.Errorf("command %q returned a nil flag set", c.name)
-			continue
+		if len(c.flags().names()) == 0 {
+			t.Errorf("command %q declared a flag set with no flags", path)
 		}
-		if len(flagNames(fs)) == 0 {
-			t.Errorf("command %q declared a flag set with no flags", c.name)
-		}
-	}
+	})
 }
 
 // TestCommandFlagsAppearInBashCompletion checks that every flag a command
@@ -200,11 +199,11 @@ func TestCommandFlagsAppearInBashCompletion(t *testing.T) {
 // allDeclaredSpecs collects every flag specification the CLI declares.
 func allDeclaredSpecs() []flagSpec {
 	specs := globalFlagSpecsFor(&globalFlags{}, allGlobalGroups)
-	for _, c := range commandRegistry() {
+	walk(commandRegistry(), func(_ string, c command) {
 		if c.flags != nil {
 			specs = append(specs, ownSpecsOf(c)...)
 		}
-	}
+	})
 	return specs
 }
 
@@ -291,4 +290,19 @@ func TestGlobalFlagsGeneratedForAllShells(t *testing.T) {
 	if entries != len(specs) {
 		t.Errorf("zsh global_flags has %d entries, specs declare %d", entries, len(specs))
 	}
+}
+
+// TestBuildersRecordGlobalProvenance guards a construction footgun: a
+// commandFlags carrying global specs but no *globalFlags silently loses flag
+// provenance, so profile overrides would clobber explicitly passed flags.
+func TestBuildersRecordGlobalProvenance(t *testing.T) {
+	walk(commandRegistry(), func(path string, c command) {
+		if c.flags == nil {
+			return
+		}
+		cf := c.flags()
+		if len(cf.global) > 0 && cf.globals == nil {
+			t.Errorf("command %q binds global flags but does not record provenance on globalFlags", path)
+		}
+	})
 }

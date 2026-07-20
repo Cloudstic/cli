@@ -109,15 +109,7 @@ func (g *globalFlags) applyProfileStoreOverrides() error {
 	if !ok {
 		return fmt.Errorf("profile %q references unknown store %q", g.profile, p.Store)
 	}
-	flagsSet := map[string]bool{}
-	for _, name := range []string{
-		"store", "s3-endpoint", "s3-region", "s3-profile", "s3-access-key", "s3-secret-key",
-		"store-sftp-password", "store-sftp-key",
-		"password", "encryption-key", "recovery-key", "kms-key-arn", "kms-region", "kms-endpoint",
-	} {
-		flagsSet[name] = g.flagProvided(name)
-	}
-	if err := applyProfileStoreToGlobalFlags(g, s, flagsSet); err != nil {
+	if err := applyProfileStoreToGlobalFlags(g, s); err != nil {
 		return fmt.Errorf("profile %q store %q: %w", g.profile, p.Store, err)
 	}
 	return nil

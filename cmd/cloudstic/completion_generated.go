@@ -21,9 +21,7 @@ const (
 // globalFlagSet builds a flag set containing only the global flags, for
 // introspection by completion generation and drift tests.
 func globalFlagSet() *flag.FlagSet {
-	fs := flag.NewFlagSet("global", flag.ContinueOnError)
-	addGlobalFlags(fs, allGlobalGroups)
-	return fs
+	return newCommandFlags("global", allGlobalGroups, &globalFlags{}, commandInput{}).set
 }
 
 // globalFlagNames returns every global flag name in declaration order.
@@ -106,9 +104,9 @@ func renderCompletion(script string) string {
 	).Replace(script)
 }
 
-// Per-command flag entries for the shell scripts are generated from each
-// command's own flag specifications. Grouped commands (auth/store/profile/key)
-// still build their flags inline and keep their hand-written blocks.
+// Per-command flag entries for top-level shell completion are generated from
+// each command's own flag and positional specifications. The shell templates
+// still own nested command dispatch; their leaves use the same declarations.
 const (
 	placeholderBashCmdFlags = "@@BASH_CMD_FLAGS@@"
 	placeholderZshCmdFlags  = "@@ZSH_CMD_FLAGS@@"
@@ -145,8 +143,8 @@ func zshCommandFlagCases() string {
 		for _, s := range ownSpecsOf(c) {
 			fmt.Fprintf(&b, " \\\n                '%s'", zshFlagEntry(s))
 		}
-		for _, p := range c.positional {
-			fmt.Fprintf(&b, " \\\n                '%s'", p)
+		for _, p := range c.positionals {
+			fmt.Fprintf(&b, " \\\n                '%s'", p.zshSpec())
 		}
 		b.WriteString("\n            ;;\n")
 	}

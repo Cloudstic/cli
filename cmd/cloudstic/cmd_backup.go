@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -21,12 +20,10 @@ import (
 )
 
 type backupArgs struct {
-	g                 *globalFlags
+	*globalFlags
 	sourceURI         string
-	profile           string
 	allProfiles       bool
 	authRef           string
-	profilesFile      string
 	dryRun            bool
 	ignoreEmpty       bool
 	excludeFile       string
@@ -46,11 +43,11 @@ type backupArgs struct {
 	xattrNamespaces   string
 	tags              stringArrayFlags
 	excludes          stringArrayFlags
-	flagsSet          map[string]bool
 }
 
-func backupFlagSpecs(a *backupArgs) []flagSpec {
-	return []flagSpec{
+func declareBackupArgs(g *globalFlags) (*backupArgs, commandInput) {
+	a := &backupArgs{globalFlags: g}
+	return a, commandInput{flags: []flagSpec{
 		stringFlag(&a.sourceURI, "source", "gdrive",
 			"Source URI: local:<path>, sftp://[user@]host[:port]/<path>, gdrive[://<Drive Name>][/<path>], gdrive-changes[://<Drive Name>][/<path>], onedrive[://<Drive Name>][/<path>], onedrive-changes[://<Drive Name>][/<path>]",
 			withEnv("CLOUDSTIC_SOURCE"), withPlaceholder("<uri>"), withCompleter("_cloudstic_source_prefixes"),
@@ -93,39 +90,10 @@ func backupFlagSpecs(a *backupArgs) []flagSpec {
 			withPlaceholder("<tag>"), asRepeatable()),
 		valueFlag(&a.excludes, "exclude", "Exclude pattern (gitignore syntax, repeatable)",
 			withPlaceholder("<pattern>"), asRepeatable()),
-	}
+	}}
 }
 
-func newBackupFlagSet() (boundFlagSet, *backupArgs) {
-	fs := flag.NewFlagSet("backup", flag.ContinueOnError)
-	a := &backupArgs{}
-	g, globalSpecs := addGlobalFlags(fs, backupCommandGroups)
-	a.g = g
-	own := backupFlagSpecs(a)
-	bindFlags(fs, own)
-	return boundFlagSet{set: fs, global: globalSpecs, own: own}, a
-}
-
-func parseBackupArgs(args []string) (*backupArgs, error) {
-	b, a := newBackupFlagSet()
-	if err := parseFlags(b, args); err != nil {
-		return nil, err
-	}
-	a.profile = a.g.profile
-	a.profilesFile = a.g.profilesFile
-	a.flagsSet = map[string]bool{}
-	b.set.Visit(func(f *flag.Flag) {
-		a.flagsSet[f.Name] = true
-	})
-	return a, nil
-}
-
-func runBackup(r *runner, ctx context.Context) int {
-	a, err := parseBackupArgs(r.args)
-	if err != nil {
-		return r.parseError(err)
-	}
-
+func runBackup(r *runner, ctx context.Context, a *backupArgs) int {
 	if a.profile != "" && a.allProfiles {
 		return r.fail("-profile and -all-profiles are mutually exclusive")
 	}
@@ -177,14 +145,14 @@ func runSingleBackup(r *runner, ctx context.Context, a *backupArgs) int {
 		skipFlags:         a.skipFlags,
 		skipXattrs:        a.skipXattrs,
 		xattrNamespaces:   a.xattrNamespaces,
-		globalFlags:       a.g,
+		globalFlags:       a.globalFlags,
 		excludePatterns:   excludePatterns,
 	})
 	if err != nil {
 		return r.fail("Failed to init source: %v", err)
 	}
 
-	if err := r.openClient(ctx, a.g); err != nil {
+	if err := r.openClient(ctx, a.globalFlags); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 
@@ -194,7 +162,7 @@ func runSingleBackup(r *runner, ctx context.Context, a *backupArgs) int {
 	if err != nil {
 		return r.fail("Backup failed: %v", err)
 	}
-	if a.g.jsonEnabled() {
+	if a.jsonEnabled() {
 		return r.writeJSON(result)
 	}
 	printBackupSummary(r.out, result)
@@ -235,9 +203,6 @@ func ensureDefaultAuthRefForCloudBackup(a *backupArgs) error {
 	if a.authRef == "" {
 		authRef := defaultAuthRef
 		a.authRef = authRef
-		if a.flagsSet == nil {
-			a.flagsSet = map[string]bool{}
-		}
 
 		cfg, loadErr := cloudstic.LoadProfilesFile(a.profilesFile)
 		if loadErr != nil {
@@ -344,45 +309,45 @@ func runBackupWithProfiles(r *runner, ctx context.Context, base *backupArgs) int
 }
 
 func mergeProfileBackupArgs(base *backupArgs, profileName string, p cloudstic.BackupProfile, cfg *cloudstic.ProfilesConfig) (*backupArgs, error) {
-	g := cloneGlobalFlags(base.g)
+	g := cloneGlobalFlags(base.globalFlags)
 	a := *base
-	a.g = g
+	a.globalFlags = g
 
-	if !a.flagsSet["source"] {
+	if !a.flagProvided("source") {
 		a.sourceURI = p.Source
 	}
 	if a.sourceURI == "" {
 		return nil, fmt.Errorf("profile %q has empty source", profileName)
 	}
 
-	if !a.flagsSet["skip-native-files"] {
+	if !a.flagProvided("skip-native-files") {
 		a.skipNativeFiles = p.SkipNativeFiles
 	}
-	if !a.flagsSet["volume-uuid"] && p.VolumeUUID != "" {
+	if !a.flagProvided("volume-uuid") && p.VolumeUUID != "" {
 		a.volumeUUID = p.VolumeUUID
 	}
-	if !a.flagsSet["google-credentials"] && p.GoogleCreds != "" {
+	if !a.flagProvided("google-credentials") && p.GoogleCreds != "" {
 		a.googleCreds = p.GoogleCreds
 	}
-	if !a.flagsSet["google-credentials-ref"] && p.GoogleCredsRef != "" {
+	if !a.flagProvided("google-credentials-ref") && p.GoogleCredsRef != "" {
 		a.googleCredsRef = p.GoogleCredsRef
 	}
-	if !a.flagsSet["google-credentials-json"] && p.GoogleCredsJSON != "" {
+	if !a.flagProvided("google-credentials-json") && p.GoogleCredsJSON != "" {
 		a.googleCredsJSON = p.GoogleCredsJSON
 	}
-	if !a.flagsSet["google-token-file"] && p.GoogleTokenFile != "" {
+	if !a.flagProvided("google-token-file") && p.GoogleTokenFile != "" {
 		a.googleTokenFile = p.GoogleTokenFile
 	}
-	if !a.flagsSet["google-token-ref"] && p.GoogleTokenRef != "" {
+	if !a.flagProvided("google-token-ref") && p.GoogleTokenRef != "" {
 		a.googleTokenRef = p.GoogleTokenRef
 	}
-	if !a.flagsSet["onedrive-client-id"] && p.OneDriveClientID != "" {
+	if !a.flagProvided("onedrive-client-id") && p.OneDriveClientID != "" {
 		a.onedriveClientID = p.OneDriveClientID
 	}
-	if !a.flagsSet["onedrive-token-file"] && p.OneDriveTokenFile != "" {
+	if !a.flagProvided("onedrive-token-file") && p.OneDriveTokenFile != "" {
 		a.onedriveTokenFile = p.OneDriveTokenFile
 	}
-	if !a.flagsSet["onedrive-token-ref"] && p.OneDriveTokenRef != "" {
+	if !a.flagProvided("onedrive-token-ref") && p.OneDriveTokenRef != "" {
 		a.onedriveTokenRef = p.OneDriveTokenRef
 	}
 
@@ -392,10 +357,10 @@ func mergeProfileBackupArgs(base *backupArgs, profileName string, p cloudstic.Ba
 	if len(a.excludes) == 0 && len(p.Excludes) > 0 {
 		a.excludes = append(stringArrayFlags{}, p.Excludes...)
 	}
-	if !a.flagsSet["exclude-file"] && p.ExcludeFile != "" {
+	if !a.flagProvided("exclude-file") && p.ExcludeFile != "" {
 		a.excludeFile = p.ExcludeFile
 	}
-	if !a.flagsSet["ignore-empty-snapshot"] {
+	if !a.flagProvided("ignore-empty-snapshot") {
 		a.ignoreEmpty = p.IgnoreEmpty
 	}
 
@@ -404,14 +369,14 @@ func mergeProfileBackupArgs(base *backupArgs, profileName string, p cloudstic.Ba
 		if !ok {
 			return nil, fmt.Errorf("profile %q references unknown store %q", profileName, p.Store)
 		}
-		if err := applyProfileStoreToGlobalFlags(g, storeCfg, a.flagsSet); err != nil {
+		if err := applyProfileStoreToGlobalFlags(g, storeCfg); err != nil {
 			return nil, fmt.Errorf("profile %q store %q: %w", profileName, p.Store, err)
 		}
 	}
 
 	if p.AuthRef != "" {
 		effectiveAuthRef := p.AuthRef
-		if a.flagsSet["auth-ref"] {
+		if a.flagProvided("auth-ref") {
 			effectiveAuthRef = a.authRef
 		}
 		authCfg, ok := cfg.Auth[effectiveAuthRef]
@@ -421,7 +386,7 @@ func mergeProfileBackupArgs(base *backupArgs, profileName string, p cloudstic.Ba
 		if err := applyProfileAuthToBackupArgs(&a, authCfg); err != nil {
 			return nil, fmt.Errorf("profile %q auth %q: %w", profileName, effectiveAuthRef, err)
 		}
-	} else if a.flagsSet["auth-ref"] {
+	} else if a.flagProvided("auth-ref") {
 		authCfg, ok := cfg.Auth[a.authRef]
 		if !ok {
 			return nil, fmt.Errorf("profile %q requested unknown auth %q", profileName, a.authRef)
@@ -455,31 +420,31 @@ func applyProfileAuthToBackupArgs(a *backupArgs, auth cloudstic.ProfileAuth) err
 	}
 
 	if requiredProvider == "google" {
-		if !a.flagsSet["google-credentials"] && auth.GoogleCreds != "" {
+		if !a.flagProvided("google-credentials") && auth.GoogleCreds != "" {
 			a.googleCreds = auth.GoogleCreds
 		}
-		if !a.flagsSet["google-credentials-ref"] && auth.GoogleCredsRef != "" {
+		if !a.flagProvided("google-credentials-ref") && auth.GoogleCredsRef != "" {
 			a.googleCredsRef = auth.GoogleCredsRef
 		}
-		if !a.flagsSet["google-credentials-json"] && auth.GoogleCredsJSON != "" {
+		if !a.flagProvided("google-credentials-json") && auth.GoogleCredsJSON != "" {
 			a.googleCredsJSON = auth.GoogleCredsJSON
 		}
-		if !a.flagsSet["google-token-file"] && auth.GoogleTokenFile != "" {
+		if !a.flagProvided("google-token-file") && auth.GoogleTokenFile != "" {
 			a.googleTokenFile = auth.GoogleTokenFile
 		}
-		if !a.flagsSet["google-token-ref"] && auth.GoogleTokenRef != "" {
+		if !a.flagProvided("google-token-ref") && auth.GoogleTokenRef != "" {
 			a.googleTokenRef = auth.GoogleTokenRef
 		}
 	}
 
 	if requiredProvider == "onedrive" {
-		if !a.flagsSet["onedrive-client-id"] && auth.OneDriveClientID != "" {
+		if !a.flagProvided("onedrive-client-id") && auth.OneDriveClientID != "" {
 			a.onedriveClientID = auth.OneDriveClientID
 		}
-		if !a.flagsSet["onedrive-token-file"] && auth.OneDriveTokenFile != "" {
+		if !a.flagProvided("onedrive-token-file") && auth.OneDriveTokenFile != "" {
 			a.onedriveTokenFile = auth.OneDriveTokenFile
 		}
-		if !a.flagsSet["onedrive-token-ref"] && auth.OneDriveTokenRef != "" {
+		if !a.flagProvided("onedrive-token-ref") && auth.OneDriveTokenRef != "" {
 			a.onedriveTokenRef = auth.OneDriveTokenRef
 		}
 	}
@@ -495,79 +460,79 @@ func cloneGlobalFlags(src *globalFlags) *globalFlags {
 	return &clone
 }
 
-func applyProfileStoreToGlobalFlags(g *globalFlags, s cloudstic.ProfileStore, flagsSet map[string]bool) error {
-	if !flagsSet["store"] && s.URI != "" {
+func applyProfileStoreToGlobalFlags(g *globalFlags, s cloudstic.ProfileStore) error {
+	if !g.flagProvided("store") && s.URI != "" {
 		g.store = s.URI
 	}
-	if !flagsSet["s3-endpoint"] && s.S3Endpoint != "" {
+	if !g.flagProvided("s3-endpoint") && s.S3Endpoint != "" {
 		g.s3Endpoint = s.S3Endpoint
 	}
-	if !flagsSet["s3-region"] && s.S3Region != "" {
+	if !g.flagProvided("s3-region") && s.S3Region != "" {
 		g.s3Region = s.S3Region
 	}
-	if !flagsSet["s3-profile"] {
+	if !g.flagProvided("s3-profile") {
 		v, err := resolveProfileStoreValue("s3_profile", s.S3Profile, "")
 		if err != nil {
 			return err
 		}
 		g.s3Profile = v
 	}
-	if !flagsSet["s3-access-key"] {
+	if !g.flagProvided("s3-access-key") {
 		v, err := resolveProfileStoreValue("s3_access_key", s.S3AccessKey, s.S3AccessKeySecret)
 		if err != nil {
 			return err
 		}
 		g.s3AccessKey = v
 	}
-	if !flagsSet["s3-secret-key"] {
+	if !g.flagProvided("s3-secret-key") {
 		v, err := resolveProfileStoreValue("s3_secret_key", s.S3SecretKey, s.S3SecretKeySecret)
 		if err != nil {
 			return err
 		}
 		g.s3SecretKey = v
 	}
-	if !flagsSet["store-sftp-password"] {
+	if !g.flagProvided("store-sftp-password") {
 		v, err := resolveProfileStoreValue("store_sftp_password", s.StoreSFTPPassword, s.StoreSFTPPasswordSecret)
 		if err != nil {
 			return err
 		}
 		g.storeSFTPPassword = v
 	}
-	if !flagsSet["store-sftp-key"] {
+	if !g.flagProvided("store-sftp-key") {
 		v, err := resolveProfileStoreValue("store_sftp_key", s.StoreSFTPKey, s.StoreSFTPKeySecret)
 		if err != nil {
 			return err
 		}
 		g.storeSFTPKey = v
 	}
-	if !flagsSet["password"] {
+	if !g.flagProvided("password") {
 		v, err := resolveProfileStoreValue("password", "", s.PasswordSecret)
 		if err != nil {
 			return err
 		}
 		g.password = v
 	}
-	if !flagsSet["encryption-key"] {
+	if !g.flagProvided("encryption-key") {
 		v, err := resolveProfileStoreValue("encryption_key", "", s.EncryptionKeySecret)
 		if err != nil {
 			return err
 		}
 		g.encryptionKey = v
 	}
-	if !flagsSet["recovery-key"] {
+	if !g.flagProvided("recovery-key") {
 		v, err := resolveProfileStoreValue("recovery_key", "", s.RecoveryKeySecret)
 		if err != nil {
 			return err
 		}
 		g.recoveryKey = v
 	}
-	if !flagsSet["kms-key-arn"] && s.KMSKeyARN != "" {
+	if !g.flagProvided("kms-key-arn") && s.KMSKeyARN != "" {
 		g.kmsKeyARN = s.KMSKeyARN
 	}
-	if !flagsSet["kms-region"] && s.KMSRegion != "" {
+	if !g.flagProvided("kms-region") && s.KMSRegion != "" {
 		g.kmsRegion = s.KMSRegion
 	}
-	if !flagsSet["kms-endpoint"] && s.KMSEndpoint != "" {
+	if !g.flagProvided("kms-endpoint") && s.KMSEndpoint != "" {
 		g.kmsEndpoint = s.KMSEndpoint
 	}
 	return nil
@@ -587,7 +552,7 @@ func parseExcludePatterns(a *backupArgs) ([]string, error) {
 
 func buildBackupOpts(a *backupArgs, excludePatterns []string) []cloudstic.BackupOption {
 	var opts []cloudstic.BackupOption
-	if a.g.verbose {
+	if a.verbose {
 		opts = append(opts, cloudstic.WithVerbose())
 	}
 	if a.dryRun {
@@ -783,5 +748,5 @@ func resolveTokenPath(explicit, defaultFilename string) (string, error) {
 // backupCommand declares the `backup` command.
 func backupCommand() command {
 	return leaf("backup", "Create a new backup snapshot from a source",
-		runBackup, withFlags(func() boundFlagSet { b, _ := newBackupFlagSet(); return b }))
+		backupCommandGroups, declareBackupArgs, runBackup)
 }

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -15,30 +14,15 @@ import (
 )
 
 type keyListArgs struct {
-	g *globalFlags
+	*globalFlags
 }
 
-func newKeyListFlagSet() (boundFlagSet, *keyListArgs) {
-	fs := flag.NewFlagSet("key list", flag.ContinueOnError)
-	g, globalSpecs := addGlobalFlags(fs, repoCommandGroups)
-	return boundFlagSet{set: fs, global: globalSpecs}, &keyListArgs{g: g}
+func declareKeyListArgs(g *globalFlags) (*keyListArgs, commandInput) {
+	return &keyListArgs{globalFlags: g}, commandInput{}
 }
 
-func parseKeyListArgs(args []string) (*keyListArgs, error) {
-	b, a := newKeyListFlagSet()
-	if err := parseFlags(b, args); err != nil {
-		return nil, err
-	}
-	return a, nil
-}
-
-func runKeyList(r *runner, ctx context.Context) int {
-	a, err := parseKeyListArgs(r.args)
-	if err != nil {
-		return r.parseError(err)
-	}
-
-	raw, err := a.g.openStore(ctx)
+func runKeyList(r *runner, ctx context.Context, a *keyListArgs) int {
+	raw, err := a.openStore(ctx)
 	if err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
@@ -48,7 +32,7 @@ func runKeyList(r *runner, ctx context.Context) int {
 		return r.fail("Failed to list key slots: %v", err)
 	}
 
-	if a.g.jsonEnabled() {
+	if a.jsonEnabled() {
 		return r.writeJSON(slots)
 	}
 	printKeySlots(r.out, r.errOut, slots)
@@ -75,47 +59,25 @@ func printKeySlots(out io.Writer, errOut io.Writer, slots []cloudstic.KeySlot) {
 }
 
 type keyPasswdArgs struct {
-	g           *globalFlags
+	*globalFlags
 	newPassword string
 }
 
-func keyPasswdFlagSpecs(a *keyPasswdArgs) []flagSpec {
-	return []flagSpec{
+func declareKeyPasswdArgs(g *globalFlags) (*keyPasswdArgs, commandInput) {
+	a := &keyPasswdArgs{globalFlags: g}
+	return a, commandInput{flags: []flagSpec{
 		stringFlag(&a.newPassword, "new-password", "", "New repository password (prompted interactively if not set)",
 			withPlaceholder("<pw>"), asSecret()),
-	}
+	}}
 }
 
-func newKeyPasswdFlagSet() (boundFlagSet, *keyPasswdArgs) {
-	fs := flag.NewFlagSet("key passwd", flag.ContinueOnError)
-	a := &keyPasswdArgs{}
-	g, globalSpecs := addGlobalFlags(fs, repoCommandGroups)
-	a.g = g
-	own := keyPasswdFlagSpecs(a)
-	bindFlags(fs, own)
-	return boundFlagSet{set: fs, global: globalSpecs, own: own}, a
-}
-
-func parseKeyPasswdArgs(args []string) (*keyPasswdArgs, error) {
-	b, a := newKeyPasswdFlagSet()
-	if err := parseFlags(b, args); err != nil {
-		return nil, err
-	}
-	return a, nil
-}
-
-func runKeyPasswd(r *runner, ctx context.Context) int {
-	a, err := parseKeyPasswdArgs(r.args)
-	if err != nil {
-		return r.parseError(err)
-	}
-
-	raw, err := a.g.openStore(ctx)
+func runKeyPasswd(r *runner, ctx context.Context, a *keyPasswdArgs) int {
+	raw, err := a.openStore(ctx)
 	if err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 
-	kc, err := a.g.buildKeychain(ctx)
+	kc, err := a.buildKeychain(ctx)
 	if err != nil {
 		return r.fail("%v", err)
 	}
@@ -139,7 +101,7 @@ func runKeyPasswd(r *runner, ctx context.Context) int {
 		return r.fail("Failed to change password: %v", err)
 	}
 
-	if a.g.jsonEnabled() {
+	if a.jsonEnabled() {
 		return r.writeJSON(&keyPasswordJSONResult{Changed: true})
 	}
 	_, _ = fmt.Fprintln(r.errOut, "Repository password has been changed.")
@@ -147,35 +109,20 @@ func runKeyPasswd(r *runner, ctx context.Context) int {
 }
 
 type addRecoveryKeyArgs struct {
-	g *globalFlags
+	*globalFlags
 }
 
-func newAddRecoveryKeyFlagSet() (boundFlagSet, *addRecoveryKeyArgs) {
-	fs := flag.NewFlagSet("add-recovery-key", flag.ContinueOnError)
-	g, globalSpecs := addGlobalFlags(fs, repoCommandGroups)
-	return boundFlagSet{set: fs, global: globalSpecs}, &addRecoveryKeyArgs{g: g}
+func declareAddRecoveryKeyArgs(g *globalFlags) (*addRecoveryKeyArgs, commandInput) {
+	return &addRecoveryKeyArgs{globalFlags: g}, commandInput{}
 }
 
-func parseAddRecoveryKeyArgs(args []string) (*addRecoveryKeyArgs, error) {
-	b, a := newAddRecoveryKeyFlagSet()
-	if err := parseFlags(b, args); err != nil {
-		return nil, err
-	}
-	return a, nil
-}
-
-func runAddRecoveryKey(r *runner, ctx context.Context) int {
-	a, err := parseAddRecoveryKeyArgs(r.args)
-	if err != nil {
-		return r.parseError(err)
-	}
-
-	raw, err := a.g.openStore(ctx)
+func runAddRecoveryKey(r *runner, ctx context.Context, a *addRecoveryKeyArgs) int {
+	raw, err := a.openStore(ctx)
 	if err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 
-	kc, err := a.g.buildKeychain(ctx)
+	kc, err := a.buildKeychain(ctx)
 	if err != nil {
 		return r.fail("%v", err)
 	}
@@ -185,7 +132,7 @@ func runAddRecoveryKey(r *runner, ctx context.Context) int {
 		return r.fail("Failed to create recovery key: %v", err)
 	}
 
-	if a.g.jsonEnabled() {
+	if a.jsonEnabled() {
 		return r.writeJSON(&recoveryKeyJSONResult{RecoveryKey: mnemonic})
 	}
 	printRecoveryKey(r.errOut, mnemonic)
@@ -197,10 +144,10 @@ func runAddRecoveryKey(r *runner, ctx context.Context) int {
 func keyCommand() command {
 	return group("key", "Manage encryption key slots",
 		leaf("list", "List all encryption key slots in the repository",
-			runKeyList, withFlags(func() boundFlagSet { b, _ := newKeyListFlagSet(); return b })),
+			repoCommandGroups, declareKeyListArgs, runKeyList),
 		leaf("add-recovery", "Generate a 24-word recovery key for an encrypted repository",
-			runAddRecoveryKey, withFlags(func() boundFlagSet { b, _ := newAddRecoveryKeyFlagSet(); return b })),
+			repoCommandGroups, declareAddRecoveryKeyArgs, runAddRecoveryKey),
 		leaf("passwd", "Change the repository password",
-			runKeyPasswd, withFlags(func() boundFlagSet { b, _ := newKeyPasswdFlagSet(); return b })),
+			repoCommandGroups, declareKeyPasswdArgs, runKeyPasswd),
 	)
 }

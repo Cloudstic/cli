@@ -2,21 +2,26 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/jedib0t/go-pretty/v6/table"
 )
 
-func runSourceDiscover(r *runner, ctx context.Context) int {
-	fs := flag.NewFlagSet("source discover", flag.ContinueOnError)
-	portableOnly := fs.Bool("portable-only", false, "Only show portable/external source candidates")
-	jsonOutput := fs.Bool("json", false, "Write discovered sources as JSON")
-	if err := parseFlags(boundFlagSet{set: fs}, r.args); err != nil {
-		return r.parseError(err)
-	}
+type sourceDiscoverArgs struct {
+	portableOnly bool
+	jsonOutput   bool
+}
 
+func declareSourceDiscoverArgs(_ *globalFlags) (*sourceDiscoverArgs, commandInput) {
+	a := &sourceDiscoverArgs{}
+	return a, commandInput{flags: []flagSpec{
+		boolFlag(&a.portableOnly, "portable-only", false, "Only show portable/external source candidates"),
+		boolFlag(&a.jsonOutput, "json", false, "Write discovered sources as JSON"),
+	}}
+}
+
+func runSourceDiscover(r *runner, ctx context.Context, a *sourceDiscoverArgs) int {
 	if r.client == nil {
 		r.client = &cloudstic.Client{}
 	}
@@ -26,7 +31,7 @@ func runSourceDiscover(r *runner, ctx context.Context) int {
 		return r.fail("Failed to discover sources: %v", err)
 	}
 
-	if *portableOnly {
+	if a.portableOnly {
 		filtered := results[:0]
 		for _, result := range results {
 			if result.Portable {
@@ -36,7 +41,7 @@ func runSourceDiscover(r *runner, ctx context.Context) int {
 		results = filtered
 	}
 
-	if *jsonOutput {
+	if a.jsonOutput {
 		return r.writeJSON(results)
 	}
 
@@ -65,6 +70,6 @@ func runSourceDiscover(r *runner, ctx context.Context) int {
 // sourceCommand declares the `source` command group.
 func sourceCommand() command {
 	return group("source", "Discover source candidates for onboarding",
-		leaf("discover", "Discover local source candidates for onboarding", runSourceDiscover),
+		leaf("discover", "Discover local source candidates for onboarding", nil, declareSourceDiscoverArgs, runSourceDiscover),
 	)
 }

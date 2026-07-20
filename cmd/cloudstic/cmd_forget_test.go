@@ -17,7 +17,7 @@ func TestRunForget_SingleSnapshot(t *testing.T) {
 		forgetResult: &cloudstic.ForgetResult{Prune: nil},
 	}}
 
-	runForget(r.withArgs(args), context.Background())
+	forgetCommand().execute(r.withArgs(args), context.Background(), "forget")
 
 	if !strings.Contains(out.String(), "Snapshot removed.") {
 		t.Errorf("expected 'Snapshot removed.', got:\n%s", out.String())
@@ -37,7 +37,7 @@ func TestRunForget_SingleSnapshot_WithPruneResult(t *testing.T) {
 		},
 	}}
 
-	runForget(r.withArgs(args), context.Background())
+	forgetCommand().execute(r.withArgs(args), context.Background(), "forget")
 
 	got := out.String()
 	if !strings.Contains(got, "Snapshot removed.") {
@@ -63,7 +63,7 @@ func TestRunForget_Policy_NoRemove(t *testing.T) {
 		},
 	}}
 
-	runForget(r.withArgs(args), context.Background())
+	forgetCommand().execute(r.withArgs(args), context.Background(), "forget")
 
 	got := out.String()
 	if !strings.Contains(got, "No snapshots to remove") {
@@ -86,7 +86,7 @@ func TestRunForget_Policy_WithRemoval(t *testing.T) {
 		},
 	}}
 
-	runForget(r.withArgs(args), context.Background())
+	forgetCommand().execute(r.withArgs(args), context.Background(), "forget")
 
 	got := out.String()
 	if !strings.Contains(got, "1 snapshots have been removed") {
@@ -108,7 +108,7 @@ func TestRunForget_Policy_DryRun(t *testing.T) {
 		},
 	}}
 
-	runForget(r.withArgs(args), context.Background())
+	forgetCommand().execute(r.withArgs(args), context.Background(), "forget")
 
 	got := out.String()
 	if !strings.Contains(got, "would remove") {
@@ -206,9 +206,12 @@ func TestParseForgetArgs_FilterOnlySourceSetsPolicyAndGrouping(t *testing.T) {
 		"--group-by", "source,path",
 	}
 
-	parsed, err := parseForgetArgs(args)
+	parsed, err := parseInto("forget", repoCommandGroups, declareForgetArgs, args)
 	if err != nil {
 		t.Fatalf("parseForgetArgs() error = %v", err)
+	}
+	if err := prepareForgetArgs(parsed); err != nil {
+		t.Fatalf("prepareForgetArgs() error = %v", err)
 	}
 
 	if !parsed.hasFilters {
@@ -238,9 +241,12 @@ func TestParseForgetArgs_BareSourceKeywordDoesNotSetFilterPath(t *testing.T) {
 
 	args := []string{"--source", "local"}
 
-	parsed, err := parseForgetArgs(args)
+	parsed, err := parseInto("forget", repoCommandGroups, declareForgetArgs, args)
 	if err != nil {
 		t.Fatalf("parseForgetArgs() error = %v", err)
+	}
+	if err := prepareForgetArgs(parsed); err != nil {
+		t.Fatalf("prepareForgetArgs() error = %v", err)
 	}
 
 	if parsed.filterSource != "local" {

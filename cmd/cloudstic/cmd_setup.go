@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -37,30 +36,21 @@ type setupWorkstationArgs struct {
 	storeRef     string
 }
 
-func parseSetupWorkstationArgs(args []string) (*setupWorkstationArgs, error) {
-	fs := flag.NewFlagSet("setup workstation", flag.ContinueOnError)
+func declareSetupWorkstationArgs(_ *globalFlags) (*setupWorkstationArgs, commandInput) {
 	a := &setupWorkstationArgs{}
-	dryRun := fs.Bool("dry-run", false, "Preview generated profiles without writing configuration")
-	yes := fs.Bool("yes", false, "Accept default selections without prompting")
-	jsonOutput := fs.Bool("json", false, "Write onboarding plan as JSON")
-	profilesFile := fs.String("profiles-file", defaultProfilesPathNoCreate(), "Path to profiles YAML file")
-	storeRef := fs.String("store-ref", "", "Existing store reference to attach to generated profiles")
-	if err := parseFlags(boundFlagSet{set: fs}, args); err != nil {
-		return nil, err
-	}
-	a.dryRun = *dryRun
-	a.yes = *yes
-	a.jsonOutput = *jsonOutput
-	a.profilesFile = *profilesFile
-	a.storeRef = strings.TrimSpace(*storeRef)
-	return a, nil
+	return a, commandInput{flags: []flagSpec{
+		boolFlag(&a.dryRun, "dry-run", false, "Preview generated profiles without writing configuration"),
+		boolFlag(&a.yes, "yes", false, "Accept default selections without prompting"),
+		boolFlag(&a.jsonOutput, "json", false, "Write onboarding plan as JSON"),
+		stringFlag(&a.profilesFile, "profiles-file", defaultProfilesPathNoCreate(), "Path to profiles YAML file",
+			withEnv("CLOUDSTIC_PROFILES_FILE"), withPlaceholder("<path>"), withCompleter("_files")),
+		stringFlag(&a.storeRef, "store-ref", "", "Existing store reference to attach to generated profiles",
+			withPlaceholder("<name>")),
+	}}
 }
 
-func runSetupWorkstation(r *runner, ctx context.Context) int {
-	args, err := parseSetupWorkstationArgs(r.args)
-	if err != nil {
-		return r.parseError(err)
-	}
+func runSetupWorkstation(r *runner, ctx context.Context, args *setupWorkstationArgs) int {
+	args.storeRef = strings.TrimSpace(args.storeRef)
 	cfg, err := loadProfilesOrInit(args.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
@@ -445,6 +435,6 @@ func sanitizeWorkstationProfileName(value string) string {
 // setupCommand declares the `setup` command group.
 func setupCommand() command {
 	return group("setup", "Guided setup and onboarding flows",
-		leaf("workstation", "Guide workstation onboarding and profile scaffolding", runSetupWorkstation),
+		leaf("workstation", "Guide workstation onboarding and profile scaffolding", nil, declareSetupWorkstationArgs, runSetupWorkstation),
 	)
 }

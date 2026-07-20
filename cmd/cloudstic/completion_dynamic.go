@@ -13,18 +13,25 @@ import (
 
 var completionLoadProfilesFile = cloudstic.LoadProfilesFile
 
-func runCompletionQuery(r *runner, ctx context.Context) int {
-	if len(r.args) < 1 {
+type completionQueryArgs struct{ values []string }
+
+func declareCompletionQueryArgs(_ *globalFlags) (*completionQueryArgs, commandInput) {
+	a := &completionQueryArgs{}
+	return a, commandInput{positionals: []positionalSpec{remainingPositionals(&a.values, "query argument")}}
+}
+
+func runCompletionQuery(r *runner, ctx context.Context, a *completionQueryArgs) int {
+	if len(a.values) < 1 {
 		return 0
 	}
-	kind := r.args[0]
+	kind := a.values[0]
 	current := ""
-	if len(r.args) > 1 {
-		current = r.args[1]
+	if len(a.values) > 1 {
+		current = a.values[1]
 	}
 	var commandArgs []string
-	if len(r.args) > 2 {
-		commandArgs = r.args[2:]
+	if len(a.values) > 2 {
+		commandArgs = a.values[2:]
 	}
 	candidates, err := completionCandidates(ctx, kind, current, commandArgs)
 	if err != nil {
@@ -130,5 +137,5 @@ func splitCompletionFlag(arg string) (name string, hasValue bool, value string) 
 // completeCommand is the internal dynamic-completion helper.
 func completeCommand() command {
 	return leaf("__complete", "Internal dynamic completion helper",
-		runCompletionQuery, asHidden())
+		nil, declareCompletionQueryArgs, runCompletionQuery, asHidden())
 }

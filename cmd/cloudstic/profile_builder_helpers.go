@@ -27,6 +27,11 @@ func defaultProfilesPathFallback() string {
 	return defaultPath
 }
 
+func profilesFileFlag(target *string) flagSpec {
+	return stringFlag(target, "profiles-file", defaultProfilesPathFallback(), "Path to profiles YAML file",
+		withEnv("CLOUDSTIC_PROFILES_FILE"), withPlaceholder("<path>"), withCompleter("_files"))
+}
+
 func loadProfilesOrInit(path string) (*cloudstic.ProfilesConfig, error) {
 	cfg, err := cloudstic.LoadProfilesFile(path)
 	if err != nil {

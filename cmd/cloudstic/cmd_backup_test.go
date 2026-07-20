@@ -111,7 +111,7 @@ func TestPrintUsage_Smoke(t *testing.T) {
 }
 
 func TestBuildBackupOpts_IgnoreEmptySnapshot(t *testing.T) {
-	a := &backupArgs{ignoreEmpty: true, g: newTestGlobalFlags()}
+	a := &backupArgs{ignoreEmpty: true, globalFlags: newTestGlobalFlags()}
 	opts := buildBackupOpts(a, nil)
 	if len(opts) != 1 {
 		t.Fatalf("len(opts)=%d want 1", len(opts))

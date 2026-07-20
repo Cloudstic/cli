@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 
@@ -10,39 +9,19 @@ import (
 )
 
 type listArgs struct {
-	g     *globalFlags
+	*globalFlags
 	group bool
 }
 
-func listFlagSpecs(a *listArgs) []flagSpec {
-	return []flagSpec{
+func declareListArgs(g *globalFlags) (*listArgs, commandInput) {
+	a := &listArgs{globalFlags: g}
+	return a, commandInput{flags: []flagSpec{
 		boolFlag(&a.group, "group", false, "Group snapshots by source identity"),
-	}
+	}}
 }
 
-func newListFlagSet() (boundFlagSet, *listArgs) {
-	fs := flag.NewFlagSet("list", flag.ContinueOnError)
-	g, globalSpecs := addGlobalFlags(fs, repoCommandGroups)
-	a := &listArgs{g: g}
-	own := listFlagSpecs(a)
-	bindFlags(fs, own)
-	return boundFlagSet{set: fs, global: globalSpecs, own: own}, a
-}
-
-func parseListArgs(args []string) (*listArgs, error) {
-	b, a := newListFlagSet()
-	if err := parseFlags(b, args); err != nil {
-		return nil, err
-	}
-	return a, nil
-}
-
-func runList(r *runner, ctx context.Context) int {
-	a, err := parseListArgs(r.args)
-	if err != nil {
-		return r.parseError(err)
-	}
-	if err := r.openClient(ctx, a.g); err != nil {
+func runList(r *runner, ctx context.Context, a *listArgs) int {
+	if err := r.openClient(ctx, a.globalFlags); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 
@@ -52,7 +31,7 @@ func runList(r *runner, ctx context.Context) int {
 	if err != nil {
 		return r.fail("List failed: %v", err)
 	}
-	if a.g.jsonEnabled() {
+	if a.jsonEnabled() {
 		return r.writeJSON(result)
 	}
 	printListResult(r.out, result, a.group)
@@ -61,7 +40,7 @@ func runList(r *runner, ctx context.Context) int {
 
 func buildListOpts(a *listArgs) []cloudstic.ListOption {
 	var listOpts []cloudstic.ListOption
-	if a.g.verbose {
+	if a.verbose {
 		listOpts = append(listOpts, cloudstic.WithListVerbose())
 	}
 	return listOpts
@@ -79,5 +58,5 @@ func printListResult(out io.Writer, result *cloudstic.ListResult, group bool) {
 // listCommand declares the `list` command.
 func listCommand() command {
 	return leaf("list", "List all backup snapshots in the repository",
-		runList, withFlags(func() boundFlagSet { b, _ := newListFlagSet(); return b }))
+		repoCommandGroups, declareListArgs, runList)
 }

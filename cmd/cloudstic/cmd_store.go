@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -15,14 +14,15 @@ import (
 	"github.com/cloudstic/cli/pkg/store"
 )
 
-func runStoreList(r *runner, ctx context.Context) int {
-	fs := flag.NewFlagSet("store list", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
-	if err := parseFlags(boundFlagSet{set: fs}, r.args); err != nil {
-		return r.parseError(err)
-	}
+type storeListArgs struct{ profilesFile string }
 
-	cfg, err := cloudstic.LoadProfilesFile(*profilesFile)
+func declareStoreListArgs(_ *globalFlags) (*storeListArgs, commandInput) {
+	a := &storeListArgs{}
+	return a, commandInput{flags: []flagSpec{profilesFileFlag(&a.profilesFile)}}
+}
+
+func runStoreList(r *runner, ctx context.Context, a *storeListArgs) int {
+	cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return 0
@@ -34,26 +34,25 @@ func runStoreList(r *runner, ctx context.Context) int {
 	return 0
 }
 
-func runStoreShow(r *runner, ctx context.Context) int {
-	fs := flag.NewFlagSet("store show", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
-	if err := parseFlags(boundFlagSet{set: fs}, r.args); err != nil {
-		return r.parseError(err)
-	}
-	if fs.NArg() > 1 {
-		return r.fail("usage: cloudstic store show [-profiles-file <path>] <name>")
-	}
+type storeShowArgs struct {
+	profilesFile string
+	name         string
+}
 
-	name := ""
-	if fs.NArg() == 1 {
-		name = fs.Arg(0)
+func declareStoreShowArgs(_ *globalFlags) (*storeShowArgs, commandInput) {
+	a := &storeShowArgs{}
+	return a, commandInput{
+		flags:       []flagSpec{profilesFileFlag(&a.profilesFile)},
+		positionals: []positionalSpec{optionalPositional(&a.name, "store name", "")},
 	}
+}
 
-	cfg, err := cloudstic.LoadProfilesFile(*profilesFile)
+func runStoreShow(r *runner, ctx context.Context, a *storeShowArgs) int {
+	cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
 	}
-	if name == "" {
+	if a.name == "" {
 		if !r.canPrompt() {
 			return r.fail("usage: cloudstic store show [-profiles-file <path>] <name>")
 		}
@@ -62,67 +61,73 @@ func runStoreShow(r *runner, ctx context.Context) int {
 		if pickErr != nil {
 			return r.fail("Failed to select store: %v", pickErr)
 		}
-		name = picked
+		a.name = picked
 	}
 
-	s, ok := cfg.Stores[name]
+	s, ok := cfg.Stores[a.name]
 	if !ok {
-		return r.fail("Unknown store %q", name)
+		return r.fail("Unknown store %q", a.name)
 	}
-	renderStoreShow(r.out, cfg, name, s)
+	renderStoreShow(r.out, cfg, a.name, s)
 	return 0
 }
 
-func runStoreNew(r *runner, ctx context.Context) int {
-	fs := flag.NewFlagSet("store new", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
-	name := fs.String("name", "", "Store reference name")
-	uri := fs.String("uri", "", "Store URI (e.g. s3:bucket/path, local:/path, sftp://host/path)")
-	s3Region := fs.String("s3-region", "", "S3 region")
-	s3Profile := fs.String("s3-profile", "", "AWS shared config profile")
-	s3Endpoint := fs.String("s3-endpoint", "", "S3-compatible endpoint URL")
-	s3AccessKey := fs.String("s3-access-key", "", "S3 static access key")
-	s3SecretKey := fs.String("s3-secret-key", "", "S3 static secret key")
-	s3AccessKeySecret := fs.String("s3-access-key-secret", "", "Secret reference for S3 access key (e.g. env://..., keychain://...)")
-	s3SecretKeySecret := fs.String("s3-secret-key-secret", "", "Secret reference for S3 secret key (e.g. env://..., keychain://...)")
-	sftpPassword := fs.String("store-sftp-password", "", "SFTP password")
-	sftpKey := fs.String("store-sftp-key", "", "Path to SFTP private key")
-	sftpPasswordSecret := fs.String("store-sftp-password-secret", "", "Secret reference for SFTP password (e.g. env://..., keychain://...)")
-	sftpKeySecret := fs.String("store-sftp-key-secret", "", "Secret reference for SFTP key path (e.g. env://..., keychain://...)")
-	passwordSecret := fs.String("password-secret", "", "Secret reference for repository password (e.g. env://..., keychain://...)")
-	encryptionKeySecret := fs.String("encryption-key-secret", "", "Secret reference for platform key (e.g. env://..., keychain://...)")
-	recoveryKeySecret := fs.String("recovery-key-secret", "", "Secret reference for recovery key mnemonic (e.g. env://..., keychain://...)")
-	kmsKeyARN := fs.String("kms-key-arn", "", "AWS KMS key ARN")
-	kmsRegion := fs.String("kms-region", "", "AWS KMS region")
-	kmsEndpoint := fs.String("kms-endpoint", "", "Custom AWS KMS endpoint URL")
-	if err := parseFlags(boundFlagSet{set: fs}, r.args); err != nil {
-		return r.parseError(err)
-	}
+type storeNewArgs struct {
+	*globalFlags
+	profilesFile                                           string
+	name, uri                                              string
+	s3Region, s3Profile, s3Endpoint                        string
+	s3AccessKey, s3SecretKey                               string
+	s3AccessKeySecret, s3SecretKeySecret                   string
+	sftpPassword, sftpKey                                  string
+	sftpPasswordSecret, sftpKeySecret                      string
+	passwordSecret, encryptionKeySecret, recoveryKeySecret string
+	kmsKeyARN, kmsRegion, kmsEndpoint                      string
+}
 
-	flagsSet := map[string]bool{}
-	fs.Visit(func(f *flag.Flag) { flagsSet[f.Name] = true })
-	storeFlags := storeNewFlagPtrs{
-		uri:                 uri,
-		s3Region:            s3Region,
-		s3Profile:           s3Profile,
-		s3Endpoint:          s3Endpoint,
-		s3AccessKey:         s3AccessKey,
-		s3SecretKey:         s3SecretKey,
-		s3AccessKeySecret:   s3AccessKeySecret,
-		s3SecretKeySecret:   s3SecretKeySecret,
-		sftpPassword:        sftpPassword,
-		sftpKey:             sftpKey,
-		sftpPasswordSecret:  sftpPasswordSecret,
-		sftpKeySecret:       sftpKeySecret,
-		passwordSecret:      passwordSecret,
-		encryptionKeySecret: encryptionKeySecret,
-		recoveryKeySecret:   recoveryKeySecret,
-		kmsKeyARN:           kmsKeyARN,
-		kmsRegion:           kmsRegion,
-		kmsEndpoint:         kmsEndpoint,
-	}
+func declareStoreNewArgs(g *globalFlags) (*storeNewArgs, commandInput) {
+	a := &storeNewArgs{globalFlags: g}
+	return a, commandInput{flags: []flagSpec{
+		profilesFileFlag(&a.profilesFile),
+		stringFlag(&a.name, "name", "", "Store reference name", withPlaceholder("<name>")),
+		stringFlag(&a.uri, "uri", "", "Store URI (e.g. s3:bucket/path, local:/path, sftp://host/path)", withPlaceholder("<uri>"), withCompleter("_cloudstic_store_prefixes")),
+		stringFlag(&a.s3Region, "s3-region", "", "S3 region", withPlaceholder("<region>")),
+		stringFlag(&a.s3Profile, "s3-profile", "", "AWS shared config profile", withPlaceholder("<name>")),
+		stringFlag(&a.s3Endpoint, "s3-endpoint", "", "S3-compatible endpoint URL", withPlaceholder("<url>")),
+		stringFlag(&a.s3AccessKey, "s3-access-key", "", "S3 static access key", withPlaceholder("<key>"), asSecret()),
+		stringFlag(&a.s3SecretKey, "s3-secret-key", "", "S3 static secret key", withPlaceholder("<secret>"), asSecret()),
+		stringFlag(&a.s3AccessKeySecret, "s3-access-key-secret", "", "Secret reference for S3 access key (e.g. env://..., keychain://...)", withPlaceholder("<ref>")),
+		stringFlag(&a.s3SecretKeySecret, "s3-secret-key-secret", "", "Secret reference for S3 secret key (e.g. env://..., keychain://...)", withPlaceholder("<ref>")),
+		stringFlag(&a.sftpPassword, "store-sftp-password", "", "SFTP password", withPlaceholder("<pass>"), asSecret()),
+		stringFlag(&a.sftpKey, "store-sftp-key", "", "Path to SFTP private key", withPlaceholder("<path>"), withCompleter("_files")),
+		stringFlag(&a.sftpPasswordSecret, "store-sftp-password-secret", "", "Secret reference for SFTP password (e.g. env://..., keychain://...)", withPlaceholder("<ref>")),
+		stringFlag(&a.sftpKeySecret, "store-sftp-key-secret", "", "Secret reference for SFTP key path (e.g. env://..., keychain://...)", withPlaceholder("<ref>")),
+		stringFlag(&a.passwordSecret, "password-secret", "", "Secret reference for repository password (e.g. env://..., keychain://...)", withPlaceholder("<ref>")),
+		stringFlag(&a.encryptionKeySecret, "encryption-key-secret", "", "Secret reference for platform key (e.g. env://..., keychain://...)", withPlaceholder("<ref>")),
+		stringFlag(&a.recoveryKeySecret, "recovery-key-secret", "", "Secret reference for recovery key mnemonic (e.g. env://..., keychain://...)", withPlaceholder("<ref>")),
+		stringFlag(&a.kmsKeyARN, "kms-key-arn", "", "AWS KMS key ARN", withPlaceholder("<arn>")),
+		stringFlag(&a.kmsRegion, "kms-region", "", "AWS KMS region", withPlaceholder("<region>")),
+		stringFlag(&a.kmsEndpoint, "kms-endpoint", "", "Custom AWS KMS endpoint URL", withPlaceholder("<url>")),
+	}}
+}
 
-	if *name == "" {
+func (a *storeNewArgs) flagPtrs() storeNewFlagPtrs {
+	return storeNewFlagPtrs{
+		uri: &a.uri, s3Region: &a.s3Region, s3Profile: &a.s3Profile, s3Endpoint: &a.s3Endpoint,
+		s3AccessKey: &a.s3AccessKey, s3SecretKey: &a.s3SecretKey,
+		s3AccessKeySecret: &a.s3AccessKeySecret, s3SecretKeySecret: &a.s3SecretKeySecret,
+		sftpPassword: &a.sftpPassword, sftpKey: &a.sftpKey,
+		sftpPasswordSecret: &a.sftpPasswordSecret, sftpKeySecret: &a.sftpKeySecret,
+		passwordSecret: &a.passwordSecret, encryptionKeySecret: &a.encryptionKeySecret,
+		recoveryKeySecret: &a.recoveryKeySecret, kmsKeyARN: &a.kmsKeyARN,
+		kmsRegion: &a.kmsRegion, kmsEndpoint: &a.kmsEndpoint,
+	}
+}
+
+func runStoreNew(r *runner, ctx context.Context, a *storeNewArgs) int {
+	storeFlags := a.flagPtrs()
+
+	if a.name == "" {
 		if r.canPrompt() {
 			v, err := r.promptValidatedLine(ctx, "Store reference name", "", func(v string) error {
 				if v == "" {
@@ -133,36 +138,36 @@ func runStoreNew(r *runner, ctx context.Context) int {
 			if err != nil {
 				return r.fail("Failed to read store name: %v", err)
 			}
-			*name = v
+			a.name = v
 		}
-		if *name == "" {
+		if a.name == "" {
 			return r.fail("-name is required")
 		}
 	}
-	if err := validateRefName("store", *name); err != nil {
+	if err := validateRefName("store", a.name); err != nil {
 		return r.fail("%v", err)
 	}
-	cfg, err := loadProfilesOrInit(*profilesFile)
+	cfg, err := loadProfilesOrInit(a.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
 	}
 	ensureProfilesMaps(cfg)
 
-	_, existedBefore := cfg.Stores[*name]
+	_, existedBefore := cfg.Stores[a.name]
 	forcePromptURI := false
 	forcePromptEncryption := false
 	askKeepEncryption := false
-	if existing, ok := cfg.Stores[*name]; ok {
-		applyExistingStoreDefaults(flagsSet, existing, storeFlags)
-		if promptURI, askKeep := existingStoreInteractivePlan(r.canPrompt(), hasStoreNewOverrideFlags(flagsSet), storeHasExplicitEncryption(existing)); promptURI {
+	if existing, ok := cfg.Stores[a.name]; ok {
+		applyExistingStoreDefaults(a.globalFlags, existing, storeFlags)
+		if promptURI, askKeep := existingStoreInteractivePlan(r.canPrompt(), hasStoreNewOverrideFlags(a.globalFlags), storeHasExplicitEncryption(existing)); promptURI {
 			forcePromptURI = true
 			askKeepEncryption = askKeep
 		}
 	}
 
-	if *uri == "" || forcePromptURI {
+	if a.uri == "" || forcePromptURI {
 		if r.canPrompt() {
-			v, err := r.promptValidatedLine(ctx, "Store URI", *uri, func(v string) error {
+			v, err := r.promptValidatedLine(ctx, "Store URI", a.uri, func(v string) error {
 				if v == "" {
 					return fmt.Errorf("store URI is required")
 				}
@@ -172,28 +177,28 @@ func runStoreNew(r *runner, ctx context.Context) int {
 			if err != nil {
 				return r.fail("Failed to read store URI: %v", err)
 			}
-			*uri = v
+			a.uri = v
 		}
-		if *uri == "" {
+		if a.uri == "" {
 			return r.fail("-uri is required")
 		}
 	}
 
 	// Validate the URI before saving.
-	if _, err := parseStoreURI(*uri); err != nil {
+	if _, err := parseStoreURI(a.uri); err != nil {
 		return r.fail("%v", err)
 	}
 
-	cfg.Stores[*name] = buildProfileStoreFromFlags(storeFlags)
+	cfg.Stores[a.name] = buildProfileStoreFromFlags(storeFlags)
 
-	if err := cloudstic.SaveProfilesFile(*profilesFile, cfg); err != nil {
+	if err := cloudstic.SaveProfilesFile(a.profilesFile, cfg); err != nil {
 		return r.fail("Failed to save profiles: %v", err)
 	}
-	_, _ = fmt.Fprintf(r.out, "Store %q saved in %s\n", *name, *profilesFile)
+	_, _ = fmt.Fprintf(r.out, "Store %q saved in %s\n", a.name, a.profilesFile)
 
 	if r.canPrompt() {
 		// If no encryption flags were provided, prompt for encryption config.
-		s := cfg.Stores[*name]
+		s := cfg.Stores[a.name]
 		if askKeepEncryption {
 			keepCurrent, confirmErr := r.promptConfirm(ctx, "Keep current encryption settings?", true)
 			if confirmErr != nil {
@@ -202,9 +207,9 @@ func runStoreNew(r *runner, ctx context.Context) int {
 			forcePromptEncryption = !keepCurrent
 		}
 		if forcePromptEncryption || !storeHasExplicitEncryption(s) {
-			r.promptEncryptionConfig(ctx, cfg, *name, *profilesFile)
+			r.promptEncryptionConfig(ctx, cfg, a.name, a.profilesFile)
 		}
-		if err := checkOrInitStoreWithRecovery(r, ctx, cfg, *name, *profilesFile, checkOrInitOptions{
+		if err := checkOrInitStoreWithRecovery(r, ctx, cfg, a.name, a.profilesFile, checkOrInitOptions{
 			allowMissingSecrets:  true,
 			warnOnMissingSecrets: !existedBefore,
 			offerInit:            true,
@@ -221,22 +226,21 @@ func runStoreNew(r *runner, ctx context.Context) int {
 // initialize it. Encryption config should already be saved in profiles.yaml
 // before calling this. Errors are printed but never cause a non-zero exit—
 // the store config has already been saved.
-func runStoreVerify(r *runner, ctx context.Context) int {
-	fs := flag.NewFlagSet("store verify", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
-	if err := parseFlags(boundFlagSet{set: fs}, r.args); err != nil {
-		return r.parseError(err)
-	}
-	if fs.NArg() > 1 {
-		return r.fail("usage: cloudstic store verify [-profiles-file <path>] <name>")
-	}
+type storeVerifyArgs struct {
+	profilesFile string
+	name         string
+}
 
-	name := ""
-	if fs.NArg() == 1 {
-		name = fs.Arg(0)
+func declareStoreVerifyArgs(_ *globalFlags) (*storeVerifyArgs, commandInput) {
+	a := &storeVerifyArgs{}
+	return a, commandInput{
+		flags:       []flagSpec{profilesFileFlag(&a.profilesFile)},
+		positionals: []positionalSpec{optionalPositional(&a.name, "store name", "")},
 	}
+}
 
-	cfg, err := cloudstic.LoadProfilesFile(*profilesFile)
+func runStoreVerify(r *runner, ctx context.Context, a *storeVerifyArgs) int {
+	cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
 	}
@@ -244,7 +248,7 @@ func runStoreVerify(r *runner, ctx context.Context) int {
 		return r.fail("No stores configured")
 	}
 
-	if name == "" {
+	if a.name == "" {
 		if !r.canPrompt() {
 			return r.fail("usage: cloudstic store verify [-profiles-file <path>] <name>")
 		}
@@ -253,13 +257,13 @@ func runStoreVerify(r *runner, ctx context.Context) int {
 		if pickErr != nil {
 			return r.fail("Failed to select store: %v", pickErr)
 		}
-		name = picked
+		a.name = picked
 	}
 
-	if _, ok := cfg.Stores[name]; !ok {
-		return r.fail("Unknown store %q", name)
+	if _, ok := cfg.Stores[a.name]; !ok {
+		return r.fail("Unknown store %q", a.name)
 	}
-	if err := checkOrInitStoreWithRecovery(r, ctx, cfg, name, *profilesFile, checkOrInitOptions{
+	if err := checkOrInitStoreWithRecovery(r, ctx, cfg, a.name, a.profilesFile, checkOrInitOptions{
 		warnOnMissingSecrets: true,
 	}, false); err != nil {
 		return r.fail("%v", err)
@@ -267,23 +271,25 @@ func runStoreVerify(r *runner, ctx context.Context) int {
 	return 0
 }
 
-func runStoreInit(r *runner, ctx context.Context) int {
-	fs := flag.NewFlagSet("store init", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
-	yes := fs.Bool("yes", false, "Initialize without confirmation prompt")
-	if err := parseFlags(boundFlagSet{set: fs}, r.args); err != nil {
-		return r.parseError(err)
-	}
-	if fs.NArg() > 1 {
-		return r.fail("usage: cloudstic store init [-profiles-file <path>] [-yes] <name>")
-	}
+type storeInitArgs struct {
+	profilesFile string
+	name         string
+	yes          bool
+}
 
-	name := ""
-	if fs.NArg() == 1 {
-		name = fs.Arg(0)
+func declareStoreInitArgs(_ *globalFlags) (*storeInitArgs, commandInput) {
+	a := &storeInitArgs{}
+	return a, commandInput{
+		flags: []flagSpec{
+			profilesFileFlag(&a.profilesFile),
+			boolFlag(&a.yes, "yes", false, "Initialize without confirmation prompt"),
+		},
+		positionals: []positionalSpec{optionalPositional(&a.name, "store name", "")},
 	}
+}
 
-	cfg, err := cloudstic.LoadProfilesFile(*profilesFile)
+func runStoreInit(r *runner, ctx context.Context, a *storeInitArgs) int {
+	cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
 	}
@@ -291,7 +297,7 @@ func runStoreInit(r *runner, ctx context.Context) int {
 		return r.fail("No stores configured")
 	}
 
-	if name == "" {
+	if a.name == "" {
 		if !r.canPrompt() {
 			return r.fail("usage: cloudstic store init [-profiles-file <path>] [-yes] <name>")
 		}
@@ -300,16 +306,16 @@ func runStoreInit(r *runner, ctx context.Context) int {
 		if pickErr != nil {
 			return r.fail("Failed to select store: %v", pickErr)
 		}
-		name = picked
+		a.name = picked
 	}
 
-	if _, ok := cfg.Stores[name]; !ok {
-		return r.fail("Unknown store %q", name)
+	if _, ok := cfg.Stores[a.name]; !ok {
+		return r.fail("Unknown store %q", a.name)
 	}
-	if err := checkOrInitStoreWithRecovery(r, ctx, cfg, name, *profilesFile, checkOrInitOptions{
+	if err := checkOrInitStoreWithRecovery(r, ctx, cfg, a.name, a.profilesFile, checkOrInitOptions{
 		warnOnMissingSecrets: true,
 		offerInit:            true,
-		assumeYes:            *yes,
+		assumeYes:            a.yes,
 	}, false); err != nil {
 		return r.fail("%v", err)
 	}
@@ -693,8 +699,11 @@ func runAWSSSOLogin(r *runner, ctx context.Context, s cloudstic.ProfileStore) er
 	return runFn(ctx, r.stdin, r.out, r.errOut, "aws", args...)
 }
 
-func hasStoreNewOverrideFlags(flagsSet map[string]bool) bool {
-	for name := range flagsSet {
+func hasStoreNewOverrideFlags(g *globalFlags) bool {
+	for name, origin := range g.origins {
+		if origin != originFlag {
+			continue
+		}
 		switch name {
 		case "name", "profiles-file":
 			continue
@@ -788,10 +797,10 @@ func storeHasExplicitEncryption(s cloudstic.ProfileStore) bool {
 // storeCommand declares the `store` command group.
 func storeCommand() command {
 	return group("store", "Manage store entries in profiles.yaml",
-		leaf("new", "Create or update a store entry in profiles.yaml", runStoreNew),
-		leaf("list", "List configured stores", runStoreList),
-		leaf("show", "Show one store and its configuration", runStoreShow),
-		leaf("verify", "Verify one store's credentials and connectivity", runStoreVerify),
-		leaf("init", "Initialize a configured store by reference", runStoreInit),
+		leaf("new", "Create or update a store entry in profiles.yaml", nil, declareStoreNewArgs, runStoreNew),
+		leaf("list", "List configured stores", nil, declareStoreListArgs, runStoreList),
+		leaf("show", "Show one store and its configuration", nil, declareStoreShowArgs, runStoreShow),
+		leaf("verify", "Verify one store's credentials and connectivity", nil, declareStoreVerifyArgs, runStoreVerify),
+		leaf("init", "Initialize a configured store by reference", nil, declareStoreInitArgs, runStoreInit),
 	)
 }

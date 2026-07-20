@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"testing"
 
 	"github.com/cloudstic/cli/internal/logger"
@@ -129,9 +128,9 @@ func TestParseSourceURI(t *testing.T) {
 func TestApplyDebug_Disabled(t *testing.T) {
 	logger.Writer = nil
 
-	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	g, _ := addGlobalFlags(fs, repoCommandGroups)
-	_ = fs.Parse([]string{}) // --debug defaults to false
+	g := &globalFlags{}
+	cf := newCommandFlags("test", repoCommandGroups, g, commandInput{})
+	_ = cf.parse(nil) // --debug defaults to false
 
 	inner := newTestLocalStore(t)
 	result := g.applyDebug(inner)
@@ -149,9 +148,9 @@ func TestApplyDebug_Enabled(t *testing.T) {
 	logger.Writer = nil
 	defer func() { logger.Writer = nil }()
 
-	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	g, _ := addGlobalFlags(fs, repoCommandGroups)
-	_ = fs.Parse([]string{"-debug"})
+	g := &globalFlags{}
+	cf := newCommandFlags("test", repoCommandGroups, g, commandInput{})
+	_ = cf.parse([]string{"-debug"})
 
 	inner := newTestLocalStore(t)
 	result := g.applyDebug(inner)

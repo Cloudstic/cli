@@ -21,7 +21,7 @@ func TestRunCheck_Healthy(t *testing.T) {
 		},
 	}}
 
-	runCheck(r.withArgs(args), context.Background())
+	checkCommand().execute(r.withArgs(args), context.Background(), "check")
 
 	got := errOut.String()
 	if !strings.Contains(got, "No errors found") {
@@ -45,7 +45,7 @@ func TestRunCheck_JSONWithErrorsReturnsExitOne(t *testing.T) {
 		},
 	}}
 
-	if exit := runCheck(r.withArgs(args), context.Background()); exit != 1 {
+	if exit := checkCommand().execute(r.withArgs(args), context.Background(), "check"); exit != 1 {
 		t.Fatalf("runCheck() exit = %d, want 1", exit)
 	}
 

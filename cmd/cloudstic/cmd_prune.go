@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 
@@ -11,40 +10,19 @@ import (
 )
 
 type pruneArgs struct {
-	g      *globalFlags
+	*globalFlags
 	dryRun bool
 }
 
-func pruneFlagSpecs(a *pruneArgs) []flagSpec {
-	return []flagSpec{
+func declarePruneArgs(g *globalFlags) (*pruneArgs, commandInput) {
+	a := &pruneArgs{globalFlags: g}
+	return a, commandInput{flags: []flagSpec{
 		boolFlag(&a.dryRun, "dry-run", false, "Show what would be deleted without deleting"),
-	}
+	}}
 }
 
-func newPruneFlagSet() (boundFlagSet, *pruneArgs) {
-	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
-	a := &pruneArgs{}
-	g, globalSpecs := addGlobalFlags(fs, repoCommandGroups)
-	a.g = g
-	own := pruneFlagSpecs(a)
-	bindFlags(fs, own)
-	return boundFlagSet{set: fs, global: globalSpecs, own: own}, a
-}
-
-func parsePruneArgs(args []string) (*pruneArgs, error) {
-	b, a := newPruneFlagSet()
-	if err := parseFlags(b, args); err != nil {
-		return nil, err
-	}
-	return a, nil
-}
-
-func runPrune(r *runner, ctx context.Context) int {
-	a, err := parsePruneArgs(r.args)
-	if err != nil {
-		return r.parseError(err)
-	}
-	if err := r.openClient(ctx, a.g); err != nil {
+func runPrune(r *runner, ctx context.Context, a *pruneArgs) int {
+	if err := r.openClient(ctx, a.globalFlags); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 
@@ -54,7 +32,7 @@ func runPrune(r *runner, ctx context.Context) int {
 	if err != nil {
 		return r.fail("Prune failed: %v", err)
 	}
-	if a.g.jsonEnabled() {
+	if a.jsonEnabled() {
 		return r.writeJSON(result)
 	}
 	_, _ = fmt.Fprintln(r.out)
@@ -67,7 +45,7 @@ func buildPruneOpts(a *pruneArgs) []cloudstic.PruneOption {
 	if a.dryRun {
 		pruneOpts = append(pruneOpts, engine.WithPruneDryRun())
 	}
-	if a.g.verbose {
+	if a.verbose {
 		pruneOpts = append(pruneOpts, engine.WithPruneVerbose())
 	}
 	return pruneOpts
@@ -89,5 +67,5 @@ func printPruneStats(out io.Writer, res *cloudstic.PruneResult) {
 // pruneCommand declares the `prune` command.
 func pruneCommand() command {
 	return leaf("prune", "Remove unused data chunks from the repository",
-		runPrune, withFlags(func() boundFlagSet { b, _ := newPruneFlagSet(); return b }))
+		repoCommandGroups, declarePruneArgs, runPrune)
 }

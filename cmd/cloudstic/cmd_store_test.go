@@ -1089,16 +1089,16 @@ func TestAWSSSOLoginOption(t *testing.T) {
 }
 
 func TestHasStoreNewOverrideFlags(t *testing.T) {
-	if hasStoreNewOverrideFlags(map[string]bool{"name": true}) {
+	if hasStoreNewOverrideFlags(&globalFlags{origins: map[string]flagOrigin{"name": originFlag}}) {
 		t.Fatal("name-only should not count as override")
 	}
-	if hasStoreNewOverrideFlags(map[string]bool{"profiles-file": true}) {
+	if hasStoreNewOverrideFlags(&globalFlags{origins: map[string]flagOrigin{"profiles-file": originFlag}}) {
 		t.Fatal("profiles-file-only should not count as override")
 	}
-	if hasStoreNewOverrideFlags(map[string]bool{"name": true, "profiles-file": true}) {
+	if hasStoreNewOverrideFlags(&globalFlags{origins: map[string]flagOrigin{"name": originFlag, "profiles-file": originFlag}}) {
 		t.Fatal("identity-only flags should not count as override")
 	}
-	if !hasStoreNewOverrideFlags(map[string]bool{"name": true, "uri": true}) {
+	if !hasStoreNewOverrideFlags(&globalFlags{origins: map[string]flagOrigin{"name": originFlag, "uri": originFlag}}) {
 		t.Fatal("uri should count as override")
 	}
 }

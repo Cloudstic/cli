@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"strings"
@@ -13,7 +11,7 @@ import (
 )
 
 type forgetArgs struct {
-	g             *globalFlags
+	*globalFlags
 	prune         bool
 	dryRun        bool
 	keepLast      int
@@ -32,52 +30,38 @@ type forgetArgs struct {
 	hasFilters    bool
 	hasPolicy     bool
 
-	// rawFilterSource holds the -source flag verbatim; parseForgetArgs splits
-	// it into filterSource/filterPath after parsing.
+	// rawFilterSource holds the -source flag verbatim; prepareForgetArgs splits
+	// it into filterSource/filterPath before execution.
 	rawFilterSource string
 }
 
-func forgetFlagSpecs(a *forgetArgs) []flagSpec {
-	return []flagSpec{
-		boolFlag(&a.prune, "prune", false, "Run prune after forgetting"),
-		boolFlag(&a.dryRun, "dry-run", false, "Only show what would be removed"),
-		intFlag(&a.keepLast, "keep-last", 0, "Keep the last n snapshots", withPlaceholder("N"),
-			withShortUsage("Keep N most recent snapshots")),
-		intFlag(&a.keepHourly, "keep-hourly", 0, "Keep n hourly snapshots", withPlaceholder("N")),
-		intFlag(&a.keepDaily, "keep-daily", 0, "Keep n daily snapshots", withPlaceholder("N")),
-		intFlag(&a.keepWeekly, "keep-weekly", 0, "Keep n weekly snapshots", withPlaceholder("N")),
-		intFlag(&a.keepMonthly, "keep-monthly", 0, "Keep n monthly snapshots", withPlaceholder("N")),
-		intFlag(&a.keepYearly, "keep-yearly", 0, "Keep n yearly snapshots", withPlaceholder("N")),
-		valueFlag(&a.filterTags, "tag", "Filter by tag (can be specified multiple times)",
-			withPlaceholder("<tag>"), asRepeatable()),
-		stringFlag(&a.rawFilterSource, "source", "", "Filter by source URI (e.g. local:./docs, gdrive)",
-			withPlaceholder("<uri>"), withCompleter("_cloudstic_source_prefixes")),
-		stringFlag(&a.filterAccount, "account", "", "Filter by account", withPlaceholder("<id>")),
-		stringFlag(&a.groupBy, "group-by", "source,account,path", "Group snapshots by fields (comma-separated)",
-			withPlaceholder("<fields>")),
+func declareForgetArgs(g *globalFlags) (*forgetArgs, commandInput) {
+	a := &forgetArgs{globalFlags: g}
+	return a, commandInput{
+		flags: []flagSpec{
+			boolFlag(&a.prune, "prune", false, "Run prune after forgetting"),
+			boolFlag(&a.dryRun, "dry-run", false, "Only show what would be removed"),
+			intFlag(&a.keepLast, "keep-last", 0, "Keep the last n snapshots", withPlaceholder("N"),
+				withShortUsage("Keep N most recent snapshots")),
+			intFlag(&a.keepHourly, "keep-hourly", 0, "Keep n hourly snapshots", withPlaceholder("N")),
+			intFlag(&a.keepDaily, "keep-daily", 0, "Keep n daily snapshots", withPlaceholder("N")),
+			intFlag(&a.keepWeekly, "keep-weekly", 0, "Keep n weekly snapshots", withPlaceholder("N")),
+			intFlag(&a.keepMonthly, "keep-monthly", 0, "Keep n monthly snapshots", withPlaceholder("N")),
+			intFlag(&a.keepYearly, "keep-yearly", 0, "Keep n yearly snapshots", withPlaceholder("N")),
+			valueFlag(&a.filterTags, "tag", "Filter by tag (can be specified multiple times)",
+				withPlaceholder("<tag>"), asRepeatable()),
+			stringFlag(&a.rawFilterSource, "source", "", "Filter by source URI (e.g. local:./docs, gdrive)",
+				withPlaceholder("<uri>"), withCompleter("_cloudstic_source_prefixes")),
+			stringFlag(&a.filterAccount, "account", "", "Filter by account", withPlaceholder("<id>")),
+			stringFlag(&a.groupBy, "group-by", "source,account,path", "Group snapshots by fields (comma-separated)",
+				withPlaceholder("<fields>")),
+		},
+		positionals: []positionalSpec{optionalPositional(&a.snapshotID, "snapshot ID", "")},
 	}
 }
 
-func newForgetFlagSet() (boundFlagSet, *forgetArgs) {
-	fs := flag.NewFlagSet("forget", flag.ContinueOnError)
-	a := &forgetArgs{}
-	g, globalSpecs := addGlobalFlags(fs, repoCommandGroups)
-	a.g = g
-	own := forgetFlagSpecs(a)
-	bindFlags(fs, own)
-	return boundFlagSet{set: fs, global: globalSpecs, own: own}, a
-}
-
-func parseForgetArgs(args []string) (*forgetArgs, error) {
-	b, a := newForgetFlagSet()
-	if err := parseFlags(b, args); err != nil {
-		return nil, err
-	}
-	b.set.Visit(func(f *flag.Flag) {
-		if f.Name == "group-by" {
-			a.groupBySet = true
-		}
-	})
+func prepareForgetArgs(a *forgetArgs) error {
+	a.groupBySet = a.flagProvided("group-by")
 	if a.rawFilterSource != "" {
 		// Allow bare source type keywords (e.g. "local", "sftp") without a path for type-only filtering.
 		switch a.rawFilterSource {
@@ -86,7 +70,7 @@ func parseForgetArgs(args []string) (*forgetArgs, error) {
 		default:
 			parts, err := parseSourceURI(a.rawFilterSource)
 			if err != nil {
-				return nil, fmt.Errorf("invalid -source filter: %w", err)
+				return fmt.Errorf("invalid -source filter: %w", err)
 			}
 			a.filterSource = parts.scheme
 			a.filterPath = parts.path
@@ -95,13 +79,10 @@ func parseForgetArgs(args []string) (*forgetArgs, error) {
 	a.hasFilters = len(a.filterTags) > 0 || a.filterSource != "" || a.filterAccount != "" || a.filterPath != ""
 	a.hasPolicy = a.keepLast > 0 || a.keepHourly > 0 || a.keepDaily > 0 ||
 		a.keepWeekly > 0 || a.keepMonthly > 0 || a.keepYearly > 0
-	a.snapshotID = b.set.Arg(0)
-
 	if err := validateForgetArgs(a); err != nil {
-		return nil, err
+		return err
 	}
-
-	return a, nil
+	return nil
 }
 
 func printForgetUsage(w io.Writer) {
@@ -164,18 +145,14 @@ func validateForgetArgs(a *forgetArgs) error {
 	return nil
 }
 
-func runForget(r *runner, ctx context.Context) int {
-	a, err := parseForgetArgs(r.args)
-	if err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
+func runForget(r *runner, ctx context.Context, a *forgetArgs) int {
+	if err := prepareForgetArgs(a); err != nil {
 		if !r.jsonEnabled() {
 			printForgetUsage(r.errOut)
 		}
 		return r.parseError(err)
 	}
-	if err := r.openClient(ctx, a.g); err != nil {
+	if err := r.openClient(ctx, a.globalFlags); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 
@@ -190,14 +167,14 @@ func execForgetSingle(r *runner, ctx context.Context, a *forgetArgs) int {
 	if a.prune {
 		forgetOpts = append(forgetOpts, cloudstic.WithPrune())
 	}
-	if a.g.verbose {
+	if a.verbose {
 		forgetOpts = append(forgetOpts, cloudstic.WithForgetVerbose())
 	}
 	result, err := r.client.Forget(ctx, a.snapshotID, forgetOpts...)
 	if err != nil {
 		return r.fail("Forget failed: %v", err)
 	}
-	if a.g.jsonEnabled() {
+	if a.jsonEnabled() {
 		return r.writeJSON(&forgetSingleJSONResult{
 			SnapshotID: a.snapshotID,
 			Prune:      result.Prune,
@@ -217,7 +194,7 @@ func execForgetPolicy(r *runner, ctx context.Context, a *forgetArgs) int {
 	if err != nil {
 		return r.fail("Forget failed: %v", err)
 	}
-	if a.g.jsonEnabled() {
+	if a.jsonEnabled() {
 		return r.writeJSON(makeForgetPolicyJSONResult(result, a.dryRun))
 	}
 	printPolicyResult(r.out, result, a.dryRun)
@@ -232,7 +209,7 @@ func buildForgetPolicyOpts(a *forgetArgs) []cloudstic.ForgetOption {
 	if a.dryRun {
 		opts = append(opts, cloudstic.WithDryRun())
 	}
-	if a.g.verbose {
+	if a.verbose {
 		opts = append(opts, cloudstic.WithForgetVerbose())
 	}
 	if a.keepLast > 0 {
@@ -315,6 +292,5 @@ func printPolicyResult(out io.Writer, result *cloudstic.PolicyResult, dryRun boo
 // forgetCommand declares the `forget` command.
 func forgetCommand() command {
 	return leaf("forget", "Remove a specific snapshot from history",
-		runForget, withFlags(func() boundFlagSet { b, _ := newForgetFlagSet(); return b }),
-		withPositional(":snapshot ID:"))
+		repoCommandGroups, declareForgetArgs, runForget, withUsageOnError(printForgetUsage))
 }

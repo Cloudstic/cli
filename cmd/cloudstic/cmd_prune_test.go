@@ -20,7 +20,7 @@ func TestRunPrune_Normal(t *testing.T) {
 		},
 	}}
 
-	runPrune(r.withArgs(args), context.Background())
+	pruneCommand().execute(r.withArgs(args), context.Background(), "prune")
 
 	got := out.String()
 	if !strings.Contains(got, "Prune complete.") {
@@ -48,7 +48,7 @@ func TestRunPrune_DryRun(t *testing.T) {
 		},
 	}}
 
-	runPrune(r.withArgs(args), context.Background())
+	pruneCommand().execute(r.withArgs(args), context.Background(), "prune")
 
 	got := out.String()
 	if !strings.Contains(got, "Prune dry run complete.") {

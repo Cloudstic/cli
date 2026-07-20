@@ -25,6 +25,8 @@ type ProfileStore struct {
 	S3Profile         string `yaml:"s3_profile,omitempty"`
 	S3AccessKey       string `yaml:"s3_access_key,omitempty"`
 	S3SecretKey       string `yaml:"s3_secret_key,omitempty"`
+	B2KeyID           string `yaml:"b2_key_id,omitempty"`
+	B2AppKey          string `yaml:"b2_app_key,omitempty"`
 	StoreSFTPPassword string `yaml:"store_sftp_password,omitempty"`
 	StoreSFTPKey      string `yaml:"store_sftp_key,omitempty"`
 
@@ -34,6 +36,8 @@ type ProfileStore struct {
 	RecoveryKeySecret       string `yaml:"recovery_key_secret,omitempty"`
 	S3AccessKeySecret       string `yaml:"s3_access_key_secret,omitempty"`
 	S3SecretKeySecret       string `yaml:"s3_secret_key_secret,omitempty"`
+	B2KeyIDSecret           string `yaml:"b2_key_id_secret,omitempty"`
+	B2AppKeySecret          string `yaml:"b2_app_key_secret,omitempty"`
 	StoreSFTPPasswordSecret string `yaml:"store_sftp_password_secret,omitempty"`
 	StoreSFTPKeySecret      string `yaml:"store_sftp_key_secret,omitempty"`
 	KMSKeyARN               string `yaml:"kms_key_arn,omitempty"`
@@ -118,6 +122,12 @@ func validateProfilesConfig(cfg *ProfilesConfig) error {
 			return err
 		}
 		if err := validateSecretRef("store", storeName, "s3_secret_key_secret", s.S3SecretKeySecret); err != nil {
+			return err
+		}
+		if err := validateSecretRef("store", storeName, "b2_key_id_secret", s.B2KeyIDSecret); err != nil {
+			return err
+		}
+		if err := validateSecretRef("store", storeName, "b2_app_key_secret", s.B2AppKeySecret); err != nil {
 			return err
 		}
 		if err := validateSecretRef("store", storeName, "store_sftp_password_secret", s.StoreSFTPPasswordSecret); err != nil {

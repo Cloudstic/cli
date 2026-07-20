@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/internal/ui"
@@ -53,12 +52,10 @@ func newObjectStore(ctx context.Context, cfg storeConfig) (store.ObjectStore, er
 	case "local":
 		inner, err = store.NewLocalStore(uri.path)
 	case "b2":
-		keyID := os.Getenv("B2_KEY_ID")
-		appKey := os.Getenv("B2_APP_KEY")
-		if keyID == "" || appKey == "" {
-			return nil, fmt.Errorf("B2_KEY_ID and B2_APP_KEY env vars required for b2 store")
+		if cfg.b2.keyID == "" || cfg.b2.appKey == "" {
+			return nil, fmt.Errorf("B2 credentials required: pass -b2-key-id/-b2-app-key (or set B2_KEY_ID/B2_APP_KEY)")
 		}
-		inner, err = store.NewB2Store(uri.bucket, store.WithCredentials(keyID, appKey), store.WithPrefix(uri.prefix))
+		inner, err = store.NewB2Store(uri.bucket, store.WithCredentials(cfg.b2.keyID, cfg.b2.appKey), store.WithPrefix(uri.prefix))
 	case "s3":
 		inner, err = store.NewS3Store(
 			ctx,

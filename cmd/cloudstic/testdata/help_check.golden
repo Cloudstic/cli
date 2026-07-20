@@ -20,6 +20,8 @@ GLOBAL OPTIONS (also settable via environment variables)
     -s3-profile <name>             AWS shared config profile for S3 credentials  [env: CLOUDSTIC_S3_PROFILE]
     -s3-access-key <key>           S3 access key ID  [env: AWS_ACCESS_KEY_ID]
     -s3-secret-key <secret>        S3 secret access key  [env: AWS_SECRET_ACCESS_KEY]
+    -b2-key-id <key-id>            Backblaze B2 application key ID  [env: B2_KEY_ID]
+    -b2-app-key <key>              Backblaze B2 application key  [env: B2_APP_KEY]
     -disable-packfile              Disable bundling small objects into 8MB packs  [env: CLOUDSTIC_DISABLE_PACKFILE]
     -store-sftp-password <pw>      SFTP store password  [env: CLOUDSTIC_STORE_SFTP_PASSWORD]
     -store-sftp-key <path>         Path to SSH private key for SFTP store  [env: CLOUDSTIC_STORE_SFTP_KEY]

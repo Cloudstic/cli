@@ -67,6 +67,9 @@ func profileStoreAuthMode(s cloudstic.ProfileStore) string {
 	if s.S3Profile != "" {
 		return "aws-shared-profile"
 	}
+	if s.B2KeyID != "" || s.B2AppKey != "" || s.B2KeyIDSecret != "" || s.B2AppKeySecret != "" {
+		return "b2-keys"
+	}
 	if s.StoreSFTPPassword != "" || s.StoreSFTPKey != "" || s.StoreSFTPPasswordSecret != "" || s.StoreSFTPKeySecret != "" {
 		return "sftp"
 	}

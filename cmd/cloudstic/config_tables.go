@@ -345,6 +345,8 @@ func secretDisplayRows(s cloudstic.ProfileStore) []table.Row {
 	}
 	appendRow("S3 Access Key Secret", s.S3AccessKeySecret, false)
 	appendRow("S3 Secret Key Secret", s.S3SecretKeySecret, false)
+	appendRow("B2 Key ID Secret", s.B2KeyIDSecret, false)
+	appendRow("B2 App Key Secret", s.B2AppKeySecret, false)
 	appendRow("SFTP Password Secret", s.StoreSFTPPasswordSecret, false)
 	appendRow("SFTP Key Secret", s.StoreSFTPKeySecret, false)
 	appendRow("Password Secret", s.PasswordSecret, false)

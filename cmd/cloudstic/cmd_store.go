@@ -79,6 +79,8 @@ type storeNewArgs struct {
 	s3Region, s3Profile, s3Endpoint                        string
 	s3AccessKey, s3SecretKey                               string
 	s3AccessKeySecret, s3SecretKeySecret                   string
+	b2KeyID, b2AppKey                                      string
+	b2KeyIDSecret, b2AppKeySecret                          string
 	sftpPassword, sftpKey                                  string
 	sftpPasswordSecret, sftpKeySecret                      string
 	passwordSecret, encryptionKeySecret, recoveryKeySecret string
@@ -98,6 +100,10 @@ func declareStoreNewArgs(g *globalFlags) (*storeNewArgs, commandInput) {
 		stringFlag(&a.s3SecretKey, "s3-secret-key", "", "S3 static secret key", withPlaceholder("<secret>"), asSecret()),
 		stringFlag(&a.s3AccessKeySecret, "s3-access-key-secret", "", "Secret reference for S3 access key (e.g. env://..., keychain://...)", withPlaceholder("<ref>")),
 		stringFlag(&a.s3SecretKeySecret, "s3-secret-key-secret", "", "Secret reference for S3 secret key (e.g. env://..., keychain://...)", withPlaceholder("<ref>")),
+		stringFlag(&a.b2KeyID, "b2-key-id", "", "Backblaze B2 application key ID", withPlaceholder("<key-id>"), asSecret()),
+		stringFlag(&a.b2AppKey, "b2-app-key", "", "Backblaze B2 application key", withPlaceholder("<key>"), asSecret()),
+		stringFlag(&a.b2KeyIDSecret, "b2-key-id-secret", "", "Secret reference for B2 key ID (e.g. env://..., keychain://...)", withPlaceholder("<ref>")),
+		stringFlag(&a.b2AppKeySecret, "b2-app-key-secret", "", "Secret reference for B2 application key (e.g. env://..., keychain://...)", withPlaceholder("<ref>")),
 		stringFlag(&a.sftpPassword, "store-sftp-password", "", "SFTP password", withPlaceholder("<pass>"), asSecret()),
 		stringFlag(&a.sftpKey, "store-sftp-key", "", "Path to SFTP private key", withPlaceholder("<path>"), withCompleter("_files")),
 		stringFlag(&a.sftpPasswordSecret, "store-sftp-password-secret", "", "Secret reference for SFTP password (e.g. env://..., keychain://...)", withPlaceholder("<ref>")),
@@ -116,6 +122,8 @@ func (a *storeNewArgs) flagPtrs() storeNewFlagPtrs {
 		uri: &a.uri, s3Region: &a.s3Region, s3Profile: &a.s3Profile, s3Endpoint: &a.s3Endpoint,
 		s3AccessKey: &a.s3AccessKey, s3SecretKey: &a.s3SecretKey,
 		s3AccessKeySecret: &a.s3AccessKeySecret, s3SecretKeySecret: &a.s3SecretKeySecret,
+		b2KeyID: &a.b2KeyID, b2AppKey: &a.b2AppKey,
+		b2KeyIDSecret: &a.b2KeyIDSecret, b2AppKeySecret: &a.b2AppKeySecret,
 		sftpPassword: &a.sftpPassword, sftpKey: &a.sftpKey,
 		sftpPasswordSecret: &a.sftpPasswordSecret, sftpKeySecret: &a.sftpKeySecret,
 		passwordSecret: &a.passwordSecret, encryptionKeySecret: &a.encryptionKeySecret,

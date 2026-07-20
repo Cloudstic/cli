@@ -41,7 +41,7 @@ func TestRunBackupInterruptedJSON(t *testing.T) {
 	r.out, r.errOut = &out, &errOut
 	r.client = &stubClient{backupErr: fmt.Errorf("chunking file: %w", context.Canceled)}
 
-	if code := runBackup(r, context.Background()); code != exitInterrupted {
+	if code := backupCommand().execute(r, context.Background(), "backup"); code != exitInterrupted {
 		t.Fatalf("runBackup() exit code = %d, want %d", code, exitInterrupted)
 	}
 	if out.Len() != 0 {
@@ -55,7 +55,7 @@ func TestRunBackupParseErrorJSON(t *testing.T) {
 	r := newRunner([]string{"-json", "-unknown"})
 	r.out, r.errOut = &out, &errOut
 
-	if code := runBackup(r, context.Background()); code != exitFailure {
+	if code := backupCommand().execute(r, context.Background(), "backup"); code != exitFailure {
 		t.Fatalf("runBackup() exit code = %d, want %d", code, exitFailure)
 	}
 	if out.Len() != 0 {

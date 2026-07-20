@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"os"
@@ -74,8 +75,9 @@ func TestRunCompletionQuery_WritesCandidates(t *testing.T) {
 	defer func() { _ = r.Close() }()
 	defer func() { _ = w.Close() }()
 
-	queryRunner := &runner{args: []string{"profile-names", "", "backup"}, out: w}
-	if code := runCompletionQuery(queryRunner, context.Background()); code != 0 {
+	queryRunner := &runner{out: w}
+	queryArgs := &completionQueryArgs{values: []string{"profile-names", "", "backup"}}
+	if code := runCompletionQuery(queryRunner, context.Background(), queryArgs); code != 0 {
 		t.Fatalf("runCompletionQuery code = %d, want 0", code)
 	}
 	_ = w.Close()
@@ -86,5 +88,29 @@ func TestRunCompletionQuery_WritesCandidates(t *testing.T) {
 	}
 	if string(data) != "work\n" {
 		t.Fatalf("stdout = %q, want %q", string(data), "work\n")
+	}
+}
+
+func TestCompleteCommand_AcceptsForwardedFlags(t *testing.T) {
+	oldLoad := completionLoadProfilesFile
+	completionLoadProfilesFile = func(string) (*cloudstic.ProfilesConfig, error) {
+		return &cloudstic.ProfilesConfig{
+			Version:  1,
+			Profiles: map[string]cloudstic.BackupProfile{"work": {}},
+		}, nil
+	}
+	t.Cleanup(func() { completionLoadProfilesFile = oldLoad })
+
+	var out bytes.Buffer
+	r := &runner{
+		args:   []string{"--", "profile-names", "", "backup", "-profile"},
+		out:    &out,
+		errOut: io.Discard,
+	}
+	if code := completeCommand().execute(r, context.Background(), "__complete"); code != 0 {
+		t.Fatalf("completeCommand() exit code = %d, want 0", code)
+	}
+	if got, want := out.String(), "work\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }

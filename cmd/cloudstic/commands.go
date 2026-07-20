@@ -86,7 +86,7 @@ func flagNamesOf(c command) []string {
 	if c.flags == nil {
 		return nil
 	}
-	return flagNames(c.flags().set)
+	return c.flags().names()
 }
 
 // ownSpecsOf returns a command's own flag specifications, excluding the global
@@ -95,7 +95,7 @@ func ownSpecsOf(c command) []flagSpec {
 	if c.flags == nil {
 		return nil
 	}
-	return c.flags().own
+	return c.flags().ownSpecs()
 }
 
 // flagNames returns the flag names declared by fs, in lexical order.

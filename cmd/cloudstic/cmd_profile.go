@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,32 +28,15 @@ type profileShowArgs struct {
 	name         string
 }
 
-func parseProfileShowArgs(args []string) (*profileShowArgs, error) {
-	fs := flag.NewFlagSet("profile show", flag.ContinueOnError)
+func declareProfileShowArgs(_ *globalFlags) (*profileShowArgs, commandInput) {
 	a := &profileShowArgs{}
-	defaultPath, err := defaultProfilesPath()
-	if err != nil {
-		defaultPath = defaultProfilesFilename
+	return a, commandInput{
+		flags:       []flagSpec{profilesFileFlag(&a.profilesFile)},
+		positionals: []positionalSpec{optionalPositional(&a.name, "profile name", "", "_cloudstic_profile_names")},
 	}
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultPath), "Path to profiles YAML file")
-	if err := parseFlags(boundFlagSet{set: fs}, args); err != nil {
-		return nil, err
-	}
-	a.profilesFile = *profilesFile
-	if fs.NArg() > 1 {
-		return nil, fmt.Errorf("usage: cloudstic profile show [-profiles-file <path>] <name>")
-	}
-	if fs.NArg() == 1 {
-		a.name = fs.Arg(0)
-	}
-	return a, nil
 }
 
-func runProfileShow(r *runner, ctx context.Context) int {
-	a, err := parseProfileShowArgs(r.args)
-	if err != nil {
-		return r.parseError(err)
-	}
+func runProfileShow(r *runner, ctx context.Context, a *profileShowArgs) int {
 	cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
@@ -95,26 +77,12 @@ type profileListArgs struct {
 	profilesFile string
 }
 
-func parseProfileListArgs(args []string) (*profileListArgs, error) {
-	fs := flag.NewFlagSet("profile list", flag.ContinueOnError)
+func declareProfileListArgs(_ *globalFlags) (*profileListArgs, commandInput) {
 	a := &profileListArgs{}
-	defaultPath, err := defaultProfilesPath()
-	if err != nil {
-		defaultPath = defaultProfilesFilename
-	}
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultPath), "Path to profiles YAML file")
-	if err := parseFlags(boundFlagSet{set: fs}, args); err != nil {
-		return nil, err
-	}
-	a.profilesFile = *profilesFile
-	return a, nil
+	return a, commandInput{flags: []flagSpec{profilesFileFlag(&a.profilesFile)}}
 }
 
-func runProfileList(r *runner, ctx context.Context) int {
-	a, err := parseProfileListArgs(r.args)
-	if err != nil {
-		return r.parseError(err)
-	}
+func runProfileList(r *runner, ctx context.Context, a *profileListArgs) int {
 	cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -133,6 +101,7 @@ func runProfileList(r *runner, ctx context.Context) int {
 }
 
 type profileNewArgs struct {
+	*globalFlags
 	profilesFile      string
 	name              string
 	source            string
@@ -153,70 +122,35 @@ type profileNewArgs struct {
 	onedriveClientID  string
 	onedriveTokenFile string
 	onedriveTokenRef  string
-	flagsSet          map[string]bool
 }
 
-func parseProfileNewArgs(args []string) (*profileNewArgs, error) {
-	fs := flag.NewFlagSet("profile new", flag.ContinueOnError)
-	a := &profileNewArgs{}
-	defaultPath, err := defaultProfilesPath()
-	if err != nil {
-		defaultPath = defaultProfilesFilename
-	}
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultPath), "Path to profiles YAML file")
-	name := fs.String("name", "", "Profile name")
-	source := fs.String("source", "", "Source URI")
-	storeRef := fs.String("store-ref", "", "Store reference name from top-level stores map")
-	store := fs.String("store", "", "Store URI to create/update under -store-ref")
-	authRef := fs.String("auth-ref", "", "Auth reference name from top-level auth map")
-	excludeFile := fs.String("exclude-file", "", "Path to file with exclude patterns")
-	ignoreEmpty := fs.Bool("ignore-empty-snapshot", false, "Skip creating a new snapshot when nothing changed")
-	skipNativeFiles := fs.Bool("skip-native-files", false, "Exclude Google-native files (Docs, Sheets, Slides, etc.)")
-	volumeUUID := fs.String("volume-uuid", "", "Override volume UUID for local source")
-	googleCreds := fs.String("google-credentials", "", "Path to Google service account credentials JSON file")
-	googleCredsRef := fs.String("google-credentials-ref", "", "Secret reference to Google service account credentials JSON")
-	googleCredsJSON := fs.String("google-credentials-json", "", "Inline Google credentials JSON")
-	googleTokenFile := fs.String("google-token-file", "", "Path to Google OAuth token file")
-	googleTokenRef := fs.String("google-token-ref", "", "Secret reference to Google OAuth token")
-	onedriveClientID := fs.String("onedrive-client-id", "", "OneDrive OAuth client ID")
-	onedriveTokenFile := fs.String("onedrive-token-file", "", "Path to OneDrive OAuth token file")
-	onedriveTokenRef := fs.String("onedrive-token-ref", "", "Secret reference to OneDrive OAuth token")
-	fs.Var(&a.tags, "tag", "Tag to apply to snapshots (repeatable)")
-	fs.Var(&a.excludes, "exclude", "Exclude pattern (repeatable)")
-	if err := parseFlags(boundFlagSet{set: fs}, args); err != nil {
-		return nil, err
-	}
-
-	a.flagsSet = map[string]bool{}
-	fs.Visit(func(f *flag.Flag) { a.flagsSet[f.Name] = true })
-
-	a.profilesFile = *profilesFile
-	a.name = *name
-	a.source = *source
-	a.storeRef = *storeRef
-	a.store = *store
-	a.authRef = *authRef
-	a.excludeFile = *excludeFile
-	a.ignoreEmpty = *ignoreEmpty
-	a.skipNativeFiles = *skipNativeFiles
-	a.volumeUUID = *volumeUUID
-	a.googleCreds = *googleCreds
-	a.googleCredsRef = *googleCredsRef
-	a.googleCredsJSON = *googleCredsJSON
-	a.googleTokenFile = *googleTokenFile
-	a.googleTokenRef = *googleTokenRef
-	a.onedriveClientID = *onedriveClientID
-	a.onedriveTokenFile = *onedriveTokenFile
-	a.onedriveTokenRef = *onedriveTokenRef
-
-	return a, nil
+func declareProfileNewArgs(g *globalFlags) (*profileNewArgs, commandInput) {
+	a := &profileNewArgs{globalFlags: g}
+	return a, commandInput{flags: []flagSpec{
+		profilesFileFlag(&a.profilesFile),
+		stringFlag(&a.name, "name", "", "Profile name", withPlaceholder("<name>")),
+		stringFlag(&a.source, "source", "", "Source URI", withPlaceholder("<uri>"), withCompleter("_cloudstic_source_prefixes")),
+		stringFlag(&a.storeRef, "store-ref", "", "Store reference name from top-level stores map", withPlaceholder("<name>")),
+		stringFlag(&a.store, "store", "", "Store URI to create/update under -store-ref", withPlaceholder("<uri>"), withCompleter("_cloudstic_store_prefixes")),
+		stringFlag(&a.authRef, "auth-ref", "", "Auth reference name from top-level auth map", withPlaceholder("<name>"), withCompleter("_cloudstic_auth_names")),
+		valueFlag(&a.tags, "tag", "Tag to apply to snapshots (repeatable)", withPlaceholder("<tag>"), asRepeatable()),
+		valueFlag(&a.excludes, "exclude", "Exclude pattern (repeatable)", withPlaceholder("<pattern>"), asRepeatable()),
+		stringFlag(&a.excludeFile, "exclude-file", "", "Path to file with exclude patterns", withPlaceholder("<path>"), withCompleter("_files")),
+		boolFlag(&a.ignoreEmpty, "ignore-empty-snapshot", false, "Skip creating a new snapshot when nothing changed"),
+		boolFlag(&a.skipNativeFiles, "skip-native-files", false, "Exclude Google-native files (Docs, Sheets, Slides, etc.)"),
+		stringFlag(&a.volumeUUID, "volume-uuid", "", "Override volume UUID for local source", withPlaceholder("<uuid>")),
+		stringFlag(&a.googleCreds, "google-credentials", "", "Path to Google service account credentials JSON file", withPlaceholder("<path>"), withCompleter("_files")),
+		stringFlag(&a.googleCredsRef, "google-credentials-ref", "", "Secret reference to Google service account credentials JSON", withPlaceholder("<ref>")),
+		stringFlag(&a.googleCredsJSON, "google-credentials-json", "", "Inline Google credentials JSON", withPlaceholder("<json>"), asSecret()),
+		stringFlag(&a.googleTokenFile, "google-token-file", "", "Path to Google OAuth token file", withPlaceholder("<path>"), withCompleter("_files")),
+		stringFlag(&a.googleTokenRef, "google-token-ref", "", "Secret reference to Google OAuth token", withPlaceholder("<ref>")),
+		stringFlag(&a.onedriveClientID, "onedrive-client-id", "", "OneDrive OAuth client ID", withPlaceholder("<id>")),
+		stringFlag(&a.onedriveTokenFile, "onedrive-token-file", "", "Path to OneDrive OAuth token file", withPlaceholder("<path>"), withCompleter("_files")),
+		stringFlag(&a.onedriveTokenRef, "onedrive-token-ref", "", "Secret reference to OneDrive OAuth token", withPlaceholder("<ref>")),
+	}}
 }
 
-func runProfileNew(r *runner, ctx context.Context) int {
-	a, err := parseProfileNewArgs(r.args)
-	if err != nil {
-		return r.parseError(err)
-	}
+func runProfileNew(r *runner, ctx context.Context, a *profileNewArgs) int {
 	if a.name == "" {
 		if r.canPrompt() {
 			v, err := r.promptValidatedLine(ctx, "Profile name", "", func(v string) error {
@@ -506,46 +440,46 @@ func (r *runner) promptAuthSelection(ctx context.Context, cfg *cloudstic.Profile
 }
 
 func prefillProfileArgs(a *profileNewArgs, p cloudstic.BackupProfile) {
-	if !a.flagsSet["source"] && p.Source != "" {
+	if !a.flagProvided("source") && p.Source != "" {
 		a.source = p.Source
 	}
-	if !a.flagsSet["store-ref"] && p.Store != "" {
+	if !a.flagProvided("store-ref") && p.Store != "" {
 		a.storeRef = p.Store
 	}
-	if !a.flagsSet["auth-ref"] && p.AuthRef != "" {
+	if !a.flagProvided("auth-ref") && p.AuthRef != "" {
 		a.authRef = p.AuthRef
 	}
-	if !a.flagsSet["exclude-file"] && p.ExcludeFile != "" {
+	if !a.flagProvided("exclude-file") && p.ExcludeFile != "" {
 		a.excludeFile = p.ExcludeFile
 	}
-	if !a.flagsSet["skip-native-files"] && p.SkipNativeFiles {
+	if !a.flagProvided("skip-native-files") && p.SkipNativeFiles {
 		a.skipNativeFiles = true
 	}
-	if !a.flagsSet["volume-uuid"] && p.VolumeUUID != "" {
+	if !a.flagProvided("volume-uuid") && p.VolumeUUID != "" {
 		a.volumeUUID = p.VolumeUUID
 	}
-	if !a.flagsSet["google-credentials"] && p.GoogleCreds != "" {
+	if !a.flagProvided("google-credentials") && p.GoogleCreds != "" {
 		a.googleCreds = p.GoogleCreds
 	}
-	if !a.flagsSet["google-credentials-ref"] && p.GoogleCredsRef != "" {
+	if !a.flagProvided("google-credentials-ref") && p.GoogleCredsRef != "" {
 		a.googleCredsRef = p.GoogleCredsRef
 	}
-	if !a.flagsSet["google-credentials-json"] && p.GoogleCredsJSON != "" {
+	if !a.flagProvided("google-credentials-json") && p.GoogleCredsJSON != "" {
 		a.googleCredsJSON = p.GoogleCredsJSON
 	}
-	if !a.flagsSet["google-token-file"] && p.GoogleTokenFile != "" {
+	if !a.flagProvided("google-token-file") && p.GoogleTokenFile != "" {
 		a.googleTokenFile = p.GoogleTokenFile
 	}
-	if !a.flagsSet["google-token-ref"] && p.GoogleTokenRef != "" {
+	if !a.flagProvided("google-token-ref") && p.GoogleTokenRef != "" {
 		a.googleTokenRef = p.GoogleTokenRef
 	}
-	if !a.flagsSet["onedrive-client-id"] && p.OneDriveClientID != "" {
+	if !a.flagProvided("onedrive-client-id") && p.OneDriveClientID != "" {
 		a.onedriveClientID = p.OneDriveClientID
 	}
-	if !a.flagsSet["onedrive-token-file"] && p.OneDriveTokenFile != "" {
+	if !a.flagProvided("onedrive-token-file") && p.OneDriveTokenFile != "" {
 		a.onedriveTokenFile = p.OneDriveTokenFile
 	}
-	if !a.flagsSet["onedrive-token-ref"] && p.OneDriveTokenRef != "" {
+	if !a.flagProvided("onedrive-token-ref") && p.OneDriveTokenRef != "" {
 		a.onedriveTokenRef = p.OneDriveTokenRef
 	}
 	if len(a.tags) == 0 && len(p.Tags) > 0 {
@@ -574,8 +508,8 @@ func profileProviderFromSource(sourceURI string) string {
 // profileCommand declares the `profile` command group.
 func profileCommand() command {
 	return group("profile", "Manage backup profiles",
-		leaf("new", "Create or update a backup profile in profiles.yaml", runProfileNew),
-		leaf("list", "List stores, auth entries, and backup profiles", runProfileList),
-		leaf("show", "Show one profile and resolved store/auth references", runProfileShow),
+		leaf("new", "Create or update a backup profile in profiles.yaml", nil, declareProfileNewArgs, runProfileNew),
+		leaf("list", "List stores, auth entries, and backup profiles", nil, declareProfileListArgs, runProfileList),
+		leaf("show", "Show one profile and resolved store/auth references", nil, declareProfileShowArgs, runProfileShow),
 	)
 }

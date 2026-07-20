@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -11,14 +10,15 @@ import (
 	cloudstic "github.com/cloudstic/cli"
 )
 
-func runAuthList(r *runner, ctx context.Context) int {
-	fs := flag.NewFlagSet("auth list", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
-	if err := parseFlags(boundFlagSet{set: fs}, r.args); err != nil {
-		return r.parseError(err)
-	}
+type authListArgs struct{ profilesFile string }
 
-	cfg, err := cloudstic.LoadProfilesFile(*profilesFile)
+func declareAuthListArgs(_ *globalFlags) (*authListArgs, commandInput) {
+	a := &authListArgs{}
+	return a, commandInput{flags: []flagSpec{profilesFileFlag(&a.profilesFile)}}
+}
+
+func runAuthList(r *runner, ctx context.Context, a *authListArgs) int {
+	cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return 0
@@ -30,25 +30,25 @@ func runAuthList(r *runner, ctx context.Context) int {
 	return 0
 }
 
-func runAuthShow(r *runner, ctx context.Context) int {
-	fs := flag.NewFlagSet("auth show", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
-	if err := parseFlags(boundFlagSet{set: fs}, r.args); err != nil {
-		return r.parseError(err)
-	}
-	if fs.NArg() > 1 {
-		return r.fail("usage: cloudstic auth show [-profiles-file <path>] <name>")
-	}
-	name := ""
-	if fs.NArg() == 1 {
-		name = fs.Arg(0)
-	}
+type authShowArgs struct {
+	profilesFile string
+	name         string
+}
 
-	cfg, err := cloudstic.LoadProfilesFile(*profilesFile)
+func declareAuthShowArgs(_ *globalFlags) (*authShowArgs, commandInput) {
+	a := &authShowArgs{}
+	return a, commandInput{
+		flags:       []flagSpec{profilesFileFlag(&a.profilesFile)},
+		positionals: []positionalSpec{optionalPositional(&a.name, "auth name", "", "_cloudstic_auth_names")},
+	}
+}
+
+func runAuthShow(r *runner, ctx context.Context, a *authShowArgs) int {
+	cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
 	}
-	if name == "" {
+	if a.name == "" {
 		if !r.canPrompt() {
 			return r.fail("usage: cloudstic auth show [-profiles-file <path>] <name>")
 		}
@@ -57,34 +57,48 @@ func runAuthShow(r *runner, ctx context.Context) int {
 		if pickErr != nil {
 			return r.fail("Failed to select auth entry: %v", pickErr)
 		}
-		name = picked
+		a.name = picked
 	}
 
-	auth, ok := cfg.Auth[name]
+	auth, ok := cfg.Auth[a.name]
 	if !ok {
-		return r.fail("Unknown auth %q", name)
+		return r.fail("Unknown auth %q", a.name)
 	}
-	renderAuthShow(r.out, cfg, name, auth)
+	renderAuthShow(r.out, cfg, a.name, auth)
 	return 0
 }
 
-func runAuthNew(r *runner, ctx context.Context) int {
-	fs := flag.NewFlagSet("auth new", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
-	name := fs.String("name", "", "Auth reference name")
-	provider := fs.String("provider", "", "Auth provider: google|onedrive")
-	googleCreds := fs.String("google-credentials", "", "Path to Google service account credentials JSON file")
-	googleCredsRef := fs.String("google-credentials-ref", "", "Secret reference to Google service account credentials JSON")
-	googleTokenFile := fs.String("google-token-file", "", "Path to Google OAuth token file")
-	googleTokenRef := fs.String("google-token-ref", "", "Secret reference to Google OAuth token")
-	onedriveClientID := fs.String("onedrive-client-id", "", "OneDrive OAuth client ID")
-	onedriveTokenFile := fs.String("onedrive-token-file", "", "Path to OneDrive OAuth token file")
-	onedriveTokenRef := fs.String("onedrive-token-ref", "", "Secret reference to OneDrive OAuth token")
-	if err := parseFlags(boundFlagSet{set: fs}, r.args); err != nil {
-		return r.parseError(err)
-	}
+type authNewArgs struct {
+	profilesFile      string
+	name              string
+	provider          string
+	googleCreds       string
+	googleCredsRef    string
+	googleTokenFile   string
+	googleTokenRef    string
+	onedriveClientID  string
+	onedriveTokenFile string
+	onedriveTokenRef  string
+}
 
-	if *name == "" {
+func declareAuthNewArgs(_ *globalFlags) (*authNewArgs, commandInput) {
+	a := &authNewArgs{}
+	return a, commandInput{flags: []flagSpec{
+		profilesFileFlag(&a.profilesFile),
+		stringFlag(&a.name, "name", "", "Auth reference name", withPlaceholder("<name>")),
+		stringFlag(&a.provider, "provider", "", "Auth provider: google|onedrive", withPlaceholder("<google|onedrive>")),
+		stringFlag(&a.googleCreds, "google-credentials", "", "Path to Google service account credentials JSON file", withPlaceholder("<path>"), withCompleter("_files")),
+		stringFlag(&a.googleCredsRef, "google-credentials-ref", "", "Secret reference to Google service account credentials JSON", withPlaceholder("<ref>")),
+		stringFlag(&a.googleTokenFile, "google-token-file", "", "Path to Google OAuth token file", withPlaceholder("<path>"), withCompleter("_files")),
+		stringFlag(&a.googleTokenRef, "google-token-ref", "", "Secret reference to Google OAuth token", withPlaceholder("<ref>")),
+		stringFlag(&a.onedriveClientID, "onedrive-client-id", "", "OneDrive OAuth client ID", withPlaceholder("<id>")),
+		stringFlag(&a.onedriveTokenFile, "onedrive-token-file", "", "Path to OneDrive OAuth token file", withPlaceholder("<path>"), withCompleter("_files")),
+		stringFlag(&a.onedriveTokenRef, "onedrive-token-ref", "", "Secret reference to OneDrive OAuth token", withPlaceholder("<ref>")),
+	}}
+}
+
+func runAuthNew(r *runner, ctx context.Context, a *authNewArgs) int {
+	if a.name == "" {
 		if r.canPrompt() {
 			v, err := r.promptValidatedLine(ctx, "Auth reference name", "", func(v string) error {
 				if v == "" {
@@ -95,102 +109,111 @@ func runAuthNew(r *runner, ctx context.Context) int {
 			if err != nil {
 				return r.fail("Failed to read auth reference name: %v", err)
 			}
-			*name = v
+			a.name = v
 		}
-		if *name == "" {
+		if a.name == "" {
 			return r.fail("-name is required")
 		}
 	}
-	if err := validateRefName("auth", *name); err != nil {
+	if err := validateRefName("auth", a.name); err != nil {
 		return r.fail("%v", err)
 	}
-	if *provider != "google" && *provider != "onedrive" {
+	if a.provider != "google" && a.provider != "onedrive" {
 		if r.canPrompt() {
 			picked, err := r.promptSelect(ctx, "Select auth provider", []string{"google", "onedrive"})
 			if err != nil {
 				return r.fail("Failed to read auth provider: %v", err)
 			}
-			*provider = picked
+			a.provider = picked
 		}
-		if *provider != "google" && *provider != "onedrive" {
+		if a.provider != "google" && a.provider != "onedrive" {
 			return r.fail("-provider must be 'google' or 'onedrive'")
 		}
 	}
 
-	auth := cloudstic.ProfileAuth{Provider: *provider}
-	if *provider == "google" {
-		if *googleTokenFile == "" && *googleTokenRef == "" {
-			def := defaultAuthTokenRef("google", *name)
+	auth := cloudstic.ProfileAuth{Provider: a.provider}
+	if a.provider == "google" {
+		if a.googleTokenFile == "" && a.googleTokenRef == "" {
+			def := defaultAuthTokenRef("google", a.name)
 			if r.canPrompt() {
 				v, err := r.promptLine(ctx, "Google token storage (file path or secret ref)", def)
 				if err != nil {
 					return r.fail("Failed to read google token storage: %v", err)
 				}
 				if strings.Contains(v, "://") {
-					*googleTokenRef = v
+					a.googleTokenRef = v
 				} else {
-					*googleTokenFile = v
+					a.googleTokenFile = v
 				}
 			}
-			if *googleTokenFile == "" && *googleTokenRef == "" {
-				*googleTokenRef = def
+			if a.googleTokenFile == "" && a.googleTokenRef == "" {
+				a.googleTokenRef = def
 			}
 		}
-		auth.GoogleCreds = *googleCreds
-		auth.GoogleCredsRef = *googleCredsRef
-		auth.GoogleTokenFile = *googleTokenFile
-		auth.GoogleTokenRef = *googleTokenRef
+		auth.GoogleCreds = a.googleCreds
+		auth.GoogleCredsRef = a.googleCredsRef
+		auth.GoogleTokenFile = a.googleTokenFile
+		auth.GoogleTokenRef = a.googleTokenRef
 	}
-	if *provider == "onedrive" {
-		if *onedriveTokenFile == "" && *onedriveTokenRef == "" {
-			def := defaultAuthTokenRef("onedrive", *name)
+	if a.provider == "onedrive" {
+		if a.onedriveTokenFile == "" && a.onedriveTokenRef == "" {
+			def := defaultAuthTokenRef("onedrive", a.name)
 			if r.canPrompt() {
 				v, err := r.promptLine(ctx, "OneDrive token storage (file path or secret ref)", def)
 				if err != nil {
 					return r.fail("Failed to read onedrive token storage: %v", err)
 				}
 				if strings.Contains(v, "://") {
-					*onedriveTokenRef = v
+					a.onedriveTokenRef = v
 				} else {
-					*onedriveTokenFile = v
+					a.onedriveTokenFile = v
 				}
 			}
-			if *onedriveTokenFile == "" && *onedriveTokenRef == "" {
-				*onedriveTokenRef = def
+			if a.onedriveTokenFile == "" && a.onedriveTokenRef == "" {
+				a.onedriveTokenRef = def
 			}
 		}
-		auth.OneDriveClientID = *onedriveClientID
-		auth.OneDriveTokenFile = *onedriveTokenFile
-		auth.OneDriveTokenRef = *onedriveTokenRef
+		auth.OneDriveClientID = a.onedriveClientID
+		auth.OneDriveTokenFile = a.onedriveTokenFile
+		auth.OneDriveTokenRef = a.onedriveTokenRef
 	}
 
-	cfg, err := loadProfilesOrInit(*profilesFile)
+	cfg, err := loadProfilesOrInit(a.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
 	}
 	ensureProfilesMaps(cfg)
-	cfg.Auth[*name] = auth
+	cfg.Auth[a.name] = auth
 
-	if err := cloudstic.SaveProfilesFile(*profilesFile, cfg); err != nil {
+	if err := cloudstic.SaveProfilesFile(a.profilesFile, cfg); err != nil {
 		return r.fail("Failed to save profiles: %v", err)
 	}
-	_, _ = fmt.Fprintf(r.out, "Auth %q saved in %s\n", *name, *profilesFile)
+	_, _ = fmt.Fprintf(r.out, "Auth %q saved in %s\n", a.name, a.profilesFile)
 	return 0
 }
 
-func runAuthLogin(r *runner, ctx context.Context) int {
-	fs := flag.NewFlagSet("auth login", flag.ContinueOnError)
-	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
-	name := fs.String("name", "", "Auth reference name")
-	if err := parseFlags(boundFlagSet{set: fs}, r.args); err != nil {
-		return r.parseError(err)
-	}
+type authLoginArgs struct {
+	profilesFile string
+	name         string
+}
 
-	cfg, err := cloudstic.LoadProfilesFile(*profilesFile)
+func declareAuthLoginArgs(_ *globalFlags) (*authLoginArgs, commandInput) {
+	a := &authLoginArgs{}
+	return a, commandInput{
+		flags: []flagSpec{
+			profilesFileFlag(&a.profilesFile),
+			stringFlag(&a.name, "name", "", "Auth reference name", withPlaceholder("<name>"), withCompleter("_cloudstic_auth_names")),
+		},
+		positionals: []positionalSpec{optionalPositional(&a.name, "auth name", "", "_cloudstic_auth_names")},
+	}
+}
+
+func runAuthLogin(r *runner, ctx context.Context, a *authLoginArgs) int {
+	cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
 	}
-	if *name == "" {
+	if a.name == "" {
 		if !r.canPrompt() {
 			return r.fail("usage: cloudstic auth login [-profiles-file <path>] <name>")
 		}
@@ -199,12 +222,12 @@ func runAuthLogin(r *runner, ctx context.Context) int {
 		if pickErr != nil {
 			return r.fail("Failed to select auth entry: %v", pickErr)
 		}
-		*name = picked
+		a.name = picked
 	}
 
-	auth, ok := cfg.Auth[*name]
+	auth, ok := cfg.Auth[a.name]
 	if !ok {
-		return r.fail("Unknown auth %q", *name)
+		return r.fail("Unknown auth %q", a.name)
 	}
 
 	src, err := initSource(ctx, initSourceOptions{
@@ -238,9 +261,9 @@ func defaultAuthTokenRef(provider, name string) string {
 // authCommand declares the `auth` command group.
 func authCommand() command {
 	return group("auth", "Manage reusable cloud auth entries",
-		leaf("new", "Create or update a reusable cloud auth entry", runAuthNew),
-		leaf("list", "List auth entries from profiles.yaml", runAuthList),
-		leaf("show", "Show one auth entry", runAuthShow),
-		leaf("login", "Run OAuth login flow for one auth entry", runAuthLogin),
+		leaf("new", "Create or update a reusable cloud auth entry", nil, declareAuthNewArgs, runAuthNew),
+		leaf("list", "List auth entries from profiles.yaml", nil, declareAuthListArgs, runAuthList),
+		leaf("show", "Show one auth entry", nil, declareAuthShowArgs, runAuthShow),
+		leaf("login", "Run OAuth login flow for one auth entry", nil, declareAuthLoginArgs, runAuthLogin),
 	)
 }

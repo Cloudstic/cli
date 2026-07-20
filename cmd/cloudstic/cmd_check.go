@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 
@@ -10,45 +9,23 @@ import (
 )
 
 type checkArgs struct {
-	g           *globalFlags
+	*globalFlags
 	readData    bool
 	snapshotRef string
 }
 
-func checkFlagSpecs(a *checkArgs) []flagSpec {
-	return []flagSpec{
-		boolFlag(&a.readData, "read-data", false, "Re-hash all chunk data for full byte-level verification"),
+func declareCheckArgs(g *globalFlags) (*checkArgs, commandInput) {
+	a := &checkArgs{globalFlags: g}
+	return a, commandInput{
+		flags: []flagSpec{
+			boolFlag(&a.readData, "read-data", false, "Re-hash all chunk data for full byte-level verification"),
+		},
+		positionals: []positionalSpec{optionalPositional(&a.snapshotRef, "snapshot ID", "latest")},
 	}
 }
 
-func newCheckFlagSet() (boundFlagSet, *checkArgs) {
-	fs := flag.NewFlagSet("check", flag.ContinueOnError)
-	a := &checkArgs{}
-	g, globalSpecs := addGlobalFlags(fs, repoCommandGroups)
-	a.g = g
-	own := checkFlagSpecs(a)
-	bindFlags(fs, own)
-	return boundFlagSet{set: fs, global: globalSpecs, own: own}, a
-}
-
-func parseCheckArgs(args []string) (*checkArgs, error) {
-	b, a := newCheckFlagSet()
-	if err := parseFlags(b, args); err != nil {
-		return nil, err
-	}
-	a.snapshotRef = b.set.Arg(0)
-	if a.snapshotRef == "" {
-		a.snapshotRef = "latest"
-	}
-	return a, nil
-}
-
-func runCheck(r *runner, ctx context.Context) int {
-	a, err := parseCheckArgs(r.args)
-	if err != nil {
-		return r.parseError(err)
-	}
-	if err := r.openClient(ctx, a.g); err != nil {
+func runCheck(r *runner, ctx context.Context, a *checkArgs) int {
+	if err := r.openClient(ctx, a.globalFlags); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 
@@ -58,7 +35,7 @@ func runCheck(r *runner, ctx context.Context) int {
 	if err != nil {
 		return r.fail("Check failed: %v", err)
 	}
-	if a.g.jsonEnabled() {
+	if a.jsonEnabled() {
 		if exit := r.writeJSON(result); exit != 0 {
 			return exit
 		}
@@ -78,7 +55,7 @@ func buildCheckOpts(a *checkArgs) []cloudstic.CheckOption {
 	if a.readData {
 		checkOpts = append(checkOpts, cloudstic.WithReadData())
 	}
-	if a.g.verbose {
+	if a.verbose {
 		checkOpts = append(checkOpts, cloudstic.WithCheckVerbose())
 	}
 	if a.snapshotRef != "" {
@@ -109,6 +86,5 @@ func printCheckResult(errOut io.Writer, result *cloudstic.CheckResult) bool {
 // checkCommand declares the `check` command.
 func checkCommand() command {
 	return leaf("check", "Verify repository integrity (reference chain, objects, data)",
-		runCheck, withFlags(func() boundFlagSet { b, _ := newCheckFlagSet(); return b }),
-		withPositional(":snapshot ID:"))
+		repoCommandGroups, declareCheckArgs, runCheck)
 }

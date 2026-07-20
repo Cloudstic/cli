@@ -9,8 +9,10 @@ import (
 func TestReorderArgs_PreservesTerminator(t *testing.T) {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	jsonOutput := fs.Bool("json", false, "")
+	var positional []string
 
-	if err := parseFlags(boundFlagSet{set: fs}, []string{"object", "-json", "--", "-no-prompt"}); err != nil {
+	cf := commandFlags{set: fs, positionals: []positionalSpec{remainingPositionals(&positional, "argument")}}
+	if err := cf.parse([]string{"object", "-json", "--", "-no-prompt"}); err != nil {
 		t.Fatalf("parseFlags() error = %v", err)
 	}
 	if !*jsonOutput {
@@ -22,7 +24,7 @@ func TestReorderArgs_PreservesTerminator(t *testing.T) {
 }
 
 func TestParseCatArgs_TerminatedFlagShapedKey(t *testing.T) {
-	args, err := parseCatArgs([]string{"--", "-weirdly-named-file"})
+	args, err := parseInto("cat", repoCommandGroups, declareCatArgs, []string{"--", "-weirdly-named-file"})
 	if err != nil {
 		t.Fatalf("parseCatArgs() error = %v", err)
 	}
@@ -32,13 +34,17 @@ func TestParseCatArgs_TerminatedFlagShapedKey(t *testing.T) {
 }
 
 func TestParseHelpers_ReturnErrors(t *testing.T) {
-	if _, err := parseCatArgs([]string{"-unknown"}); err == nil {
+	if _, err := parseInto("cat", repoCommandGroups, declareCatArgs, []string{"-unknown"}); err == nil {
 		t.Fatal("parseCatArgs() expected an unknown-flag error")
 	}
-	if _, err := parseDiffArgs([]string{"only-one-snapshot"}); err == nil {
+	if _, err := parseInto("diff", repoCommandGroups, declareDiffArgs, []string{"only-one-snapshot"}); err == nil {
 		t.Fatal("parseDiffArgs() expected a validation error")
 	}
-	if _, err := parseForgetArgs(nil); err == nil {
+	forget, err := parseInto("forget", repoCommandGroups, declareForgetArgs, nil)
+	if err != nil {
+		t.Fatalf("parse forget: %v", err)
+	}
+	if err := prepareForgetArgs(forget); err == nil {
 		t.Fatal("parseForgetArgs() expected a validation error")
 	}
 }
@@ -49,9 +55,12 @@ func TestGlobalFlagScans_StopAtTerminator(t *testing.T) {
 		t.Fatal("hasGlobalFlag() treated a positional argument as a flag")
 	}
 
-	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	g, _ := addGlobalFlags(fs, repoCommandGroups)
-	if err := parseFlags(boundFlagSet{set: fs}, []string{"--", "-store"}); err != nil {
+	g := &globalFlags{}
+	var positional []string
+	cf := newCommandFlags("test", repoCommandGroups, g, commandInput{
+		positionals: []positionalSpec{remainingPositionals(&positional, "argument")},
+	})
+	if err := cf.parse([]string{"--", "-store"}); err != nil {
 		t.Fatalf("parseFlags() error = %v", err)
 	}
 	if g.flagProvided("store") {
@@ -60,8 +69,8 @@ func TestGlobalFlagScans_StopAtTerminator(t *testing.T) {
 }
 
 func TestParseFlags_AcceptsNoPromptForNestedCommands(t *testing.T) {
-	fs := flag.NewFlagSet("nested", flag.ContinueOnError)
-	if err := parseFlags(boundFlagSet{set: fs}, []string{"-no-prompt"}); err != nil {
+	g := &globalFlags{}
+	if err := newCommandFlags("nested", nil, g, commandInput{}).parse([]string{"-no-prompt"}); err != nil {
 		t.Fatalf("parseFlags() error = %v", err)
 	}
 }

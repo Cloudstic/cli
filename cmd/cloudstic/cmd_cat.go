@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"flag"
 	"fmt"
 	"io"
 
@@ -13,66 +11,38 @@ import (
 )
 
 type catArgs struct {
-	g    *globalFlags
+	*globalFlags
 	keys []string
 	raw  bool
 }
 
-func catFlagSpecs(a *catArgs) []flagSpec {
-	return []flagSpec{
-		boolFlag(&a.raw, "raw", false, "Output raw, unformatted data (useful for hashing)"),
+func declareCatArgs(g *globalFlags) (*catArgs, commandInput) {
+	a := &catArgs{globalFlags: g}
+	return a, commandInput{
+		flags: []flagSpec{
+			boolFlag(&a.raw, "raw", false, "Output raw, unformatted data (useful for hashing)"),
+		},
+		positionals: []positionalSpec{requiredPositionals(&a.keys, "object key")},
 	}
 }
 
-func newCatFlagSet() (boundFlagSet, *catArgs) {
-	fs := flag.NewFlagSet("cat", flag.ContinueOnError)
-	a := &catArgs{}
-	g, globalSpecs := addGlobalFlags(fs, repoCommandGroups)
-	a.g = g
-	own := catFlagSpecs(a)
-	bindFlags(fs, own)
-	return boundFlagSet{set: fs, global: globalSpecs, own: own}, a
-}
-
-func parseCatArgs(args []string) (*catArgs, error) {
-	b, a := newCatFlagSet()
-	if err := parseFlags(b, args); err != nil {
-		return nil, err
-	}
-	if b.set.NArg() < 1 {
-		return nil, fmt.Errorf("at least one object key is required")
-	}
-	a.keys = b.set.Args()
-	return a, nil
-}
-
-func runCat(r *runner, ctx context.Context) int {
-	a, err := parseCatArgs(r.args)
-	if err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return 0
-		}
-		if !r.jsonEnabled() {
-			printCatUsage(r.errOut)
-		}
-		return r.parseError(err)
-	}
-	if err := r.openClient(ctx, a.g); err != nil {
+func runCat(r *runner, ctx context.Context, a *catArgs) int {
+	if err := r.openClient(ctx, a.globalFlags); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 
-	if a.g.jsonEnabled() && a.raw {
+	if a.jsonEnabled() && a.raw {
 		return r.failJSONFlagConflict("-json", "-raw")
 	}
 
-	quiet := a.g.quiet || a.g.jsonEnabled()
+	quiet := a.quiet || a.jsonEnabled()
 
 	results, err := r.client.Cat(ctx, a.keys...)
 	if err != nil {
 		return r.fail("Failed to fetch objects: %v", err)
 	}
 
-	if a.g.jsonEnabled() {
+	if a.jsonEnabled() {
 		return r.writeJSON(makeCatJSONResults(results))
 	}
 	printCatResult(r.out, r.errOut, results, quiet, a.raw)
@@ -118,6 +88,5 @@ func printCatResult(out io.Writer, errOut io.Writer, results []*cloudstic.CatRes
 // catCommand declares the `cat` command.
 func catCommand() command {
 	return leaf("cat", "Display raw JSON content of repository objects",
-		runCat, withFlags(func() boundFlagSet { b, _ := newCatFlagSet(); return b }),
-		withPositional("*:object key:"))
+		repoCommandGroups, declareCatArgs, runCat, withUsageOnError(printCatUsage))
 }

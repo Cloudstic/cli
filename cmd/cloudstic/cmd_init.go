@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -14,54 +13,33 @@ import (
 )
 
 type initArgs struct {
-	g            *globalFlags
+	*globalFlags
 	recovery     bool
 	noEncryption bool
 	adoptSlots   bool
 }
 
-func initFlagSpecs(a *initArgs) []flagSpec {
-	return []flagSpec{
+func declareInitArgs(g *globalFlags) (*initArgs, commandInput) {
+	a := &initArgs{globalFlags: g}
+	return a, commandInput{flags: []flagSpec{
 		boolFlag(&a.recovery, "add-recovery-key", false, "Generate a recovery key (24-word seed phrase) during init",
 			withShortUsage("Generate a 24-word recovery key")),
 		boolFlag(&a.noEncryption, "no-encryption", false, "Create an unencrypted repository (NOT recommended)"),
 		boolFlag(&a.adoptSlots, "adopt-slots", false, "Initialize by adopting existing key slots if found (prevents error if already has slots)"),
-	}
+	}}
 }
 
-func newInitFlagSet() (boundFlagSet, *initArgs) {
-	fs := flag.NewFlagSet("init", flag.ContinueOnError)
-	a := &initArgs{}
-	g, globalSpecs := addGlobalFlags(fs, repoCommandGroups)
-	a.g = g
-	own := initFlagSpecs(a)
-	bindFlags(fs, own)
-	return boundFlagSet{set: fs, global: globalSpecs, own: own}, a
-}
-
-func parseInitArgs(args []string) (*initArgs, error) {
-	b, a := newInitFlagSet()
-	if err := parseFlags(b, args); err != nil {
-		return nil, err
-	}
-	return a, nil
-}
-
-func runInit(r *runner, ctx context.Context) int {
-	a, err := parseInitArgs(r.args)
-	if err != nil {
-		return r.parseError(err)
-	}
+func runInit(r *runner, ctx context.Context, a *initArgs) int {
 	return runInitWithArgs(r, ctx, a)
 }
 
 func runInitWithArgs(r *runner, ctx context.Context, a *initArgs) int {
-	raw, err := a.g.openStore(ctx)
+	raw, err := a.openStore(ctx)
 	if err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 
-	kc, err := a.g.buildKeychain(ctx)
+	kc, err := a.buildKeychain(ctx)
 	if err != nil {
 		return r.fail("Failed to build keychain: %v", err)
 	}
@@ -73,8 +51,8 @@ func runInitWithArgs(r *runner, ctx context.Context, a *initArgs) int {
 			if err != nil {
 				return r.fail("Error: %v", err)
 			}
-			a.g.password = pw
-			kc, _ = a.g.buildKeychain(ctx)
+			a.password = pw
+			kc, _ = a.buildKeychain(ctx)
 		} else {
 			return r.fail("Error: encryption is required by default.\nProvide --password or --encryption-key to encrypt your repository.\nTo create an unencrypted repository, pass --no-encryption (not recommended).")
 		}
@@ -87,7 +65,7 @@ func runInitWithArgs(r *runner, ctx context.Context, a *initArgs) int {
 		return r.fail("Init failed: %v", err)
 	}
 
-	if a.g.jsonEnabled() {
+	if a.jsonEnabled() {
 		return r.writeJSON(result)
 	}
 	printInitResult(r.errOut, result)
@@ -147,5 +125,5 @@ func printRecoveryKey(errOut io.Writer, mnemonic string) {
 // initCommand declares the `init` command.
 func initCommand() command {
 	return leaf("init", "Initialize a new repository (must run before first backup)",
-		runInit, withFlags(func() boundFlagSet { b, _ := newInitFlagSet(); return b }))
+		repoCommandGroups, declareInitArgs, runInit)
 }

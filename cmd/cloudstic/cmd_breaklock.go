@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 
@@ -10,29 +9,15 @@ import (
 )
 
 type breakLockArgs struct {
-	g *globalFlags
+	*globalFlags
 }
 
-func newBreakLockFlagSet() (boundFlagSet, *breakLockArgs) {
-	fs := flag.NewFlagSet("break-lock", flag.ContinueOnError)
-	g, globalSpecs := addGlobalFlags(fs, repoCommandGroups)
-	return boundFlagSet{set: fs, global: globalSpecs}, &breakLockArgs{g: g}
+func declareBreakLockArgs(g *globalFlags) (*breakLockArgs, commandInput) {
+	return &breakLockArgs{globalFlags: g}, commandInput{}
 }
 
-func parseBreakLockArgs(args []string) (*breakLockArgs, error) {
-	b, a := newBreakLockFlagSet()
-	if err := parseFlags(b, args); err != nil {
-		return nil, err
-	}
-	return a, nil
-}
-
-func runBreakLock(r *runner, ctx context.Context) int {
-	a, err := parseBreakLockArgs(r.args)
-	if err != nil {
-		return r.parseError(err)
-	}
-	if err := r.openClient(ctx, a.g); err != nil {
+func runBreakLock(r *runner, ctx context.Context, a *breakLockArgs) int {
+	if err := r.openClient(ctx, a.globalFlags); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 
@@ -40,7 +25,7 @@ func runBreakLock(r *runner, ctx context.Context) int {
 	if err != nil {
 		return r.fail("Failed to break lock: %v", err)
 	}
-	if a.g.jsonEnabled() {
+	if a.jsonEnabled() {
 		return r.writeJSON(&breakLockJSONResult{Locks: removed})
 	}
 	printBreakLockResult(r.errOut, removed)
@@ -66,5 +51,5 @@ func printBreakLockResult(errOut io.Writer, removed []*cloudstic.RepoLock) {
 // breakLockCommand declares the `break-lock` command.
 func breakLockCommand() command {
 	return leaf("break-lock", "Remove a stale repository lock left by a crashed process",
-		runBreakLock, withFlags(func() boundFlagSet { b, _ := newBreakLockFlagSet(); return b }))
+		repoCommandGroups, declareBreakLockArgs, runBreakLock)
 }

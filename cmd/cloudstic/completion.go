@@ -6,21 +6,26 @@ import (
 	"io"
 )
 
-func runCompletion(r *runner) int {
-	if len(r.args) < 1 {
-		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic completion <shell>")
-		_, _ = fmt.Fprintln(r.errOut)
-		_, _ = fmt.Fprintln(r.errOut, "Available shells: bash, zsh, fish")
-		_, _ = fmt.Fprintln(r.errOut)
-		_, _ = fmt.Fprintln(r.errOut, "Setup:")
-		_, _ = fmt.Fprintln(r.errOut, "  bash:  source <(cloudstic completion bash)")
-		_, _ = fmt.Fprintln(r.errOut, "  zsh:   source <(cloudstic completion zsh)")
-		_, _ = fmt.Fprintln(r.errOut, "  fish:  cloudstic completion fish | source")
-		return 1
-	}
+type completionArgs struct{ shell string }
 
-	shell := r.args[0]
-	switch shell {
+func declareCompletionArgs(_ *globalFlags) (*completionArgs, commandInput) {
+	a := &completionArgs{}
+	return a, commandInput{positionals: []positionalSpec{requiredPositional(&a.shell, "shell")}}
+}
+
+func printCompletionUsage(w io.Writer) {
+	_, _ = fmt.Fprintln(w, "Usage: cloudstic completion <shell>")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Available shells: bash, zsh, fish")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Setup:")
+	_, _ = fmt.Fprintln(w, "  bash:  source <(cloudstic completion bash)")
+	_, _ = fmt.Fprintln(w, "  zsh:   source <(cloudstic completion zsh)")
+	_, _ = fmt.Fprintln(w, "  fish:  cloudstic completion fish | source")
+}
+
+func runCompletion(r *runner, _ context.Context, a *completionArgs) int {
+	switch a.shell {
 	case "bash":
 		completionBash(r.out)
 	case "zsh":
@@ -28,7 +33,7 @@ func runCompletion(r *runner) int {
 	case "fish":
 		completionFish(r.out)
 	default:
-		return r.fail("Unsupported shell: %s\nAvailable shells: bash, zsh, fish", shell)
+		return r.fail("Unsupported shell: %s\nAvailable shells: bash, zsh, fish", a.shell)
 	}
 	return 0
 }
@@ -41,7 +46,7 @@ _cloudstic_query() {
     local kind="$1"
     local cur="$2"
     shift 2
-    cloudstic __complete "$kind" "$cur" "$@" 2>/dev/null
+    cloudstic __complete -- "$kind" "$cur" "$@" 2>/dev/null
 }
 
 _cloudstic() {
@@ -283,7 +288,7 @@ _cloudstic_query() {
     shift
     local -a prior_words
     prior_words=("${words[@]:2:$(( CURRENT - 2 ))}")
-    cloudstic __complete "$kind" "$PREFIX" "${prior_words[@]}" 2>/dev/null
+    cloudstic __complete -- "$kind" "$PREFIX" "${prior_words[@]}" 2>/dev/null
 }
 
 _cloudstic_dynamic_values() {
@@ -635,7 +640,7 @@ func completionFish(w io.Writer) {
 
 function __fish_cloudstic_query
     set -l kind $argv[1]
-    cloudstic __complete $kind (commandline -ct) (commandline -opc) 2>/dev/null
+    cloudstic __complete -- $kind (commandline -ct) (commandline -opc) 2>/dev/null
 end
 
 # Disable file completions by default
@@ -780,5 +785,5 @@ complete -c cloudstic -n '__fish_seen_subcommand_from completion' -a 'bash zsh f
 // completionCommand declares the `completion` command.
 func completionCommand() command {
 	return leaf("completion", "Generate shell completion scripts (bash, zsh, fish)",
-		func(r *runner, _ context.Context) int { return runCompletion(r) })
+		nil, declareCompletionArgs, runCompletion, withUsageOnError(printCompletionUsage))
 }

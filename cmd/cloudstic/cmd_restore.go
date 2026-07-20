@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -13,7 +12,7 @@ import (
 )
 
 type restoreArgs struct {
-	g           *globalFlags
+	*globalFlags
 	output      string
 	format      string
 	dryRun      bool
@@ -21,53 +20,31 @@ type restoreArgs struct {
 	snapshotRef string
 }
 
-func restoreFlagSpecs(a *restoreArgs) []flagSpec {
-	return []flagSpec{
-		stringFlag(&a.output, "output", "./restore.zip", "Output path (ZIP file for -format zip, directory for -format dir)",
-			withPlaceholder("<path>"), withCompleter("_files")),
-		stringFlag(&a.format, "format", "", "Restore format: zip or dir (default: auto from -output)",
-			withPlaceholder("<zip|dir>")),
-		boolFlag(&a.dryRun, "dry-run", false, "Show what would be restored without writing output"),
-		stringFlag(&a.pathFilter, "path", "", "Restore only the given file or subtree (e.g. Documents/report.pdf or Documents/)",
-			withPlaceholder("<path>")),
+func declareRestoreArgs(g *globalFlags) (*restoreArgs, commandInput) {
+	a := &restoreArgs{globalFlags: g}
+	return a, commandInput{
+		flags: []flagSpec{
+			stringFlag(&a.output, "output", "./restore.zip", "Output path (ZIP file for -format zip, directory for -format dir)",
+				withPlaceholder("<path>"), withCompleter("_files")),
+			stringFlag(&a.format, "format", "", "Restore format: zip or dir (default: auto from -output)",
+				withPlaceholder("<zip|dir>")),
+			boolFlag(&a.dryRun, "dry-run", false, "Show what would be restored without writing output"),
+			stringFlag(&a.pathFilter, "path", "", "Restore only the given file or subtree (e.g. Documents/report.pdf or Documents/)",
+				withPlaceholder("<path>")),
+		},
+		positionals: []positionalSpec{optionalPositional(&a.snapshotRef, "snapshot ID", "latest")},
 	}
 }
 
-func newRestoreFlagSet() (boundFlagSet, *restoreArgs) {
-	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
-	a := &restoreArgs{}
-	g, globalSpecs := addGlobalFlags(fs, repoCommandGroups)
-	a.g = g
-	own := restoreFlagSpecs(a)
-	bindFlags(fs, own)
-	return boundFlagSet{set: fs, global: globalSpecs, own: own}, a
-}
-
-func parseRestoreArgs(args []string) (*restoreArgs, error) {
-	b, a := newRestoreFlagSet()
-	if err := parseFlags(b, args); err != nil {
-		return nil, err
-	}
+func runRestore(r *runner, ctx context.Context, a *restoreArgs) int {
 	a.format = strings.TrimSpace(strings.ToLower(a.format))
-	a.snapshotRef = "latest"
-	if b.set.NArg() > 0 {
-		a.snapshotRef = b.set.Arg(0)
-	}
-	return a, nil
-}
-
-func runRestore(r *runner, ctx context.Context) int {
-	a, err := parseRestoreArgs(r.args)
-	if err != nil {
-		return r.parseError(err)
-	}
 	format, err := resolveRestoreFormat(a.format, a.output)
 	if err != nil {
 		return r.fail("%v", err)
 	}
 	a.format = format
 
-	if err := r.openClient(ctx, a.g); err != nil {
+	if err := r.openClient(ctx, a.globalFlags); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 
@@ -82,7 +59,7 @@ func execRestore(r *runner, ctx context.Context, a *restoreArgs, opts []cloudsti
 		if err != nil {
 			return r.fail("Restore failed: %v", err)
 		}
-		if a.g.jsonEnabled() {
+		if a.jsonEnabled() {
 			return r.writeJSON(result)
 		}
 		printRestoreSummary(r.out, result, "")
@@ -94,7 +71,7 @@ func execRestore(r *runner, ctx context.Context, a *restoreArgs, opts []cloudsti
 		if err != nil {
 			return r.fail("Restore failed: %v", err)
 		}
-		if a.g.jsonEnabled() {
+		if a.jsonEnabled() {
 			return r.writeJSON(result)
 		}
 		printRestoreSummary(r.out, result, a.output)
@@ -112,7 +89,7 @@ func execRestore(r *runner, ctx context.Context, a *restoreArgs, opts []cloudsti
 		_ = os.Remove(a.output)
 		return r.fail("Restore failed: %v", err)
 	}
-	if a.g.jsonEnabled() {
+	if a.jsonEnabled() {
 		return r.writeJSON(result)
 	}
 	printRestoreSummary(r.out, result, a.output)
@@ -124,7 +101,7 @@ func buildRestoreOpts(a *restoreArgs) []cloudstic.RestoreOption {
 	if a.dryRun {
 		restoreOpts = append(restoreOpts, engine.WithRestoreDryRun())
 	}
-	if a.g.verbose {
+	if a.verbose {
 		restoreOpts = append(restoreOpts, engine.WithRestoreVerbose())
 	}
 	if a.pathFilter != "" {
@@ -174,6 +151,5 @@ func resolveRestoreFormat(explicitFormat, output string) (string, error) {
 // restoreCommand declares the `restore` command.
 func restoreCommand() command {
 	return leaf("restore", "Restore files from a backup snapshot",
-		runRestore, withFlags(func() boundFlagSet { b, _ := newRestoreFlagSet(); return b }),
-		withPositional(":snapshot ID:"))
+		repoCommandGroups, declareRestoreArgs, runRestore)
 }

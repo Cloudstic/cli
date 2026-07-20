@@ -23,59 +23,59 @@ type storeNewFlagPtrs struct {
 	kmsEndpoint         *string
 }
 
-func applyExistingStoreDefaults(flagsSet map[string]bool, existing cloudstic.ProfileStore, f storeNewFlagPtrs) {
-	if !flagsSet["uri"] && existing.URI != "" {
+func applyExistingStoreDefaults(g *globalFlags, existing cloudstic.ProfileStore, f storeNewFlagPtrs) {
+	if !g.flagProvided("uri") && existing.URI != "" {
 		*f.uri = existing.URI
 	}
-	if !flagsSet["s3-region"] && existing.S3Region != "" {
+	if !g.flagProvided("s3-region") && existing.S3Region != "" {
 		*f.s3Region = existing.S3Region
 	}
-	if !flagsSet["s3-profile"] && existing.S3Profile != "" {
+	if !g.flagProvided("s3-profile") && existing.S3Profile != "" {
 		*f.s3Profile = existing.S3Profile
 	}
-	if !flagsSet["s3-endpoint"] && existing.S3Endpoint != "" {
+	if !g.flagProvided("s3-endpoint") && existing.S3Endpoint != "" {
 		*f.s3Endpoint = existing.S3Endpoint
 	}
-	if !flagsSet["s3-access-key"] && existing.S3AccessKey != "" {
+	if !g.flagProvided("s3-access-key") && existing.S3AccessKey != "" {
 		*f.s3AccessKey = existing.S3AccessKey
 	}
-	if !flagsSet["s3-secret-key"] && existing.S3SecretKey != "" {
+	if !g.flagProvided("s3-secret-key") && existing.S3SecretKey != "" {
 		*f.s3SecretKey = existing.S3SecretKey
 	}
-	if !flagsSet["s3-access-key-secret"] && existing.S3AccessKeySecret != "" {
+	if !g.flagProvided("s3-access-key-secret") && existing.S3AccessKeySecret != "" {
 		*f.s3AccessKeySecret = existing.S3AccessKeySecret
 	}
-	if !flagsSet["s3-secret-key-secret"] && existing.S3SecretKeySecret != "" {
+	if !g.flagProvided("s3-secret-key-secret") && existing.S3SecretKeySecret != "" {
 		*f.s3SecretKeySecret = existing.S3SecretKeySecret
 	}
-	if !flagsSet["store-sftp-password"] && existing.StoreSFTPPassword != "" {
+	if !g.flagProvided("store-sftp-password") && existing.StoreSFTPPassword != "" {
 		*f.sftpPassword = existing.StoreSFTPPassword
 	}
-	if !flagsSet["store-sftp-key"] && existing.StoreSFTPKey != "" {
+	if !g.flagProvided("store-sftp-key") && existing.StoreSFTPKey != "" {
 		*f.sftpKey = existing.StoreSFTPKey
 	}
-	if !flagsSet["store-sftp-password-secret"] && existing.StoreSFTPPasswordSecret != "" {
+	if !g.flagProvided("store-sftp-password-secret") && existing.StoreSFTPPasswordSecret != "" {
 		*f.sftpPasswordSecret = existing.StoreSFTPPasswordSecret
 	}
-	if !flagsSet["store-sftp-key-secret"] && existing.StoreSFTPKeySecret != "" {
+	if !g.flagProvided("store-sftp-key-secret") && existing.StoreSFTPKeySecret != "" {
 		*f.sftpKeySecret = existing.StoreSFTPKeySecret
 	}
-	if !flagsSet["password-secret"] && existing.PasswordSecret != "" {
+	if !g.flagProvided("password-secret") && existing.PasswordSecret != "" {
 		*f.passwordSecret = existing.PasswordSecret
 	}
-	if !flagsSet["encryption-key-secret"] && existing.EncryptionKeySecret != "" {
+	if !g.flagProvided("encryption-key-secret") && existing.EncryptionKeySecret != "" {
 		*f.encryptionKeySecret = existing.EncryptionKeySecret
 	}
-	if !flagsSet["recovery-key-secret"] && existing.RecoveryKeySecret != "" {
+	if !g.flagProvided("recovery-key-secret") && existing.RecoveryKeySecret != "" {
 		*f.recoveryKeySecret = existing.RecoveryKeySecret
 	}
-	if !flagsSet["kms-key-arn"] && existing.KMSKeyARN != "" {
+	if !g.flagProvided("kms-key-arn") && existing.KMSKeyARN != "" {
 		*f.kmsKeyARN = existing.KMSKeyARN
 	}
-	if !flagsSet["kms-region"] && existing.KMSRegion != "" {
+	if !g.flagProvided("kms-region") && existing.KMSRegion != "" {
 		*f.kmsRegion = existing.KMSRegion
 	}
-	if !flagsSet["kms-endpoint"] && existing.KMSEndpoint != "" {
+	if !g.flagProvided("kms-endpoint") && existing.KMSEndpoint != "" {
 		*f.kmsEndpoint = existing.KMSEndpoint
 	}
 }

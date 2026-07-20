@@ -50,25 +50,22 @@ func (b tuiCLIBackend) InitProfile(ctx context.Context, profilesFile, profileNam
 	}
 	g := tuiStoreFlags(profilesFile, storeCfg)
 	g.quiet = false
-	if code := runInitWithArgs(b.r, ctx, &initArgs{g: g}); code != 0 {
+	if code := runInitWithArgs(b.r, ctx, &initArgs{globalFlags: g}); code != 0 {
 		return fmt.Errorf("init failed")
 	}
 	return nil
 }
 
 func (b tuiCLIBackend) BackupProfile(ctx context.Context, profilesFile, profileName string, profileCfg cloudstic.BackupProfile, cfg *cloudstic.ProfilesConfig, reporter cloudstic.Reporter) error {
-	base := &backupArgs{
-		g:            tuiStoreFlags(profilesFile, cloudstic.ProfileStore{}),
-		profile:      profileName,
-		profilesFile: profilesFile,
-		flagsSet:     map[string]bool{},
-	}
-	base.g.profilesFile = profilesFile
+	g := tuiStoreFlags(profilesFile, cloudstic.ProfileStore{})
+	g.profile = profileName
+	g.profilesFile = profilesFile
+	base := &backupArgs{globalFlags: g}
 	effective, err := mergeProfileBackupArgs(base, profileName, profileCfg, cfg)
 	if err != nil {
 		return err
 	}
-	client, err := effective.g.openClientWithReporter(ctx, reporter)
+	client, err := effective.openClientWithReporter(ctx, reporter)
 	if err != nil {
 		return fmt.Errorf("init store: %w", err)
 	}

@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"strings"
@@ -310,11 +309,10 @@ func (p tuiReporterPhase) Error() {
 }
 
 func tuiStoreFlags(profilesFile string, storeCfg cloudstic.ProfileStore) *globalFlags {
-	fs := flag.NewFlagSet("tui-store", flag.ContinueOnError)
-	g, _ := addGlobalFlags(fs, repoCommandGroups)
+	g := &globalFlags{}
+	_ = newCommandFlags("tui-store", repoCommandGroups, g, commandInput{})
 	g.profilesFile = profilesFile
-	flagsSet := map[string]bool{}
-	_ = applyProfileStoreToGlobalFlags(g, storeCfg, flagsSet)
+	_ = applyProfileStoreToGlobalFlags(g, storeCfg)
 	g.quiet = true
 	g.debug = false
 	g.verbose = false

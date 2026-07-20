@@ -18,7 +18,7 @@ func TestRunCat_SingleKey_JSON(t *testing.T) {
 		},
 	}}
 
-	runCat(r.withArgs(args), context.Background())
+	catCommand().execute(r.withArgs(args), context.Background(), "cat")
 
 	got := out.String()
 	if !strings.Contains(got, `"version"`) {
@@ -36,7 +36,7 @@ func TestRunCat_MultipleKeys_HeadersShown(t *testing.T) {
 		},
 	}}
 
-	runCat(r.withArgs(args), context.Background())
+	catCommand().execute(r.withArgs(args), context.Background(), "cat")
 
 	got := errOut.String()
 	if !strings.Contains(got, "==> config <==") {
@@ -58,7 +58,7 @@ func TestRunCat_JSON_NoHeadersAndStructuredOutput(t *testing.T) {
 		},
 	}}
 
-	if exit := runCat(r.withArgs(args), context.Background()); exit != 0 {
+	if exit := catCommand().execute(r.withArgs(args), context.Background(), "cat"); exit != 0 {
 		t.Fatalf("runCat() exit = %d, want 0", exit)
 	}
 
@@ -86,7 +86,7 @@ func TestRunCat_RawMode(t *testing.T) {
 		catResults: []*cloudstic.CatResult{{Key: "config", Data: rawData}},
 	}}
 
-	runCat(r.withArgs(args), context.Background())
+	catCommand().execute(r.withArgs(args), context.Background(), "cat")
 
 	if out.String() != string(rawData) {
 		t.Errorf("raw mode: expected %q, got %q", rawData, out.String())
@@ -100,7 +100,7 @@ func TestRunCat_InvalidJSON_PrintsRaw(t *testing.T) {
 		catResults: []*cloudstic.CatResult{{Key: "config", Data: []byte("not-json")}},
 	}}
 
-	runCat(r.withArgs(args), context.Background())
+	catCommand().execute(r.withArgs(args), context.Background(), "cat")
 
 	if !strings.Contains(out.String(), "not-json") {
 		t.Errorf("expected raw fallback output, got:\n%s", out.String())
@@ -112,7 +112,7 @@ func TestRunCat_JSONAndRawConflict(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &strings.Builder{}, errOut: &errOut, client: &stubClient{}}
 
-	if exit := runCat(r.withArgs(args), context.Background()); exit != 1 {
+	if exit := catCommand().execute(r.withArgs(args), context.Background(), "cat"); exit != 1 {
 		t.Fatalf("runCat() exit = %d, want 1", exit)
 	}
 	if !strings.Contains(errOut.String(), "-json cannot be combined with -raw") {

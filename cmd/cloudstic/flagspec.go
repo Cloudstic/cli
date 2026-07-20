@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 )
@@ -255,19 +256,35 @@ func specNames(specs []flagSpec) []string {
 	return names
 }
 
-// boundFlagSet pairs a flag set with the specifications bound into it, split
-// into the global groups a command opted into and its own flags. Parsing needs
-// all of them (to resolve environment values); completion generation needs
-// only the command's own.
-type boundFlagSet struct {
-	set    *flag.FlagSet
-	global []flagSpec
-	own    []flagSpec
+// commandFlags owns the parser state assembled from one command declaration.
+// The underlying *flag.FlagSet is deliberately unexported so the flag package
+// stays an implementation detail rather than leaking into commands.
+type commandFlags struct {
+	set         *flag.FlagSet
+	globals     *globalFlags
+	global      []flagSpec
+	own         []flagSpec
+	positionals []positionalSpec
 }
 
-// all returns every specification bound into the set.
-func (b boundFlagSet) all() []flagSpec {
-	specs := make([]flagSpec, 0, len(b.global)+len(b.own))
-	specs = append(specs, b.global...)
-	return append(specs, b.own...)
+// specs returns every specification bound into the set, globals first.
+func (c commandFlags) specs() []flagSpec {
+	all := make([]flagSpec, 0, len(c.global)+len(c.own))
+	all = append(all, c.global...)
+	return append(all, c.own...)
 }
+
+// ownSpecs returns only the command's own flags, excluding global groups.
+func (c commandFlags) ownSpecs() []flagSpec { return c.own }
+
+// names returns every flag name registered, globals included.
+func (c commandFlags) names() []string { return flagNames(c.set) }
+
+// printDefaults writes the flag listing to w, as `-h` would.
+func (c commandFlags) printDefaults(w io.Writer) {
+	c.set.SetOutput(w)
+	c.set.PrintDefaults()
+}
+
+// lookup returns the registered flag with the given name, or nil.
+func (c commandFlags) lookup(name string) *flag.Flag { return c.set.Lookup(name) }

@@ -30,7 +30,7 @@ type globalFlags struct {
 	verbose, quiet, debug             bool
 	json                              bool
 	debugLog                          *ui.SafeLogWriter
-	flagSet                           *flag.FlagSet
+	origins                           map[string]flagOrigin
 }
 
 // Global flags are declared as named groups that commands opt into, so a
@@ -126,11 +126,17 @@ func encryptionFlagSpecs(g *globalFlags) []flagSpec {
 // outputFlagSpecs covers how results and progress are reported.
 func outputFlagSpecs(g *globalFlags) []flagSpec {
 	return []flagSpec{
-		boolFlag(&g.noPrompt, "no-prompt", false, "Disable interactive prompts (for scripts and CI)"),
 		boolFlag(&g.verbose, "verbose", false, "Log detailed file-level operations", withShortUsage("Log detailed operations")),
 		boolFlag(&g.quiet, "quiet", false, "Suppress progress bars (keeps final summary)", withShortUsage("Suppress progress bars")),
 		boolFlag(&g.json, "json", false, "Write command result as JSON to stdout"),
 		boolFlag(&g.debug, "debug", false, "Log every store request (network calls, timing, sizes)", withShortUsage("Log every store request")),
+	}
+}
+
+// baseFlagSpecs are accepted by every runnable command.
+func baseFlagSpecs(g *globalFlags) []flagSpec {
+	return []flagSpec{
+		boolFlag(&g.noPrompt, "no-prompt", false, "Disable interactive prompts (for scripts and CI)"),
 	}
 }
 
@@ -149,44 +155,41 @@ var allGlobalGroups = append(append([]flagGroup{}, repoCommandGroups...), source
 
 // globalFlagSpecsFor collects the specs for the given groups.
 func globalFlagSpecsFor(g *globalFlags, groups []flagGroup) []flagSpec {
-	var specs []flagSpec
+	specs := baseFlagSpecs(g)
 	for _, group := range groups {
 		specs = append(specs, group(g)...)
 	}
 	return specs
 }
 
-// addGlobalFlags registers the given global flag groups on fs and returns the
-// destination struct. Commands pass the groups they actually use so that help
-// output does not advertise flags the command cannot act on.
-func addGlobalFlags(fs *flag.FlagSet, groups []flagGroup) (*globalFlags, []flagSpec) {
-	g := &globalFlags{flagSet: fs}
-	specs := globalFlagSpecsFor(g, groups)
-	bindFlags(fs, specs)
-	return g, specs
+// newCommandFlags builds a command's complete flag set: the global groups it
+// opts into, plus its own specifications. Callers construct the destination
+// structs first, so both sets of specs bind directly into them.
+//
+// This is the single place command flag sets are assembled, which keeps each
+// command's builder to a declaration rather than seven lines of ceremony.
+func newCommandFlags(name string, groups []flagGroup, g *globalFlags, input commandInput) commandFlags {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	global := globalFlagSpecsFor(g, groups)
+	bindFlags(fs, global)
+	bindFlags(fs, input.flags)
+	return commandFlags{set: fs, globals: g, global: global, own: input.flags, positionals: input.positionals}
 }
 
 func (g *globalFlags) jsonEnabled() bool {
 	return g != nil && g.json
 }
 
+// flagProvided reports whether a command flag was passed explicitly, as opposed
+// to resolved from the environment or left at its default.
 func (g *globalFlags) flagProvided(name string) bool {
-	provided := false
-	g.flagSet.Visit(func(f *flag.Flag) {
-		provided = provided || f.Name == name
-	})
-	return provided
+	return g != nil && g.origins[name] == originFlag
 }
 
-// parseFlags parses args into fs, reordering positional arguments after
-// flags so that flags can appear anywhere on the command line (e.g.
-// "cloudstic restore abc123 -output ./out.zip" works as well as the reverse).
-// Using this consistently means every command supports flexible argument ordering.
-func parseFlags(b boundFlagSet, args []string) error {
-	fs := b.set
-	if fs.Lookup("no-prompt") == nil {
-		fs.Bool("no-prompt", false, "Disable interactive prompts (for scripts and CI)")
-	}
+// parse parses args into the flag set and then resolves environment values for
+// any flag the user did not pass explicitly, then binds positional arguments.
+func (c commandFlags) parse(args []string) error {
+	fs := c.set
 	if hasGlobalFlag(args, "json") && !hasGlobalFlag(args, "h") {
 		fs.SetOutput(io.Discard)
 	}
@@ -195,8 +198,17 @@ func parseFlags(b boundFlagSet, args []string) error {
 	}
 	// Environment values are resolved here, after parsing, so that explicit
 	// flags still win and help output never sees them.
-	_, err := applyEnvDefaults(fs, b.all())
-	return err
+	origins, err := applyEnvDefaults(fs, c.specs())
+	if err != nil {
+		return err
+	}
+	// Recording provenance lets later stages (profile overrides) distinguish an
+	// explicitly passed flag from an environment or default value without
+	// re-inspecting the flag set.
+	if c.globals != nil {
+		c.globals.origins = origins
+	}
+	return bindPositionals(c.positionals, fs.Args())
 }
 
 func (r *runner) parseError(err error) int {

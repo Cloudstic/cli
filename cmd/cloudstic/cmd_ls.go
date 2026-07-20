@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"sort"
@@ -15,36 +14,19 @@ import (
 )
 
 type lsArgs struct {
-	g          *globalFlags
+	*globalFlags
 	snapshotID string
 }
 
-func newLsFlagSet() (boundFlagSet, *lsArgs) {
-	fs := flag.NewFlagSet("ls", flag.ContinueOnError)
-	a := &lsArgs{}
-	g, globalSpecs := addGlobalFlags(fs, repoCommandGroups)
-	a.g = g
-	return boundFlagSet{set: fs, global: globalSpecs}, a
+func declareLsArgs(g *globalFlags) (*lsArgs, commandInput) {
+	a := &lsArgs{globalFlags: g}
+	return a, commandInput{positionals: []positionalSpec{
+		optionalPositional(&a.snapshotID, "snapshot ID", "latest"),
+	}}
 }
 
-func parseLsArgs(args []string) (*lsArgs, error) {
-	b, a := newLsFlagSet()
-	if err := parseFlags(b, args); err != nil {
-		return nil, err
-	}
-	a.snapshotID = "latest"
-	if b.set.NArg() > 0 {
-		a.snapshotID = b.set.Arg(0)
-	}
-	return a, nil
-}
-
-func runLsSnapshot(r *runner, ctx context.Context) int {
-	a, err := parseLsArgs(r.args)
-	if err != nil {
-		return r.parseError(err)
-	}
-	if err := r.openClient(ctx, a.g); err != nil {
+func runLsSnapshot(r *runner, ctx context.Context, a *lsArgs) int {
+	if err := r.openClient(ctx, a.globalFlags); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 
@@ -55,7 +37,7 @@ func runLsSnapshot(r *runner, ctx context.Context) int {
 	if err != nil {
 		return r.fail("Ls failed: %v", err)
 	}
-	if a.g.jsonEnabled() {
+	if a.jsonEnabled() {
 		return r.writeJSON(result)
 	}
 	printLsResult(r.out, result, time.Since(start))
@@ -64,7 +46,7 @@ func runLsSnapshot(r *runner, ctx context.Context) int {
 
 func buildLsOpts(a *lsArgs) []cloudstic.LsSnapshotOption {
 	var lsOpts []cloudstic.LsSnapshotOption
-	if a.g.verbose {
+	if a.verbose {
 		lsOpts = append(lsOpts, cloudstic.WithLsVerbose())
 	}
 	return lsOpts
@@ -113,6 +95,5 @@ func appendTreeNode(l list.Writer, ref string, refToMeta map[string]core.FileMet
 // lsCommand declares the `ls` command.
 func lsCommand() command {
 	return leaf("ls", "List files within a specific snapshot",
-		runLsSnapshot, withFlags(func() boundFlagSet { b, _ := newLsFlagSet(); return b }),
-		withPositional(":snapshot ID:"))
+		repoCommandGroups, declareLsArgs, runLsSnapshot)
 }

@@ -25,7 +25,7 @@ func TestRunDiff_Success(t *testing.T) {
 		},
 	}}
 
-	runDiff(r.withArgs(args), context.Background())
+	diffCommand().execute(r.withArgs(args), context.Background(), "diff")
 
 	got := out.String()
 	if !strings.Contains(got, "snapshot/aaa") {
@@ -55,7 +55,7 @@ func TestRunDiff_JSON(t *testing.T) {
 		},
 	}}
 
-	if exit := runDiff(r.withArgs(args), context.Background()); exit != 0 {
+	if exit := diffCommand().execute(r.withArgs(args), context.Background(), "diff"); exit != 0 {
 		t.Fatalf("runDiff() exit = %d, want 0", exit)
 	}
 
@@ -79,7 +79,7 @@ func TestRunDiff_NoChanges(t *testing.T) {
 		},
 	}}
 
-	runDiff(r.withArgs(args), context.Background())
+	diffCommand().execute(r.withArgs(args), context.Background(), "diff")
 
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
 	if len(lines) != 1 {

@@ -23,8 +23,8 @@ func TestStringFlagUsesEnvOverDefault(t *testing.T) {
 	spec := stringFlag(&target, "thing", "from-default", "usage", withEnv("CLOUDSTIC_TEST_VALUE"))
 	fs := flag.NewFlagSet("t", flag.ContinueOnError)
 	bindFlags(fs, []flagSpec{spec})
-	b := boundFlagSet{set: fs, own: []flagSpec{spec}}
-	if err := parseFlags(b, nil); err != nil {
+	b := commandFlags{set: fs, own: []flagSpec{spec}}
+	if err := b.parse(nil); err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	if target != "from-env" {
@@ -39,8 +39,8 @@ func TestStringFlagFallsBackToDefaultWhenEnvUnset(t *testing.T) {
 	spec := stringFlag(&target, "thing", "from-default", "usage", withEnv("CLOUDSTIC_TEST_VALUE"))
 	fs := flag.NewFlagSet("t", flag.ContinueOnError)
 	bindFlags(fs, []flagSpec{spec})
-	b := boundFlagSet{set: fs, own: []flagSpec{spec}}
-	if err := parseFlags(b, nil); err != nil {
+	b := commandFlags{set: fs, own: []flagSpec{spec}}
+	if err := b.parse(nil); err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	if target != "from-default" {
@@ -55,8 +55,8 @@ func TestExplicitFlagBeatsEnv(t *testing.T) {
 	spec := stringFlag(&target, "thing", "from-default", "usage", withEnv("CLOUDSTIC_TEST_VALUE"))
 	fs := flag.NewFlagSet("t", flag.ContinueOnError)
 	bindFlags(fs, []flagSpec{spec})
-	b := boundFlagSet{set: fs, own: []flagSpec{spec}}
-	if err := parseFlags(b, []string{"-thing", "from-flag"}); err != nil {
+	b := commandFlags{set: fs, own: []flagSpec{spec}}
+	if err := b.parse([]string{"-thing", "from-flag"}); err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	if target != "from-flag" {
@@ -81,8 +81,8 @@ func TestBoolFlagAcceptsParseBoolSpellings(t *testing.T) {
 			spec := boolFlag(&target, "thing", false, "usage", withEnv("CLOUDSTIC_TEST_BOOL"))
 			fs := flag.NewFlagSet("t", flag.ContinueOnError)
 			bindFlags(fs, []flagSpec{spec})
-			b := boundFlagSet{set: fs, own: []flagSpec{spec}}
-			if err := parseFlags(b, nil); err != nil {
+			b := commandFlags{set: fs, own: []flagSpec{spec}}
+			if err := b.parse(nil); err != nil {
 				t.Fatalf("parse: %v", err)
 			}
 			if target != tc.want {
@@ -98,9 +98,9 @@ func TestBoolFlagRejectsUnparseableEnv(t *testing.T) {
 	spec := boolFlag(&target, "thing", true, "usage", withEnv("CLOUDSTIC_TEST_BOOL"))
 	fs := flag.NewFlagSet("t", flag.ContinueOnError)
 	bindFlags(fs, []flagSpec{spec})
-	b := boundFlagSet{set: fs, own: []flagSpec{spec}}
+	b := commandFlags{set: fs, own: []flagSpec{spec}}
 
-	err := parseFlags(b, nil)
+	err := b.parse(nil)
 	if err == nil {
 		t.Fatal("expected an error for an unparseable boolean environment value")
 	}
@@ -167,8 +167,7 @@ func TestSecretFlagsWithEnvAreConsistent(t *testing.T) {
 func TestCommandFlagGroupsAreScoped(t *testing.T) {
 	sourceOnly := specNames(sourceSFTPFlagSpecs(&globalFlags{}))
 
-	backupB, _ := newBackupFlagSet()
-	backupFlags := flagNames(backupB.set)
+	backupFlags := lookupCommandForTest(t, "backup").flags().names()
 	for _, name := range sourceOnly {
 		if !slices.Contains(backupFlags, name) {
 			t.Errorf("backup should offer source flag -%s", name)
@@ -177,15 +176,15 @@ func TestCommandFlagGroupsAreScoped(t *testing.T) {
 
 	for _, tc := range []struct {
 		name string
-		fn   func() *flag.FlagSet
+		fn   func() commandFlags
 	}{
-		{"list", func() *flag.FlagSet { b, _ := newListFlagSet(); return b.set }},
-		{"check", func() *flag.FlagSet { b, _ := newCheckFlagSet(); return b.set }},
-		{"prune", func() *flag.FlagSet { b, _ := newPruneFlagSet(); return b.set }},
-		{"cat", func() *flag.FlagSet { b, _ := newCatFlagSet(); return b.set }},
+		{"list", func() commandFlags { return lookupCommandForTest(t, "list").flags() }},
+		{"check", func() commandFlags { return lookupCommandForTest(t, "check").flags() }},
+		{"prune", func() commandFlags { return lookupCommandForTest(t, "prune").flags() }},
+		{"cat", func() commandFlags { return lookupCommandForTest(t, "cat").flags() }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			names := flagNames(tc.fn())
+			names := tc.fn().names()
 			for _, s := range sourceOnly {
 				if slices.Contains(names, s) {
 					t.Errorf("%s does not read a source but advertises -%s", tc.name, s)
@@ -202,17 +201,17 @@ func TestCommandFlagGroupsAreScoped(t *testing.T) {
 // TestFlagSpecsCoverRegisteredFlags ensures the declarative specs and the bound
 // flag set stay in agreement for every command that declares one.
 func TestFlagSpecsCoverRegisteredFlags(t *testing.T) {
-	for _, c := range commandRegistry() {
+	walk(commandRegistry(), func(path string, c command) {
 		if c.flags == nil {
-			continue
+			return
 		}
-		fs := c.flags().set
-		for _, name := range flagNames(fs) {
-			if fs.Lookup(name) == nil {
-				t.Errorf("command %q: flag -%s is not registered", c.name, name)
+		cf := c.flags()
+		for _, spec := range cf.specs() {
+			if cf.lookup(spec.name) == nil {
+				t.Errorf("command %q declares spec -%s but never registers it", path, spec.name)
 			}
 		}
-	}
+	})
 }
 
 // TestSecretEnvValuesNeverAppearInHelp is the regression test for the leak this
@@ -231,27 +230,23 @@ func TestSecretEnvValuesNeverAppearInHelp(t *testing.T) {
 	}
 	withFakeEnv(t, env)
 
-	for _, c := range commandRegistry() {
+	walk(commandRegistry(), func(path string, c command) {
 		if c.flags == nil {
-			continue
+			return
 		}
-		fs := c.flags().set
 		var buf bytes.Buffer
-		fs.SetOutput(&buf)
-		fs.PrintDefaults()
+		c.flags().printDefaults(&buf)
 		if strings.Contains(buf.String(), sentinel) {
-			t.Errorf("help output for %q leaks a secret environment value", c.name)
+			t.Errorf("help output for %q leaks a secret environment value", path)
 		}
-	}
+	})
 }
 
 // TestHelpNamesEnvironmentVariables ensures users can still discover which
 // variable feeds a flag, even though the value is never shown.
 func TestHelpNamesEnvironmentVariables(t *testing.T) {
-	fs := lookupCommandForTest(t, "backup").flags().set
 	var buf bytes.Buffer
-	fs.SetOutput(&buf)
-	fs.PrintDefaults()
+	lookupCommandForTest(t, "backup").flags().printDefaults(&buf)
 	out := buf.String()
 
 	for _, want := range []string{"[$CLOUDSTIC_PASSWORD]", "[$CLOUDSTIC_STORE]", "[$CLOUDSTIC_SOURCE]"} {

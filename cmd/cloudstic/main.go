@@ -53,7 +53,7 @@ func runCmd(r *runner, ctx context.Context, cmd string) int {
 	}
 
 	if c, ok := lookupCommand(cmd); ok {
-		return c.run(r, ctx)
+		return c.execute(r, ctx, c.name)
 	}
 
 	exitCode := r.fail("Unknown command: %s", cmd)

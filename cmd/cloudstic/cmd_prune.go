@@ -85,3 +85,9 @@ func printPruneStats(out io.Writer, res *cloudstic.PruneResult) {
 		_, _ = fmt.Fprintf(out, "  Space reclaimed:  %s\n", formatBytes(res.BytesReclaimed))
 	}
 }
+
+// pruneCommand declares the `prune` command.
+func pruneCommand() command {
+	return leaf("prune", "Remove unused data chunks from the repository",
+		runPrune, withFlags(func() boundFlagSet { b, _ := newPruneFlagSet(); return b }))
+}

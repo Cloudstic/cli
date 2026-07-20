@@ -105,3 +105,10 @@ func printCheckResult(errOut io.Writer, result *cloudstic.CheckResult) bool {
 	_, _ = fmt.Fprintf(errOut, "\nNo errors found — repository is healthy.\n")
 	return false
 }
+
+// checkCommand declares the `check` command.
+func checkCommand() command {
+	return leaf("check", "Verify repository integrity (reference chain, objects, data)",
+		runCheck, withFlags(func() boundFlagSet { b, _ := newCheckFlagSet(); return b }),
+		withPositional(":snapshot ID:"))
+}

@@ -68,3 +68,9 @@ func runTUI(r *runner, ctx context.Context) int {
 	}
 	return newTUISession(r, args.profilesFile, dashboard).run(ctx)
 }
+
+// tuiCommand declares the `tui` command.
+func tuiCommand() command {
+	return leaf("tui", "Launch the interactive terminal dashboard",
+		runTUI, withFlags(func() boundFlagSet { b, _ := newTUIFlagSet(); return b }))
+}

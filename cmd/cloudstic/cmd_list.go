@@ -75,3 +75,9 @@ func printListResult(out io.Writer, result *cloudstic.ListResult, group bool) {
 		renderSnapshotTable(out, result.Snapshots, nil)
 	}
 }
+
+// listCommand declares the `list` command.
+func listCommand() command {
+	return leaf("list", "List all backup snapshots in the repository",
+		runList, withFlags(func() boundFlagSet { b, _ := newListFlagSet(); return b }))
+}

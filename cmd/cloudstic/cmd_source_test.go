@@ -20,7 +20,7 @@ func TestRunSourceDiscover(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut, client: client}
-	if code := runSource(r.withArgs(args), context.Background()); code != 0 {
+	if code := sourceCommand().execute(r.withArgs(args), context.Background(), "source"); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()
@@ -41,7 +41,7 @@ func TestRunSourceDiscover_PortableOnly(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut, client: client}
-	if code := runSource(r.withArgs(args), context.Background()); code != 0 {
+	if code := sourceCommand().execute(r.withArgs(args), context.Background(), "source"); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()
@@ -64,7 +64,7 @@ func TestRunSourceDiscover_JSON(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut, client: client}
-	if code := runSource(r.withArgs(args), context.Background()); code != 0 {
+	if code := sourceCommand().execute(r.withArgs(args), context.Background(), "source"); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()
@@ -79,7 +79,7 @@ func TestRunSourceDiscover_DefaultClient(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runSource(r.withArgs(args), context.Background()); code != 0 {
+	if code := sourceCommand().execute(r.withArgs(args), context.Background(), "source"); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}
 }

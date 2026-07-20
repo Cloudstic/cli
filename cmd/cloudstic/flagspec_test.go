@@ -206,7 +206,7 @@ func TestFlagSpecsCoverRegisteredFlags(t *testing.T) {
 		if c.flags == nil {
 			continue
 		}
-		fs, _ := c.flags()
+		fs := c.flags().set
 		for _, name := range flagNames(fs) {
 			if fs.Lookup(name) == nil {
 				t.Errorf("command %q: flag -%s is not registered", c.name, name)
@@ -235,7 +235,7 @@ func TestSecretEnvValuesNeverAppearInHelp(t *testing.T) {
 		if c.flags == nil {
 			continue
 		}
-		fs, _ := c.flags()
+		fs := c.flags().set
 		var buf bytes.Buffer
 		fs.SetOutput(&buf)
 		fs.PrintDefaults()
@@ -248,7 +248,7 @@ func TestSecretEnvValuesNeverAppearInHelp(t *testing.T) {
 // TestHelpNamesEnvironmentVariables ensures users can still discover which
 // variable feeds a flag, even though the value is never shown.
 func TestHelpNamesEnvironmentVariables(t *testing.T) {
-	fs, _ := lookupCommandForTest(t, "backup").flags()
+	fs := lookupCommandForTest(t, "backup").flags().set
 	var buf bytes.Buffer
 	fs.SetOutput(&buf)
 	fs.PrintDefaults()

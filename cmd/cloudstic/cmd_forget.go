@@ -311,3 +311,10 @@ func printPolicyResult(out io.Writer, result *cloudstic.PolicyResult, dryRun boo
 		_, _ = fmt.Fprintln(out, "No snapshots to remove")
 	}
 }
+
+// forgetCommand declares the `forget` command.
+func forgetCommand() command {
+	return leaf("forget", "Remove a specific snapshot from history",
+		runForget, withFlags(func() boundFlagSet { b, _ := newForgetFlagSet(); return b }),
+		withPositional(":snapshot ID:"))
+}

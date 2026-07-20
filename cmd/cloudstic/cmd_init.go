@@ -143,3 +143,9 @@ func printRecoveryKey(errOut io.Writer, mnemonic string) {
 	_, _ = fmt.Fprintln(errOut, "╚══════════════════════════════════════════════════════════════╝")
 	_, _ = fmt.Fprintln(errOut)
 }
+
+// initCommand declares the `init` command.
+func initCommand() command {
+	return leaf("init", "Initialize a new repository (must run before first backup)",
+		runInit, withFlags(func() boundFlagSet { b, _ := newInitFlagSet(); return b }))
+}

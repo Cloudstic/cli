@@ -80,3 +80,10 @@ func printDiffResult(out io.Writer, result *cloudstic.DiffResult) {
 		_, _ = fmt.Fprintf(out, "%s %s\n", c.Type, c.Path)
 	}
 }
+
+// diffCommand declares the `diff` command.
+func diffCommand() command {
+	return leaf("diff", "Compare two snapshots or a snapshot against latest",
+		runDiff, withFlags(func() boundFlagSet { b, _ := newDiffFlagSet(); return b }),
+		withPositional(":snapshot 1:", ":snapshot 2:"))
+}

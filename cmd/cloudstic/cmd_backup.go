@@ -779,3 +779,9 @@ func resolveTokenPath(explicit, defaultFilename string) (string, error) {
 	}
 	return paths.TokenPath(defaultFilename)
 }
+
+// backupCommand declares the `backup` command.
+func backupCommand() command {
+	return leaf("backup", "Create a new backup snapshot from a source",
+		runBackup, withFlags(func() boundFlagSet { b, _ := newBackupFlagSet(); return b }))
+}

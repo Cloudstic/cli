@@ -121,7 +121,11 @@ func (r *runner) openClient(ctx context.Context, g *globalFlags) error {
 	if r.client != nil {
 		return nil
 	}
-	client, err := g.openClient(ctx)
+	cfg, err := resolveClientConfig(g)
+	if err != nil {
+		return err
+	}
+	client, err := openClient(ctx, cfg, nil)
 	if err != nil {
 		return err
 	}

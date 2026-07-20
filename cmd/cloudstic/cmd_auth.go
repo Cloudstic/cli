@@ -239,7 +239,6 @@ func runAuthLogin(r *runner, ctx context.Context, a *authLoginArgs) int {
 		onedriveClientID:  auth.OneDriveClientID,
 		onedriveTokenFile: auth.OneDriveTokenFile,
 		onedriveTokenRef:  auth.OneDriveTokenRef,
-		globalFlags:       &globalFlags{}, // dummy
 	})
 	if err != nil {
 		return r.fail("Failed to initialize auth source: %v", err)

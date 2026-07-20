@@ -31,8 +31,11 @@ type tuiCLIBackend struct {
 }
 
 func (b tuiCLIBackend) LoadStoreSnapshots(ctx context.Context, storeName string, storeCfg cloudstic.ProfileStore) ([]engine.SnapshotEntry, error) {
-	g := tuiStoreFlags(b.profilesFile, storeCfg)
-	client, err := g.openClient(ctx)
+	cfg, err := tuiClientConfig(storeCfg)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", storeName, err)
+	}
+	client, err := openClient(ctx, cfg, nil)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", storeName, err)
 	}
@@ -48,24 +51,29 @@ func (b tuiCLIBackend) InitProfile(ctx context.Context, profilesFile, profileNam
 	if !ok {
 		return fmt.Errorf("profile %q references unknown store %q", profileName, profileCfg.Store)
 	}
-	g := tuiStoreFlags(profilesFile, storeCfg)
-	g.quiet = false
-	if code := runInitWithArgs(b.r, ctx, &initArgs{globalFlags: g}); code != 0 {
+	resolved, err := tuiClientConfig(storeCfg)
+	if err != nil {
+		return err
+	}
+	resolved.quiet = false
+	if code := execInit(b.r, ctx, &initArgs{globalFlags: &globalFlags{}}, resolved); code != 0 {
 		return fmt.Errorf("init failed")
 	}
 	return nil
 }
 
 func (b tuiCLIBackend) BackupProfile(ctx context.Context, profilesFile, profileName string, profileCfg cloudstic.BackupProfile, cfg *cloudstic.ProfilesConfig, reporter cloudstic.Reporter) error {
-	g := tuiStoreFlags(profilesFile, cloudstic.ProfileStore{})
-	g.profile = profileName
-	g.profilesFile = profilesFile
+	g := &globalFlags{profile: profileName, profilesFile: profilesFile, quiet: true}
 	base := &backupArgs{globalFlags: g}
 	effective, err := mergeProfileBackupArgs(base, profileName, profileCfg, cfg)
 	if err != nil {
 		return err
 	}
-	client, err := effective.openClientWithReporter(ctx, reporter)
+	resolved, err := resolveClientConfig(effective.globalFlags)
+	if err != nil {
+		return fmt.Errorf("init store: %w", err)
+	}
+	client, err := openClient(ctx, resolved, reporter)
 	if err != nil {
 		return fmt.Errorf("init store: %w", err)
 	}
@@ -82,8 +90,11 @@ func (b tuiCLIBackend) CheckProfile(ctx context.Context, profilesFile, profileNa
 	if !ok {
 		return fmt.Errorf("profile %q references unknown store %q", profileName, profileCfg.Store)
 	}
-	g := tuiStoreFlags(profilesFile, storeCfg)
-	client, err := g.openClientWithReporter(ctx, reporter)
+	resolved, err := tuiClientConfig(storeCfg)
+	if err != nil {
+		return err
+	}
+	client, err := openClient(ctx, resolved, reporter)
 	if err != nil {
 		return fmt.Errorf("init store: %w", err)
 	}

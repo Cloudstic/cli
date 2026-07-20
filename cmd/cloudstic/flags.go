@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"strings"
-
-	"github.com/cloudstic/cli/internal/ui"
 )
+
+// defaultS3Region is the region used when neither a flag, environment
+// variable, nor profile names one.
+const defaultS3Region = "us-east-1"
 
 type globalFlags struct {
 	store                             string
@@ -29,7 +31,6 @@ type globalFlags struct {
 	prompt, noPrompt                  bool
 	verbose, quiet, debug             bool
 	json                              bool
-	debugLog                          *ui.SafeLogWriter
 	origins                           map[string]flagOrigin
 }
 
@@ -56,7 +57,7 @@ func repoFlagSpecs(g *globalFlags) []flagSpec {
 		stringFlag(&g.s3Endpoint, "s3-endpoint", "", "S3 compatible endpoint URL (for MinIO, R2, etc.)",
 			withEnv("CLOUDSTIC_S3_ENDPOINT"), withPlaceholder("<url>"),
 			withShortUsage("S3 compatible endpoint URL")),
-		stringFlag(&g.s3Region, "s3-region", "us-east-1", "S3 region",
+		stringFlag(&g.s3Region, "s3-region", defaultS3Region, "S3 region",
 			withEnv("CLOUDSTIC_S3_REGION"), withPlaceholder("<region>")),
 		stringFlag(&g.s3Profile, "s3-profile", envDefault("AWS_PROFILE", ""), "AWS shared config profile for S3 credentials",
 			withEnv("CLOUDSTIC_S3_PROFILE"), withPlaceholder("<name>")),

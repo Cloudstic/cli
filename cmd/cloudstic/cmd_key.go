@@ -22,7 +22,11 @@ func declareKeyListArgs(g *globalFlags) (*keyListArgs, commandInput) {
 }
 
 func runKeyList(r *runner, ctx context.Context, a *keyListArgs) int {
-	raw, err := a.openStore(ctx)
+	cfg, err := resolveClientConfig(a.globalFlags)
+	if err != nil {
+		return r.fail("Failed to init store: %v", err)
+	}
+	raw, err := openStore(ctx, cfg.store)
 	if err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
@@ -72,12 +76,16 @@ func declareKeyPasswdArgs(g *globalFlags) (*keyPasswdArgs, commandInput) {
 }
 
 func runKeyPasswd(r *runner, ctx context.Context, a *keyPasswdArgs) int {
-	raw, err := a.openStore(ctx)
+	cfg, err := resolveClientConfig(a.globalFlags)
+	if err != nil {
+		return r.fail("Failed to init store: %v", err)
+	}
+	raw, err := openStore(ctx, cfg.store)
 	if err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 
-	kc, err := a.buildKeychain(ctx)
+	kc, err := buildKeychain(ctx, cfg.unlock)
 	if err != nil {
 		return r.fail("%v", err)
 	}
@@ -117,12 +125,16 @@ func declareAddRecoveryKeyArgs(g *globalFlags) (*addRecoveryKeyArgs, commandInpu
 }
 
 func runAddRecoveryKey(r *runner, ctx context.Context, a *addRecoveryKeyArgs) int {
-	raw, err := a.openStore(ctx)
+	cfg, err := resolveClientConfig(a.globalFlags)
+	if err != nil {
+		return r.fail("Failed to init store: %v", err)
+	}
+	raw, err := openStore(ctx, cfg.store)
 	if err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 
-	kc, err := a.buildKeychain(ctx)
+	kc, err := buildKeychain(ctx, cfg.unlock)
 	if err != nil {
 		return r.fail("%v", err)
 	}

@@ -130,7 +130,7 @@ func TestApplyDebug_Disabled(t *testing.T) {
 	logger.Writer = nil
 
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	g := addGlobalFlags(fs)
+	g := addGlobalFlags(fs, repoCommandGroups)
 	_ = fs.Parse([]string{}) // --debug defaults to false
 
 	inner := newTestLocalStore(t)
@@ -150,7 +150,7 @@ func TestApplyDebug_Enabled(t *testing.T) {
 	defer func() { logger.Writer = nil }()
 
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	g := addGlobalFlags(fs)
+	g := addGlobalFlags(fs, repoCommandGroups)
 	_ = fs.Parse([]string{"-debug"})
 
 	inner := newTestLocalStore(t)

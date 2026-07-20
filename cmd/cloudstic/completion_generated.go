@@ -22,7 +22,7 @@ const (
 // introspection by completion generation and drift tests.
 func globalFlagSet() *flag.FlagSet {
 	fs := flag.NewFlagSet("global", flag.ContinueOnError)
-	addGlobalFlags(fs)
+	addGlobalFlags(fs, allGlobalGroups)
 	return fs
 }
 

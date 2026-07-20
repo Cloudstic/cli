@@ -5,23 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	"github.com/cloudstic/cli/internal/ui"
 )
-
-func envDefault(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func envBool(key string) bool {
-	v := os.Getenv(key)
-	return v == "1" || v == "true"
-}
 
 type globalFlags struct {
 	store                             string
@@ -46,44 +33,128 @@ type globalFlags struct {
 	flagSet                           *flag.FlagSet
 }
 
-func addGlobalFlags(fs *flag.FlagSet) *globalFlags {
-	g := &globalFlags{flagSet: fs}
-	fs.StringVar(&g.store, "store", envDefault("CLOUDSTIC_STORE", "local:./backup_store"), "Storage backend URI: local:<path>, s3:<bucket>[/<prefix>], b2:<bucket>[/<prefix>], sftp://[user@]host[:port]/<path>")
+// Global flags are declared as named groups that commands opt into, so a
+// command's help output lists only the flags it can actually act on. Every
+// group is a function of the destination struct: the specs bind directly into
+// the globalFlags value the command will read.
+
+// repoFlagSpecs covers locating and addressing the repository itself.
+func repoFlagSpecs(g *globalFlags) []flagSpec {
 	defaultProfilesPath, err := defaultProfilesPath()
 	if err != nil {
 		defaultProfilesPath = defaultProfilesFilename
 	}
-	fs.StringVar(&g.profile, "profile", envDefault("CLOUDSTIC_PROFILE", ""), "Profile name from profiles.yaml")
-	fs.StringVar(&g.profilesFile, "profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPath), "Path to profiles YAML file")
-	fs.StringVar(&g.s3Endpoint, "s3-endpoint", envDefault("CLOUDSTIC_S3_ENDPOINT", ""), "S3 compatible endpoint URL (for MinIO, R2, etc.)")
-	fs.StringVar(&g.s3Region, "s3-region", envDefault("CLOUDSTIC_S3_REGION", "us-east-1"), "S3 region")
-	fs.StringVar(&g.s3Profile, "s3-profile", envDefault("CLOUDSTIC_S3_PROFILE", envDefault("AWS_PROFILE", "")), "AWS shared config profile for S3 credentials")
-	fs.StringVar(&g.s3AccessKey, "s3-access-key", envDefault("AWS_ACCESS_KEY_ID", ""), "S3 access key ID")
-	fs.StringVar(&g.s3SecretKey, "s3-secret-key", envDefault("AWS_SECRET_ACCESS_KEY", ""), "S3 secret access key")
+	return []flagSpec{
+		stringFlag(&g.store, "store", "local:./backup_store",
+			"Storage backend URI: local:<path>, s3:<bucket>[/<prefix>], b2:<bucket>[/<prefix>], sftp://[user@]host[:port]/<path>",
+			withEnv("CLOUDSTIC_STORE"), withPlaceholder("<uri>"), withCompleter("_cloudstic_store_prefixes")),
+		stringFlag(&g.profile, "profile", "", "Profile name from profiles.yaml",
+			withEnv("CLOUDSTIC_PROFILE"), withPlaceholder("<name>"), withCompleter("_cloudstic_profile_names")),
+		stringFlag(&g.profilesFile, "profiles-file", defaultProfilesPath, "Path to profiles YAML file",
+			withEnv("CLOUDSTIC_PROFILES_FILE"), withPlaceholder("<path>"), withCompleter("_files")),
+		stringFlag(&g.s3Endpoint, "s3-endpoint", "", "S3 compatible endpoint URL (for MinIO, R2, etc.)",
+			withEnv("CLOUDSTIC_S3_ENDPOINT"), withPlaceholder("<url>")),
+		stringFlag(&g.s3Region, "s3-region", "us-east-1", "S3 region",
+			withEnv("CLOUDSTIC_S3_REGION"), withPlaceholder("<region>")),
+		stringFlag(&g.s3Profile, "s3-profile", envDefault("AWS_PROFILE", ""), "AWS shared config profile for S3 credentials",
+			withEnv("CLOUDSTIC_S3_PROFILE"), withPlaceholder("<name>")),
+		stringFlag(&g.s3AccessKey, "s3-access-key", "", "S3 access key ID",
+			withEnv("AWS_ACCESS_KEY_ID"), withPlaceholder("<key>"), asSecret()),
+		stringFlag(&g.s3SecretKey, "s3-secret-key", "", "S3 secret access key",
+			withEnv("AWS_SECRET_ACCESS_KEY"), withPlaceholder("<secret>"), asSecret()),
+		boolFlag(&g.disablePackfile, "disable-packfile", false, "Disable bundling small objects into 8MB packs",
+			withEnv("CLOUDSTIC_DISABLE_PACKFILE")),
+	}
+}
 
-	fs.StringVar(&g.sourceSFTPPassword, "source-sftp-password", envDefault("CLOUDSTIC_SOURCE_SFTP_PASSWORD", ""), "SFTP source password")
-	fs.StringVar(&g.sourceSFTPKey, "source-sftp-key", envDefault("CLOUDSTIC_SOURCE_SFTP_KEY", ""), "Path to SSH private key for SFTP source")
-	fs.BoolVar(&g.sourceSFTPInsecure, "source-sftp-insecure", envBool("CLOUDSTIC_SOURCE_SFTP_INSECURE"), "Skip host key validation for SFTP source (INSECURE)")
-	fs.StringVar(&g.sourceSFTPKnownHosts, "source-sftp-known-hosts", envDefault("CLOUDSTIC_SOURCE_SFTP_KNOWN_HOSTS", ""), "Path to known_hosts file for SFTP source")
+// storeSFTPFlagSpecs covers SFTP credentials for the repository store. Every
+// repository command needs these, since any store URI may be sftp://.
+func storeSFTPFlagSpecs(g *globalFlags) []flagSpec {
+	return []flagSpec{
+		stringFlag(&g.storeSFTPPassword, "store-sftp-password", "", "SFTP store password",
+			withEnv("CLOUDSTIC_STORE_SFTP_PASSWORD"), withPlaceholder("<pw>"), asSecret()),
+		stringFlag(&g.storeSFTPKey, "store-sftp-key", "", "Path to SSH private key for SFTP store",
+			withEnv("CLOUDSTIC_STORE_SFTP_KEY"), withPlaceholder("<path>"), withCompleter("_files")),
+		boolFlag(&g.storeSFTPInsecure, "store-sftp-insecure", false, "Skip host key validation for SFTP store (INSECURE)",
+			withEnv("CLOUDSTIC_STORE_SFTP_INSECURE")),
+		stringFlag(&g.storeSFTPKnownHosts, "store-sftp-known-hosts", "", "Path to known_hosts file for SFTP store",
+			withEnv("CLOUDSTIC_STORE_SFTP_KNOWN_HOSTS"), withPlaceholder("<path>"), withCompleter("_files")),
+	}
+}
 
-	fs.StringVar(&g.storeSFTPPassword, "store-sftp-password", envDefault("CLOUDSTIC_STORE_SFTP_PASSWORD", ""), "SFTP store password")
-	fs.StringVar(&g.storeSFTPKey, "store-sftp-key", envDefault("CLOUDSTIC_STORE_SFTP_KEY", ""), "Path to SSH private key for SFTP store")
-	fs.BoolVar(&g.storeSFTPInsecure, "store-sftp-insecure", envBool("CLOUDSTIC_STORE_SFTP_INSECURE"), "Skip host key validation for SFTP store (INSECURE)")
-	fs.StringVar(&g.storeSFTPKnownHosts, "store-sftp-known-hosts", envDefault("CLOUDSTIC_STORE_SFTP_KNOWN_HOSTS", ""), "Path to known_hosts file for SFTP store")
+// sourceSFTPFlagSpecs covers SFTP credentials for a backup *source*. Only
+// commands that read a source (backup) need these.
+func sourceSFTPFlagSpecs(g *globalFlags) []flagSpec {
+	return []flagSpec{
+		stringFlag(&g.sourceSFTPPassword, "source-sftp-password", "", "SFTP source password",
+			withEnv("CLOUDSTIC_SOURCE_SFTP_PASSWORD"), withPlaceholder("<pw>"), asSecret()),
+		stringFlag(&g.sourceSFTPKey, "source-sftp-key", "", "Path to SSH private key for SFTP source",
+			withEnv("CLOUDSTIC_SOURCE_SFTP_KEY"), withPlaceholder("<path>"), withCompleter("_files")),
+		boolFlag(&g.sourceSFTPInsecure, "source-sftp-insecure", false, "Skip host key validation for SFTP source (INSECURE)",
+			withEnv("CLOUDSTIC_SOURCE_SFTP_INSECURE")),
+		stringFlag(&g.sourceSFTPKnownHosts, "source-sftp-known-hosts", "", "Path to known_hosts file for SFTP source",
+			withEnv("CLOUDSTIC_SOURCE_SFTP_KNOWN_HOSTS"), withPlaceholder("<path>"), withCompleter("_files")),
+	}
+}
 
-	fs.StringVar(&g.encryptionKey, "encryption-key", envDefault("CLOUDSTIC_ENCRYPTION_KEY", ""), "Platform key (hex-encoded, 32 bytes)")
-	fs.StringVar(&g.password, "password", envDefault("CLOUDSTIC_PASSWORD", ""), "Repository password")
-	fs.StringVar(&g.recoveryKey, "recovery-key", envDefault("CLOUDSTIC_RECOVERY_KEY", ""), "Recovery key (BIP39 24-word mnemonic)")
-	fs.StringVar(&g.kmsKeyARN, "kms-key-arn", envDefault("CLOUDSTIC_KMS_KEY_ARN", ""), "AWS KMS key ARN for kms-platform slots")
-	fs.StringVar(&g.kmsRegion, "kms-region", envDefault("CLOUDSTIC_KMS_REGION", ""), "AWS KMS region (defaults to us-east-1)")
-	fs.StringVar(&g.kmsEndpoint, "kms-endpoint", envDefault("CLOUDSTIC_KMS_ENDPOINT", ""), "Custom AWS KMS endpoint URL")
-	fs.BoolVar(&g.disablePackfile, "disable-packfile", envBool("CLOUDSTIC_DISABLE_PACKFILE"), "Disable bundling small objects into 8MB packs")
-	fs.BoolVar(&g.prompt, "prompt", false, "Prompt for password interactively (use alongside --encryption-key or --kms-key-arn to add a password layer)")
-	fs.BoolVar(&g.noPrompt, "no-prompt", false, "Disable interactive prompts (for scripts and CI)")
-	fs.BoolVar(&g.verbose, "verbose", false, "Log detailed file-level operations")
-	fs.BoolVar(&g.quiet, "quiet", false, "Suppress progress bars (keeps final summary)")
-	fs.BoolVar(&g.json, "json", false, "Write command result as JSON to stdout")
-	fs.BoolVar(&g.debug, "debug", false, "Log every store request (network calls, timing, sizes)")
+// encryptionFlagSpecs covers credentials for unlocking an encrypted repository.
+func encryptionFlagSpecs(g *globalFlags) []flagSpec {
+	return []flagSpec{
+		stringFlag(&g.password, "password", "", "Repository password",
+			withEnv("CLOUDSTIC_PASSWORD"), withPlaceholder("<pw>"), asSecret()),
+		stringFlag(&g.encryptionKey, "encryption-key", "", "Platform key (hex-encoded, 32 bytes)",
+			withEnv("CLOUDSTIC_ENCRYPTION_KEY"), withPlaceholder("<hex>"), asSecret()),
+		stringFlag(&g.recoveryKey, "recovery-key", "", "Recovery key (BIP39 24-word mnemonic)",
+			withEnv("CLOUDSTIC_RECOVERY_KEY"), withPlaceholder("<words>"), asSecret()),
+		stringFlag(&g.kmsKeyARN, "kms-key-arn", "", "AWS KMS key ARN for kms-platform slots",
+			withEnv("CLOUDSTIC_KMS_KEY_ARN"), withPlaceholder("<arn>")),
+		stringFlag(&g.kmsRegion, "kms-region", "", "AWS KMS region (defaults to us-east-1)",
+			withEnv("CLOUDSTIC_KMS_REGION"), withPlaceholder("<region>")),
+		stringFlag(&g.kmsEndpoint, "kms-endpoint", "", "Custom AWS KMS endpoint URL",
+			withEnv("CLOUDSTIC_KMS_ENDPOINT"), withPlaceholder("<url>")),
+		boolFlag(&g.prompt, "prompt", false, "Prompt for password interactively (use alongside --encryption-key or --kms-key-arn to add a password layer)"),
+	}
+}
+
+// outputFlagSpecs covers how results and progress are reported.
+func outputFlagSpecs(g *globalFlags) []flagSpec {
+	return []flagSpec{
+		boolFlag(&g.noPrompt, "no-prompt", false, "Disable interactive prompts (for scripts and CI)"),
+		boolFlag(&g.verbose, "verbose", false, "Log detailed file-level operations"),
+		boolFlag(&g.quiet, "quiet", false, "Suppress progress bars (keeps final summary)"),
+		boolFlag(&g.json, "json", false, "Write command result as JSON to stdout"),
+		boolFlag(&g.debug, "debug", false, "Log every store request (network calls, timing, sizes)"),
+	}
+}
+
+// flagGroup names a reusable set of global flag specifications.
+type flagGroup func(*globalFlags) []flagSpec
+
+// repoCommandGroups is the set every command that opens a repository needs.
+var repoCommandGroups = []flagGroup{repoFlagSpecs, storeSFTPFlagSpecs, encryptionFlagSpecs, outputFlagSpecs}
+
+// backupCommandGroups additionally covers reading from an SFTP source.
+var backupCommandGroups = append(append([]flagGroup{}, repoCommandGroups...), sourceSFTPFlagSpecs)
+
+// allGlobalGroups is every global group, used where the full surface is
+// required (shell completion's global flag list, profile-derived flag values).
+var allGlobalGroups = append(append([]flagGroup{}, repoCommandGroups...), sourceSFTPFlagSpecs)
+
+// globalFlagSpecsFor collects the specs for the given groups.
+func globalFlagSpecsFor(g *globalFlags, groups []flagGroup) []flagSpec {
+	var specs []flagSpec
+	for _, group := range groups {
+		specs = append(specs, group(g)...)
+	}
+	return specs
+}
+
+// addGlobalFlags registers the given global flag groups on fs and returns the
+// destination struct. Commands pass the groups they actually use so that help
+// output does not advertise flags the command cannot act on.
+func addGlobalFlags(fs *flag.FlagSet, groups []flagGroup) *globalFlags {
+	g := &globalFlags{flagSet: fs}
+	bindFlags(fs, globalFlagSpecsFor(g, groups))
 	return g
 }
 

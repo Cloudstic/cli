@@ -15,7 +15,7 @@ type breakLockArgs struct {
 
 func newBreakLockFlagSet() (*flag.FlagSet, *breakLockArgs) {
 	fs := flag.NewFlagSet("break-lock", flag.ContinueOnError)
-	return fs, &breakLockArgs{g: addGlobalFlags(fs)}
+	return fs, &breakLockArgs{g: addGlobalFlags(fs, repoCommandGroups)}
 }
 
 func parseBreakLockArgs(args []string) (*breakLockArgs, error) {

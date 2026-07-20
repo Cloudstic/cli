@@ -37,22 +37,31 @@ type forgetArgs struct {
 	rawFilterSource string
 }
 
+func forgetFlagSpecs(a *forgetArgs) []flagSpec {
+	return []flagSpec{
+		boolFlag(&a.prune, "prune", false, "Run prune after forgetting"),
+		boolFlag(&a.dryRun, "dry-run", false, "Only show what would be removed"),
+		intFlag(&a.keepLast, "keep-last", 0, "Keep the last n snapshots", withPlaceholder("N")),
+		intFlag(&a.keepHourly, "keep-hourly", 0, "Keep n hourly snapshots", withPlaceholder("N")),
+		intFlag(&a.keepDaily, "keep-daily", 0, "Keep n daily snapshots", withPlaceholder("N")),
+		intFlag(&a.keepWeekly, "keep-weekly", 0, "Keep n weekly snapshots", withPlaceholder("N")),
+		intFlag(&a.keepMonthly, "keep-monthly", 0, "Keep n monthly snapshots", withPlaceholder("N")),
+		intFlag(&a.keepYearly, "keep-yearly", 0, "Keep n yearly snapshots", withPlaceholder("N")),
+		valueFlag(&a.filterTags, "tag", "Filter by tag (can be specified multiple times)",
+			withPlaceholder("<tag>"), asRepeatable()),
+		stringFlag(&a.rawFilterSource, "source", "", "Filter by source URI (e.g. local:./docs, gdrive)",
+			withPlaceholder("<uri>"), withCompleter("_cloudstic_source_prefixes")),
+		stringFlag(&a.filterAccount, "account", "", "Filter by account", withPlaceholder("<id>")),
+		stringFlag(&a.groupBy, "group-by", "source,account,path", "Group snapshots by fields (comma-separated)",
+			withPlaceholder("<fields>")),
+	}
+}
+
 func newForgetFlagSet() (*flag.FlagSet, *forgetArgs) {
 	fs := flag.NewFlagSet("forget", flag.ContinueOnError)
 	a := &forgetArgs{}
-	a.g = addGlobalFlags(fs)
-	fs.BoolVar(&a.prune, "prune", false, "Run prune after forgetting")
-	fs.BoolVar(&a.dryRun, "dry-run", false, "Only show what would be removed")
-	fs.IntVar(&a.keepLast, "keep-last", 0, "Keep the last n snapshots")
-	fs.IntVar(&a.keepHourly, "keep-hourly", 0, "Keep n hourly snapshots")
-	fs.IntVar(&a.keepDaily, "keep-daily", 0, "Keep n daily snapshots")
-	fs.IntVar(&a.keepWeekly, "keep-weekly", 0, "Keep n weekly snapshots")
-	fs.IntVar(&a.keepMonthly, "keep-monthly", 0, "Keep n monthly snapshots")
-	fs.IntVar(&a.keepYearly, "keep-yearly", 0, "Keep n yearly snapshots")
-	fs.Var(&a.filterTags, "tag", "Filter by tag (can be specified multiple times)")
-	fs.StringVar(&a.rawFilterSource, "source", "", "Filter by source URI (e.g. local:./docs, gdrive)")
-	fs.StringVar(&a.filterAccount, "account", "", "Filter by account")
-	fs.StringVar(&a.groupBy, "group-by", "source,account,path", "Group snapshots by fields (comma-separated)")
+	a.g = addGlobalFlags(fs, repoCommandGroups)
+	bindFlags(fs, forgetFlagSpecs(a))
 	return fs, a
 }
 

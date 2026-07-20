@@ -49,32 +49,54 @@ type backupArgs struct {
 	flagsSet          map[string]bool
 }
 
+func backupFlagSpecs(a *backupArgs) []flagSpec {
+	return []flagSpec{
+		stringFlag(&a.sourceURI, "source", "gdrive",
+			"Source URI: local:<path>, sftp://[user@]host[:port]/<path>, gdrive[://<Drive Name>][/<path>], gdrive-changes[://<Drive Name>][/<path>], onedrive[://<Drive Name>][/<path>], onedrive-changes[://<Drive Name>][/<path>]",
+			withEnv("CLOUDSTIC_SOURCE"), withPlaceholder("<uri>"), withCompleter("_cloudstic_source_prefixes")),
+		boolFlag(&a.allProfiles, "all-profiles", false, "Run backup for all enabled profiles from profiles.yaml"),
+		stringFlag(&a.authRef, "auth-ref", "", "Use named auth entry from profiles.yaml for cloud source credentials",
+			withPlaceholder("<name>"), withCompleter("_cloudstic_auth_names")),
+		boolFlag(&a.dryRun, "dry-run", false, "Scan source and report changes without writing to the store"),
+		boolFlag(&a.ignoreEmpty, "ignore-empty-snapshot", false, "Skip creating a new snapshot when nothing changed"),
+		boolFlag(&a.skipNativeFiles, "skip-native-files", false, "Exclude Google-native files (Docs, Sheets, Slides, etc.) from the backup"),
+		stringFlag(&a.excludeFile, "exclude-file", "", "Path to file with exclude patterns (one per line, gitignore syntax)",
+			withPlaceholder("<path>"), withCompleter("_files")),
+		stringFlag(&a.volumeUUID, "volume-uuid", "", "Override volume UUID for local source (enables cross-machine incremental backup)",
+			withEnv("CLOUDSTIC_VOLUME_UUID"), withPlaceholder("<uuid>")),
+		stringFlag(&a.googleCreds, "google-credentials", "", "Path to Google service account credentials JSON file",
+			withEnv("GOOGLE_APPLICATION_CREDENTIALS"), withPlaceholder("<path>"), withCompleter("_files")),
+		stringFlag(&a.googleCredsRef, "google-credentials-ref", "", "Secret reference to Google service account credentials JSON",
+			withPlaceholder("<ref>")),
+		stringFlag(&a.googleCredsJSON, "google-credentials-json", "", "Inline Google credentials JSON (OAuth client or service account)",
+			withEnv("GOOGLE_CREDENTIALS_JSON"), withPlaceholder("<json>"), asSecret()),
+		stringFlag(&a.googleTokenFile, "google-token-file", "", "Path to Google OAuth token file",
+			withEnv("GOOGLE_TOKEN_FILE"), withPlaceholder("<path>"), withCompleter("_files")),
+		stringFlag(&a.googleTokenRef, "google-token-ref", "", "Secret reference to Google OAuth token",
+			withPlaceholder("<ref>")),
+		stringFlag(&a.onedriveClientID, "onedrive-client-id", "", "OneDrive OAuth client ID",
+			withEnv("ONEDRIVE_CLIENT_ID"), withPlaceholder("<id>")),
+		stringFlag(&a.onedriveTokenFile, "onedrive-token-file", "", "Path to OneDrive OAuth token file",
+			withEnv("ONEDRIVE_TOKEN_FILE"), withPlaceholder("<path>"), withCompleter("_files")),
+		stringFlag(&a.onedriveTokenRef, "onedrive-token-ref", "", "Secret reference to OneDrive OAuth token",
+			withPlaceholder("<ref>")),
+		boolFlag(&a.skipMode, "skip-mode", false, "Skip POSIX mode, uid, gid, btime, and flags collection"),
+		boolFlag(&a.skipFlags, "skip-flags", false, "Skip file flags collection"),
+		boolFlag(&a.skipXattrs, "skip-xattrs", false, "Skip extended attribute collection"),
+		stringFlag(&a.xattrNamespaces, "xattr-namespaces", "", "Restrict xattr collection to these prefixes (comma-separated, e.g. \"user.,com.apple.\")",
+			withPlaceholder("<prefixes>")),
+		valueFlag(&a.tags, "tag", "Tag to apply to the snapshot (can be specified multiple times)",
+			withPlaceholder("<tag>"), asRepeatable()),
+		valueFlag(&a.excludes, "exclude", "Exclude pattern (gitignore syntax, repeatable)",
+			withPlaceholder("<pattern>"), asRepeatable()),
+	}
+}
+
 func newBackupFlagSet() (*flag.FlagSet, *backupArgs) {
 	fs := flag.NewFlagSet("backup", flag.ContinueOnError)
 	a := &backupArgs{}
-	a.g = addGlobalFlags(fs)
-	fs.StringVar(&a.sourceURI, "source", envDefault("CLOUDSTIC_SOURCE", "gdrive"), "Source URI: local:<path>, sftp://[user@]host[:port]/<path>, gdrive[://<Drive Name>][/<path>], gdrive-changes[://<Drive Name>][/<path>], onedrive[://<Drive Name>][/<path>], onedrive-changes[://<Drive Name>][/<path>]")
-	fs.BoolVar(&a.allProfiles, "all-profiles", false, "Run backup for all enabled profiles from profiles.yaml")
-	fs.StringVar(&a.authRef, "auth-ref", "", "Use named auth entry from profiles.yaml for cloud source credentials")
-	fs.BoolVar(&a.dryRun, "dry-run", false, "Scan source and report changes without writing to the store")
-	fs.BoolVar(&a.ignoreEmpty, "ignore-empty-snapshot", false, "Skip creating a new snapshot when nothing changed")
-	fs.BoolVar(&a.skipNativeFiles, "skip-native-files", false, "Exclude Google-native files (Docs, Sheets, Slides, etc.) from the backup")
-	fs.StringVar(&a.excludeFile, "exclude-file", "", "Path to file with exclude patterns (one per line, gitignore syntax)")
-	fs.StringVar(&a.volumeUUID, "volume-uuid", envDefault("CLOUDSTIC_VOLUME_UUID", ""), "Override volume UUID for local source (enables cross-machine incremental backup)")
-	fs.StringVar(&a.googleCreds, "google-credentials", envDefault("GOOGLE_APPLICATION_CREDENTIALS", ""), "Path to Google service account credentials JSON file")
-	fs.StringVar(&a.googleCredsRef, "google-credentials-ref", "", "Secret reference to Google service account credentials JSON")
-	fs.StringVar(&a.googleCredsJSON, "google-credentials-json", envDefault("GOOGLE_CREDENTIALS_JSON", ""), "Inline Google credentials JSON (OAuth client or service account)")
-	fs.StringVar(&a.googleTokenFile, "google-token-file", envDefault("GOOGLE_TOKEN_FILE", ""), "Path to Google OAuth token file")
-	fs.StringVar(&a.googleTokenRef, "google-token-ref", "", "Secret reference to Google OAuth token")
-	fs.StringVar(&a.onedriveClientID, "onedrive-client-id", envDefault("ONEDRIVE_CLIENT_ID", ""), "OneDrive OAuth client ID")
-	fs.StringVar(&a.onedriveTokenFile, "onedrive-token-file", envDefault("ONEDRIVE_TOKEN_FILE", ""), "Path to OneDrive OAuth token file")
-	fs.StringVar(&a.onedriveTokenRef, "onedrive-token-ref", "", "Secret reference to OneDrive OAuth token")
-	fs.BoolVar(&a.skipMode, "skip-mode", false, "Skip POSIX mode, uid, gid, btime, and flags collection")
-	fs.BoolVar(&a.skipFlags, "skip-flags", false, "Skip file flags collection")
-	fs.BoolVar(&a.skipXattrs, "skip-xattrs", false, "Skip extended attribute collection")
-	fs.StringVar(&a.xattrNamespaces, "xattr-namespaces", "", "Restrict xattr collection to these prefixes (comma-separated, e.g. \"user.,com.apple.\")")
-	fs.Var(&a.tags, "tag", "Tag to apply to the snapshot (can be specified multiple times)")
-	fs.Var(&a.excludes, "exclude", "Exclude pattern (gitignore syntax, repeatable)")
+	a.g = addGlobalFlags(fs, backupCommandGroups)
+	bindFlags(fs, backupFlagSpecs(a))
 	return fs, a
 }
 

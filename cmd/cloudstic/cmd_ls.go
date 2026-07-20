@@ -22,7 +22,7 @@ type lsArgs struct {
 func newLsFlagSet() (*flag.FlagSet, *lsArgs) {
 	fs := flag.NewFlagSet("ls", flag.ContinueOnError)
 	a := &lsArgs{}
-	a.g = addGlobalFlags(fs)
+	a.g = addGlobalFlags(fs, repoCommandGroups)
 	return fs, a
 }
 

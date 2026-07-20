@@ -20,13 +20,19 @@ type initArgs struct {
 	adoptSlots   bool
 }
 
+func initFlagSpecs(a *initArgs) []flagSpec {
+	return []flagSpec{
+		boolFlag(&a.recovery, "add-recovery-key", false, "Generate a recovery key (24-word seed phrase) during init"),
+		boolFlag(&a.noEncryption, "no-encryption", false, "Create an unencrypted repository (NOT recommended)"),
+		boolFlag(&a.adoptSlots, "adopt-slots", false, "Initialize by adopting existing key slots if found (prevents error if already has slots)"),
+	}
+}
+
 func newInitFlagSet() (*flag.FlagSet, *initArgs) {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	a := &initArgs{}
-	a.g = addGlobalFlags(fs)
-	fs.BoolVar(&a.recovery, "add-recovery-key", false, "Generate a recovery key (24-word seed phrase) during init")
-	fs.BoolVar(&a.noEncryption, "no-encryption", false, "Create an unencrypted repository (NOT recommended)")
-	fs.BoolVar(&a.adoptSlots, "adopt-slots", false, "Initialize by adopting existing key slots if found (prevents error if already has slots)")
+	a.g = addGlobalFlags(fs, repoCommandGroups)
+	bindFlags(fs, initFlagSpecs(a))
 	return fs, a
 }
 

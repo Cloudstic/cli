@@ -15,11 +15,17 @@ type checkArgs struct {
 	snapshotRef string
 }
 
+func checkFlagSpecs(a *checkArgs) []flagSpec {
+	return []flagSpec{
+		boolFlag(&a.readData, "read-data", false, "Re-hash all chunk data for full byte-level verification"),
+	}
+}
+
 func newCheckFlagSet() (*flag.FlagSet, *checkArgs) {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	a := &checkArgs{}
-	a.g = addGlobalFlags(fs)
-	fs.BoolVar(&a.readData, "read-data", false, "Re-hash all chunk data for full byte-level verification")
+	a.g = addGlobalFlags(fs, repoCommandGroups)
+	bindFlags(fs, checkFlagSpecs(a))
 	return fs, a
 }
 

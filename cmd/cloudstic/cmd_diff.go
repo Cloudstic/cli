@@ -19,7 +19,7 @@ type diffArgs struct {
 func newDiffFlagSet() (*flag.FlagSet, *diffArgs) {
 	fs := flag.NewFlagSet("diff", flag.ContinueOnError)
 	a := &diffArgs{}
-	a.g = addGlobalFlags(fs)
+	a.g = addGlobalFlags(fs, repoCommandGroups)
 	return fs, a
 }
 

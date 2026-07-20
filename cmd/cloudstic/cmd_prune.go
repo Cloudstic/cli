@@ -15,11 +15,17 @@ type pruneArgs struct {
 	dryRun bool
 }
 
+func pruneFlagSpecs(a *pruneArgs) []flagSpec {
+	return []flagSpec{
+		boolFlag(&a.dryRun, "dry-run", false, "Show what would be deleted without deleting"),
+	}
+}
+
 func newPruneFlagSet() (*flag.FlagSet, *pruneArgs) {
 	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
 	a := &pruneArgs{}
-	a.g = addGlobalFlags(fs)
-	fs.BoolVar(&a.dryRun, "dry-run", false, "Show what would be deleted without deleting")
+	a.g = addGlobalFlags(fs, repoCommandGroups)
+	bindFlags(fs, pruneFlagSpecs(a))
 	return fs, a
 }
 

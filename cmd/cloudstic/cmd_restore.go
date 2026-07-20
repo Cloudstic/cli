@@ -21,14 +21,23 @@ type restoreArgs struct {
 	snapshotRef string
 }
 
+func restoreFlagSpecs(a *restoreArgs) []flagSpec {
+	return []flagSpec{
+		stringFlag(&a.output, "output", "./restore.zip", "Output path (ZIP file for -format zip, directory for -format dir)",
+			withPlaceholder("<path>"), withCompleter("_files")),
+		stringFlag(&a.format, "format", "", "Restore format: zip or dir (default: auto from -output)",
+			withPlaceholder("<zip|dir>")),
+		boolFlag(&a.dryRun, "dry-run", false, "Show what would be restored without writing output"),
+		stringFlag(&a.pathFilter, "path", "", "Restore only the given file or subtree (e.g. Documents/report.pdf or Documents/)",
+			withPlaceholder("<path>")),
+	}
+}
+
 func newRestoreFlagSet() (*flag.FlagSet, *restoreArgs) {
 	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
 	a := &restoreArgs{}
-	a.g = addGlobalFlags(fs)
-	fs.StringVar(&a.output, "output", "./restore.zip", "Output path (ZIP file for -format zip, directory for -format dir)")
-	fs.StringVar(&a.format, "format", "", "Restore format: zip or dir (default: auto from -output)")
-	fs.BoolVar(&a.dryRun, "dry-run", false, "Show what would be restored without writing output")
-	fs.StringVar(&a.pathFilter, "path", "", "Restore only the given file or subtree (e.g. Documents/report.pdf or Documents/)")
+	a.g = addGlobalFlags(fs, repoCommandGroups)
+	bindFlags(fs, restoreFlagSpecs(a))
 	return fs, a
 }
 

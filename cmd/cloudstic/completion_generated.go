@@ -101,6 +101,8 @@ func renderCompletion(script string) string {
 		placeholderBashCmdFlags, bashCommandFlagCases(),
 		placeholderZshCmdFlags, zshCommandFlagCases(),
 		placeholderFishCmdFlags, fishCommandFlagLines(),
+		placeholderZshGlobalFlags, zshGlobalFlagLines(),
+		placeholderFishGlobalFlags, fishGlobalFlagLines(),
 	).Replace(script)
 }
 
@@ -212,4 +214,43 @@ func fishValueSpec(completer string) string {
 	default:
 		return " -x"
 	}
+}
+
+const (
+	placeholderZshGlobalFlags  = "@@ZSH_GLOBAL_FLAGS@@"
+	placeholderFishGlobalFlags = "@@FISH_GLOBAL_FLAGS@@"
+)
+
+// globalSpecs returns every global flag specification, in declaration order.
+func globalSpecs() []flagSpec {
+	return globalFlagSpecsFor(&globalFlags{}, allGlobalGroups)
+}
+
+// zshGlobalFlagLines renders the zsh global_flags array from the specs.
+func zshGlobalFlagLines() string {
+	var b strings.Builder
+	for i, s := range globalSpecs() {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		fmt.Fprintf(&b, "        '%s'", zshFlagEntry(s))
+	}
+	return b.String()
+}
+
+// fishGlobalFlagLines renders fish completions for the global flags. These
+// apply to every command, so they carry no subcommand condition.
+func fishGlobalFlagLines() string {
+	var b strings.Builder
+	for i, s := range globalSpecs() {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		fmt.Fprintf(&b, "complete -c cloudstic -o %s -l %s", s.name, s.name)
+		if !s.isBool {
+			b.WriteString(fishValueSpec(s.completer))
+		}
+		fmt.Fprintf(&b, " -d '%s'", escapeFish(s.completionUsage()))
+	}
+	return b.String()
 }

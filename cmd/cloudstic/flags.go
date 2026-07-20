@@ -47,13 +47,15 @@ func repoFlagSpecs(g *globalFlags) []flagSpec {
 	return []flagSpec{
 		stringFlag(&g.store, "store", "local:./backup_store",
 			"Storage backend URI: local:<path>, s3:<bucket>[/<prefix>], b2:<bucket>[/<prefix>], sftp://[user@]host[:port]/<path>",
-			withEnv("CLOUDSTIC_STORE"), withPlaceholder("<uri>"), withCompleter("_cloudstic_store_prefixes")),
+			withEnv("CLOUDSTIC_STORE"), withPlaceholder("<uri>"), withCompleter("_cloudstic_store_prefixes"),
+			withShortUsage("Storage backend URI")),
 		stringFlag(&g.profile, "profile", "", "Profile name from profiles.yaml",
 			withEnv("CLOUDSTIC_PROFILE"), withPlaceholder("<name>"), withCompleter("_cloudstic_profile_names")),
 		stringFlag(&g.profilesFile, "profiles-file", defaultProfilesPath, "Path to profiles YAML file",
 			withEnv("CLOUDSTIC_PROFILES_FILE"), withPlaceholder("<path>"), withCompleter("_files")),
 		stringFlag(&g.s3Endpoint, "s3-endpoint", "", "S3 compatible endpoint URL (for MinIO, R2, etc.)",
-			withEnv("CLOUDSTIC_S3_ENDPOINT"), withPlaceholder("<url>")),
+			withEnv("CLOUDSTIC_S3_ENDPOINT"), withPlaceholder("<url>"),
+			withShortUsage("S3 compatible endpoint URL")),
 		stringFlag(&g.s3Region, "s3-region", "us-east-1", "S3 region",
 			withEnv("CLOUDSTIC_S3_REGION"), withPlaceholder("<region>")),
 		stringFlag(&g.s3Profile, "s3-profile", envDefault("AWS_PROFILE", ""), "AWS shared config profile for S3 credentials",
@@ -63,7 +65,7 @@ func repoFlagSpecs(g *globalFlags) []flagSpec {
 		stringFlag(&g.s3SecretKey, "s3-secret-key", "", "S3 secret access key",
 			withEnv("AWS_SECRET_ACCESS_KEY"), withPlaceholder("<secret>"), asSecret()),
 		boolFlag(&g.disablePackfile, "disable-packfile", false, "Disable bundling small objects into 8MB packs",
-			withEnv("CLOUDSTIC_DISABLE_PACKFILE")),
+			withEnv("CLOUDSTIC_DISABLE_PACKFILE"), withShortUsage("Disable bundling small objects into packs")),
 	}
 }
 
@@ -103,16 +105,21 @@ func encryptionFlagSpecs(g *globalFlags) []flagSpec {
 		stringFlag(&g.password, "password", "", "Repository password",
 			withEnv("CLOUDSTIC_PASSWORD"), withPlaceholder("<pw>"), asSecret()),
 		stringFlag(&g.encryptionKey, "encryption-key", "", "Platform key (hex-encoded, 32 bytes)",
-			withEnv("CLOUDSTIC_ENCRYPTION_KEY"), withPlaceholder("<hex>"), asSecret()),
+			withEnv("CLOUDSTIC_ENCRYPTION_KEY"), withPlaceholder("<hex>"), asSecret(),
+			withShortUsage("Platform key (hex-encoded)")),
 		stringFlag(&g.recoveryKey, "recovery-key", "", "Recovery key (BIP39 24-word mnemonic)",
-			withEnv("CLOUDSTIC_RECOVERY_KEY"), withPlaceholder("<words>"), asSecret()),
+			withEnv("CLOUDSTIC_RECOVERY_KEY"), withPlaceholder("<words>"), asSecret(),
+			withShortUsage("Recovery key (24-word mnemonic)")),
 		stringFlag(&g.kmsKeyARN, "kms-key-arn", "", "AWS KMS key ARN for kms-platform slots",
-			withEnv("CLOUDSTIC_KMS_KEY_ARN"), withPlaceholder("<arn>")),
+			withEnv("CLOUDSTIC_KMS_KEY_ARN"), withPlaceholder("<arn>"),
+			withShortUsage("AWS KMS key ARN")),
 		stringFlag(&g.kmsRegion, "kms-region", "", "AWS KMS region (defaults to us-east-1)",
-			withEnv("CLOUDSTIC_KMS_REGION"), withPlaceholder("<region>")),
+			withEnv("CLOUDSTIC_KMS_REGION"), withPlaceholder("<region>"),
+			withShortUsage("AWS KMS region")),
 		stringFlag(&g.kmsEndpoint, "kms-endpoint", "", "Custom AWS KMS endpoint URL",
-			withEnv("CLOUDSTIC_KMS_ENDPOINT"), withPlaceholder("<url>")),
-		boolFlag(&g.prompt, "prompt", false, "Prompt for password interactively (use alongside --encryption-key or --kms-key-arn to add a password layer)"),
+			withEnv("CLOUDSTIC_KMS_ENDPOINT"), withPlaceholder("<url>"),
+			withShortUsage("Custom AWS KMS endpoint")),
+		boolFlag(&g.prompt, "prompt", false, "Prompt for password interactively (use alongside --encryption-key or --kms-key-arn to add a password layer)", withShortUsage("Prompt for password interactively")),
 	}
 }
 
@@ -120,10 +127,10 @@ func encryptionFlagSpecs(g *globalFlags) []flagSpec {
 func outputFlagSpecs(g *globalFlags) []flagSpec {
 	return []flagSpec{
 		boolFlag(&g.noPrompt, "no-prompt", false, "Disable interactive prompts (for scripts and CI)"),
-		boolFlag(&g.verbose, "verbose", false, "Log detailed file-level operations"),
-		boolFlag(&g.quiet, "quiet", false, "Suppress progress bars (keeps final summary)"),
+		boolFlag(&g.verbose, "verbose", false, "Log detailed file-level operations", withShortUsage("Log detailed operations")),
+		boolFlag(&g.quiet, "quiet", false, "Suppress progress bars (keeps final summary)", withShortUsage("Suppress progress bars")),
 		boolFlag(&g.json, "json", false, "Write command result as JSON to stdout"),
-		boolFlag(&g.debug, "debug", false, "Log every store request (network calls, timing, sizes)"),
+		boolFlag(&g.debug, "debug", false, "Log every store request (network calls, timing, sizes)", withShortUsage("Log every store request")),
 	}
 }
 

@@ -274,3 +274,36 @@ func TestGeneratedCommandFlagsMatchSpecs(t *testing.T) {
 		}
 	}
 }
+
+// TestGlobalFlagsGeneratedForAllShells ensures the zsh global_flags array and
+// the fish global completions are derived from the global specs, so a new
+// global flag cannot be offered by one shell and missed by another. fish
+// previously declared only 3 of the ~29 global flags.
+func TestGlobalFlagsGeneratedForAllShells(t *testing.T) {
+	scripts := completionScripts(t)
+	specs := globalSpecs()
+	if len(specs) == 0 {
+		t.Fatal("no global specs declared")
+	}
+
+	for _, s := range specs {
+		if !strings.Contains(scripts["zsh"], "'-"+s.name+"[") {
+			t.Errorf("zsh global_flags is missing -%s", s.name)
+		}
+		if !strings.Contains(scripts["fish"], "complete -c cloudstic -o "+s.name+" -l "+s.name) {
+			t.Errorf("fish global completions are missing -%s", s.name)
+		}
+	}
+
+	// The zsh array must contain exactly the declared globals, no extras.
+	block := scripts["zsh"]
+	start := strings.Index(block, "global_flags=(")
+	if start < 0 {
+		t.Fatal("zsh global_flags array not found")
+	}
+	end := strings.Index(block[start:], "\n    )")
+	entries := strings.Count(block[start:start+end], "\n        '-")
+	if entries != len(specs) {
+		t.Errorf("zsh global_flags has %d entries, specs declare %d", entries, len(specs))
+	}
+}

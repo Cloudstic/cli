@@ -323,35 +323,7 @@ _cloudstic() {
 
     local -a global_flags
     global_flags=(
-        '-store[Storage backend URI]:uri:_cloudstic_store_prefixes'
-        '-profile[Profile name from profiles.yaml]:name:_cloudstic_profile_names'
-        '-profiles-file[Path to profiles YAML file]:path:_files'
-        '-s3-endpoint[S3 compatible endpoint URL]:url:'
-        '-s3-region[S3 region]:region:'
-        '-s3-profile[AWS shared config profile for S3 auth]:name:'
-        '-s3-access-key[S3 access key ID]:key:'
-        '-s3-secret-key[S3 secret access key]:secret:'
-        '-source-sftp-password[SFTP source password]:password:'
-        '-source-sftp-key[Path to SSH private key for SFTP source]:key:_files'
-        '-source-sftp-known-hosts[Path to known_hosts file for SFTP source]:path:_files'
-        '-source-sftp-insecure[Skip host key validation for SFTP source (INSECURE)]'
-        '-store-sftp-password[SFTP store password]:password:'
-        '-store-sftp-key[Path to SSH private key for SFTP store]:key:_files'
-        '-store-sftp-known-hosts[Path to known_hosts file for SFTP store]:path:_files'
-        '-store-sftp-insecure[Skip host key validation for SFTP store (INSECURE)]'
-        '-encryption-key[Platform key (hex-encoded)]:key:'
-        '-password[Repository password]:password:'
-        '-recovery-key[Recovery key (24-word mnemonic)]:words:'
-        '-kms-key-arn[AWS KMS key ARN]:arn:'
-        '-kms-region[AWS KMS region]:region:'
-        '-kms-endpoint[Custom AWS KMS endpoint]:url:'
-        '-disable-packfile[Disable bundling small objects into packs]'
-        '-prompt[Prompt for password interactively]'
-        '-no-prompt[Disable interactive prompts (for scripts and CI)]'
-        '-verbose[Log detailed operations]'
-        '-quiet[Suppress progress bars]'
-        '-json[Write command result as JSON to stdout]'
-        '-debug[Log every store request]'
+@@ZSH_GLOBAL_FLAGS@@
     )
     # Check if a subcommand has been given
     local cmd
@@ -672,9 +644,7 @@ complete -c cloudstic -f
 @@FISH_COMMANDS@@
 
 # Global flags (available for all subcommands)
-complete -c cloudstic -o store -l store -x -a 'local: s3: b2: sftp://' -d 'Storage backend URI (local:<path>, s3:<bucket>[/<prefix>], b2:<bucket>[/<prefix>], sftp://[user@]host[:port]/<path>)'
-complete -c cloudstic -o profile -l profile -x -a '(__fish_cloudstic_query profile-names)' -d 'Profile name from profiles.yaml'
-complete -c cloudstic -o profiles-file -l profiles-file -r -F -d 'Path to profiles YAML file'
+@@FISH_GLOBAL_FLAGS@@
 complete -c cloudstic -l s3-endpoint -x -d 'S3 compatible endpoint URL'
 complete -c cloudstic -l s3-region -x -d 'S3 region'
 complete -c cloudstic -l s3-profile -x -d 'AWS shared config profile for S3 auth'

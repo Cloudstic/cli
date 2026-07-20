@@ -44,9 +44,13 @@ type keyListArgs struct {
 	g *globalFlags
 }
 
-func parseKeyListArgs(args []string) (*keyListArgs, error) {
+func newKeyListFlagSet() (*flag.FlagSet, *keyListArgs) {
 	fs := flag.NewFlagSet("key list", flag.ContinueOnError)
-	a := &keyListArgs{g: addGlobalFlags(fs)}
+	return fs, &keyListArgs{g: addGlobalFlags(fs)}
+}
+
+func parseKeyListArgs(args []string) (*keyListArgs, error) {
+	fs, a := newKeyListFlagSet()
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
@@ -100,15 +104,19 @@ type keyPasswdArgs struct {
 	newPassword string
 }
 
-func parseKeyPasswdArgs(args []string) (*keyPasswdArgs, error) {
+func newKeyPasswdFlagSet() (*flag.FlagSet, *keyPasswdArgs) {
 	fs := flag.NewFlagSet("key passwd", flag.ContinueOnError)
 	a := &keyPasswdArgs{}
 	a.g = addGlobalFlags(fs)
-	newPassword := fs.String("new-password", "", "New repository password (prompted interactively if not set)")
+	fs.StringVar(&a.newPassword, "new-password", "", "New repository password (prompted interactively if not set)")
+	return fs, a
+}
+
+func parseKeyPasswdArgs(args []string) (*keyPasswdArgs, error) {
+	fs, a := newKeyPasswdFlagSet()
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
-	a.newPassword = *newPassword
 	return a, nil
 }
 
@@ -158,9 +166,13 @@ type addRecoveryKeyArgs struct {
 	g *globalFlags
 }
 
-func parseAddRecoveryKeyArgs(args []string) (*addRecoveryKeyArgs, error) {
+func newAddRecoveryKeyFlagSet() (*flag.FlagSet, *addRecoveryKeyArgs) {
 	fs := flag.NewFlagSet("add-recovery-key", flag.ContinueOnError)
-	a := &addRecoveryKeyArgs{g: addGlobalFlags(fs)}
+	return fs, &addRecoveryKeyArgs{g: addGlobalFlags(fs)}
+}
+
+func parseAddRecoveryKeyArgs(args []string) (*addRecoveryKeyArgs, error) {
+	fs, a := newAddRecoveryKeyFlagSet()
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}

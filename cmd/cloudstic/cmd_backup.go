@@ -49,57 +49,42 @@ type backupArgs struct {
 	flagsSet          map[string]bool
 }
 
-func parseBackupArgs(args []string) (*backupArgs, error) {
+func newBackupFlagSet() (*flag.FlagSet, *backupArgs) {
 	fs := flag.NewFlagSet("backup", flag.ContinueOnError)
 	a := &backupArgs{}
 	a.g = addGlobalFlags(fs)
-	sourceURI := fs.String("source", envDefault("CLOUDSTIC_SOURCE", "gdrive"), "Source URI: local:<path>, sftp://[user@]host[:port]/<path>, gdrive[://<Drive Name>][/<path>], gdrive-changes[://<Drive Name>][/<path>], onedrive[://<Drive Name>][/<path>], onedrive-changes[://<Drive Name>][/<path>]")
-	allProfiles := fs.Bool("all-profiles", false, "Run backup for all enabled profiles from profiles.yaml")
-	authRef := fs.String("auth-ref", "", "Use named auth entry from profiles.yaml for cloud source credentials")
-	dryRun := fs.Bool("dry-run", false, "Scan source and report changes without writing to the store")
-	ignoreEmpty := fs.Bool("ignore-empty-snapshot", false, "Skip creating a new snapshot when nothing changed")
-	skipNativeFiles := fs.Bool("skip-native-files", false, "Exclude Google-native files (Docs, Sheets, Slides, etc.) from the backup")
-	excludeFile := fs.String("exclude-file", "", "Path to file with exclude patterns (one per line, gitignore syntax)")
-	volumeUUID := fs.String("volume-uuid", envDefault("CLOUDSTIC_VOLUME_UUID", ""), "Override volume UUID for local source (enables cross-machine incremental backup)")
-	googleCreds := fs.String("google-credentials", envDefault("GOOGLE_APPLICATION_CREDENTIALS", ""), "Path to Google service account credentials JSON file")
-	googleCredsRef := fs.String("google-credentials-ref", "", "Secret reference to Google service account credentials JSON")
-	googleCredsJSON := fs.String("google-credentials-json", envDefault("GOOGLE_CREDENTIALS_JSON", ""), "Inline Google credentials JSON (OAuth client or service account)")
-	googleTokenFile := fs.String("google-token-file", envDefault("GOOGLE_TOKEN_FILE", ""), "Path to Google OAuth token file")
-	googleTokenRef := fs.String("google-token-ref", "", "Secret reference to Google OAuth token")
-	onedriveClientID := fs.String("onedrive-client-id", envDefault("ONEDRIVE_CLIENT_ID", ""), "OneDrive OAuth client ID")
-	onedriveTokenFile := fs.String("onedrive-token-file", envDefault("ONEDRIVE_TOKEN_FILE", ""), "Path to OneDrive OAuth token file")
-	onedriveTokenRef := fs.String("onedrive-token-ref", "", "Secret reference to OneDrive OAuth token")
-	skipMode := fs.Bool("skip-mode", false, "Skip POSIX mode, uid, gid, btime, and flags collection")
-	skipFlags := fs.Bool("skip-flags", false, "Skip file flags collection")
-	skipXattrs := fs.Bool("skip-xattrs", false, "Skip extended attribute collection")
-	xattrNamespaces := fs.String("xattr-namespaces", "", "Restrict xattr collection to these prefixes (comma-separated, e.g. \"user.,com.apple.\")")
+	fs.StringVar(&a.sourceURI, "source", envDefault("CLOUDSTIC_SOURCE", "gdrive"), "Source URI: local:<path>, sftp://[user@]host[:port]/<path>, gdrive[://<Drive Name>][/<path>], gdrive-changes[://<Drive Name>][/<path>], onedrive[://<Drive Name>][/<path>], onedrive-changes[://<Drive Name>][/<path>]")
+	fs.BoolVar(&a.allProfiles, "all-profiles", false, "Run backup for all enabled profiles from profiles.yaml")
+	fs.StringVar(&a.authRef, "auth-ref", "", "Use named auth entry from profiles.yaml for cloud source credentials")
+	fs.BoolVar(&a.dryRun, "dry-run", false, "Scan source and report changes without writing to the store")
+	fs.BoolVar(&a.ignoreEmpty, "ignore-empty-snapshot", false, "Skip creating a new snapshot when nothing changed")
+	fs.BoolVar(&a.skipNativeFiles, "skip-native-files", false, "Exclude Google-native files (Docs, Sheets, Slides, etc.) from the backup")
+	fs.StringVar(&a.excludeFile, "exclude-file", "", "Path to file with exclude patterns (one per line, gitignore syntax)")
+	fs.StringVar(&a.volumeUUID, "volume-uuid", envDefault("CLOUDSTIC_VOLUME_UUID", ""), "Override volume UUID for local source (enables cross-machine incremental backup)")
+	fs.StringVar(&a.googleCreds, "google-credentials", envDefault("GOOGLE_APPLICATION_CREDENTIALS", ""), "Path to Google service account credentials JSON file")
+	fs.StringVar(&a.googleCredsRef, "google-credentials-ref", "", "Secret reference to Google service account credentials JSON")
+	fs.StringVar(&a.googleCredsJSON, "google-credentials-json", envDefault("GOOGLE_CREDENTIALS_JSON", ""), "Inline Google credentials JSON (OAuth client or service account)")
+	fs.StringVar(&a.googleTokenFile, "google-token-file", envDefault("GOOGLE_TOKEN_FILE", ""), "Path to Google OAuth token file")
+	fs.StringVar(&a.googleTokenRef, "google-token-ref", "", "Secret reference to Google OAuth token")
+	fs.StringVar(&a.onedriveClientID, "onedrive-client-id", envDefault("ONEDRIVE_CLIENT_ID", ""), "OneDrive OAuth client ID")
+	fs.StringVar(&a.onedriveTokenFile, "onedrive-token-file", envDefault("ONEDRIVE_TOKEN_FILE", ""), "Path to OneDrive OAuth token file")
+	fs.StringVar(&a.onedriveTokenRef, "onedrive-token-ref", "", "Secret reference to OneDrive OAuth token")
+	fs.BoolVar(&a.skipMode, "skip-mode", false, "Skip POSIX mode, uid, gid, btime, and flags collection")
+	fs.BoolVar(&a.skipFlags, "skip-flags", false, "Skip file flags collection")
+	fs.BoolVar(&a.skipXattrs, "skip-xattrs", false, "Skip extended attribute collection")
+	fs.StringVar(&a.xattrNamespaces, "xattr-namespaces", "", "Restrict xattr collection to these prefixes (comma-separated, e.g. \"user.,com.apple.\")")
 	fs.Var(&a.tags, "tag", "Tag to apply to the snapshot (can be specified multiple times)")
 	fs.Var(&a.excludes, "exclude", "Exclude pattern (gitignore syntax, repeatable)")
+	return fs, a
+}
+
+func parseBackupArgs(args []string) (*backupArgs, error) {
+	fs, a := newBackupFlagSet()
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
-	a.sourceURI = *sourceURI
 	a.profile = a.g.profile
-	a.allProfiles = *allProfiles
-	a.authRef = *authRef
 	a.profilesFile = a.g.profilesFile
-	a.dryRun = *dryRun
-	a.ignoreEmpty = *ignoreEmpty
-	a.skipNativeFiles = *skipNativeFiles
-	a.excludeFile = *excludeFile
-	a.volumeUUID = *volumeUUID
-	a.googleCreds = *googleCreds
-	a.googleCredsRef = *googleCredsRef
-	a.googleCredsJSON = *googleCredsJSON
-	a.googleTokenFile = *googleTokenFile
-	a.googleTokenRef = *googleTokenRef
-	a.onedriveClientID = *onedriveClientID
-	a.onedriveTokenFile = *onedriveTokenFile
-	a.onedriveTokenRef = *onedriveTokenRef
-	a.skipMode = *skipMode
-	a.skipFlags = *skipFlags
-	a.skipXattrs = *skipXattrs
-	a.xattrNamespaces = *xattrNamespaces
 	a.flagsSet = map[string]bool{}
 	fs.Visit(func(f *flag.Flag) {
 		a.flagsSet[f.Name] = true

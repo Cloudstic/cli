@@ -34,7 +34,7 @@ func runCompletion(r *runner) int {
 
 // completionBash writes a bash completion script to w.
 func completionBash(w io.Writer) {
-	_, _ = fmt.Fprint(w, `# bash completion for cloudstic
+	_, _ = fmt.Fprint(w, renderCompletion(`# bash completion for cloudstic
 
 _cloudstic_query() {
     local kind="$1"
@@ -47,9 +47,9 @@ _cloudstic() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="init backup auth profile store source setup tui restore list ls prune forget diff break-lock key cat completion version help"
+    local commands="@@COMMAND_NAMES@@"
 
-    local global_flags="-store -profile -profiles-file -s3-endpoint -s3-region -s3-profile -s3-access-key -s3-secret-key -source-sftp-password -source-sftp-key -source-sftp-known-hosts -source-sftp-insecure -store-sftp-password -store-sftp-key -store-sftp-known-hosts -store-sftp-insecure -encryption-key -password -recovery-key -kms-key-arn -kms-region -kms-endpoint -disable-packfile -prompt -no-prompt -verbose -quiet -json -debug"
+    local global_flags="@@GLOBAL_FLAGS@@"
 
     # Identify the subcommand
     local cmd=""
@@ -59,7 +59,7 @@ _cloudstic() {
             -*)
                 # skip flags and their values
                 case "${words[i]}" in
-					-store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-source-sftp-known-hosts|-store|-store-sftp-password|-store-sftp-key|-store-sftp-known-hosts|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-all-profiles|-auth-ref|-google-credentials|-google-credentials-ref|-google-credentials-json|-google-token-file|-google-token-ref|-onedrive-client-id|-onedrive-token-file|-onedrive-token-ref|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account|-xattr-namespaces)
+					@@GLOBAL_VALUE_FLAGS@@|-source|-auth-ref|-google-credentials|-google-credentials-ref|-google-credentials-json|-google-token-file|-google-token-ref|-onedrive-client-id|-onedrive-token-file|-onedrive-token-ref|-tag|-output|-format|-path|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account|-xattr-namespaces|-exclude|-exclude-file|-new-password|-name|-provider|-uri|-store-ref)
 						((i++)) ;;
 				esac
                 ;;
@@ -279,12 +279,12 @@ _cloudstic() {
 }
 
 complete -F _cloudstic cloudstic
-`)
+`))
 }
 
 // completionZsh writes a zsh completion script to w.
 func completionZsh(w io.Writer) {
-	_, _ = fmt.Fprint(w, `#compdef cloudstic
+	_, _ = fmt.Fprint(w, renderCompletion(`#compdef cloudstic
 
 # zsh completion for cloudstic
 
@@ -321,25 +321,7 @@ _cloudstic_store_prefixes() {
 _cloudstic() {
     local -a commands
     commands=(
-        'init:Initialize a new repository'
-        'backup:Create a new backup snapshot from a source'
-        'auth:Manage reusable cloud auth entries'
-        'profile:Manage backup profiles'
-        'source:Discover source candidates for onboarding'
-        'setup:Guided setup and onboarding flows'
-        'tui:Launch the interactive terminal dashboard'
-        'restore:Restore files from a backup snapshot'
-        'list:List all backup snapshots in the repository'
-        'ls:List files within a specific snapshot'
-        'prune:Remove unused data chunks from the repository'
-        'forget:Remove a specific snapshot from history'
-        'diff:Compare two snapshots or a snapshot against latest'
-        'break-lock:Remove a stale repository lock'
-        'key:Manage encryption key slots'
-        'cat:Display raw JSON content of repository objects'
-        'completion:Generate shell completion scripts'
-        'version:Print version information'
-        'help:Show usage information'
+@@ZSH_COMMANDS@@
     )
 
     local prev_word="${words[CURRENT-1]}"
@@ -398,7 +380,7 @@ _cloudstic() {
 
     if [[ -z "$cmd" ]]; then
         case "$prev_word" in
-            -store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-source-sftp-known-hosts|-store-sftp-password|-store-sftp-key|-store-sftp-known-hosts|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint)
+            @@GLOBAL_VALUE_FLAGS@@)
                 _arguments $global_flags
                 return
                 ;;
@@ -754,12 +736,12 @@ _cloudstic() {
 }
 
 compdef _cloudstic cloudstic
-`)
+`))
 }
 
 // completionFish writes a fish completion script to w.
 func completionFish(w io.Writer) {
-	_, _ = fmt.Fprint(w, `# fish completion for cloudstic
+	_, _ = fmt.Fprint(w, renderCompletion(`# fish completion for cloudstic
 
 function __fish_cloudstic_query
     set -l kind $argv[1]
@@ -770,25 +752,7 @@ end
 complete -c cloudstic -f
 
 # Subcommands
-complete -c cloudstic -n __fish_use_subcommand -a init -d 'Initialize a new repository'
-complete -c cloudstic -n __fish_use_subcommand -a backup -d 'Create a new backup snapshot'
-complete -c cloudstic -n __fish_use_subcommand -a auth -d 'Manage reusable cloud auth entries'
-complete -c cloudstic -n __fish_use_subcommand -a profile -d 'Manage backup profiles'
-complete -c cloudstic -n __fish_use_subcommand -a source -d 'Discover source candidates for onboarding'
-complete -c cloudstic -n __fish_use_subcommand -a setup -d 'Guided setup and onboarding flows'
-complete -c cloudstic -n __fish_use_subcommand -a tui -d 'Launch the interactive terminal dashboard'
-complete -c cloudstic -n __fish_use_subcommand -a restore -d 'Restore files from a snapshot'
-complete -c cloudstic -n __fish_use_subcommand -a list -d 'List all backup snapshots'
-complete -c cloudstic -n __fish_use_subcommand -a ls -d 'List files within a snapshot'
-complete -c cloudstic -n __fish_use_subcommand -a prune -d 'Remove unused data chunks'
-complete -c cloudstic -n __fish_use_subcommand -a forget -d 'Remove a snapshot from history'
-complete -c cloudstic -n __fish_use_subcommand -a diff -d 'Compare two snapshots'
-complete -c cloudstic -n __fish_use_subcommand -a break-lock -d 'Remove a stale repository lock'
-complete -c cloudstic -n __fish_use_subcommand -a key -d 'Manage encryption key slots'
-complete -c cloudstic -n __fish_use_subcommand -a cat -d 'Display raw JSON of repository objects'
-complete -c cloudstic -n __fish_use_subcommand -a completion -d 'Generate shell completion scripts'
-complete -c cloudstic -n __fish_use_subcommand -a version -d 'Print version information'
-complete -c cloudstic -n __fish_use_subcommand -a help -d 'Show usage information'
+@@FISH_COMMANDS@@
 
 # Global flags (available for all subcommands)
 complete -c cloudstic -o store -l store -x -a 'local: s3: b2: sftp://' -d 'Storage backend URI (local:<path>, s3:<bucket>[/<prefix>], b2:<bucket>[/<prefix>], sftp://[user@]host[:port]/<path>)'
@@ -962,5 +926,5 @@ complete -c cloudstic -n '__fish_seen_subcommand_from cat' -l raw -d 'Output raw
 
 # completion
 complete -c cloudstic -n '__fish_seen_subcommand_from completion' -a 'bash zsh fish' -d 'Shell type'
-`)
+`))
 }

@@ -13,9 +13,13 @@ type breakLockArgs struct {
 	g *globalFlags
 }
 
-func parseBreakLockArgs(args []string) (*breakLockArgs, error) {
+func newBreakLockFlagSet() (*flag.FlagSet, *breakLockArgs) {
 	fs := flag.NewFlagSet("break-lock", flag.ContinueOnError)
-	a := &breakLockArgs{g: addGlobalFlags(fs)}
+	return fs, &breakLockArgs{g: addGlobalFlags(fs)}
+}
+
+func parseBreakLockArgs(args []string) (*breakLockArgs, error) {
+	fs, a := newBreakLockFlagSet()
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}

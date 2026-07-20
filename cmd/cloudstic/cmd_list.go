@@ -20,17 +20,18 @@ func listFlagSpecs(a *listArgs) []flagSpec {
 	}
 }
 
-func newListFlagSet() (*flag.FlagSet, *listArgs, []flagSpec) {
+func newListFlagSet() (boundFlagSet, *listArgs) {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
-	a := &listArgs{g: addGlobalFlags(fs, repoCommandGroups)}
-	specs := listFlagSpecs(a)
-	bindFlags(fs, specs)
-	return fs, a, specs
+	g, globalSpecs := addGlobalFlags(fs, repoCommandGroups)
+	a := &listArgs{g: g}
+	own := listFlagSpecs(a)
+	bindFlags(fs, own)
+	return boundFlagSet{set: fs, global: globalSpecs, own: own}, a
 }
 
 func parseListArgs(args []string) (*listArgs, error) {
-	fs, a, _ := newListFlagSet()
-	if err := parseFlags(fs, args); err != nil {
+	b, a := newListFlagSet()
+	if err := parseFlags(b, args); err != nil {
 		return nil, err
 	}
 	return a, nil

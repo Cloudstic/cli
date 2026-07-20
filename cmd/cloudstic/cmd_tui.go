@@ -19,18 +19,19 @@ func tuiFlagSpecs(a *tuiArgs) []flagSpec {
 	}
 }
 
-func newTUIFlagSet() (*flag.FlagSet, *tuiArgs, []flagSpec) {
+func newTUIFlagSet() (boundFlagSet, *tuiArgs) {
 	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	a := &tuiArgs{}
-	specs := tuiFlagSpecs(a)
-	bindFlags(fs, specs)
-	return fs, a, specs
+	var globalSpecs []flagSpec
+	own := tuiFlagSpecs(a)
+	bindFlags(fs, own)
+	return boundFlagSet{set: fs, global: globalSpecs, own: own}, a
 }
 
 func parseTUIArgs(args []string) (*tuiArgs, error) {
-	fs, a, _ := newTUIFlagSet()
-	if err := parseFlags(fs, args); err != nil {
+	b, a := newTUIFlagSet()
+	if err := parseFlags(b, args); err != nil {
 		return nil, err
 	}
 	return a, nil

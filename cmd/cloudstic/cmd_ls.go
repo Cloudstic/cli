@@ -19,21 +19,22 @@ type lsArgs struct {
 	snapshotID string
 }
 
-func newLsFlagSet() (*flag.FlagSet, *lsArgs, []flagSpec) {
+func newLsFlagSet() (boundFlagSet, *lsArgs) {
 	fs := flag.NewFlagSet("ls", flag.ContinueOnError)
 	a := &lsArgs{}
-	a.g = addGlobalFlags(fs, repoCommandGroups)
-	return fs, a, nil
+	g, globalSpecs := addGlobalFlags(fs, repoCommandGroups)
+	a.g = g
+	return boundFlagSet{set: fs, global: globalSpecs}, a
 }
 
 func parseLsArgs(args []string) (*lsArgs, error) {
-	fs, a, _ := newLsFlagSet()
-	if err := parseFlags(fs, args); err != nil {
+	b, a := newLsFlagSet()
+	if err := parseFlags(b, args); err != nil {
 		return nil, err
 	}
 	a.snapshotID = "latest"
-	if fs.NArg() > 0 {
-		a.snapshotID = fs.Arg(0)
+	if b.set.NArg() > 0 {
+		a.snapshotID = b.set.Arg(0)
 	}
 	return a, nil
 }

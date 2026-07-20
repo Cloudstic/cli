@@ -38,7 +38,7 @@ func runAuth(r *runner, ctx context.Context) int {
 func runAuthList(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("auth list", flag.ContinueOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
-	if err := parseFlags(fs, r.args); err != nil {
+	if err := parseFlags(boundFlagSet{set: fs}, r.args); err != nil {
 		return r.parseError(err)
 	}
 
@@ -57,7 +57,7 @@ func runAuthList(r *runner, ctx context.Context) int {
 func runAuthShow(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("auth show", flag.ContinueOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
-	if err := parseFlags(fs, r.args); err != nil {
+	if err := parseFlags(boundFlagSet{set: fs}, r.args); err != nil {
 		return r.parseError(err)
 	}
 	if fs.NArg() > 1 {
@@ -104,7 +104,7 @@ func runAuthNew(r *runner, ctx context.Context) int {
 	onedriveClientID := fs.String("onedrive-client-id", "", "OneDrive OAuth client ID")
 	onedriveTokenFile := fs.String("onedrive-token-file", "", "Path to OneDrive OAuth token file")
 	onedriveTokenRef := fs.String("onedrive-token-ref", "", "Secret reference to OneDrive OAuth token")
-	if err := parseFlags(fs, r.args); err != nil {
+	if err := parseFlags(boundFlagSet{set: fs}, r.args); err != nil {
 		return r.parseError(err)
 	}
 
@@ -206,7 +206,7 @@ func runAuthLogin(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("auth login", flag.ContinueOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
 	name := fs.String("name", "", "Auth reference name")
-	if err := parseFlags(fs, r.args); err != nil {
+	if err := parseFlags(boundFlagSet{set: fs}, r.args); err != nil {
 		return r.parseError(err)
 	}
 

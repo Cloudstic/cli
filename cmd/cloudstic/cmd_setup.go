@@ -63,7 +63,7 @@ func parseSetupWorkstationArgs(args []string) (*setupWorkstationArgs, error) {
 	jsonOutput := fs.Bool("json", false, "Write onboarding plan as JSON")
 	profilesFile := fs.String("profiles-file", defaultProfilesPathNoCreate(), "Path to profiles YAML file")
 	storeRef := fs.String("store-ref", "", "Existing store reference to attach to generated profiles")
-	if err := parseFlags(fs, args); err != nil {
+	if err := parseFlags(boundFlagSet{set: fs}, args); err != nil {
 		return nil, err
 	}
 	a.dryRun = *dryRun

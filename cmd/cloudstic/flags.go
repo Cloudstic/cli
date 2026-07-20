@@ -159,10 +159,11 @@ func globalFlagSpecsFor(g *globalFlags, groups []flagGroup) []flagSpec {
 // addGlobalFlags registers the given global flag groups on fs and returns the
 // destination struct. Commands pass the groups they actually use so that help
 // output does not advertise flags the command cannot act on.
-func addGlobalFlags(fs *flag.FlagSet, groups []flagGroup) *globalFlags {
+func addGlobalFlags(fs *flag.FlagSet, groups []flagGroup) (*globalFlags, []flagSpec) {
 	g := &globalFlags{flagSet: fs}
-	bindFlags(fs, globalFlagSpecsFor(g, groups))
-	return g
+	specs := globalFlagSpecsFor(g, groups)
+	bindFlags(fs, specs)
+	return g, specs
 }
 
 func (g *globalFlags) jsonEnabled() bool {
@@ -181,14 +182,21 @@ func (g *globalFlags) flagProvided(name string) bool {
 // flags so that flags can appear anywhere on the command line (e.g.
 // "cloudstic restore abc123 -output ./out.zip" works as well as the reverse).
 // Using this consistently means every command supports flexible argument ordering.
-func parseFlags(fs *flag.FlagSet, args []string) error {
+func parseFlags(b boundFlagSet, args []string) error {
+	fs := b.set
 	if fs.Lookup("no-prompt") == nil {
 		fs.Bool("no-prompt", false, "Disable interactive prompts (for scripts and CI)")
 	}
 	if hasGlobalFlag(args, "json") && !hasGlobalFlag(args, "h") {
 		fs.SetOutput(io.Discard)
 	}
-	return fs.Parse(reorderArgs(fs, args))
+	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
+		return err
+	}
+	// Environment values are resolved here, after parsing, so that explicit
+	// flags still win and help output never sees them.
+	_, err := applyEnvDefaults(fs, b.all())
+	return err
 }
 
 func (r *runner) parseError(err error) int {

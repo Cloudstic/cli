@@ -21,21 +21,22 @@ func checkFlagSpecs(a *checkArgs) []flagSpec {
 	}
 }
 
-func newCheckFlagSet() (*flag.FlagSet, *checkArgs, []flagSpec) {
+func newCheckFlagSet() (boundFlagSet, *checkArgs) {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	a := &checkArgs{}
-	a.g = addGlobalFlags(fs, repoCommandGroups)
-	specs := checkFlagSpecs(a)
-	bindFlags(fs, specs)
-	return fs, a, specs
+	g, globalSpecs := addGlobalFlags(fs, repoCommandGroups)
+	a.g = g
+	own := checkFlagSpecs(a)
+	bindFlags(fs, own)
+	return boundFlagSet{set: fs, global: globalSpecs, own: own}, a
 }
 
 func parseCheckArgs(args []string) (*checkArgs, error) {
-	fs, a, _ := newCheckFlagSet()
-	if err := parseFlags(fs, args); err != nil {
+	b, a := newCheckFlagSet()
+	if err := parseFlags(b, args); err != nil {
 		return nil, err
 	}
-	a.snapshotRef = fs.Arg(0)
+	a.snapshotRef = b.set.Arg(0)
 	if a.snapshotRef == "" {
 		a.snapshotRef = "latest"
 	}

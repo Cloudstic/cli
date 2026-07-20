@@ -31,7 +31,7 @@ func runSourceDiscover(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("source discover", flag.ContinueOnError)
 	portableOnly := fs.Bool("portable-only", false, "Only show portable/external source candidates")
 	jsonOutput := fs.Bool("json", false, "Write discovered sources as JSON")
-	if err := parseFlags(fs, r.args); err != nil {
+	if err := parseFlags(boundFlagSet{set: fs}, r.args); err != nil {
 		return r.parseError(err)
 	}
 

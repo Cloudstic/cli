@@ -41,7 +41,8 @@ func forgetFlagSpecs(a *forgetArgs) []flagSpec {
 	return []flagSpec{
 		boolFlag(&a.prune, "prune", false, "Run prune after forgetting"),
 		boolFlag(&a.dryRun, "dry-run", false, "Only show what would be removed"),
-		intFlag(&a.keepLast, "keep-last", 0, "Keep the last n snapshots", withPlaceholder("N")),
+		intFlag(&a.keepLast, "keep-last", 0, "Keep the last n snapshots", withPlaceholder("N"),
+			withShortUsage("Keep N most recent snapshots")),
 		intFlag(&a.keepHourly, "keep-hourly", 0, "Keep n hourly snapshots", withPlaceholder("N")),
 		intFlag(&a.keepDaily, "keep-daily", 0, "Keep n daily snapshots", withPlaceholder("N")),
 		intFlag(&a.keepWeekly, "keep-weekly", 0, "Keep n weekly snapshots", withPlaceholder("N")),
@@ -57,16 +58,17 @@ func forgetFlagSpecs(a *forgetArgs) []flagSpec {
 	}
 }
 
-func newForgetFlagSet() (*flag.FlagSet, *forgetArgs) {
+func newForgetFlagSet() (*flag.FlagSet, *forgetArgs, []flagSpec) {
 	fs := flag.NewFlagSet("forget", flag.ContinueOnError)
 	a := &forgetArgs{}
 	a.g = addGlobalFlags(fs, repoCommandGroups)
-	bindFlags(fs, forgetFlagSpecs(a))
-	return fs, a
+	specs := forgetFlagSpecs(a)
+	bindFlags(fs, specs)
+	return fs, a, specs
 }
 
 func parseForgetArgs(args []string) (*forgetArgs, error) {
-	fs, a := newForgetFlagSet()
+	fs, a, _ := newForgetFlagSet()
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}

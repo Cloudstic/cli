@@ -33,16 +33,17 @@ func restoreFlagSpecs(a *restoreArgs) []flagSpec {
 	}
 }
 
-func newRestoreFlagSet() (*flag.FlagSet, *restoreArgs) {
+func newRestoreFlagSet() (*flag.FlagSet, *restoreArgs, []flagSpec) {
 	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
 	a := &restoreArgs{}
 	a.g = addGlobalFlags(fs, repoCommandGroups)
-	bindFlags(fs, restoreFlagSpecs(a))
-	return fs, a
+	specs := restoreFlagSpecs(a)
+	bindFlags(fs, specs)
+	return fs, a, specs
 }
 
 func parseRestoreArgs(args []string) (*restoreArgs, error) {
-	fs, a := newRestoreFlagSet()
+	fs, a, _ := newRestoreFlagSet()
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}

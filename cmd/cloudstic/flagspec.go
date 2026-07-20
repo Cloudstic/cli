@@ -34,6 +34,11 @@ type flagSpec struct {
 	completer string
 	// placeholder is the value name shown in usage output, e.g. "<path>".
 	placeholder string
+	// shortUsage is a concise description for shell completion menus, where the
+	// full usage text is often too long to be readable. Optional; completion
+	// falls back to usage. Kept on the spec so there is still one declaration
+	// per flag rather than a separately maintained completion description.
+	shortUsage string
 	// isBool reports whether the flag takes no value. Shells must not consume
 	// the following word for boolean flags.
 	isBool bool
@@ -62,6 +67,19 @@ func asRepeatable() flagOpt {
 // withCompleter attaches a shell completion function for the flag's value.
 func withCompleter(name string) flagOpt {
 	return func(s *flagSpec) { s.completer = name }
+}
+
+// withShortUsage sets a concise description used in shell completion menus.
+func withShortUsage(text string) flagOpt {
+	return func(s *flagSpec) { s.shortUsage = text }
+}
+
+// completionUsage returns the description shells should display.
+func (s flagSpec) completionUsage() string {
+	if s.shortUsage != "" {
+		return s.shortUsage
+	}
+	return s.usage
 }
 
 // withPlaceholder sets the value name shown in usage output.

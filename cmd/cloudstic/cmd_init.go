@@ -22,22 +22,24 @@ type initArgs struct {
 
 func initFlagSpecs(a *initArgs) []flagSpec {
 	return []flagSpec{
-		boolFlag(&a.recovery, "add-recovery-key", false, "Generate a recovery key (24-word seed phrase) during init"),
+		boolFlag(&a.recovery, "add-recovery-key", false, "Generate a recovery key (24-word seed phrase) during init",
+			withShortUsage("Generate a 24-word recovery key")),
 		boolFlag(&a.noEncryption, "no-encryption", false, "Create an unencrypted repository (NOT recommended)"),
 		boolFlag(&a.adoptSlots, "adopt-slots", false, "Initialize by adopting existing key slots if found (prevents error if already has slots)"),
 	}
 }
 
-func newInitFlagSet() (*flag.FlagSet, *initArgs) {
+func newInitFlagSet() (*flag.FlagSet, *initArgs, []flagSpec) {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	a := &initArgs{}
 	a.g = addGlobalFlags(fs, repoCommandGroups)
-	bindFlags(fs, initFlagSpecs(a))
-	return fs, a
+	specs := initFlagSpecs(a)
+	bindFlags(fs, specs)
+	return fs, a, specs
 }
 
 func parseInitArgs(args []string) (*initArgs, error) {
-	fs, a := newInitFlagSet()
+	fs, a, _ := newInitFlagSet()
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}

@@ -53,11 +53,15 @@ func backupFlagSpecs(a *backupArgs) []flagSpec {
 	return []flagSpec{
 		stringFlag(&a.sourceURI, "source", "gdrive",
 			"Source URI: local:<path>, sftp://[user@]host[:port]/<path>, gdrive[://<Drive Name>][/<path>], gdrive-changes[://<Drive Name>][/<path>], onedrive[://<Drive Name>][/<path>], onedrive-changes[://<Drive Name>][/<path>]",
-			withEnv("CLOUDSTIC_SOURCE"), withPlaceholder("<uri>"), withCompleter("_cloudstic_source_prefixes")),
-		boolFlag(&a.allProfiles, "all-profiles", false, "Run backup for all enabled profiles from profiles.yaml"),
+			withEnv("CLOUDSTIC_SOURCE"), withPlaceholder("<uri>"), withCompleter("_cloudstic_source_prefixes"),
+			withShortUsage("Source URI")),
+		boolFlag(&a.allProfiles, "all-profiles", false, "Run backup for all enabled profiles from profiles.yaml",
+			withShortUsage("Run all enabled backup profiles")),
 		stringFlag(&a.authRef, "auth-ref", "", "Use named auth entry from profiles.yaml for cloud source credentials",
-			withPlaceholder("<name>"), withCompleter("_cloudstic_auth_names")),
-		boolFlag(&a.dryRun, "dry-run", false, "Scan source and report changes without writing to the store"),
+			withPlaceholder("<name>"), withCompleter("_cloudstic_auth_names"),
+			withShortUsage("Use named auth entry from profiles.yaml")),
+		boolFlag(&a.dryRun, "dry-run", false, "Scan source and report changes without writing to the store",
+			withShortUsage("Scan without writing")),
 		boolFlag(&a.ignoreEmpty, "ignore-empty-snapshot", false, "Skip creating a new snapshot when nothing changed"),
 		boolFlag(&a.skipNativeFiles, "skip-native-files", false, "Exclude Google-native files (Docs, Sheets, Slides, etc.) from the backup"),
 		stringFlag(&a.excludeFile, "exclude-file", "", "Path to file with exclude patterns (one per line, gitignore syntax)",
@@ -92,16 +96,17 @@ func backupFlagSpecs(a *backupArgs) []flagSpec {
 	}
 }
 
-func newBackupFlagSet() (*flag.FlagSet, *backupArgs) {
+func newBackupFlagSet() (*flag.FlagSet, *backupArgs, []flagSpec) {
 	fs := flag.NewFlagSet("backup", flag.ContinueOnError)
 	a := &backupArgs{}
 	a.g = addGlobalFlags(fs, backupCommandGroups)
-	bindFlags(fs, backupFlagSpecs(a))
-	return fs, a
+	specs := backupFlagSpecs(a)
+	bindFlags(fs, specs)
+	return fs, a, specs
 }
 
 func parseBackupArgs(args []string) (*backupArgs, error) {
-	fs, a := newBackupFlagSet()
+	fs, a, _ := newBackupFlagSet()
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}

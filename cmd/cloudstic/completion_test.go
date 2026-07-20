@@ -113,7 +113,7 @@ func TestCompletionZsh(t *testing.T) {
 		"-dry-run[Scan without writing]",
 		"-keep-last[Keep N most recent snapshots]",
 		"list:List stores, auth entries, and backup profiles",
-		"-profile[Backup profile name]",
+		"-profile[Profile name from profiles.yaml]", // global flag, no longer duplicated per-command
 		"-all-profiles[Run all enabled backup profiles]",
 		"-auth-ref[Use named auth entry from profiles.yaml]",
 		"-ignore-empty-snapshot[Skip creating a new snapshot when nothing changed]",

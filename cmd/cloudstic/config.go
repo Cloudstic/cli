@@ -29,6 +29,12 @@ type s3Config struct {
 	secretKey string
 }
 
+// b2Config holds Backblaze B2 application key credentials.
+type b2Config struct {
+	keyID  string
+	appKey string
+}
+
 // sftpConfig holds SFTP authentication and host-key settings. The same shape
 // serves both a store and a backup source, which are configured independently.
 type sftpConfig struct {
@@ -49,6 +55,7 @@ type kmsConfig struct {
 type storeConfig struct {
 	uri   string
 	s3    s3Config
+	b2    b2Config
 	sftp  sftpConfig
 	debug bool
 }
@@ -86,6 +93,10 @@ func clientConfigFromFlags(g *globalFlags) clientConfig {
 				profile:   g.s3Profile,
 				accessKey: g.s3AccessKey,
 				secretKey: g.s3SecretKey,
+			},
+			b2: b2Config{
+				keyID:  g.b2KeyID,
+				appKey: g.b2AppKey,
 			},
 			sftp: sftpConfig{
 				password:   g.storeSFTPPassword,
@@ -223,6 +234,8 @@ func applyProfileStore(cfg *clientConfig, s cloudstic.ProfileStore, provided fun
 		{"s3-profile", "s3_profile", s.S3Profile, "", &cfg.store.s3.profile},
 		{"s3-access-key", "s3_access_key", s.S3AccessKey, s.S3AccessKeySecret, &cfg.store.s3.accessKey},
 		{"s3-secret-key", "s3_secret_key", s.S3SecretKey, s.S3SecretKeySecret, &cfg.store.s3.secretKey},
+		{"b2-key-id", "b2_key_id", s.B2KeyID, s.B2KeyIDSecret, &cfg.store.b2.keyID},
+		{"b2-app-key", "b2_app_key", s.B2AppKey, s.B2AppKeySecret, &cfg.store.b2.appKey},
 		{"store-sftp-password", "store_sftp_password", s.StoreSFTPPassword, s.StoreSFTPPasswordSecret, &cfg.store.sftp.password},
 		{"store-sftp-key", "store_sftp_key", s.StoreSFTPKey, s.StoreSFTPKeySecret, &cfg.store.sftp.key},
 		{"password", "password", "", s.PasswordSecret, &cfg.unlock.password},

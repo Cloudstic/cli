@@ -362,6 +362,8 @@ func TestProfileStoreAuthMode(t *testing.T) {
 	}{
 		{"s3_access_key", cloudstic.ProfileStore{S3AccessKey: "x"}, "static-keys"},
 		{"s3_profile", cloudstic.ProfileStore{S3Profile: "x"}, "aws-shared-profile"},
+		{"b2_key_id", cloudstic.ProfileStore{B2KeyID: "x"}, "b2-keys"},
+		{"b2_app_key_secret", cloudstic.ProfileStore{B2AppKeySecret: "env://B2_APP_KEY"}, "b2-keys"},
 		{"sftp_password", cloudstic.ProfileStore{StoreSFTPPassword: "x"}, "sftp"},
 		{"sftp_key", cloudstic.ProfileStore{StoreSFTPKey: "x"}, "sftp"},
 		{"empty", cloudstic.ProfileStore{}, "default-chain"},

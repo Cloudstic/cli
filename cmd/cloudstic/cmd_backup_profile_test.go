@@ -352,6 +352,8 @@ func TestApplyProfileStore_AllFields(t *testing.T) {
 		S3Profile:           "prod",
 		S3AccessKey:         "AKIATEST",
 		S3SecretKey:         "SECRETTEST",
+		B2KeyID:             "b2-key-id",
+		B2AppKey:            "b2-app-key",
 		StoreSFTPPassword:   "sftp-pw",
 		StoreSFTPKey:        "/tmp/sftp.key",
 		PasswordSecret:      "env://TEST_PASSWORD",
@@ -376,6 +378,8 @@ func TestApplyProfileStore_AllFields(t *testing.T) {
 		{"s3.profile", cfg.store.s3.profile, "prod"},
 		{"s3.accessKey", cfg.store.s3.accessKey, "AKIATEST"},
 		{"s3.secretKey", cfg.store.s3.secretKey, "SECRETTEST"},
+		{"b2.keyID", cfg.store.b2.keyID, "b2-key-id"},
+		{"b2.appKey", cfg.store.b2.appKey, "b2-app-key"},
 		{"sftp.password", cfg.store.sftp.password, "sftp-pw"},
 		{"sftp.key", cfg.store.sftp.key, "/tmp/sftp.key"},
 		{"unlock.password", cfg.unlock.password, "secret-pw"},
@@ -417,6 +421,25 @@ func TestApplyProfileStore_SecretRef(t *testing.T) {
 	}
 	if cfg.unlock.password != "from-secret-ref" {
 		t.Fatalf("unlock.password=%q want from-secret-ref", cfg.unlock.password)
+	}
+}
+
+func TestApplyProfileStore_B2SecretRef(t *testing.T) {
+	t.Setenv("SECRET_B2_KEY_ID", "b2-id-from-env")
+	t.Setenv("SECRET_B2_APP_KEY", "b2-key-from-env")
+
+	cfg, err := applyTestProfileStore(t, cloudstic.ProfileStore{
+		B2KeyIDSecret:  "env://SECRET_B2_KEY_ID",
+		B2AppKeySecret: "env://SECRET_B2_APP_KEY",
+	})
+	if err != nil {
+		t.Fatalf("applyProfileStore: %v", err)
+	}
+	if cfg.store.b2.keyID != "b2-id-from-env" {
+		t.Fatalf("b2.keyID=%q want b2-id-from-env", cfg.store.b2.keyID)
+	}
+	if cfg.store.b2.appKey != "b2-key-from-env" {
+		t.Fatalf("b2.appKey=%q want b2-key-from-env", cfg.store.b2.appKey)
 	}
 }
 

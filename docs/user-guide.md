@@ -1579,14 +1579,22 @@ cloudstic init -store local:/mnt/external/backups -password "passphrase"
 
 ### Backblaze B2
 
-Store backups in a Backblaze B2 bucket. Requires B2 application keys.
+Store backups in a Backblaze B2 bucket. Requires B2 application keys, supplied
+as flags, environment variables, or (for a saved store) a profile field or
+secret reference.
+
+```bash
+cloudstic init -store b2:my-bucket-name -b2-key-id your-key-id -b2-app-key your-app-key -password "passphrase"
+cloudstic backup -store b2:my-bucket-name -source local:~/Documents
+```
+
+Or via the environment:
 
 ```bash
 export B2_KEY_ID=your-key-id
 export B2_APP_KEY=your-app-key
 
 cloudstic init -store b2:my-bucket-name -password "passphrase"
-cloudstic backup -store b2:my-bucket-name -source local:~/Documents
 ```
 
 Use a prefix to namespace objects within a bucket:
@@ -1595,12 +1603,20 @@ Use a prefix to namespace objects within a bucket:
 cloudstic init -store b2:my-bucket/laptop/ -password "passphrase"
 ```
 
-**Environment variables:**
+To save B2 credentials in a store entry, use `cloudstic store new` with a
+secret reference rather than an inline key:
 
-| Variable | Description |
-|----------|-------------|
-| `B2_KEY_ID` | Backblaze B2 application key ID |
-| `B2_APP_KEY` | Backblaze B2 application key |
+```bash
+cloudstic store new -name b2-store -uri b2:my-bucket-name \
+  -b2-key-id-secret env://B2_KEY_ID -b2-app-key-secret env://B2_APP_KEY
+```
+
+**Flags and environment variables:**
+
+| Variable | Flag equivalent | Description |
+|----------|------------------|-------------|
+| `B2_KEY_ID` | `-b2-key-id` | Backblaze B2 application key ID |
+| `B2_APP_KEY` | `-b2-app-key` | Backblaze B2 application key |
 
 ### Amazon S3
 
@@ -1798,6 +1814,8 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 | `CLOUDSTIC_S3_PROFILE` | `-s3-profile` | AWS shared config profile for S3 auth |
 | `AWS_ACCESS_KEY_ID` | `-s3-access-key` | S3 Access Key ID |
 | `AWS_SECRET_ACCESS_KEY` | `-s3-secret-key` | S3 Secret Access Key |
+| `B2_KEY_ID` | `-b2-key-id` | Backblaze B2 application key ID |
+| `B2_APP_KEY` | `-b2-app-key` | Backblaze B2 application key |
 | `CLOUDSTIC_STORE_SFTP_PASSWORD` | `-store-sftp-password` | SFTP password for the store |
 | `CLOUDSTIC_STORE_SFTP_KEY` | `-store-sftp-key` | Path to SSH private key for the store |
 | `CLOUDSTIC_SOURCE` | `-source` | Source URI: `local:<path>`, `sftp://[user@]host[:port]/<path>`, `gdrive[://<Drive Name>][/<path>]`, `gdrive-changes[://<Drive Name>][/<path>]`, `onedrive[://<Drive Name>][/<path>]`, `onedrive-changes[://<Drive Name>][/<path>]` |
@@ -1816,5 +1834,3 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 | `GOOGLE_TOKEN_FILE` | `-google-token-file` | Override Google OAuth token path |
 | `ONEDRIVE_CLIENT_ID` | — | Microsoft app client ID (optional, overrides built-in) |
 | `ONEDRIVE_TOKEN_FILE` | — | Override OneDrive token path |
-| `B2_KEY_ID` | — | Backblaze B2 key ID |
-| `B2_APP_KEY` | — | Backblaze B2 application key |

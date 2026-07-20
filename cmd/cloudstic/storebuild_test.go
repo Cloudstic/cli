@@ -70,3 +70,19 @@ func TestNewObjectStore_UnknownScheme(t *testing.T) {
 		t.Fatal("expected error for unknown store scheme")
 	}
 }
+
+// B2 credentials come from the resolved b2Config, not from raw os.Getenv
+// calls, so a missing credential is caught before any network dial is
+// attempted.
+func TestNewObjectStore_B2_RequiresCredentials(t *testing.T) {
+	cases := []storeConfig{
+		{uri: "b2:my-bucket"},
+		{uri: "b2:my-bucket", b2: b2Config{keyID: "id-only"}},
+		{uri: "b2:my-bucket", b2: b2Config{appKey: "key-only"}},
+	}
+	for _, cfg := range cases {
+		if _, err := newObjectStore(context.Background(), cfg); err == nil {
+			t.Fatalf("expected error for incomplete B2 credentials: %+v", cfg.b2)
+		}
+	}
+}

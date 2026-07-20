@@ -154,7 +154,7 @@ func TestSecretFlagsWithEnvAreConsistent(t *testing.T) {
 		if s.env != "" && !strings.HasPrefix(s.env, "CLOUDSTIC_") {
 			// Provider-standard names are deliberate; record them explicitly.
 			switch s.env {
-			case "AWS_PROFILE", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY":
+			case "AWS_PROFILE", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "B2_KEY_ID", "B2_APP_KEY":
 			default:
 				t.Errorf("flag -%s uses unprefixed env %q; add it to the documented provider-standard list", s.name, s.env)
 			}

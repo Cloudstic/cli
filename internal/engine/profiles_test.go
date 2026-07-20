@@ -45,6 +45,8 @@ func TestSaveProfilesFile_RoundTrip(t *testing.T) {
 				RecoveryKeySecret:       "keychain://cloudstic/recovery",
 				S3AccessKeySecret:       "env://AWS_ACCESS_KEY_ID",
 				S3SecretKeySecret:       "env://AWS_SECRET_ACCESS_KEY",
+				B2KeyIDSecret:           "env://B2_KEY_ID",
+				B2AppKeySecret:          "env://B2_APP_KEY",
 				StoreSFTPPasswordSecret: "env://STORE_SFTP_PASSWORD",
 				StoreSFTPKeySecret:      "env://STORE_SFTP_KEY",
 			},
@@ -72,6 +74,12 @@ func TestSaveProfilesFile_RoundTrip(t *testing.T) {
 	}
 	if cfg.Stores["s"].S3SecretKeySecret != "env://AWS_SECRET_ACCESS_KEY" {
 		t.Fatalf("unexpected s3 secret ref: %q", cfg.Stores["s"].S3SecretKeySecret)
+	}
+	if cfg.Stores["s"].B2KeyIDSecret != "env://B2_KEY_ID" {
+		t.Fatalf("unexpected b2 key id ref: %q", cfg.Stores["s"].B2KeyIDSecret)
+	}
+	if cfg.Stores["s"].B2AppKeySecret != "env://B2_APP_KEY" {
+		t.Fatalf("unexpected b2 app key ref: %q", cfg.Stores["s"].B2AppKeySecret)
 	}
 }
 
@@ -116,6 +124,25 @@ func TestSaveProfilesFile_InvalidSecretRef(t *testing.T) {
 		t.Fatal("SaveProfilesFile: expected validation error")
 	}
 	if !strings.Contains(err.Error(), `store "prod" field "store_sftp_key_secret"`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSaveProfilesFile_InvalidB2SecretRef(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "profiles.yaml")
+	err := SaveProfilesFile(path, &ProfilesConfig{
+		Stores: map[string]ProfileStore{
+			"b2store": {
+				URI:            "b2:bucket",
+				B2AppKeySecret: "env:/bad-format",
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("SaveProfilesFile: expected validation error")
+	}
+	if !strings.Contains(err.Error(), `store "b2store" field "b2_app_key_secret"`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

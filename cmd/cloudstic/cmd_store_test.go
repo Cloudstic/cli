@@ -723,6 +723,39 @@ func TestRunStoreNew_WithAllS3Options(t *testing.T) {
 	}
 }
 
+func TestRunStoreNew_WithB2Options(t *testing.T) {
+	tmpDir := t.TempDir()
+	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
+
+	args := []string{"new",
+		"-profiles-file", profilesPath,
+		"-name", "full-b2",
+		"-uri", "b2:bucket",
+		"-b2-key-id", "direct-key-id",
+		"-b2-app-key-secret", "env://B2_APP_KEY",
+	}
+	var out strings.Builder
+	var errOut strings.Builder
+	r := &runner{out: &out, errOut: &errOut}
+	if code := storeCommand().execute(r.withArgs(args), context.Background(), "store"); code != 0 {
+		t.Fatalf("store new failed: %s", errOut.String())
+	}
+
+	raw, err := os.ReadFile(profilesPath)
+	if err != nil {
+		t.Fatalf("read profiles: %v", err)
+	}
+	yaml := string(raw)
+	for _, want := range []string{
+		"b2_key_id: direct-key-id",
+		"b2_app_key_secret: env://B2_APP_KEY",
+	} {
+		if !strings.Contains(yaml, want) {
+			t.Fatalf("expected %q in YAML:\n%s", want, yaml)
+		}
+	}
+}
+
 func TestRunStoreNew_WithSecretRefFlags(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")

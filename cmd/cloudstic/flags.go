@@ -17,6 +17,7 @@ type globalFlags struct {
 	profile, profilesFile             string
 	s3Endpoint, s3Region, s3Profile   string
 	s3AccessKey, s3SecretKey          string
+	b2KeyID, b2AppKey                 string
 	sourceSFTPPassword, sourceSFTPKey string
 	sourceSFTPInsecure                bool
 	sourceSFTPKnownHosts              string
@@ -65,6 +66,10 @@ func repoFlagSpecs(g *globalFlags) []flagSpec {
 			withEnv("AWS_ACCESS_KEY_ID"), withPlaceholder("<key>"), asSecret()),
 		stringFlag(&g.s3SecretKey, "s3-secret-key", "", "S3 secret access key",
 			withEnv("AWS_SECRET_ACCESS_KEY"), withPlaceholder("<secret>"), asSecret()),
+		stringFlag(&g.b2KeyID, "b2-key-id", "", "Backblaze B2 application key ID",
+			withEnv("B2_KEY_ID"), withPlaceholder("<key-id>"), asSecret()),
+		stringFlag(&g.b2AppKey, "b2-app-key", "", "Backblaze B2 application key",
+			withEnv("B2_APP_KEY"), withPlaceholder("<key>"), asSecret()),
 		boolFlag(&g.disablePackfile, "disable-packfile", false, "Disable bundling small objects into 8MB packs",
 			withEnv("CLOUDSTIC_DISABLE_PACKFILE"), withShortUsage("Disable bundling small objects into packs")),
 	}

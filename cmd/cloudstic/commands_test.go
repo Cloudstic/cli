@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -244,22 +245,32 @@ func TestCompletionGlobalFlagsMatchFlagSet(t *testing.T) {
 }
 
 // TestCompletionValueFlagsExcludeBooleans ensures boolean flags are never
-// listed as value-taking, which would make shells swallow the next word.
+// listed as value-taking, which would make shells swallow the next word. The
+// list now spans the whole tree, not just global flags, so a per-command
+// boolean is covered too.
 func TestCompletionValueFlagsExcludeBooleans(t *testing.T) {
 	valueFlags := map[string]bool{}
-	for _, n := range globalValueFlagNames() {
+	for _, n := range allValueFlagNames() {
 		valueFlags[n] = true
 	}
-	fs := globalFlagSet()
-	for _, name := range globalFlagNames() {
-		f := fs.Lookup(name)
-		if isBoolFlag(f) && valueFlags[name] {
-			t.Errorf("boolean flag -%s must not be listed as value-taking", name)
-		}
-		if !isBoolFlag(f) && !valueFlags[name] {
-			t.Errorf("value flag -%s is missing from the value-taking list", name)
+
+	check := func(path string, specs []flagSpec) {
+		for _, spec := range specs {
+			switch {
+			case spec.isBool && valueFlags[spec.name]:
+				t.Errorf("%s: boolean flag -%s must not be listed as value-taking", path, spec.name)
+			case !spec.isBool && !valueFlags[spec.name]:
+				t.Errorf("%s: value flag -%s is missing from the value-taking list", path, spec.name)
+			}
 		}
 	}
+
+	check("global", globalFlagSpecsFor(&globalFlags{}, allGlobalGroups))
+	walk(commandRegistry(), func(path string, c command) {
+		if c.flags != nil {
+			check(path, ownSpecsOf(c))
+		}
+	})
 }
 
 // TestCommandFlagSetsAreIntrospectable ensures every runnable command produces
@@ -442,6 +453,162 @@ func TestHelpSectionsCoverEveryGlobalFlag(t *testing.T) {
 	for name := range shown {
 		if !bound[name] {
 			t.Errorf("help shows -%s, which is not a bound global flag", name)
+		}
+	}
+}
+
+// TestCompletionCoversEveryCommandFlag is the whole-tree drift guard: every
+// flag and positional declared anywhere — including nested subcommands — must
+// be offered by all three shells. This is what previously drifted: bash offered
+// -store-sftp-insecure for `store new` and -google-credentials-json for
+// `auth new`, neither of which those commands accept.
+func TestCompletionCoversEveryCommandFlag(t *testing.T) {
+	scripts := completionScripts(t)
+
+	walk(commandRegistry(), func(path string, c command) {
+		if c.hidden || c.flags == nil {
+			return
+		}
+		for _, spec := range ownSpecsOf(c) {
+			for shell, script := range scripts {
+				token := "-" + spec.name
+				if shell == "fish" {
+					token = "-l " + spec.name
+				}
+				if !strings.Contains(script, token) {
+					t.Errorf("%s completion for %q is missing flag -%s", shell, path, spec.name)
+				}
+			}
+		}
+	})
+}
+
+// TestCompletionOffersNoUndeclaredFlag is the converse: a shell must not offer
+// a flag the command does not accept, which would make tab-completion produce
+// an immediate "flag provided but not defined" error.
+func TestCompletionOffersNoUndeclaredFlag(t *testing.T) {
+	var buf bytes.Buffer
+	completionBash(&buf)
+	script := buf.String()
+
+	declared := map[string]bool{}
+	for _, spec := range globalFlagSpecsFor(&globalFlags{}, allGlobalGroups) {
+		declared[spec.name] = true
+	}
+	walk(commandRegistry(), func(_ string, c command) {
+		if c.flags == nil {
+			return
+		}
+		for _, spec := range ownSpecsOf(c) {
+			declared[spec.name] = true
+		}
+	})
+
+	for _, match := range regexp.MustCompile(`cmd_flags="([^"]*)"`).FindAllStringSubmatch(script, -1) {
+		for _, token := range strings.Fields(match[1]) {
+			name := strings.TrimPrefix(token, "-")
+			if !declared[name] {
+				t.Errorf("bash completion offers -%s, which no command declares", name)
+			}
+		}
+	}
+}
+
+// TestCompletionSubcommandListsMatchTree keeps each group's offered subcommands
+// in step with its children.
+func TestCompletionSubcommandListsMatchTree(t *testing.T) {
+	scripts := completionScripts(t)
+	for _, g := range visibleGroups() {
+		for _, child := range g.visibleChildren() {
+			for shell, script := range scripts {
+				if !strings.Contains(script, child.name) {
+					t.Errorf("%s completion never offers %q under group %q", shell, child.name, g.name)
+				}
+			}
+		}
+	}
+}
+
+// TestCompletionDeclaresEachFlagOnce catches leftovers from partially migrated
+// hand-written blocks. The coverage tests only assert a flag is *present*, so a
+// stale duplicate definition passes them while shells see the option twice —
+// which is exactly what happened when fish's global flags were generated but
+// the hand-written copies were left behind.
+func TestCompletionDeclaresEachFlagOnce(t *testing.T) {
+	scripts := completionScripts(t)
+
+	// fish: one `complete -c cloudstic ... -l <name>` per flag per scope.
+	fishLine := regexp.MustCompile(`(?m)^complete -c cloudstic (-n '[^']*' )?(?:-o [a-z0-9-]+ )?-l ([a-z0-9-]+)`)
+	seen := map[string]int{}
+	for _, m := range fishLine.FindAllStringSubmatch(scripts["fish"], -1) {
+		seen[m[1]+"|"+m[2]]++
+	}
+	for key, n := range seen {
+		if n > 1 {
+			scope, name, _ := strings.Cut(key, "|")
+			if scope == "" {
+				scope = "(global)"
+			}
+			t.Errorf("fish declares -%s %d times for scope %s; it must be declared once", name, n, scope)
+		}
+	}
+
+	// bash and zsh keep one global list each.
+	if got := strings.Count(scripts["bash"], "local global_flags="); got != 1 {
+		t.Errorf("bash declares global_flags %d times, want 1", got)
+	}
+	if got := strings.Count(scripts["zsh"], "global_flags=("); got != 1 {
+		t.Errorf("zsh declares global_flags %d times, want 1", got)
+	}
+}
+
+// TestCompletionTemplatesHaveNoStaleScaffold guards against section headers or
+// placeholders left behind when generated blocks replace hand-written ones.
+func TestCompletionTemplatesHaveNoStaleScaffold(t *testing.T) {
+	// A section header is a comment that opens a block: preceded by a blank
+	// line, and not a shell directive such as #!/... or #compdef.
+	isDirective := func(line string) bool {
+		return strings.HasPrefix(line, "#!") || strings.HasPrefix(line, "#compdef")
+	}
+
+	for shell, script := range completionScripts(t) {
+		if strings.Contains(script, "@@") {
+			t.Errorf("%s completion contains an unsubstituted placeholder", shell)
+		}
+
+		lines := strings.Split(script, "\n")
+		for i, raw := range lines {
+			line := strings.TrimSpace(raw)
+			if !strings.HasPrefix(line, "#") || isDirective(line) {
+				continue
+			}
+			if i > 0 && strings.TrimSpace(lines[i-1]) != "" {
+				continue // part of a multi-line comment block, not a header
+			}
+
+			// Scan to the next section header: content in between means the
+			// section is populated; hitting another header first means this
+			// one was left behind.
+			content := ""
+			for j, next := range lines[i+1:] {
+				trimmed := strings.TrimSpace(next)
+				if trimmed == "" {
+					continue
+				}
+				isHeader := strings.HasPrefix(trimmed, "#") && !isDirective(trimmed) &&
+					strings.TrimSpace(lines[i+1+j-1]) == ""
+				if isHeader {
+					break
+				}
+				if strings.HasPrefix(trimmed, "#") {
+					continue
+				}
+				content = trimmed
+				break
+			}
+			if content == "" {
+				t.Errorf("%s completion has an empty section under comment %q", shell, line)
+			}
 		}
 	}
 }

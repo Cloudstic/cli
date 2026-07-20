@@ -102,12 +102,12 @@ func TestCompletionZsh(t *testing.T) {
 		"source:Discover source candidates for onboarding",
 		"discover:Discover local source candidates",
 		"setup:Guided setup and onboarding flows",
-		"workstation:Preview workstation onboarding plan",
+		"workstation:Guide workstation onboarding and profile scaffolding",
 		// Key subcommands
 		"list:List all encryption key slots",
 		"add-recovery:Generate a 24-word recovery key",
 		"passwd:Change the repository password",
-		"-new-password[New repository password]",
+		"-new-password[New repository password (prompted interactively if not set)]",
 		// Global flags with descriptions
 		"-store[Storage backend URI]:uri:_cloudstic_store_prefixes",
 		"-verbose[Log detailed operations]",
@@ -120,9 +120,9 @@ func TestCompletionZsh(t *testing.T) {
 		"-all-profiles[Run all enabled backup profiles]",
 		"-auth-ref[Use named auth entry from profiles.yaml]",
 		"-ignore-empty-snapshot[Skip creating a new snapshot when nothing changed]",
-		"-store-ref[Existing store reference to attach]",
+		"-store-ref[Existing store reference to attach to generated profiles]",
 		// Value completions (source type list still present)
-		"(local: sftp:// gdrive gdrive-changes onedrive onedrive-changes)",
+		"_cloudstic_source_prefixes",
 		"(bash zsh fish)",
 	} {
 		if !strings.Contains(out, marker) {
@@ -155,13 +155,13 @@ func TestCompletionFish(t *testing.T) {
 		"complete -c cloudstic -n __fish_use_subcommand -a key",
 		"complete -c cloudstic -n __fish_use_subcommand -a completion",
 		// Key subcommands
-		"-a list -d 'List all encryption key slots'",
-		"-a add-recovery -d 'Generate a 24-word recovery key'",
+		"-a list -d 'List all encryption key slots in the repository'",
+		"-a add-recovery -d 'Generate a 24-word recovery key for an encrypted repository'",
 		"-a passwd -d 'Change the repository password'",
 		"-l new-password",
 		// Global flags
 		"complete -c cloudstic -o store -l store -x",
-		"complete -c cloudstic -l verbose",
+		"complete -c cloudstic -o verbose -l verbose",
 		// Command-specific flags
 		"__fish_seen_subcommand_from init",
 		"__fish_seen_subcommand_from backup",
@@ -176,11 +176,11 @@ func TestCompletionFish(t *testing.T) {
 		"(__fish_cloudstic_query profile-names)",
 		"(__fish_cloudstic_query auth-names)",
 		"-l ignore-empty-snapshot",
-		"-a workstation -d 'Preview workstation onboarding plan'",
+		"-a workstation -d 'Guide workstation onboarding and profile scaffolding'",
 		"-l store-ref",
-		"-a show -d 'Show one profile and resolved refs'",
-		"-a new -d 'Create or update backup profile'",
-		"-a login -d 'Run OAuth login flow for auth entry'",
+		"-a show -d 'Show one profile and resolved store/auth references'",
+		"-a new -d 'Create or update a backup profile in profiles.yaml'",
+		"-a login -d 'Run OAuth login flow for one auth entry'",
 		"-l add-recovery-key",
 		// Value completions (source type list still present)
 		"'local: sftp:// gdrive gdrive-changes onedrive onedrive-changes'",

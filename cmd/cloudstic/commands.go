@@ -106,10 +106,3 @@ func flagNames(fs *flag.FlagSet) []string {
 	})
 	return names
 }
-
-// isBoolFlag reports whether f is a boolean flag, which shells must not treat
-// as consuming a following value.
-func isBoolFlag(f *flag.Flag) bool {
-	bf, ok := f.Value.(interface{ IsBoolFlag() bool })
-	return ok && bf.IsBoolFlag()
-}

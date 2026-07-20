@@ -260,20 +260,13 @@ func TestParseForgetArgs_BareSourceKeywordDoesNotSetFilterPath(t *testing.T) {
 	}
 }
 
-func TestPrintForgetUsage(t *testing.T) {
+func TestForgetValidationPrintsDerivedUsage(t *testing.T) {
 	var out strings.Builder
-
-	printForgetUsage(&out)
-
-	got := out.String()
-	for _, want := range []string{
-		"Usage: cloudstic forget [options] <snapshot_id>",
-		"cloudstic forget --keep-last n",
-		"cloudstic forget --tag X [--tag Y]",
-		"cloudstic forget --source local:./docs",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("expected usage output to contain %q, got:\n%s", want, got)
-		}
+	r := &runner{out: &strings.Builder{}, errOut: &out}
+	if code := forgetCommand().execute(r, context.Background(), "forget"); code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if want := "Usage: cloudstic forget [options] [snapshot_id]"; !strings.Contains(out.String(), want) {
+		t.Fatalf("expected usage output to contain %q, got:\n%s", want, out.String())
 	}
 }

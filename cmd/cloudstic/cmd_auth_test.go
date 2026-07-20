@@ -57,7 +57,9 @@ func TestRunAuth_NoSubcommand(t *testing.T) {
 	if code := authCommand().execute(r.withArgs(args), context.Background(), "auth"); code != 1 {
 		t.Fatalf("expected exit code 1, got %d", code)
 	}
-	if !strings.Contains(errOut.String(), "Subcommands:") {
+	if !strings.Contains(errOut.String(), "cloudstic auth") ||
+		!strings.Contains(errOut.String(), "SUBCOMMANDS") ||
+		!strings.Contains(errOut.String(), "new") {
 		t.Fatalf("unexpected errOut:\n%s", errOut.String())
 	}
 }

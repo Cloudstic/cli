@@ -49,17 +49,6 @@ func runCat(r *runner, ctx context.Context, a *catArgs) int {
 	return 0
 }
 
-func printCatUsage(w io.Writer) {
-	_, _ = fmt.Fprintln(w, "Usage: cloudstic cat [options] <object_key> [object_key...]")
-	_, _ = fmt.Fprintln(w)
-	_, _ = fmt.Fprintln(w, "Examples:")
-	_, _ = fmt.Fprintln(w, "  cloudstic cat config")
-	_, _ = fmt.Fprintln(w, "  cloudstic cat index/latest")
-	_, _ = fmt.Fprintln(w, "  cloudstic cat snapshot/abc123...")
-	_, _ = fmt.Fprintln(w, "  cloudstic cat filemeta/def456... node/789abc...")
-	_, _ = fmt.Fprintln(w, "  cloudstic cat -raw filemeta/def456... | sha256sum")
-}
-
 func printCatResult(out io.Writer, errOut io.Writer, results []*cloudstic.CatResult, quiet, raw bool) {
 	for i, result := range results {
 		if !quiet && len(results) > 1 {
@@ -88,5 +77,5 @@ func printCatResult(out io.Writer, errOut io.Writer, results []*cloudstic.CatRes
 // catCommand declares the `cat` command.
 func catCommand() command {
 	return leaf("cat", "Display raw JSON content of repository objects",
-		repoCommandGroups, declareCatArgs, runCat, withUsageOnError(printCatUsage))
+		repoCommandGroups, declareCatArgs, runCat)
 }

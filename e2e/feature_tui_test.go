@@ -12,8 +12,12 @@ func TestCLI_Feature_TUI_Help(t *testing.T) {
 
 	bin := buildBinary(t)
 	out := run(t, bin, "tui", "--help")
-	if !strings.Contains(out, "Usage: cloudstic tui [options]") {
-		t.Fatalf("unexpected output:\n%s", out)
+	// Help is rendered from the command declaration, so assert on the command
+	// line and the flag tui declares rather than on a hand-written banner.
+	for _, want := range []string{"cloudstic tui", "-profiles-file"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("help output missing %q:\n%s", want, out)
+		}
 	}
 }
 

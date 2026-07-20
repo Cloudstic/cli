@@ -1,0 +1,11 @@
+Cloudstic — Content-Addressable Backup System
+
+COMMAND
+  cloudstic key <subcommand> [options]
+  Manage encryption key slots
+
+SUBCOMMANDS
+  list               List all encryption key slots in the repository
+  add-recovery       Generate a 24-word recovery key for an encrypted repository
+  passwd             Change the repository password
+

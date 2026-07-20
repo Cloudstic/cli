@@ -30,6 +30,7 @@ type runner struct {
 	stdin             *os.File
 	lineIn            *bufio.Reader
 	runInteractiveCmd func(context.Context, *os.File, io.Writer, io.Writer, string, ...string) error
+	usage             func(io.Writer)
 }
 
 func newRunner(args []string) *runner {
@@ -51,6 +52,20 @@ func (r *runner) withArgs(args []string) *runner {
 	child.args = args
 	child.noPrompt = r.noPrompt || hasGlobalFlag(args, "no-prompt")
 	return &child
+}
+
+// withUsage returns a shallow runner copy with the current command's derived
+// usage renderer attached for semantic validation errors.
+func (r *runner) withUsage(print func(io.Writer)) *runner {
+	child := *r
+	child.usage = print
+	return &child
+}
+
+func (r *runner) printUsage(w io.Writer) {
+	if r.usage != nil {
+		r.usage(w)
+	}
 }
 
 func (r *runner) lineReader() *bufio.Reader {

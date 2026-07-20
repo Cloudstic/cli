@@ -170,6 +170,10 @@ func globalFlagSpecsFor(g *globalFlags, groups []flagGroup) []flagSpec {
 // command's builder to a declaration rather than seven lines of ceremony.
 func newCommandFlags(name string, groups []flagGroup, g *globalFlags, input commandInput) commandFlags {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	// Suppress the flag package's own usage dump. Parse failures are reported
+	// by the dispatcher, which prints the command's derived synopsis instead of
+	// re-listing every flag.
+	fs.Usage = func() {}
 	global := globalFlagSpecsFor(g, groups)
 	bindFlags(fs, global)
 	bindFlags(fs, input.flags)

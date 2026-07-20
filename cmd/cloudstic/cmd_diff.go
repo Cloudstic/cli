@@ -14,11 +14,6 @@ type diffArgs struct {
 	snap2 string
 }
 
-func printDiffUsage(w io.Writer) {
-	_, _ = fmt.Fprintln(w, "Usage: cloudstic diff [options] <snapshot_id1> <snapshot_id2>")
-	_, _ = fmt.Fprintln(w, "       cloudstic diff [options] <snapshot_id1> latest")
-}
-
 func declareDiffArgs(g *globalFlags) (*diffArgs, commandInput) {
 	a := &diffArgs{globalFlags: g}
 	return a, commandInput{positionals: []positionalSpec{
@@ -63,5 +58,5 @@ func printDiffResult(out io.Writer, result *cloudstic.DiffResult) {
 // diffCommand declares the `diff` command.
 func diffCommand() command {
 	return leaf("diff", "Compare two snapshots or a snapshot against latest",
-		repoCommandGroups, declareDiffArgs, runDiff, withUsageOnError(printDiffUsage))
+		repoCommandGroups, declareDiffArgs, runDiff)
 }

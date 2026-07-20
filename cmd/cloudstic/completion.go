@@ -13,17 +13,6 @@ func declareCompletionArgs(_ *globalFlags) (*completionArgs, commandInput) {
 	return a, commandInput{positionals: []positionalSpec{requiredPositional(&a.shell, "shell")}}
 }
 
-func printCompletionUsage(w io.Writer) {
-	_, _ = fmt.Fprintln(w, "Usage: cloudstic completion <shell>")
-	_, _ = fmt.Fprintln(w)
-	_, _ = fmt.Fprintln(w, "Available shells: bash, zsh, fish")
-	_, _ = fmt.Fprintln(w)
-	_, _ = fmt.Fprintln(w, "Setup:")
-	_, _ = fmt.Fprintln(w, "  bash:  source <(cloudstic completion bash)")
-	_, _ = fmt.Fprintln(w, "  zsh:   source <(cloudstic completion zsh)")
-	_, _ = fmt.Fprintln(w, "  fish:  cloudstic completion fish | source")
-}
-
 func runCompletion(r *runner, _ context.Context, a *completionArgs) int {
 	switch a.shell {
 	case "bash":
@@ -785,5 +774,5 @@ complete -c cloudstic -n '__fish_seen_subcommand_from completion' -a 'bash zsh f
 // completionCommand declares the `completion` command.
 func completionCommand() command {
 	return leaf("completion", "Generate shell completion scripts (bash, zsh, fish)",
-		nil, declareCompletionArgs, runCompletion, withUsageOnError(printCompletionUsage))
+		nil, declareCompletionArgs, runCompletion)
 }

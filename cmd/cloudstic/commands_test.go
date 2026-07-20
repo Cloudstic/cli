@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 )
@@ -46,6 +47,113 @@ func TestUsageListsEveryRegisteredCommand(t *testing.T) {
 		if c.hidden && strings.Contains(got, c.name) {
 			t.Errorf("usage output should not mention hidden command %q", c.name)
 		}
+	}
+}
+
+func TestRootHelpListsEveryGlobalFlagSpec(t *testing.T) {
+	var buf bytes.Buffer
+	printUsage(&buf)
+	got := buf.String()
+
+	for _, spec := range globalFlagSpecsFor(&globalFlags{}, allGlobalGroups) {
+		if syntax := flagSynopsis(spec); !strings.Contains(got, syntax) {
+			t.Errorf("root help is missing declared flag %q", syntax)
+		}
+	}
+}
+
+func TestScopedHelpIsDerivedFromEveryCommand(t *testing.T) {
+	walk(commandRegistry(), func(path string, c command) {
+		if c.hidden {
+			return
+		}
+		var buf bytes.Buffer
+		printCommandHelp(&buf, c, path)
+		got := buf.String()
+
+		for _, want := range []string{"cloudstic " + path, c.summary} {
+			if !strings.Contains(got, want) {
+				t.Errorf("help for %q is missing %q", path, want)
+			}
+		}
+
+		if c.isGroup() {
+			for _, child := range c.visibleChildren() {
+				if !strings.Contains(got, child.name) || !strings.Contains(got, child.summary) {
+					t.Errorf("help for group %q is missing subcommand %q", path, child.name)
+				}
+			}
+			return
+		}
+
+		cf := c.flags()
+		for _, spec := range cf.specs() {
+			if syntax := flagSynopsis(spec); !strings.Contains(got, syntax) {
+				t.Errorf("help for %q is missing declared flag %q", path, syntax)
+			}
+		}
+		for _, positional := range c.positionals {
+			if syntax := positionalSynopsis(positional); !strings.Contains(got, syntax) {
+				t.Errorf("help for %q is missing positional %q", path, syntax)
+			}
+		}
+	})
+}
+
+func TestHelpFlagUsesScopedRenderer(t *testing.T) {
+	var out bytes.Buffer
+	r := &runner{args: []string{"-h"}, out: &out, errOut: &bytes.Buffer{}}
+	if code := backupCommand().execute(r, context.Background(), "backup"); code != 0 {
+		t.Fatalf("backup -h exit code = %d, want 0", code)
+	}
+	for _, want := range []string{"COMMAND", "cloudstic backup", "OPTIONS", "-dry-run", "GLOBAL OPTIONS", "-store <uri>"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("backup -h is missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestNestedHelpUsesLeafScope(t *testing.T) {
+	var out bytes.Buffer
+	r := &runner{args: []string{"new", "-h"}, out: &out, errOut: &bytes.Buffer{}}
+	if code := storeCommand().execute(r, context.Background(), "store"); code != 0 {
+		t.Fatalf("store new -h exit code = %d, want 0", code)
+	}
+	for _, want := range []string{"cloudstic store new", "OPTIONS", "-uri <uri>"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("store new -h is missing %q:\n%s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "SUBCOMMANDS") {
+		t.Errorf("store new -h rendered parent group help:\n%s", out.String())
+	}
+}
+
+func TestHelpTokenCanBeAFlagValue(t *testing.T) {
+	type args struct{ value string }
+	var got string
+	c := leaf("demo", "Exercise help parsing", nil,
+		func(_ *globalFlags) (*args, commandInput) {
+			a := &args{}
+			return a, commandInput{flags: []flagSpec{
+				stringFlag(&a.value, "value", "", "Value to preserve"),
+			}}
+		},
+		func(_ *runner, _ context.Context, a *args) int {
+			got = a.value
+			return 0
+		},
+	)
+	var out, errOut bytes.Buffer
+	r := &runner{args: []string{"-value", "-h"}, out: &out, errOut: &errOut}
+	if code := c.execute(r, context.Background(), "demo"); code != 0 {
+		t.Fatalf("exit code = %d, want 0; stderr:\n%s", code, errOut.String())
+	}
+	if got != "-h" {
+		t.Fatalf("flag value = %q, want -h", got)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("flag value unexpectedly triggered help:\n%s", out.String())
 	}
 }
 
@@ -305,4 +413,35 @@ func TestBuildersRecordGlobalProvenance(t *testing.T) {
 			t.Errorf("command %q binds global flags but does not record provenance on globalFlags", path)
 		}
 	})
+}
+
+// TestHelpSectionsCoverEveryGlobalFlag is the guard that keeps flags.go and
+// usage.go from drifting: every globally bound flag must appear in exactly one
+// help section, so a newly declared flag cannot be silently invisible in
+// `cloudstic help`, and a removed one cannot linger.
+func TestHelpSectionsCoverEveryGlobalFlag(t *testing.T) {
+	shown := map[string]int{}
+	for _, section := range globalHelpSections() {
+		for _, spec := range section.sectionSpecs() {
+			shown[spec.name]++
+		}
+	}
+
+	bound := map[string]bool{}
+	for _, spec := range globalFlagSpecsFor(&globalFlags{}, allGlobalGroups) {
+		bound[spec.name] = true
+		switch shown[spec.name] {
+		case 0:
+			t.Errorf("global flag -%s is bound but appears in no help section", spec.name)
+		case 1:
+		default:
+			t.Errorf("global flag -%s appears in %d help sections; it must appear in exactly one", spec.name, shown[spec.name])
+		}
+	}
+
+	for name := range shown {
+		if !bound[name] {
+			t.Errorf("help shows -%s, which is not a bound global flag", name)
+		}
+	}
 }

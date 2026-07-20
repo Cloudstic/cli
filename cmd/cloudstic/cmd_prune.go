@@ -15,15 +15,19 @@ type pruneArgs struct {
 	dryRun bool
 }
 
-func parsePruneArgs(args []string) (*pruneArgs, error) {
+func newPruneFlagSet() (*flag.FlagSet, *pruneArgs) {
 	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
 	a := &pruneArgs{}
 	a.g = addGlobalFlags(fs)
-	dryRun := fs.Bool("dry-run", false, "Show what would be deleted without deleting")
+	fs.BoolVar(&a.dryRun, "dry-run", false, "Show what would be deleted without deleting")
+	return fs, a
+}
+
+func parsePruneArgs(args []string) (*pruneArgs, error) {
+	fs, a := newPruneFlagSet()
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
-	a.dryRun = *dryRun
 	return a, nil
 }
 

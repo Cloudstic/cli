@@ -15,15 +15,19 @@ type checkArgs struct {
 	snapshotRef string
 }
 
-func parseCheckArgs(args []string) (*checkArgs, error) {
+func newCheckFlagSet() (*flag.FlagSet, *checkArgs) {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	a := &checkArgs{}
 	a.g = addGlobalFlags(fs)
-	readData := fs.Bool("read-data", false, "Re-hash all chunk data for full byte-level verification")
+	fs.BoolVar(&a.readData, "read-data", false, "Re-hash all chunk data for full byte-level verification")
+	return fs, a
+}
+
+func parseCheckArgs(args []string) (*checkArgs, error) {
+	fs, a := newCheckFlagSet()
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
-	a.readData = *readData
 	a.snapshotRef = fs.Arg(0)
 	if a.snapshotRef == "" {
 		a.snapshotRef = "latest"

@@ -16,37 +16,9 @@ func printUsage(out io.Writer) {
 	_, _ = fmt.Fprintf(t.W, "  cloudstic %s<command>%s [options]\n", ui.Cyan, ui.Reset)
 
 	t.Heading("COMMANDS")
-	t.Commands([][2]string{
-		{"init", "Initialize a new repository (must run before first backup)"},
-		{"backup", "Create a new backup snapshot from a source"},
-		{"auth new", "Create or update a reusable cloud auth entry"},
-		{"auth list", "List auth entries from profiles.yaml"},
-		{"auth show", "Show one auth entry"},
-		{"auth login", "Run OAuth login flow for one auth entry"},
-		{"store new", "Create or update a store entry in profiles.yaml"},
-		{"store list", "List configured stores"},
-		{"store show", "Show one store and its configuration"},
-		{"store verify", "Verify one store's credentials and connectivity"},
-		{"source discover", "Discover local source candidates for onboarding"},
-		{"setup workstation", "Guide workstation onboarding and profile scaffolding"},
-		{"tui", "Launch the interactive terminal dashboard"},
-		{"profile new", "Create or update a backup profile in profiles.yaml"},
-		{"profile list", "List stores, auth entries, and backup profiles"},
-		{"profile show", "Show one profile and resolved store/auth references"},
-		{"restore", "Restore files from a backup snapshot"},
-		{"list", "List all backup snapshots in the repository"},
-		{"ls", "List files within a specific snapshot"},
-		{"prune", "Remove unused data chunks from the repository"},
-		{"forget", "Remove a specific snapshot from history"},
-		{"diff", "Compare two snapshots or a snapshot against latest"},
-		{"break-lock", "Remove a stale repository lock left by a crashed process"},
-		{"key list", "List all encryption key slots in the repository"},
-		{"key add-recovery", "Generate a 24-word recovery key for an encrypted repository"},
-		{"key passwd", "Change the repository password"},
-		{"check", "Verify repository integrity (reference chain, objects, data)"},
-		{"cat", "Display raw JSON content of repository objects"},
-		{"completion", "Generate shell completion scripts (bash, zsh, fish)"},
-	})
+	// Generated from the command registry so the listing cannot drift from
+	// what dispatch actually accepts.
+	t.Commands(usageCommandRows())
 
 	t.HeadingSub("GLOBAL OPTIONS", "(also settable via env vars)")
 	t.Flags([][2]string{

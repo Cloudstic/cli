@@ -19,10 +19,15 @@ type lsArgs struct {
 	snapshotID string
 }
 
-func parseLsArgs(args []string) (*lsArgs, error) {
+func newLsFlagSet() (*flag.FlagSet, *lsArgs) {
 	fs := flag.NewFlagSet("ls", flag.ContinueOnError)
 	a := &lsArgs{}
 	a.g = addGlobalFlags(fs)
+	return fs, a
+}
+
+func parseLsArgs(args []string) (*lsArgs, error) {
+	fs, a := newLsFlagSet()
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}

@@ -31,24 +31,33 @@ type forgetArgs struct {
 	snapshotID    string
 	hasFilters    bool
 	hasPolicy     bool
+
+	// rawFilterSource holds the -source flag verbatim; parseForgetArgs splits
+	// it into filterSource/filterPath after parsing.
+	rawFilterSource string
 }
 
-func parseForgetArgs(args []string) (*forgetArgs, error) {
+func newForgetFlagSet() (*flag.FlagSet, *forgetArgs) {
 	fs := flag.NewFlagSet("forget", flag.ContinueOnError)
 	a := &forgetArgs{}
 	a.g = addGlobalFlags(fs)
-	prune := fs.Bool("prune", false, "Run prune after forgetting")
-	dryRun := fs.Bool("dry-run", false, "Only show what would be removed")
-	keepLast := fs.Int("keep-last", 0, "Keep the last n snapshots")
-	keepHourly := fs.Int("keep-hourly", 0, "Keep n hourly snapshots")
-	keepDaily := fs.Int("keep-daily", 0, "Keep n daily snapshots")
-	keepWeekly := fs.Int("keep-weekly", 0, "Keep n weekly snapshots")
-	keepMonthly := fs.Int("keep-monthly", 0, "Keep n monthly snapshots")
-	keepYearly := fs.Int("keep-yearly", 0, "Keep n yearly snapshots")
+	fs.BoolVar(&a.prune, "prune", false, "Run prune after forgetting")
+	fs.BoolVar(&a.dryRun, "dry-run", false, "Only show what would be removed")
+	fs.IntVar(&a.keepLast, "keep-last", 0, "Keep the last n snapshots")
+	fs.IntVar(&a.keepHourly, "keep-hourly", 0, "Keep n hourly snapshots")
+	fs.IntVar(&a.keepDaily, "keep-daily", 0, "Keep n daily snapshots")
+	fs.IntVar(&a.keepWeekly, "keep-weekly", 0, "Keep n weekly snapshots")
+	fs.IntVar(&a.keepMonthly, "keep-monthly", 0, "Keep n monthly snapshots")
+	fs.IntVar(&a.keepYearly, "keep-yearly", 0, "Keep n yearly snapshots")
 	fs.Var(&a.filterTags, "tag", "Filter by tag (can be specified multiple times)")
-	filterSource := fs.String("source", "", "Filter by source URI (e.g. local:./docs, gdrive)")
-	filterAccount := fs.String("account", "", "Filter by account")
-	groupBy := fs.String("group-by", "source,account,path", "Group snapshots by fields (comma-separated)")
+	fs.StringVar(&a.rawFilterSource, "source", "", "Filter by source URI (e.g. local:./docs, gdrive)")
+	fs.StringVar(&a.filterAccount, "account", "", "Filter by account")
+	fs.StringVar(&a.groupBy, "group-by", "source,account,path", "Group snapshots by fields (comma-separated)")
+	return fs, a
+}
+
+func parseForgetArgs(args []string) (*forgetArgs, error) {
+	fs, a := newForgetFlagSet()
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
@@ -57,23 +66,13 @@ func parseForgetArgs(args []string) (*forgetArgs, error) {
 			a.groupBySet = true
 		}
 	})
-	a.prune = *prune
-	a.dryRun = *dryRun
-	a.keepLast = *keepLast
-	a.keepHourly = *keepHourly
-	a.keepDaily = *keepDaily
-	a.keepWeekly = *keepWeekly
-	a.keepMonthly = *keepMonthly
-	a.keepYearly = *keepYearly
-	a.filterAccount = *filterAccount
-	a.groupBy = *groupBy
-	if *filterSource != "" {
+	if a.rawFilterSource != "" {
 		// Allow bare source type keywords (e.g. "local", "sftp") without a path for type-only filtering.
-		switch *filterSource {
+		switch a.rawFilterSource {
 		case "local", "sftp", "gdrive", "gdrive-changes", "onedrive", "onedrive-changes":
-			a.filterSource = *filterSource
+			a.filterSource = a.rawFilterSource
 		default:
-			parts, err := parseSourceURI(*filterSource)
+			parts, err := parseSourceURI(a.rawFilterSource)
 			if err != nil {
 				return nil, fmt.Errorf("invalid -source filter: %w", err)
 			}

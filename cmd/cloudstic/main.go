@@ -47,56 +47,20 @@ func runCmd(r *runner, ctx context.Context, cmd string) int {
 		buildVersion, buildCommit, buildDate := buildMetadata()
 		_, _ = fmt.Fprintf(r.out, "cloudstic %s (commit %s, built %s)\n", buildVersion, buildCommit, buildDate)
 		return 0
-	case "init":
-		return runInit(r, ctx)
-	case "backup":
-		return runBackup(r, ctx)
-	case "restore":
-		return runRestore(r, ctx)
-	case "list":
-		return runList(r, ctx)
-	case "ls":
-		return runLsSnapshot(r, ctx)
-	case "prune":
-		return runPrune(r, ctx)
-	case "forget":
-		return runForget(r, ctx)
-	case "diff":
-		return runDiff(r, ctx)
-	case "break-lock":
-		return runBreakLock(r, ctx)
-	case "key":
-		return runKey(r, ctx)
-	case "check":
-		return runCheck(r, ctx)
-	case "cat":
-		return runCat(r, ctx)
-	case "profile":
-		return runProfile(r, ctx)
-	case "auth":
-		return runAuth(r, ctx)
-	case "store":
-		return runStore(r, ctx)
-	case "source":
-		return runSource(r, ctx)
-	case "setup":
-		return runSetup(r, ctx)
-	case "tui":
-		return runTUI(r, ctx)
-	case "completion":
-		return runCompletion(r)
-	case "__complete":
-		return runCompletionQuery(r, ctx)
 	case "help", "--help", "-h":
 		printUsage(r.out)
 		return 0
-	default:
-		exitCode := r.fail("Unknown command: %s", cmd)
-		if !r.jsonEnabled() {
-			printUsage(r.errOut)
-		}
-		return exitCode
 	}
+
+	if c, ok := lookupCommand(cmd); ok {
+		return c.run(r, ctx)
+	}
+
+	exitCode := r.fail("Unknown command: %s", cmd)
+	if !r.jsonEnabled() {
+		printUsage(r.errOut)
+	}
+	return exitCode
 }
 
 func buildMetadata() (string, string, string) {

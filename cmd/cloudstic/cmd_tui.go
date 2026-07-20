@@ -12,11 +12,16 @@ type tuiArgs struct {
 	profilesFile string
 }
 
-func parseTUIArgs(args []string) (*tuiArgs, error) {
+func newTUIFlagSet() (*flag.FlagSet, *tuiArgs) {
 	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	a := &tuiArgs{}
 	fs.StringVar(&a.profilesFile, "profiles-file", defaultProfilesPathNoCreate(), "Path to profiles YAML file")
+	return fs, a
+}
+
+func parseTUIArgs(args []string) (*tuiArgs, error) {
+	fs, a := newTUIFlagSet()
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}

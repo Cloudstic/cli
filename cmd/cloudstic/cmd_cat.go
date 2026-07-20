@@ -18,18 +18,22 @@ type catArgs struct {
 	raw  bool
 }
 
-func parseCatArgs(args []string) (*catArgs, error) {
+func newCatFlagSet() (*flag.FlagSet, *catArgs) {
 	fs := flag.NewFlagSet("cat", flag.ContinueOnError)
 	a := &catArgs{}
 	a.g = addGlobalFlags(fs)
-	rawFlag := fs.Bool("raw", false, "Output raw, unformatted data (useful for hashing)")
+	fs.BoolVar(&a.raw, "raw", false, "Output raw, unformatted data (useful for hashing)")
+	return fs, a
+}
+
+func parseCatArgs(args []string) (*catArgs, error) {
+	fs, a := newCatFlagSet()
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if fs.NArg() < 1 {
 		return nil, fmt.Errorf("at least one object key is required")
 	}
-	a.raw = *rawFlag
 	a.keys = fs.Args()
 	return a, nil
 }

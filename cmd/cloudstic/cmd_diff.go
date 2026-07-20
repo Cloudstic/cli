@@ -16,10 +16,15 @@ type diffArgs struct {
 	snap2 string
 }
 
-func parseDiffArgs(args []string) (*diffArgs, error) {
+func newDiffFlagSet() (*flag.FlagSet, *diffArgs) {
 	fs := flag.NewFlagSet("diff", flag.ContinueOnError)
 	a := &diffArgs{}
 	a.g = addGlobalFlags(fs)
+	return fs, a
+}
+
+func parseDiffArgs(args []string) (*diffArgs, error) {
+	fs, a := newDiffFlagSet()
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}

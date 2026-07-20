@@ -14,12 +14,15 @@ type listArgs struct {
 	group *bool
 }
 
-func parseListArgs(args []string) (*listArgs, error) {
+func newListFlagSet() (*flag.FlagSet, *listArgs) {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
-	a := &listArgs{
-		g:     addGlobalFlags(fs),
-		group: fs.Bool("group", false, "Group snapshots by source identity"),
-	}
+	a := &listArgs{g: addGlobalFlags(fs)}
+	a.group = fs.Bool("group", false, "Group snapshots by source identity")
+	return fs, a
+}
+
+func parseListArgs(args []string) (*listArgs, error) {
+	fs, a := newListFlagSet()
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}

@@ -331,7 +331,7 @@ type checkOrInitOptions struct {
 
 func checkOrInitStore(r *runner, ctx context.Context, cfg *cloudstic.ProfilesConfig, storeName, profilesFile string, opts checkOrInitOptions) error {
 	s := cfg.Stores[storeName]
-	g, err := globalFlagsFromProfileStore(s)
+	resolved, err := clientConfigFromProfileStore(s)
 	if err != nil {
 		if opts.allowMissingSecrets && isSecretNotFoundError(err) {
 			if opts.warnOnMissingSecrets {
@@ -342,8 +342,8 @@ func checkOrInitStore(r *runner, ctx context.Context, cfg *cloudstic.ProfilesCon
 		}
 		return fmt.Errorf("could not resolve store credentials: %w", err)
 	}
-	g.noPrompt = r.noPrompt
-	raw, err := g.initObjectStore(ctx)
+	resolved.unlock.noPrompt = r.noPrompt
+	raw, err := newObjectStore(ctx, resolved.store)
 	if err != nil {
 		return fmt.Errorf("could not connect to store: %w", err)
 	}
@@ -358,7 +358,7 @@ func checkOrInitStore(r *runner, ctx context.Context, cfg *cloudstic.ProfilesCon
 		}
 		if repoCfg != nil && repoCfg.Encrypted {
 			_, _ = fmt.Fprintln(r.out, "Repository is encrypted; verifying configured credentials...")
-			if err := verifyStoreEncryptionCredentials(ctx, g, raw); err != nil {
+			if err := verifyStoreEncryptionCredentials(ctx, resolved.unlock, raw); err != nil {
 				return fmt.Errorf("store is initialized, but configured encryption credentials are invalid: %w", err)
 			}
 			_, _ = fmt.Fprintln(r.out, "Encryption credentials are valid.")
@@ -393,7 +393,7 @@ func checkOrInitStore(r *runner, ctx context.Context, cfg *cloudstic.ProfilesCon
 	// Build keychain from the store's encryption settings.
 	// For password-based encryption, the env var must be set for init.
 	// If not set, prompt for the password interactively.
-	kc, err := g.buildKeychain(ctx)
+	kc, err := buildKeychain(ctx, resolved.unlock)
 	if err != nil {
 		return fmt.Errorf("failed to build keychain: %w", err)
 	}
@@ -638,8 +638,8 @@ func isSecretNotFoundError(err error) bool {
 	return false
 }
 
-func verifyStoreEncryptionCredentials(ctx context.Context, g *globalFlags, raw store.ObjectStore) error {
-	kc, err := g.buildKeychain(ctx)
+func verifyStoreEncryptionCredentials(ctx context.Context, cfg unlockConfig, raw store.ObjectStore) error {
+	kc, err := buildKeychain(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("build keychain: %w", err)
 	}
@@ -719,66 +719,6 @@ func existingStoreInteractivePlan(canPrompt, hasOverrides, hasEncryption bool) (
 		return false, false
 	}
 	return true, hasEncryption
-}
-
-// globalFlagsFromProfileStore builds a globalFlags populated from a ProfileStore,
-// resolving env var indirections for secrets.
-func globalFlagsFromProfileStore(s cloudstic.ProfileStore) (*globalFlags, error) {
-	g := &globalFlags{}
-	g.store = s.URI
-	g.s3Endpoint = s.S3Endpoint
-	g.s3Region = s.S3Region
-	if g.s3Region == "" {
-		g.s3Region = "us-east-1"
-	}
-
-	var err error
-	if g.s3Profile, err = resolveProfileStoreValue("s3_profile", s.S3Profile, ""); err != nil {
-		return nil, err
-	}
-	if g.s3AccessKey, err = resolveProfileStoreValue("s3_access_key", s.S3AccessKey, s.S3AccessKeySecret); err != nil {
-		return nil, err
-	}
-	if g.s3SecretKey, err = resolveProfileStoreValue("s3_secret_key", s.S3SecretKey, s.S3SecretKeySecret); err != nil {
-		return nil, err
-	}
-	if g.storeSFTPPassword, err = resolveProfileStoreValue("store_sftp_password", s.StoreSFTPPassword, s.StoreSFTPPasswordSecret); err != nil {
-		return nil, err
-	}
-	if g.storeSFTPKey, err = resolveProfileStoreValue("store_sftp_key", s.StoreSFTPKey, s.StoreSFTPKeySecret); err != nil {
-		return nil, err
-	}
-	if g.password, err = resolveProfileStoreValue("password", "", s.PasswordSecret); err != nil {
-		return nil, err
-	}
-	if g.encryptionKey, err = resolveProfileStoreValue("encryption_key", "", s.EncryptionKeySecret); err != nil {
-		return nil, err
-	}
-	if g.recoveryKey, err = resolveProfileStoreValue("recovery_key", "", s.RecoveryKeySecret); err != nil {
-		return nil, err
-	}
-	g.kmsKeyARN = s.KMSKeyARN
-	g.kmsRegion = s.KMSRegion
-	g.kmsEndpoint = s.KMSEndpoint
-
-	// Non-store fields with safe defaults: ProfileStore carries no source-side
-	// SFTP credentials or SFTP host-key-verification overrides, so those stay
-	// at their zero value (disabled/empty) rather than left unset.
-	g.sourceSFTPPassword = ""
-	g.sourceSFTPKey = ""
-	g.sourceSFTPInsecure = false
-	g.sourceSFTPKnownHosts = ""
-	g.storeSFTPInsecure = false
-	g.storeSFTPKnownHosts = ""
-	g.disablePackfile = false
-	g.prompt = false
-	g.verbose = false
-	g.quiet = false
-	g.debug = false
-	g.profile = ""
-	g.profilesFile = ""
-
-	return g, nil
 }
 
 func envRef(name string) string {

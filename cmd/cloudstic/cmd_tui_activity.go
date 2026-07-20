@@ -308,15 +308,16 @@ func (p tuiReporterPhase) Error() {
 	}
 }
 
-func tuiStoreFlags(profilesFile string, storeCfg cloudstic.ProfileStore) *globalFlags {
-	g := &globalFlags{}
-	_ = newCommandFlags("tui-store", repoCommandGroups, g, commandInput{})
-	g.profilesFile = profilesFile
-	_ = applyProfileStoreToGlobalFlags(g, storeCfg)
-	g.quiet = true
-	g.debug = false
-	g.verbose = false
-	return g
+// tuiStoreConfig resolves a store definition into a client configuration for
+// the TUI, which addresses stores by name and never parses command-line flags.
+func tuiClientConfig(storeCfg cloudstic.ProfileStore) (clientConfig, error) {
+	cfg, err := clientConfigFromProfileStore(storeCfg)
+	if err != nil {
+		return clientConfig{}, err
+	}
+	cfg.quiet = true
+	cfg.store.debug = false
+	return cfg, nil
 }
 
 func actionKindFromActionLabel(action string) tui.ActionKind {

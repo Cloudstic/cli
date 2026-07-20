@@ -17,6 +17,7 @@ import (
 	"github.com/cloudstic/cli/internal/paths"
 	"github.com/cloudstic/cli/internal/secretref"
 	"github.com/cloudstic/cli/pkg/source"
+	"golang.org/x/crypto/ssh"
 )
 
 type backupArgs struct {
@@ -145,7 +146,7 @@ func runSingleBackup(r *runner, ctx context.Context, a *backupArgs) int {
 		skipFlags:         a.skipFlags,
 		skipXattrs:        a.skipXattrs,
 		xattrNamespaces:   a.xattrNamespaces,
-		globalFlags:       a.globalFlags,
+		sourceSFTP:        sourceSFTPConfigFromFlags(a.globalFlags),
 		excludePatterns:   excludePatterns,
 	})
 	if err != nil {
@@ -364,15 +365,15 @@ func mergeProfileBackupArgs(base *backupArgs, profileName string, p cloudstic.Ba
 		a.ignoreEmpty = p.IgnoreEmpty
 	}
 
+	// The store itself is not folded in here. Naming the profile is enough:
+	// resolveClientConfig looks it up when the client is opened, so the store
+	// definition is applied in exactly one place and parsed flags stay intact.
 	if p.Store != "" {
-		storeCfg, ok := cfg.Stores[p.Store]
-		if !ok {
+		if _, ok := cfg.Stores[p.Store]; !ok {
 			return nil, fmt.Errorf("profile %q references unknown store %q", profileName, p.Store)
 		}
-		if err := applyProfileStoreToGlobalFlags(g, storeCfg); err != nil {
-			return nil, fmt.Errorf("profile %q store %q: %w", profileName, p.Store, err)
-		}
 	}
+	g.profile = profileName
 
 	if p.AuthRef != "" {
 		effectiveAuthRef := p.AuthRef
@@ -460,84 +461,6 @@ func cloneGlobalFlags(src *globalFlags) *globalFlags {
 	return &clone
 }
 
-func applyProfileStoreToGlobalFlags(g *globalFlags, s cloudstic.ProfileStore) error {
-	if !g.flagProvided("store") && s.URI != "" {
-		g.store = s.URI
-	}
-	if !g.flagProvided("s3-endpoint") && s.S3Endpoint != "" {
-		g.s3Endpoint = s.S3Endpoint
-	}
-	if !g.flagProvided("s3-region") && s.S3Region != "" {
-		g.s3Region = s.S3Region
-	}
-	if !g.flagProvided("s3-profile") {
-		v, err := resolveProfileStoreValue("s3_profile", s.S3Profile, "")
-		if err != nil {
-			return err
-		}
-		g.s3Profile = v
-	}
-	if !g.flagProvided("s3-access-key") {
-		v, err := resolveProfileStoreValue("s3_access_key", s.S3AccessKey, s.S3AccessKeySecret)
-		if err != nil {
-			return err
-		}
-		g.s3AccessKey = v
-	}
-	if !g.flagProvided("s3-secret-key") {
-		v, err := resolveProfileStoreValue("s3_secret_key", s.S3SecretKey, s.S3SecretKeySecret)
-		if err != nil {
-			return err
-		}
-		g.s3SecretKey = v
-	}
-	if !g.flagProvided("store-sftp-password") {
-		v, err := resolveProfileStoreValue("store_sftp_password", s.StoreSFTPPassword, s.StoreSFTPPasswordSecret)
-		if err != nil {
-			return err
-		}
-		g.storeSFTPPassword = v
-	}
-	if !g.flagProvided("store-sftp-key") {
-		v, err := resolveProfileStoreValue("store_sftp_key", s.StoreSFTPKey, s.StoreSFTPKeySecret)
-		if err != nil {
-			return err
-		}
-		g.storeSFTPKey = v
-	}
-	if !g.flagProvided("password") {
-		v, err := resolveProfileStoreValue("password", "", s.PasswordSecret)
-		if err != nil {
-			return err
-		}
-		g.password = v
-	}
-	if !g.flagProvided("encryption-key") {
-		v, err := resolveProfileStoreValue("encryption_key", "", s.EncryptionKeySecret)
-		if err != nil {
-			return err
-		}
-		g.encryptionKey = v
-	}
-	if !g.flagProvided("recovery-key") {
-		v, err := resolveProfileStoreValue("recovery_key", "", s.RecoveryKeySecret)
-		if err != nil {
-			return err
-		}
-		g.recoveryKey = v
-	}
-	if !g.flagProvided("kms-key-arn") && s.KMSKeyARN != "" {
-		g.kmsKeyARN = s.KMSKeyARN
-	}
-	if !g.flagProvided("kms-region") && s.KMSRegion != "" {
-		g.kmsRegion = s.KMSRegion
-	}
-	if !g.flagProvided("kms-endpoint") && s.KMSEndpoint != "" {
-		g.kmsEndpoint = s.KMSEndpoint
-	}
-	return nil
-}
-
 func parseExcludePatterns(a *backupArgs) ([]string, error) {
 	excludePatterns := []string(a.excludes)
 	if a.excludeFile != "" {
@@ -612,7 +535,7 @@ type initSourceOptions struct {
 	skipFlags         bool
 	skipXattrs        bool
 	xattrNamespaces   string
-	globalFlags       *globalFlags
+	sourceSFTP        sftpConfig
 	excludePatterns   []string
 }
 
@@ -647,7 +570,7 @@ func initSource(ctx context.Context, opts initSourceOptions) (source.Source, err
 		}
 		return source.NewLocalSource(uri.path, localOpts...), nil
 	case "sftp":
-		sftpOpts := opts.globalFlags.buildSFTPSourceOpts(uri)
+		sftpOpts := sftpSourceOpts(opts.sourceSFTP, uri)
 		sftpOpts = append(sftpOpts, source.WithSFTPExcludePatterns(opts.excludePatterns))
 		return source.NewSFTPSource(uri.host, sftpOpts...)
 	case "gdrive":
@@ -721,6 +644,31 @@ func initSource(ctx context.Context, opts initSourceOptions) (source.Source, err
 	default:
 		return nil, fmt.Errorf("unsupported source: %s", uri.scheme)
 	}
+}
+
+func sftpSourceOpts(cfg sftpConfig, uri *sourceURIParts) []source.SFTPOption {
+	opts := []source.SFTPOption{
+		source.WithSFTPSourceBasePath(uri.path),
+	}
+	if uri.port != "" {
+		opts = append(opts, source.WithSFTPSourcePort(uri.port))
+	}
+	if uri.user != "" {
+		opts = append(opts, source.WithSFTPSourceUser(uri.user))
+	}
+	if cfg.password != "" {
+		opts = append(opts, source.WithSFTPSourcePassword(cfg.password))
+	}
+	if cfg.key != "" {
+		opts = append(opts, source.WithSFTPSourceKey(cfg.key))
+	}
+	if cfg.insecure {
+		opts = append(opts, source.WithSFTPSourceHostKeyCallback(ssh.InsecureIgnoreHostKey())) //nolint:gosec // explicitly requested by user
+	}
+	if cfg.knownHosts != "" {
+		opts = append(opts, source.WithSFTPSourceKnownHosts(cfg.knownHosts))
+	}
+	return opts
 }
 
 func parseXattrNamespacePrefixes(raw string) []string {

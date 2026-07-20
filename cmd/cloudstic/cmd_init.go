@@ -30,16 +30,23 @@ func declareInitArgs(g *globalFlags) (*initArgs, commandInput) {
 }
 
 func runInit(r *runner, ctx context.Context, a *initArgs) int {
-	return runInitWithArgs(r, ctx, a)
+	cfg, err := resolveClientConfig(a.globalFlags)
+	if err != nil {
+		return r.fail("Failed to init store: %v", err)
+	}
+	return execInit(r, ctx, a, cfg)
 }
 
-func runInitWithArgs(r *runner, ctx context.Context, a *initArgs) int {
-	raw, err := a.openStore(ctx)
+// execInit initializes the repository described by cfg. It takes the resolved
+// configuration rather than deriving it, so callers that address a store
+// directly (the TUI) can reuse it without going through flag parsing.
+func execInit(r *runner, ctx context.Context, a *initArgs, cfg clientConfig) int {
+	raw, err := openStore(ctx, cfg.store)
 	if err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 
-	kc, err := a.buildKeychain(ctx)
+	kc, err := buildKeychain(ctx, cfg.unlock)
 	if err != nil {
 		return r.fail("Failed to build keychain: %v", err)
 	}
@@ -51,8 +58,8 @@ func runInitWithArgs(r *runner, ctx context.Context, a *initArgs) int {
 			if err != nil {
 				return r.fail("Error: %v", err)
 			}
-			a.password = pw
-			kc, _ = a.buildKeychain(ctx)
+			cfg.unlock.password = pw
+			kc, _ = buildKeychain(ctx, cfg.unlock)
 		} else {
 			return r.fail("Error: encryption is required by default.\nProvide --password or --encryption-key to encrypt your repository.\nTo create an unencrypted repository, pass --no-encryption (not recommended).")
 		}

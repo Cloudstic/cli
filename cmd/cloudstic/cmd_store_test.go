@@ -304,13 +304,13 @@ func TestCheckOrInitStore_AlreadyInitialized(t *testing.T) {
 
 	// Initialize the store first.
 	s := cloudstic.ProfileStore{URI: "local:" + storePath}
-	g, err := globalFlagsFromProfileStore(s)
+	sc, err := clientConfigFromProfileStore(s)
 	if err != nil {
-		t.Fatalf("globalFlagsFromProfileStore: %v", err)
+		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
-	raw, err := g.initObjectStore(context.Background())
+	raw, err := newObjectStore(context.Background(), sc.store)
 	if err != nil {
-		t.Fatalf("initObjectStore: %v", err)
+		t.Fatalf("newObjectStore: %v", err)
 	}
 	_, err = cloudstic.InitRepo(t.Context(), raw, cloudstic.WithInitNoEncryption())
 	if err != nil {
@@ -343,13 +343,13 @@ func TestCheckOrInitStore_InitializedEncrypted_ValidCredentials(t *testing.T) {
 	storePath := filepath.Join(tmpDir, "store")
 
 	s := cloudstic.ProfileStore{URI: "local:" + storePath}
-	g, err := globalFlagsFromProfileStore(s)
+	sc, err := clientConfigFromProfileStore(s)
 	if err != nil {
-		t.Fatalf("globalFlagsFromProfileStore: %v", err)
+		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
-	raw, err := g.initObjectStore(context.Background())
+	raw, err := newObjectStore(context.Background(), sc.store)
 	if err != nil {
-		t.Fatalf("initObjectStore: %v", err)
+		t.Fatalf("newObjectStore: %v", err)
 	}
 	_, err = cloudstic.InitRepo(t.Context(), raw, cloudstic.WithInitCredentials(keychain.Chain{keychain.WithPassword("correct-password")}))
 	if err != nil {
@@ -383,13 +383,13 @@ func TestCheckOrInitStore_InitializedEncrypted_InvalidCredentials(t *testing.T) 
 	storePath := filepath.Join(tmpDir, "store")
 
 	s := cloudstic.ProfileStore{URI: "local:" + storePath}
-	g, err := globalFlagsFromProfileStore(s)
+	sc, err := clientConfigFromProfileStore(s)
 	if err != nil {
-		t.Fatalf("globalFlagsFromProfileStore: %v", err)
+		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
-	raw, err := g.initObjectStore(context.Background())
+	raw, err := newObjectStore(context.Background(), sc.store)
 	if err != nil {
-		t.Fatalf("initObjectStore: %v", err)
+		t.Fatalf("newObjectStore: %v", err)
 	}
 	_, err = cloudstic.InitRepo(t.Context(), raw, cloudstic.WithInitCredentials(keychain.Chain{keychain.WithPassword("correct-password")}))
 	if err != nil {
@@ -414,7 +414,7 @@ func TestCheckOrInitStore_InitializedEncrypted_InvalidCredentials(t *testing.T) 
 	}
 }
 
-func TestGlobalFlagsFromProfileStore_ResolvesEnvVars(t *testing.T) {
+func TestClientConfigFromProfileStore_ResolvesEnvVars(t *testing.T) {
 	t.Setenv("TEST_AK", "my-access-key")
 	t.Setenv("TEST_SK", "my-secret-key")
 	t.Setenv("TEST_PW", "s3cret")
@@ -428,31 +428,31 @@ func TestGlobalFlagsFromProfileStore_ResolvesEnvVars(t *testing.T) {
 		KMSKeyARN:         "arn:aws:kms:us-east-1:123:key/abc",
 	}
 
-	g, err := globalFlagsFromProfileStore(s)
+	sc, err := clientConfigFromProfileStore(s)
 	if err != nil {
-		t.Fatalf("globalFlagsFromProfileStore: %v", err)
+		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
-	if g.store != "s3:bucket/prefix" {
-		t.Fatalf("store=%q", g.store)
+	if sc.store.uri != "s3:bucket/prefix" {
+		t.Fatalf("store=%q", sc.store.uri)
 	}
-	if g.s3Region != "eu-west-1" {
-		t.Fatalf("s3Region=%q", g.s3Region)
+	if sc.store.s3.region != "eu-west-1" {
+		t.Fatalf("s3Region=%q", sc.store.s3.region)
 	}
-	if g.s3AccessKey != "my-access-key" {
-		t.Fatalf("s3AccessKey=%q", g.s3AccessKey)
+	if sc.store.s3.accessKey != "my-access-key" {
+		t.Fatalf("s3AccessKey=%q", sc.store.s3.accessKey)
 	}
-	if g.s3SecretKey != "my-secret-key" {
-		t.Fatalf("s3SecretKey=%q", g.s3SecretKey)
+	if sc.store.s3.secretKey != "my-secret-key" {
+		t.Fatalf("s3SecretKey=%q", sc.store.s3.secretKey)
 	}
-	if g.password != "s3cret" {
-		t.Fatalf("password=%q", g.password)
+	if sc.unlock.password != "s3cret" {
+		t.Fatalf("password=%q", sc.unlock.password)
 	}
-	if g.kmsKeyARN != "arn:aws:kms:us-east-1:123:key/abc" {
-		t.Fatalf("kmsKeyARN=%q", g.kmsKeyARN)
+	if sc.unlock.kms.keyARN != "arn:aws:kms:us-east-1:123:key/abc" {
+		t.Fatalf("kmsKeyARN=%q", sc.unlock.kms.keyARN)
 	}
 }
 
-func TestGlobalFlagsFromProfileStore_ResolvesSecretRef(t *testing.T) {
+func TestClientConfigFromProfileStore_ResolvesSecretRef(t *testing.T) {
 	t.Setenv("SECRET_AK", "secret-ak")
 
 	s := cloudstic.ProfileStore{
@@ -460,22 +460,22 @@ func TestGlobalFlagsFromProfileStore_ResolvesSecretRef(t *testing.T) {
 		S3AccessKeySecret: "env://SECRET_AK",
 	}
 
-	g, err := globalFlagsFromProfileStore(s)
+	sc, err := clientConfigFromProfileStore(s)
 	if err != nil {
-		t.Fatalf("globalFlagsFromProfileStore: %v", err)
+		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
-	if g.s3AccessKey != "secret-ak" {
-		t.Fatalf("s3AccessKey=%q want secret-ak", g.s3AccessKey)
+	if sc.store.s3.accessKey != "secret-ak" {
+		t.Fatalf("s3AccessKey=%q want secret-ak", sc.store.s3.accessKey)
 	}
 }
 
-func TestGlobalFlagsFromProfileStore_InvalidSecretRefReturnsError(t *testing.T) {
+func TestClientConfigFromProfileStore_InvalidSecretRefReturnsError(t *testing.T) {
 	s := cloudstic.ProfileStore{
 		URI:            "s3:bucket/prefix",
 		PasswordSecret: "env:/bad-format",
 	}
 
-	_, err := globalFlagsFromProfileStore(s)
+	_, err := clientConfigFromProfileStore(s)
 	if err == nil {
 		t.Fatal("expected error for invalid secret ref")
 	}
@@ -1370,33 +1370,33 @@ func TestRunStoreNew_LocalStore(t *testing.T) {
 	}
 }
 
-func TestGlobalFlagsFromProfileStore_DefaultRegion(t *testing.T) {
+func TestClientConfigFromProfileStore_DefaultRegion(t *testing.T) {
 	s := cloudstic.ProfileStore{
 		URI: "s3:some-bucket",
 	}
-	g, err := globalFlagsFromProfileStore(s)
+	sc, err := clientConfigFromProfileStore(s)
 	if err != nil {
-		t.Fatalf("globalFlagsFromProfileStore: %v", err)
+		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
-	if g.s3Region != "us-east-1" {
-		t.Fatalf("expected default region us-east-1, got %q", g.s3Region)
+	if sc.store.s3.region != "us-east-1" {
+		t.Fatalf("expected default region us-east-1, got %q", sc.store.s3.region)
 	}
 }
 
-func TestGlobalFlagsFromProfileStore_SFTPFields(t *testing.T) {
+func TestClientConfigFromProfileStore_SFTPFields(t *testing.T) {
 	s := cloudstic.ProfileStore{
 		URI:               "sftp://user@host/path",
 		StoreSFTPPassword: "direct-pw",
 		StoreSFTPKey:      "/path/to/key",
 	}
-	g, err := globalFlagsFromProfileStore(s)
+	sc, err := clientConfigFromProfileStore(s)
 	if err != nil {
-		t.Fatalf("globalFlagsFromProfileStore: %v", err)
+		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
-	if g.storeSFTPPassword != "direct-pw" {
-		t.Fatalf("expected storeSFTPPassword=direct-pw, got %q", g.storeSFTPPassword)
+	if sc.store.sftp.password != "direct-pw" {
+		t.Fatalf("expected storeSFTPPassword=direct-pw, got %q", sc.store.sftp.password)
 	}
-	if g.storeSFTPKey != "/path/to/key" {
-		t.Fatalf("expected storeSFTPKey=/path/to/key, got %q", g.storeSFTPKey)
+	if sc.store.sftp.key != "/path/to/key" {
+		t.Fatalf("expected storeSFTPKey=/path/to/key, got %q", sc.store.sftp.key)
 	}
 }

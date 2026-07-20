@@ -10,11 +10,9 @@ import (
 )
 
 func TestMergeProfileBackupArgs_AppliesProfileAndStore(t *testing.T) {
-	base := &backupArgs{
-		sourceURI:   "gdrive",
-		globalFlags: newTestGlobalFlags(),
-	}
+	profilesPath := filepath.Join(t.TempDir(), "profiles.yaml")
 	cfg := &cloudstic.ProfilesConfig{
+		Version: 1,
 		Stores: map[string]cloudstic.ProfileStore{
 			"s": {
 				URI:         "s3:bucket/prefix",
@@ -23,27 +21,29 @@ func TestMergeProfileBackupArgs_AppliesProfileAndStore(t *testing.T) {
 				S3SecretKey: "SECRET",
 			},
 		},
+		Profiles: map[string]cloudstic.BackupProfile{
+			"p": {
+				Source:      "local:/data",
+				Store:       "s",
+				Tags:        []string{"daily"},
+				Excludes:    []string{"*.tmp"},
+				IgnoreEmpty: true,
+			},
+		},
 	}
-	p := cloudstic.BackupProfile{
-		Source:      "local:/data",
-		Store:       "s",
-		Tags:        []string{"daily"},
-		Excludes:    []string{"*.tmp"},
-		IgnoreEmpty: true,
+	if err := cloudstic.SaveProfilesFile(profilesPath, cfg); err != nil {
+		t.Fatalf("SaveProfilesFile: %v", err)
 	}
 
-	eff, err := mergeProfileBackupArgs(base, "p", p, cfg)
+	base := &backupArgs{sourceURI: "gdrive", globalFlags: newTestGlobalFlags()}
+	base.profilesFile = profilesPath
+
+	eff, err := mergeProfileBackupArgs(base, "p", cfg.Profiles["p"], cfg)
 	if err != nil {
 		t.Fatalf("mergeProfileBackupArgs: %v", err)
 	}
 	if eff.sourceURI != "local:/data" {
 		t.Fatalf("sourceURI=%q want local:/data", eff.sourceURI)
-	}
-	if eff.store != "s3:bucket/prefix" {
-		t.Fatalf("store=%q want s3:bucket/prefix", eff.store)
-	}
-	if eff.s3Region != "eu-west-1" {
-		t.Fatalf("s3Region=%q want eu-west-1", eff.s3Region)
 	}
 	if len(eff.tags) != 1 || eff.tags[0] != "daily" {
 		t.Fatalf("tags=%v want [daily]", eff.tags)
@@ -54,29 +54,55 @@ func TestMergeProfileBackupArgs_AppliesProfileAndStore(t *testing.T) {
 	if !eff.ignoreEmpty {
 		t.Fatal("expected ignoreEmpty to be true")
 	}
+
+	// The store reaches the command through resolution, not by rewriting flags.
+	resolved, err := resolveClientConfig(eff.globalFlags)
+	if err != nil {
+		t.Fatalf("resolveClientConfig: %v", err)
+	}
+	if resolved.store.uri != "s3:bucket/prefix" {
+		t.Fatalf("store.uri=%q want s3:bucket/prefix", resolved.store.uri)
+	}
+	if resolved.store.s3.region != "eu-west-1" {
+		t.Fatalf("s3.region=%q want eu-west-1", resolved.store.s3.region)
+	}
+	if resolved.store.s3.accessKey != "AKIA" {
+		t.Fatalf("s3.accessKey=%q want AKIA", resolved.store.s3.accessKey)
+	}
 }
 
 func TestMergeProfileBackupArgs_CLIFlagsWin(t *testing.T) {
+	profilesPath := filepath.Join(t.TempDir(), "profiles.yaml")
+	cfg := &cloudstic.ProfilesConfig{
+		Version:  1,
+		Stores:   map[string]cloudstic.ProfileStore{"s": {URI: "s3:bucket"}},
+		Profiles: map[string]cloudstic.BackupProfile{"p": {Source: "local:/profile", Store: "s"}},
+	}
+	if err := cloudstic.SaveProfilesFile(profilesPath, cfg); err != nil {
+		t.Fatalf("SaveProfilesFile: %v", err)
+	}
+
 	base := &backupArgs{
 		sourceURI:   "local:/cli",
 		globalFlags: testProvided(newTestGlobalFlags(), "source", "store"),
 	}
 	base.store = "local:/cli-store"
+	base.profilesFile = profilesPath
 
-	cfg := &cloudstic.ProfilesConfig{
-		Stores: map[string]cloudstic.ProfileStore{"s": {URI: "s3:bucket"}},
-	}
-	p := cloudstic.BackupProfile{Source: "local:/profile", Store: "s"}
-
-	eff, err := mergeProfileBackupArgs(base, "p", p, cfg)
+	eff, err := mergeProfileBackupArgs(base, "p", cfg.Profiles["p"], cfg)
 	if err != nil {
 		t.Fatalf("mergeProfileBackupArgs: %v", err)
 	}
 	if eff.sourceURI != "local:/cli" {
 		t.Fatalf("sourceURI=%q want local:/cli", eff.sourceURI)
 	}
-	if eff.store != "local:/cli-store" {
-		t.Fatalf("store=%q want local:/cli-store", eff.store)
+
+	resolved, err := resolveClientConfig(eff.globalFlags)
+	if err != nil {
+		t.Fatalf("resolveClientConfig: %v", err)
+	}
+	if resolved.store.uri != "local:/cli-store" {
+		t.Fatalf("store.uri=%q want local:/cli-store", resolved.store.uri)
 	}
 }
 
@@ -303,13 +329,23 @@ func TestCloneGlobalFlags_Independence(t *testing.T) {
 	}
 }
 
-func TestApplyProfileStoreToGlobalFlags_AllFields(t *testing.T) {
+func applyTestProfileStore(t *testing.T, s cloudstic.ProfileStore, provided ...string) (clientConfig, error) {
+	t.Helper()
+	cfg := clientConfigFromFlags(newTestGlobalFlags())
+	set := map[string]bool{}
+	for _, name := range provided {
+		set[name] = true
+	}
+	err := applyProfileStore(&cfg, s, func(name string) bool { return set[name] })
+	return cfg, err
+}
+
+func TestApplyProfileStore_AllFields(t *testing.T) {
 	t.Setenv("TEST_PASSWORD", "secret-pw")
 	t.Setenv("TEST_ENC_KEY", "enc-key-val")
 	t.Setenv("TEST_REC_KEY", "rec-key-val")
 
-	g := newTestGlobalFlags()
-	s := cloudstic.ProfileStore{
+	cfg, err := applyTestProfileStore(t, cloudstic.ProfileStore{
 		URI:                 "s3:my-bucket/prefix",
 		S3Region:            "us-east-1",
 		S3Endpoint:          "https://s3.example.com",
@@ -324,98 +360,97 @@ func TestApplyProfileStoreToGlobalFlags_AllFields(t *testing.T) {
 		KMSKeyARN:           "arn:aws:kms:us-east-1:123:key/abc",
 		KMSRegion:           "us-east-1",
 		KMSEndpoint:         "https://kms.example.com",
+	})
+	if err != nil {
+		t.Fatalf("applyProfileStore: %v", err)
 	}
 
-	if err := applyProfileStoreToGlobalFlags(g, s); err != nil {
-		t.Fatalf("applyProfileStoreToGlobalFlags: %v", err)
+	checks := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"store.uri", cfg.store.uri, "s3:my-bucket/prefix"},
+		{"s3.region", cfg.store.s3.region, "us-east-1"},
+		{"s3.endpoint", cfg.store.s3.endpoint, "https://s3.example.com"},
+		{"s3.profile", cfg.store.s3.profile, "prod"},
+		{"s3.accessKey", cfg.store.s3.accessKey, "AKIATEST"},
+		{"s3.secretKey", cfg.store.s3.secretKey, "SECRETTEST"},
+		{"sftp.password", cfg.store.sftp.password, "sftp-pw"},
+		{"sftp.key", cfg.store.sftp.key, "/tmp/sftp.key"},
+		{"unlock.password", cfg.unlock.password, "secret-pw"},
+		{"unlock.encryptionKey", cfg.unlock.encryptionKey, "enc-key-val"},
+		{"unlock.recoveryKey", cfg.unlock.recoveryKey, "rec-key-val"},
+		{"kms.keyARN", cfg.unlock.kms.keyARN, "arn:aws:kms:us-east-1:123:key/abc"},
+		{"kms.region", cfg.unlock.kms.region, "us-east-1"},
+		{"kms.endpoint", cfg.unlock.kms.endpoint, "https://kms.example.com"},
 	}
-
-	if g.store != "s3:my-bucket/prefix" {
-		t.Fatalf("store=%q want s3:my-bucket/prefix", g.store)
-	}
-	if g.s3Region != "us-east-1" {
-		t.Fatalf("s3Region=%q want us-east-1", g.s3Region)
-	}
-	if g.s3Endpoint != "https://s3.example.com" {
-		t.Fatalf("s3Endpoint=%q want https://s3.example.com", g.s3Endpoint)
-	}
-	if g.s3Profile != "prod" {
-		t.Fatalf("s3Profile=%q want prod", g.s3Profile)
-	}
-	if g.s3AccessKey != "AKIATEST" {
-		t.Fatalf("s3AccessKey=%q want AKIATEST", g.s3AccessKey)
-	}
-	if g.s3SecretKey != "SECRETTEST" {
-		t.Fatalf("s3SecretKey=%q want SECRETTEST", g.s3SecretKey)
-	}
-	if g.storeSFTPPassword != "sftp-pw" {
-		t.Fatalf("storeSFTPPassword=%q want sftp-pw", g.storeSFTPPassword)
-	}
-	if g.storeSFTPKey != "/tmp/sftp.key" {
-		t.Fatalf("storeSFTPKey=%q want /tmp/sftp.key", g.storeSFTPKey)
-	}
-	if g.password != "secret-pw" {
-		t.Fatalf("password=%q want secret-pw", g.password)
-	}
-	if g.encryptionKey != "enc-key-val" {
-		t.Fatalf("encryptionKey=%q want enc-key-val", g.encryptionKey)
-	}
-	if g.recoveryKey != "rec-key-val" {
-		t.Fatalf("recoveryKey=%q want rec-key-val", g.recoveryKey)
-	}
-	if g.kmsKeyARN != "arn:aws:kms:us-east-1:123:key/abc" {
-		t.Fatalf("kmsKeyARN=%q want arn:aws:kms:us-east-1:123:key/abc", g.kmsKeyARN)
-	}
-	if g.kmsRegion != "us-east-1" {
-		t.Fatalf("kmsRegion=%q want us-east-1", g.kmsRegion)
-	}
-	if g.kmsEndpoint != "https://kms.example.com" {
-		t.Fatalf("kmsEndpoint=%q want https://kms.example.com", g.kmsEndpoint)
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("%s=%q want %q", c.name, c.got, c.want)
+		}
 	}
 }
 
-func TestApplyProfileStoreToGlobalFlags_CLIFlagOverrides(t *testing.T) {
-	g := testProvided(newTestGlobalFlags(), "store")
-	g.store = "local:/cli-store"
-	s := cloudstic.ProfileStore{URI: "s3:profile-bucket"}
-
-	if err := applyProfileStoreToGlobalFlags(g, s); err != nil {
-		t.Fatalf("applyProfileStoreToGlobalFlags: %v", err)
+func TestApplyProfileStore_CLIFlagOverrides(t *testing.T) {
+	cfg := clientConfigFromFlags(func() *globalFlags {
+		g := testProvided(newTestGlobalFlags(), "store")
+		g.store = "local:/cli-store"
+		return g
+	}())
+	err := applyProfileStore(&cfg, cloudstic.ProfileStore{URI: "s3:profile-bucket"},
+		func(name string) bool { return name == "store" })
+	if err != nil {
+		t.Fatalf("applyProfileStore: %v", err)
 	}
-
-	if g.store != "local:/cli-store" {
-		t.Fatalf("store=%q want local:/cli-store", g.store)
+	if cfg.store.uri != "local:/cli-store" {
+		t.Fatalf("store.uri=%q want local:/cli-store", cfg.store.uri)
 	}
 }
 
-func TestApplyProfileStoreToGlobalFlags_SecretRef(t *testing.T) {
+func TestApplyProfileStore_SecretRef(t *testing.T) {
 	t.Setenv("SECRET_PW", "from-secret-ref")
 
-	g := newTestGlobalFlags()
-	s := cloudstic.ProfileStore{
-		PasswordSecret: "env://SECRET_PW",
+	cfg, err := applyTestProfileStore(t, cloudstic.ProfileStore{PasswordSecret: "env://SECRET_PW"})
+	if err != nil {
+		t.Fatalf("applyProfileStore: %v", err)
 	}
-
-	if err := applyProfileStoreToGlobalFlags(g, s); err != nil {
-		t.Fatalf("applyProfileStoreToGlobalFlags: %v", err)
-	}
-	if g.password != "from-secret-ref" {
-		t.Fatalf("password=%q want from-secret-ref", g.password)
+	if cfg.unlock.password != "from-secret-ref" {
+		t.Fatalf("unlock.password=%q want from-secret-ref", cfg.unlock.password)
 	}
 }
 
-func TestApplyProfileStoreToGlobalFlags_InvalidSecretRef(t *testing.T) {
-	g := newTestGlobalFlags()
-	s := cloudstic.ProfileStore{
-		PasswordSecret: "env:/invalid-format",
-	}
-
-	err := applyProfileStoreToGlobalFlags(g, s)
+func TestApplyProfileStore_InvalidSecretRef(t *testing.T) {
+	_, err := applyTestProfileStore(t, cloudstic.ProfileStore{PasswordSecret: "env:/invalid-format"})
 	if err == nil {
 		t.Fatal("expected error for invalid secret ref")
 	}
 	if !strings.Contains(err.Error(), "password") {
 		t.Fatalf("expected field context in error, got: %v", err)
+	}
+}
+
+// The merged args name the profile rather than carrying its store values, so
+// that resolveClientConfig applies the store definition in one place.
+func TestMergeProfileBackupArgs_NamesProfileWithoutRewritingFlags(t *testing.T) {
+	base := &backupArgs{sourceURI: "", globalFlags: newTestGlobalFlags()}
+	baseStore := base.store
+	cfg := &cloudstic.ProfilesConfig{
+		Stores:   map[string]cloudstic.ProfileStore{"s": {URI: "s3:profile-bucket"}},
+		Profiles: map[string]cloudstic.BackupProfile{"p": {Source: "local:/data", Store: "s"}},
+	}
+	eff, err := mergeProfileBackupArgs(base, "p", cfg.Profiles["p"], cfg)
+	if err != nil {
+		t.Fatalf("mergeProfileBackupArgs: %v", err)
+	}
+	if eff.profile != "p" {
+		t.Fatalf("profile=%q want p", eff.profile)
+	}
+	if eff.store != baseStore {
+		t.Fatalf("store=%q want it left at %q", eff.store, baseStore)
+	}
+	if base.profile != "" {
+		t.Fatalf("base flags mutated: profile=%q", base.profile)
 	}
 }
 

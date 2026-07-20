@@ -22,7 +22,8 @@ type initArgs struct {
 
 func initFlagSpecs(a *initArgs) []flagSpec {
 	return []flagSpec{
-		boolFlag(&a.recovery, "add-recovery-key", false, "Generate a recovery key (24-word seed phrase) during init"),
+		boolFlag(&a.recovery, "add-recovery-key", false, "Generate a recovery key (24-word seed phrase) during init",
+			withShortUsage("Generate a 24-word recovery key")),
 		boolFlag(&a.noEncryption, "no-encryption", false, "Create an unencrypted repository (NOT recommended)"),
 		boolFlag(&a.adoptSlots, "adopt-slots", false, "Initialize by adopting existing key slots if found (prevents error if already has slots)"),
 	}

@@ -90,18 +90,7 @@ _cloudstic() {
     # Complete flags per subcommand
     local cmd_flags=""
     case "$cmd" in
-		init)
-			cmd_flags="-add-recovery-key -no-encryption -adopt-slots" ;;
-		backup)
-			cmd_flags="-source -profile -all-profiles -auth-ref -profiles-file -skip-native-files -google-credentials -google-credentials-ref -google-credentials-json -google-token-file -google-token-ref -onedrive-client-id -onedrive-token-file -onedrive-token-ref -tag -ignore-empty-snapshot -dry-run -skip-mode -skip-flags -skip-xattrs -xattr-namespaces" ;;
-        restore)
-            cmd_flags="-output -format -path -dry-run" ;;
-        prune)
-            cmd_flags="-dry-run" ;;
-        forget)
-            cmd_flags="-prune -dry-run -keep-last -keep-hourly -keep-daily -keep-weekly -keep-monthly -keep-yearly -tag -source -account -group-by" ;;
-        cat)
-            cmd_flags="-raw" ;;
+@@BASH_CMD_FLAGS@@
         completion)
             COMPREPLY=($(compgen -W "bash zsh fish" -- "$cur"))
             return ;;
@@ -318,6 +307,12 @@ _cloudstic_store_prefixes() {
     compadd -Q -S '' -X 'store URI prefix' -- "${values[@]}"
 }
 
+_cloudstic_source_prefixes() {
+    local -a values
+    values=('local:' 'sftp://' 'gdrive' 'gdrive-changes' 'onedrive' 'onedrive-changes')
+    compadd -Q -S '' -X 'source URI prefix' -- "${values[@]}"
+}
+
 _cloudstic() {
     local -a commands
     commands=(
@@ -391,36 +386,7 @@ _cloudstic() {
     fi
 
     case "$cmd" in
-        init)
-            _arguments $global_flags \
-                '-add-recovery-key[Generate a 24-word recovery key]' \
-                '-no-encryption[Create an unencrypted repository]' \
-                '-adopt-slots[Adopt existing key slots]'
-            ;;
-        backup)
-            _arguments $global_flags \
-                '-source[Source URI]:uri:(local: sftp:// gdrive gdrive-changes onedrive onedrive-changes)' \
-                '-profile[Backup profile name]:name:' \
-                '-all-profiles[Run all enabled backup profiles]' \
-                '-auth-ref[Use named auth entry from profiles.yaml]:name:_cloudstic_auth_names' \
-                '-profiles-file[Path to profiles YAML file]:path:_files' \
-                '-skip-native-files[Exclude Google-native files]' \
-                '-google-credentials[Google service account credentials JSON]:path:_files' \
-                '-google-credentials-ref[Secret reference to Google credentials]:ref:' \
-                '-google-credentials-json[Inline Google credentials JSON]:json:' \
-                '-google-token-file[Google OAuth token file]:path:_files' \
-                '-google-token-ref[Secret reference to Google OAuth token]:ref:' \
-                '-onedrive-client-id[OneDrive OAuth client ID]:id:' \
-                '-onedrive-token-file[OneDrive OAuth token file]:path:_files' \
-                '-onedrive-token-ref[Secret reference to OneDrive OAuth token]:ref:' \
-                '*-tag[Tag for the snapshot]:tag:' \
-                '-ignore-empty-snapshot[Skip creating a new snapshot when nothing changed]' \
-                '-dry-run[Scan without writing]' \
-                '-skip-mode[Skip POSIX mode/uid/gid/btime/flags]' \
-                '-skip-flags[Skip file flags collection]' \
-                '-skip-xattrs[Skip extended attribute collection]' \
-                '-xattr-namespaces[Restrict xattr collection to prefixes]:prefixes:'
-            ;;
+@@ZSH_CMD_FLAGS@@
         profile)
             local -a profile_commands
             profile_commands=(
@@ -649,50 +615,6 @@ _cloudstic() {
                     ;;
             esac
             ;;
-        restore)
-            _arguments $global_flags \
-                '-output[Output path for zip or dir restore]:path:_files' \
-                '-format[Restore format]:format:(zip dir)' \
-                '-path[Restore only the given file or subtree]:path:' \
-                '-dry-run[Show what would be restored without writing output]' \
-                ':snapshot ID:'
-            ;;
-        list)
-            _arguments $global_flags \
-                '-group[Group output by source identity]'
-            ;;
-        ls)
-            _arguments $global_flags \
-                ':snapshot ID:'
-            ;;
-        prune)
-            _arguments $global_flags \
-                '-dry-run[Show what would be deleted]'
-            ;;
-        forget)
-            _arguments $global_flags \
-                '-prune[Run prune after forgetting]' \
-                '-dry-run[Show what would be removed]' \
-                '-keep-last[Keep N most recent snapshots]:count:' \
-                '-keep-hourly[Keep N hourly snapshots]:count:' \
-                '-keep-daily[Keep N daily snapshots]:count:' \
-                '-keep-weekly[Keep N weekly snapshots]:count:' \
-                '-keep-monthly[Keep N monthly snapshots]:count:' \
-                '-keep-yearly[Keep N yearly snapshots]:count:' \
-                '*-tag[Filter by tag]:tag:' \
-                '-source[Filter by source URI (e.g. local:./docs, gdrive)]:uri:' \
-                '-account[Filter by account]:account:' \
-                '-group-by[Group snapshots by fields]:fields:' \
-                ':snapshot ID:'
-            ;;
-        diff)
-            _arguments $global_flags \
-                ':snapshot 1:' \
-                ':snapshot 2:'
-            ;;
-        break-lock)
-            _arguments $global_flags
-            ;;
         key)
             local -a key_commands
             key_commands=(
@@ -723,11 +645,6 @@ _cloudstic() {
                     _arguments $global_flags
                     ;;
             esac
-            ;;
-        cat)
-            _arguments $global_flags \
-                '-raw[Output raw, unformatted data]' \
-                '*:object key:'
             ;;
         completion)
             _arguments ':shell:(bash zsh fish)'
@@ -786,32 +703,9 @@ complete -c cloudstic -l json -d 'Write command result as JSON to stdout'
 complete -c cloudstic -l debug -d 'Log every store request'
 
 # init
-complete -c cloudstic -n '__fish_seen_subcommand_from init' -l add-recovery-key -d 'Generate a 24-word recovery key'
-complete -c cloudstic -n '__fish_seen_subcommand_from init' -l no-encryption -d 'Create an unencrypted repository'
-complete -c cloudstic -n '__fish_seen_subcommand_from init' -l adopt-slots -d 'Adopt existing key slots'
+@@FISH_CMD_FLAGS@@
 
 # backup
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -o source -l source -x -a 'local: sftp:// gdrive gdrive-changes onedrive onedrive-changes' -d 'Source URI'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -o profile -l profile -x -a '(__fish_cloudstic_query profile-names)' -d 'Backup profile name'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -o all-profiles -l all-profiles -d 'Run all enabled backup profiles'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -o auth-ref -l auth-ref -x -a '(__fish_cloudstic_query auth-names)' -d 'Use named auth entry from profiles.yaml'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -o profiles-file -l profiles-file -r -F -d 'Path to profiles YAML file'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-native-files -d 'Exclude Google-native files'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l google-credentials -r -F -d 'Google service account credentials JSON'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l google-credentials-ref -x -d 'Secret reference to Google credentials'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l google-credentials-json -x -d 'Inline Google credentials JSON'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l google-token-file -r -F -d 'Google OAuth token file'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l google-token-ref -x -d 'Secret reference to Google OAuth token'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l onedrive-client-id -x -d 'OneDrive OAuth client ID'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l onedrive-token-file -r -F -d 'OneDrive OAuth token file'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l onedrive-token-ref -x -d 'Secret reference to OneDrive OAuth token'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l tag -x -d 'Tag for the snapshot'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l ignore-empty-snapshot -d 'Skip creating a new snapshot when nothing changed'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -o dry-run -l dry-run -d 'Scan without writing'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-mode -d 'Skip POSIX mode/uid/gid/btime/flags'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-flags -d 'Skip file flags collection'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l skip-xattrs -d 'Skip extended attribute collection'
-complete -c cloudstic -n '__fish_seen_subcommand_from backup' -l xattr-namespaces -x -d 'Restrict xattr collection to prefixes'
 
 # profile subcommands
 complete -c cloudstic -n '__fish_seen_subcommand_from profile; and not __fish_seen_subcommand_from list show new' -a list -d 'List stores, auth entries, and backup profiles'
@@ -892,28 +786,12 @@ complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subc
 complete -c cloudstic -n '__fish_seen_subcommand_from auth; and __fish_seen_subcommand_from login' -l name -x -d 'Auth reference name'
 
 # restore
-complete -c cloudstic -n '__fish_seen_subcommand_from restore' -l output -r -F -d 'Output ZIP file path'
-complete -c cloudstic -n '__fish_seen_subcommand_from restore' -l dry-run -d 'Show what would be restored'
 
 # list
-complete -c cloudstic -n '__fish_seen_subcommand_from list' -l group -d 'Group output by source identity'
 
 # prune
-complete -c cloudstic -n '__fish_seen_subcommand_from prune' -l dry-run -d 'Show what would be deleted'
 
 # forget
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l prune -d 'Run prune after forgetting'
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l dry-run -d 'Show what would be removed'
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l keep-last -x -d 'Keep N most recent snapshots'
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l keep-hourly -x -d 'Keep N hourly snapshots'
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l keep-daily -x -d 'Keep N daily snapshots'
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l keep-weekly -x -d 'Keep N weekly snapshots'
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l keep-monthly -x -d 'Keep N monthly snapshots'
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l keep-yearly -x -d 'Keep N yearly snapshots'
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l tag -x -d 'Filter by tag'
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l source -x -d 'Filter by source URI (e.g. local:./docs, gdrive)'
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l account -x -d 'Filter by account'
-complete -c cloudstic -n '__fish_seen_subcommand_from forget' -l group-by -x -d 'Group snapshots by fields'
 
 # key subcommands
 complete -c cloudstic -n '__fish_seen_subcommand_from key; and not __fish_seen_subcommand_from list add-recovery passwd' -a list -d 'List all encryption key slots'
@@ -922,7 +800,6 @@ complete -c cloudstic -n '__fish_seen_subcommand_from key; and not __fish_seen_s
 complete -c cloudstic -n '__fish_seen_subcommand_from key; and __fish_seen_subcommand_from passwd' -l new-password -x -d 'New repository password'
 
 # cat
-complete -c cloudstic -n '__fish_seen_subcommand_from cat' -l raw -d 'Output raw, unformatted data'
 
 # completion
 complete -c cloudstic -n '__fish_seen_subcommand_from completion' -a 'bash zsh fish' -d 'Shell type'

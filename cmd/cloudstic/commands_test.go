@@ -211,3 +211,66 @@ func TestCommandFlagsAppearInBashCompletion(t *testing.T) {
 		}
 	}
 }
+
+// allDeclaredSpecs collects every flag specification the CLI declares.
+func allDeclaredSpecs() []flagSpec {
+	specs := globalFlagSpecsFor(&globalFlags{}, allGlobalGroups)
+	for _, c := range commandRegistry() {
+		if c.ownFlags != nil {
+			specs = append(specs, c.ownFlags()...)
+		}
+	}
+	return specs
+}
+
+// TestDeclaredCompletersExistInZsh catches a completer named in a flag spec
+// that no zsh helper actually defines — a silent completion breakage that is
+// invisible until a user tabs on that flag.
+func TestDeclaredCompletersExistInZsh(t *testing.T) {
+	script := completionScripts(t)["zsh"]
+	for _, s := range allDeclaredSpecs() {
+		switch s.completer {
+		case "", "_files": // builtin or none
+			continue
+		}
+		if !strings.Contains(script, s.completer+"() {") {
+			t.Errorf("flag -%s declares completer %q, but no such zsh function is defined", s.name, s.completer)
+		}
+	}
+}
+
+// TestDeclaredCompletersHaveFishMapping ensures every completer has an explicit
+// fish translation, so dynamic value suggestions are not silently dropped.
+func TestDeclaredCompletersHaveFishMapping(t *testing.T) {
+	for _, s := range allDeclaredSpecs() {
+		if s.completer == "" || s.isBool {
+			continue
+		}
+		if got := fishValueSpec(s.completer); got == " -x" && s.completer != "" {
+			t.Errorf("flag -%s declares completer %q with no fish mapping; it will lose value suggestions", s.name, s.completer)
+		}
+	}
+}
+
+// TestGeneratedCommandFlagsMatchSpecs is the per-command drift guard: each
+// generated shell entry must offer exactly the flags the command declares.
+func TestGeneratedCommandFlagsMatchSpecs(t *testing.T) {
+	scripts := completionScripts(t)
+	for _, c := range commandRegistry() {
+		if c.ownFlags == nil || c.hidden {
+			continue
+		}
+		for _, s := range c.ownFlags() {
+			for shell, script := range scripts {
+				// fish spells long options as "-l name"; bash and zsh use "-name".
+				token := "-" + s.name
+				if shell == "fish" {
+					token = "-l " + s.name
+				}
+				if !strings.Contains(script, token) {
+					t.Errorf("%s completion for %q is missing flag -%s", shell, c.name, s.name)
+				}
+			}
+		}
+	}
+}

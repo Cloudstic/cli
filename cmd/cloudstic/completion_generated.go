@@ -98,5 +98,118 @@ func renderCompletion(script string) string {
 		placeholderGlobalValueFlags, dashPrefixed(globalValueFlagNames(), "|"),
 		placeholderZshCommands, zshCommandLines(),
 		placeholderFishCommands, fishCommandLines(),
+		placeholderBashCmdFlags, bashCommandFlagCases(),
+		placeholderZshCmdFlags, zshCommandFlagCases(),
+		placeholderFishCmdFlags, fishCommandFlagLines(),
 	).Replace(script)
+}
+
+// Per-command flag entries for the shell scripts are generated from each
+// command's own flag specifications. Grouped commands (auth/store/profile/key)
+// still build their flags inline and keep their hand-written blocks.
+const (
+	placeholderBashCmdFlags = "@@BASH_CMD_FLAGS@@"
+	placeholderZshCmdFlags  = "@@ZSH_CMD_FLAGS@@"
+	placeholderFishCmdFlags = "@@FISH_CMD_FLAGS@@"
+)
+
+// generatedFlagCommands returns the commands whose flags are introspectable.
+func generatedFlagCommands() []command {
+	var out []command
+	for _, c := range visibleCommands() {
+		if c.ownFlags != nil {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// bashCommandFlagCases renders one `case` arm per command listing its own flags.
+func bashCommandFlagCases() string {
+	var b strings.Builder
+	for _, c := range generatedFlagCommands() {
+		names := dashPrefixed(specNames(c.ownFlags()), " ")
+		fmt.Fprintf(&b, "        %s)\n            cmd_flags=%q ;;\n", c.name, names)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// zshCommandFlagCases renders one `_arguments` arm per command. Each flag
+// contributes its description, value placeholder, and completion function.
+func zshCommandFlagCases() string {
+	var b strings.Builder
+	for _, c := range generatedFlagCommands() {
+		fmt.Fprintf(&b, "        %s)\n            _arguments $global_flags", c.name)
+		for _, s := range c.ownFlags() {
+			fmt.Fprintf(&b, " \\\n                '%s'", zshFlagEntry(s))
+		}
+		for _, p := range c.positional {
+			fmt.Fprintf(&b, " \\\n                '%s'", p)
+		}
+		b.WriteString("\n            ;;\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// zshFlagEntry renders a single zsh _arguments specification for a flag.
+func zshFlagEntry(s flagSpec) string {
+	prefix := ""
+	if s.repeatable {
+		prefix = "*"
+	}
+	entry := fmt.Sprintf("%s-%s[%s]", prefix, s.name, escapeZshDesc(s.completionUsage()))
+	if s.isBool {
+		return entry
+	}
+	return entry + fmt.Sprintf(":%s:%s", zshValueName(s), s.completer)
+}
+
+// zshValueName is the value label shown while completing a flag's argument.
+func zshValueName(s flagSpec) string {
+	name := strings.Trim(s.placeholder, "<>")
+	if name == "" {
+		name = "value"
+	}
+	return name
+}
+
+// fishCommandFlagLines renders fish completions for each command's own flags.
+func fishCommandFlagLines() string {
+	var b strings.Builder
+	for _, c := range generatedFlagCommands() {
+		for _, s := range c.ownFlags() {
+			fmt.Fprintf(&b, "complete -c cloudstic -n '__fish_seen_subcommand_from %s' -o %s -l %s",
+				c.name, s.name, s.name)
+			if !s.isBool {
+				b.WriteString(fishValueSpec(s.completer))
+			}
+			fmt.Fprintf(&b, " -d '%s'\n", escapeFish(s.completionUsage()))
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// escapeZshDesc escapes a flag description for use inside zsh's [...] block.
+func escapeZshDesc(s string) string {
+	r := strings.NewReplacer(`'`, `'\''`, "[", `\[`, "]", `\]`, ":", `\:`)
+	return r.Replace(s)
+}
+
+// fishValueSpec maps a declared completer to the fish flags that reproduce it,
+// so dynamic value suggestions survive generation.
+func fishValueSpec(completer string) string {
+	switch completer {
+	case "_files":
+		return " -r -F"
+	case "_cloudstic_profile_names":
+		return " -x -a '(__fish_cloudstic_query profile-names)'"
+	case "_cloudstic_auth_names":
+		return " -x -a '(__fish_cloudstic_query auth-names)'"
+	case "_cloudstic_store_prefixes":
+		return " -x -a 'local: s3: b2: sftp://'"
+	case "_cloudstic_source_prefixes":
+		return " -x -a 'local: sftp:// gdrive gdrive-changes onedrive onedrive-changes'"
+	default:
+		return " -x"
+	}
 }

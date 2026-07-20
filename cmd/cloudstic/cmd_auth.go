@@ -11,30 +11,6 @@ import (
 	cloudstic "github.com/cloudstic/cli"
 )
 
-func runAuth(r *runner, ctx context.Context) int {
-	if len(r.args) < 1 {
-		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic auth <subcommand> [options]")
-		_, _ = fmt.Fprintln(r.errOut, "")
-		_, _ = fmt.Fprintln(r.errOut, "Available subcommands: list, show, new, login")
-		return 1
-	}
-
-	subcommand := r.args[0]
-	subRunner := r.withArgs(r.args[1:])
-	switch subcommand {
-	case "list":
-		return runAuthList(subRunner, ctx)
-	case "show":
-		return runAuthShow(subRunner, ctx)
-	case "new":
-		return runAuthNew(subRunner, ctx)
-	case "login":
-		return runAuthLogin(subRunner, ctx)
-	default:
-		return r.fail("Unknown auth subcommand: %s", subcommand)
-	}
-}
-
 func runAuthList(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("auth list", flag.ContinueOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
@@ -257,4 +233,14 @@ func defaultAuthTokenRef(provider, name string) string {
 		name = "default"
 	}
 	return "config-token://" + provider + "/" + name
+}
+
+// authCommand declares the `auth` command group.
+func authCommand() command {
+	return group("auth", "Manage reusable cloud auth entries",
+		leaf("new", "Create or update a reusable cloud auth entry", runAuthNew),
+		leaf("list", "List auth entries from profiles.yaml", runAuthList),
+		leaf("show", "Show one auth entry", runAuthShow),
+		leaf("login", "Run OAuth login flow for one auth entry", runAuthLogin),
+	)
 }

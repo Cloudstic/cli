@@ -15,32 +15,6 @@ import (
 	"github.com/cloudstic/cli/pkg/store"
 )
 
-func runStore(r *runner, ctx context.Context) int {
-	if len(r.args) < 1 {
-		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic store <subcommand> [options]")
-		_, _ = fmt.Fprintln(r.errOut, "")
-		_, _ = fmt.Fprintln(r.errOut, "Available subcommands: list, show, new, verify, init")
-		return 1
-	}
-
-	subcommand := r.args[0]
-	subRunner := r.withArgs(r.args[1:])
-	switch subcommand {
-	case "list":
-		return runStoreList(subRunner, ctx)
-	case "show":
-		return runStoreShow(subRunner, ctx)
-	case "new":
-		return runStoreNew(subRunner, ctx)
-	case "verify":
-		return runStoreVerify(subRunner, ctx)
-	case "init":
-		return runStoreInit(subRunner, ctx)
-	default:
-		return r.fail("Unknown store subcommand: %s", subcommand)
-	}
-}
-
 func runStoreList(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("store list", flag.ContinueOnError)
 	profilesFile := fs.String("profiles-file", envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback()), "Path to profiles YAML file")
@@ -809,4 +783,15 @@ func envRef(name string) string {
 func storeHasExplicitEncryption(s cloudstic.ProfileStore) bool {
 	return s.PasswordSecret != "" || s.EncryptionKeySecret != "" || s.RecoveryKeySecret != "" ||
 		s.KMSKeyARN != ""
+}
+
+// storeCommand declares the `store` command group.
+func storeCommand() command {
+	return group("store", "Manage store entries in profiles.yaml",
+		leaf("new", "Create or update a store entry in profiles.yaml", runStoreNew),
+		leaf("list", "List configured stores", runStoreList),
+		leaf("show", "Show one store and its configuration", runStoreShow),
+		leaf("verify", "Verify one store's credentials and connectivity", runStoreVerify),
+		leaf("init", "Initialize a configured store by reference", runStoreInit),
+	)
 }

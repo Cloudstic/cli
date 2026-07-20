@@ -114,3 +114,10 @@ func printCatResult(out io.Writer, errOut io.Writer, results []*cloudstic.CatRes
 		}
 	}
 }
+
+// catCommand declares the `cat` command.
+func catCommand() command {
+	return leaf("cat", "Display raw JSON content of repository objects",
+		runCat, withFlags(func() boundFlagSet { b, _ := newCatFlagSet(); return b }),
+		withPositional("*:object key:"))
+}

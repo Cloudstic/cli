@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 )
@@ -774,4 +775,10 @@ complete -c cloudstic -n '__fish_seen_subcommand_from key; and __fish_seen_subco
 # completion
 complete -c cloudstic -n '__fish_seen_subcommand_from completion' -a 'bash zsh fish' -d 'Shell type'
 `))
+}
+
+// completionCommand declares the `completion` command.
+func completionCommand() command {
+	return leaf("completion", "Generate shell completion scripts (bash, zsh, fish)",
+		func(r *runner, _ context.Context) int { return runCompletion(r) })
 }

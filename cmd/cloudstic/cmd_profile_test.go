@@ -41,7 +41,7 @@ profiles:
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r.withArgs(args), context.Background()); code != 0 {
+	if code := profileCommand().execute(r.withArgs(args), context.Background(), "profile"); code != 0 {
 		t.Fatalf("runProfile() code=%d err=%s", code, errOut.String())
 	}
 
@@ -81,7 +81,7 @@ profiles:
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r.withArgs(args), context.Background()); code != 0 {
+	if code := profileCommand().execute(r.withArgs(args), context.Background(), "profile"); code != 0 {
 		t.Fatalf("runProfile() code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()
@@ -105,7 +105,7 @@ func TestRunProfileShow_UnknownProfile(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r.withArgs(args), context.Background()); code == 0 {
+	if code := profileCommand().execute(r.withArgs(args), context.Background(), "profile"); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "Unknown profile") {
@@ -119,7 +119,7 @@ func TestRunProfileList_MissingFile(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r.withArgs(args), context.Background()); code != 0 {
+	if code := profileCommand().execute(r.withArgs(args), context.Background(), "profile"); code != 0 {
 		t.Fatalf("expected zero exit code, got=%d err=%s", code, errOut.String())
 	}
 	if out.String() != "" {
@@ -136,7 +136,7 @@ func TestRunProfile_UnknownSubcommand(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r.withArgs(args), context.Background()); code == 0 {
+	if code := profileCommand().execute(r.withArgs(args), context.Background(), "profile"); code == 0 {
 		t.Fatalf("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "Unknown profile subcommand") {
@@ -159,7 +159,7 @@ func TestRunProfileNew_CreatesFile(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r.withArgs(args), context.Background()); code != 0 {
+	if code := profileCommand().execute(r.withArgs(args), context.Background(), "profile"); code != 0 {
 		t.Fatalf("runProfile() code=%d err=%s", code, errOut.String())
 	}
 
@@ -192,7 +192,7 @@ func TestRunProfileNew_PrefillsExistingProfile(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runProfile(r.withArgs(args), context.Background()); code != 0 {
+	if code := profileCommand().execute(r.withArgs(args), context.Background(), "profile"); code != 0 {
 		t.Fatalf("initial create: code=%d err=%s", code, errOut.String())
 	}
 
@@ -204,7 +204,7 @@ func TestRunProfileNew_PrefillsExistingProfile(t *testing.T) {
 	}
 	out.Reset()
 	errOut.Reset()
-	if code := runProfile(r.withArgs(args), context.Background()); code != 0 {
+	if code := profileCommand().execute(r.withArgs(args), context.Background(), "profile"); code != 0 {
 		t.Fatalf("update: code=%d err=%s", code, errOut.String())
 	}
 
@@ -240,7 +240,7 @@ func TestRunProfileNew_RequiresNameAndSource(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r.withArgs(args), context.Background()); code == 0 {
+	if code := profileCommand().execute(r.withArgs(args), context.Background(), "profile"); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "-source is required") {
@@ -260,7 +260,7 @@ func TestRunProfileNew_RequiresStore(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r.withArgs(args), context.Background()); code == 0 {
+	if code := profileCommand().execute(r.withArgs(args), context.Background(), "profile"); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "-store-ref is required") {
@@ -281,7 +281,7 @@ func TestRunProfileNew_RejectsUnknownStoreRef(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r.withArgs(args), context.Background()); code == 0 {
+	if code := profileCommand().execute(r.withArgs(args), context.Background(), "profile"); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "Unknown store reference") {
@@ -302,7 +302,7 @@ func TestRunProfileNew_CloudSourceRequiresAuthRef(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r.withArgs(args), context.Background()); code == 0 {
+	if code := profileCommand().execute(r.withArgs(args), context.Background(), "profile"); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "-auth-ref is required for cloud sources") {
@@ -324,7 +324,7 @@ func TestRunProfileNew_RejectsUnknownAuthRef(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r.withArgs(args), context.Background()); code == 0 {
+	if code := profileCommand().execute(r.withArgs(args), context.Background(), "profile"); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "Unknown auth reference") {
@@ -346,7 +346,7 @@ func TestRunProfileNew_AuthRefRequiresCloudSource(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r.withArgs(args), context.Background()); code == 0 {
+	if code := profileCommand().execute(r.withArgs(args), context.Background(), "profile"); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "-auth-ref requires a cloud source") {
@@ -424,7 +424,7 @@ profiles:
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r.withArgs(args), context.Background()); code != 0 {
+	if code := profileCommand().execute(r.withArgs(args), context.Background(), "profile"); code != 0 {
 		t.Fatalf("runProfile() code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()
@@ -455,7 +455,7 @@ profiles:
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r.withArgs(args), context.Background()); code != 0 {
+	if code := profileCommand().execute(r.withArgs(args), context.Background(), "profile"); code != 0 {
 		t.Fatalf("runProfile() code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()
@@ -487,7 +487,7 @@ profiles:
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r.withArgs(args), context.Background()); code != 0 {
+	if code := profileCommand().execute(r.withArgs(args), context.Background(), "profile"); code != 0 {
 		t.Fatalf("runProfile() code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()
@@ -514,7 +514,7 @@ func TestRunProfileNew_WithExcludesAndTags(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r.withArgs(args), context.Background()); code != 0 {
+	if code := profileCommand().execute(r.withArgs(args), context.Background(), "profile"); code != 0 {
 		t.Fatalf("runProfile() code=%d err=%s", code, errOut.String())
 	}
 
@@ -543,7 +543,7 @@ func TestRunProfileNew_InvalidName(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r.withArgs(args), context.Background()); code == 0 {
+	if code := profileCommand().execute(r.withArgs(args), context.Background(), "profile"); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "invalid profile name") {
@@ -564,7 +564,7 @@ func TestRunProfileNew_InvalidSource(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r.withArgs(args), context.Background()); code == 0 {
+	if code := profileCommand().execute(r.withArgs(args), context.Background(), "profile"); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "Invalid source") {
@@ -585,7 +585,7 @@ func TestRunProfileNew_InvalidStoreURI(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r.withArgs(args), context.Background()); code == 0 {
+	if code := profileCommand().execute(r.withArgs(args), context.Background(), "profile"); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "Invalid store URI") {
@@ -619,7 +619,7 @@ profiles:
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r.withArgs(args), context.Background()); code != 0 {
+	if code := profileCommand().execute(r.withArgs(args), context.Background(), "profile"); code != 0 {
 		t.Fatalf("runProfile() code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()
@@ -661,7 +661,7 @@ profiles:
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	if code := runProfile(r.withArgs(args), context.Background()); code != 0 {
+	if code := profileCommand().execute(r.withArgs(args), context.Background(), "profile"); code != 0 {
 		t.Fatalf("runProfile() code=%d err=%s", code, errOut.String())
 	}
 	got := out.String()

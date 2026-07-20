@@ -24,28 +24,6 @@ func defaultProfilesPath() (string, error) {
 	return filepath.Join(configDir, defaultProfilesFilename), nil
 }
 
-func runProfile(r *runner, ctx context.Context) int {
-	if len(r.args) < 1 {
-		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic profile <subcommand> [options]")
-		_, _ = fmt.Fprintln(r.errOut, "")
-		_, _ = fmt.Fprintln(r.errOut, "Available subcommands: list, show, new")
-		return 1
-	}
-
-	subcommand := r.args[0]
-	subRunner := r.withArgs(r.args[1:])
-	switch subcommand {
-	case "list":
-		return runProfileList(subRunner, ctx)
-	case "show":
-		return runProfileShow(subRunner, ctx)
-	case "new":
-		return runProfileNew(subRunner, ctx)
-	default:
-		return r.fail("Unknown profile subcommand: %s", subcommand)
-	}
-}
-
 type profileShowArgs struct {
 	profilesFile string
 	name         string
@@ -591,4 +569,13 @@ func profileProviderFromSource(sourceURI string) string {
 	default:
 		return ""
 	}
+}
+
+// profileCommand declares the `profile` command group.
+func profileCommand() command {
+	return group("profile", "Manage backup profiles",
+		leaf("new", "Create or update a backup profile in profiles.yaml", runProfileNew),
+		leaf("list", "List stores, auth entries, and backup profiles", runProfileList),
+		leaf("show", "Show one profile and resolved store/auth references", runProfileShow),
+	)
 }

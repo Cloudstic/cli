@@ -109,3 +109,10 @@ func appendTreeNode(l list.Writer, ref string, refToMeta map[string]core.FileMet
 	}
 	l.UnIndent()
 }
+
+// lsCommand declares the `ls` command.
+func lsCommand() command {
+	return leaf("ls", "List files within a specific snapshot",
+		runLsSnapshot, withFlags(func() boundFlagSet { b, _ := newLsFlagSet(); return b }),
+		withPositional(":snapshot ID:"))
+}

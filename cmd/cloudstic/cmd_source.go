@@ -9,24 +9,6 @@ import (
 	"github.com/jedib0t/go-pretty/v6/table"
 )
 
-func runSource(r *runner, ctx context.Context) int {
-	if len(r.args) < 1 {
-		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic source <subcommand> [options]")
-		_, _ = fmt.Fprintln(r.errOut, "")
-		_, _ = fmt.Fprintln(r.errOut, "Available subcommands: discover")
-		return 1
-	}
-
-	subcommand := r.args[0]
-	subRunner := r.withArgs(r.args[1:])
-	switch subcommand {
-	case "discover":
-		return runSourceDiscover(subRunner, ctx)
-	default:
-		return r.fail("Unknown source subcommand: %s", subcommand)
-	}
-}
-
 func runSourceDiscover(r *runner, ctx context.Context) int {
 	fs := flag.NewFlagSet("source discover", flag.ContinueOnError)
 	portableOnly := fs.Bool("portable-only", false, "Only show portable/external source candidates")
@@ -78,4 +60,11 @@ func runSourceDiscover(r *runner, ctx context.Context) int {
 	}
 	t.Render()
 	return 0
+}
+
+// sourceCommand declares the `source` command group.
+func sourceCommand() command {
+	return group("source", "Discover source candidates for onboarding",
+		leaf("discover", "Discover local source candidates for onboarding", runSourceDiscover),
+	)
 }

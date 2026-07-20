@@ -170,3 +170,10 @@ func resolveRestoreFormat(explicitFormat, output string) (string, error) {
 	}
 	return "dir", nil
 }
+
+// restoreCommand declares the `restore` command.
+func restoreCommand() command {
+	return leaf("restore", "Restore files from a backup snapshot",
+		runRestore, withFlags(func() boundFlagSet { b, _ := newRestoreFlagSet(); return b }),
+		withPositional(":snapshot ID:"))
+}

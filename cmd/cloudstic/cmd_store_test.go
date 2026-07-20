@@ -54,7 +54,7 @@ func TestRunStoreNewAndListAndShow(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
+	if code := storeCommand().execute(r.withArgs(args), context.Background(), "store"); code != 0 {
 		t.Fatalf("store new failed: %s", errOut.String())
 	}
 	if !strings.Contains(out.String(), `"prod-s3" saved`) {
@@ -65,7 +65,7 @@ func TestRunStoreNewAndListAndShow(t *testing.T) {
 	args = []string{"list", "-profiles-file", profilesPath}
 	out.Reset()
 	errOut.Reset()
-	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
+	if code := storeCommand().execute(r.withArgs(args), context.Background(), "store"); code != 0 {
 		t.Fatalf("store list failed: %s", errOut.String())
 	}
 	if !strings.Contains(out.String(), "Stores") || !strings.Contains(out.String(), "prod-s3") || !strings.Contains(out.String(), "AUTH") {
@@ -76,7 +76,7 @@ func TestRunStoreNewAndListAndShow(t *testing.T) {
 	args = []string{"show", "-profiles-file", profilesPath, "prod-s3"}
 	out.Reset()
 	errOut.Reset()
-	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
+	if code := storeCommand().execute(r.withArgs(args), context.Background(), "store"); code != 0 {
 		t.Fatalf("store show failed: %s", errOut.String())
 	}
 	got := out.String()
@@ -103,7 +103,7 @@ func TestRunStoreNew_RequiresNameAndURI(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r.withArgs(args), context.Background()); code == 0 {
+	if code := storeCommand().execute(r.withArgs(args), context.Background(), "store"); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "-uri is required") {
@@ -138,7 +138,7 @@ func TestRunStoreNew_ExistingStorePrefillsUnsetValues(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
+	if code := storeCommand().execute(r.withArgs(args), context.Background(), "store"); code != 0 {
 		t.Fatalf("store new failed: %s", errOut.String())
 	}
 
@@ -194,7 +194,7 @@ func TestRunStoreShow_UnknownStore(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r.withArgs(args), context.Background()); code == 0 {
+	if code := storeCommand().execute(r.withArgs(args), context.Background(), "store"); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "Unknown store") {
@@ -225,7 +225,7 @@ profiles:
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
+	if code := storeCommand().execute(r.withArgs(args), context.Background(), "store"); code != 0 {
 		t.Fatalf("store show failed: %s", errOut.String())
 	}
 	got := out.String()
@@ -239,7 +239,7 @@ func TestRunStoreList_MissingFile(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
+	if code := storeCommand().execute(r.withArgs(args), context.Background(), "store"); code != 0 {
 		t.Fatalf("expected zero exit code, got err=%s", errOut.String())
 	}
 }
@@ -259,7 +259,7 @@ func TestRunStoreNew_WithEncryption(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
+	if code := storeCommand().execute(r.withArgs(args), context.Background(), "store"); code != 0 {
 		t.Fatalf("store new failed: %s", errOut.String())
 	}
 
@@ -267,7 +267,7 @@ func TestRunStoreNew_WithEncryption(t *testing.T) {
 	args = []string{"show", "-profiles-file", profilesPath, "encrypted-s3"}
 	out.Reset()
 	errOut.Reset()
-	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
+	if code := storeCommand().execute(r.withArgs(args), context.Background(), "store"); code != 0 {
 		t.Fatalf("store show failed: %s", errOut.String())
 	}
 	got := out.String()
@@ -492,7 +492,7 @@ func TestRunStoreNew_InvalidURI(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r.withArgs(args), context.Background()); code == 0 {
+	if code := storeCommand().execute(r.withArgs(args), context.Background(), "store"); code == 0 {
 		t.Fatal("expected non-zero exit code for invalid URI")
 	}
 	if !strings.Contains(errOut.String(), "invalid store URI") {
@@ -508,7 +508,7 @@ func TestRunStoreNew_InvalidName(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r.withArgs(args), context.Background()); code == 0 {
+	if code := storeCommand().execute(r.withArgs(args), context.Background(), "store"); code == 0 {
 		t.Fatal("expected non-zero exit code for invalid name")
 	}
 	if !strings.Contains(errOut.String(), "invalid store name") {
@@ -521,7 +521,7 @@ func TestRunStore_UnknownSubcommand(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r.withArgs(args), context.Background()); code == 0 {
+	if code := storeCommand().execute(r.withArgs(args), context.Background(), "store"); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "Unknown store subcommand") {
@@ -551,7 +551,7 @@ stores:
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
+	if code := storeCommand().execute(r.withArgs(args), context.Background(), "store"); code != 0 {
 		t.Fatalf("store show failed: %s", errOut.String())
 	}
 	got := out.String()
@@ -593,7 +593,7 @@ stores:
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
+	if code := storeCommand().execute(r.withArgs(args), context.Background(), "store"); code != 0 {
 		t.Fatalf("store show failed: %s", errOut.String())
 	}
 	got := out.String()
@@ -628,7 +628,7 @@ stores:
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
+	if code := storeCommand().execute(r.withArgs(args), context.Background(), "store"); code != 0 {
 		t.Fatalf("store show failed: %s", errOut.String())
 	}
 	got := out.String()
@@ -660,7 +660,7 @@ func TestRunStoreNew_WithSFTPOptions(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
+	if code := storeCommand().execute(r.withArgs(args), context.Background(), "store"); code != 0 {
 		t.Fatalf("store new failed: %s", errOut.String())
 	}
 
@@ -668,7 +668,7 @@ func TestRunStoreNew_WithSFTPOptions(t *testing.T) {
 	args = []string{"show", "-profiles-file", profilesPath, "sftp-new"}
 	out.Reset()
 	errOut.Reset()
-	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
+	if code := storeCommand().execute(r.withArgs(args), context.Background(), "store"); code != 0 {
 		t.Fatalf("store show failed: %s", errOut.String())
 	}
 	got := out.String()
@@ -701,7 +701,7 @@ func TestRunStoreNew_WithAllS3Options(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
+	if code := storeCommand().execute(r.withArgs(args), context.Background(), "store"); code != 0 {
 		t.Fatalf("store new failed: %s", errOut.String())
 	}
 
@@ -742,7 +742,7 @@ func TestRunStoreNew_WithSecretRefFlags(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
+	if code := storeCommand().execute(r.withArgs(args), context.Background(), "store"); code != 0 {
 		t.Fatalf("store new failed: %s", errOut.String())
 	}
 
@@ -1031,7 +1031,7 @@ func TestRunStoreVerify_MissingSecretFails(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r.withArgs(args), context.Background()); code == 0 {
+	if code := storeCommand().execute(r.withArgs(args), context.Background(), "store"); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
 	if !strings.Contains(errOut.String(), "could not resolve store credentials") {
@@ -1327,7 +1327,7 @@ stores:
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
+	if code := storeCommand().execute(r.withArgs(args), context.Background(), "store"); code != 0 {
 		t.Fatalf("store list failed: %s", errOut.String())
 	}
 	got := out.String()
@@ -1353,7 +1353,7 @@ func TestRunStoreNew_LocalStore(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
-	if code := runStore(r.withArgs(args), context.Background()); code != 0 {
+	if code := storeCommand().execute(r.withArgs(args), context.Background(), "store"); code != 0 {
 		t.Fatalf("store new failed: %s", errOut.String())
 	}
 	if !strings.Contains(out.String(), `"local-bk" saved`) {

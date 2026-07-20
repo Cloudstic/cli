@@ -14,32 +14,6 @@ import (
 	"github.com/moby/term"
 )
 
-func runKey(r *runner, ctx context.Context) int {
-	if len(r.args) < 1 {
-		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic key <subcommand>")
-		_, _ = fmt.Fprintln(r.errOut)
-		_, _ = fmt.Fprintln(r.errOut, "Subcommands:")
-		_, _ = fmt.Fprintln(r.errOut, "  list           List all encryption key slots in the repository")
-		_, _ = fmt.Fprintln(r.errOut, "  add-recovery   Generate a 24-word recovery key")
-		_, _ = fmt.Fprintln(r.errOut, "  passwd         Change the repository password")
-		return 1
-	}
-
-	sub := r.args[0]
-	subRunner := r.withArgs(r.args[1:])
-
-	switch sub {
-	case "list":
-		return runKeyList(subRunner, ctx)
-	case "add-recovery":
-		return runAddRecoveryKey(subRunner, ctx)
-	case "passwd":
-		return runKeyPasswd(subRunner, ctx)
-	default:
-		return r.fail("Unknown key subcommand: %s", sub)
-	}
-}
-
 type keyListArgs struct {
 	g *globalFlags
 }
@@ -217,4 +191,16 @@ func runAddRecoveryKey(r *runner, ctx context.Context) int {
 	printRecoveryKey(r.errOut, mnemonic)
 	_, _ = fmt.Fprintln(r.errOut, "Recovery key slot has been added to the repository.")
 	return 0
+}
+
+// keyCommand declares the `key` command group.
+func keyCommand() command {
+	return group("key", "Manage encryption key slots",
+		leaf("list", "List all encryption key slots in the repository",
+			runKeyList, withFlags(func() boundFlagSet { b, _ := newKeyListFlagSet(); return b })),
+		leaf("add-recovery", "Generate a 24-word recovery key for an encrypted repository",
+			runAddRecoveryKey, withFlags(func() boundFlagSet { b, _ := newAddRecoveryKeyFlagSet(); return b })),
+		leaf("passwd", "Change the repository password",
+			runKeyPasswd, withFlags(func() boundFlagSet { b, _ := newKeyPasswdFlagSet(); return b })),
+	)
 }

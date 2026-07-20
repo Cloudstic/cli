@@ -9,31 +9,24 @@ import (
 // TestRegistryEntriesAreWellFormed guards the registry's own invariants.
 func TestRegistryEntriesAreWellFormed(t *testing.T) {
 	seen := map[string]bool{}
-	for _, c := range commandRegistry() {
+	walk(commandRegistry(), func(path string, c command) {
 		if c.name == "" {
-			t.Error("registry entry with empty name")
+			t.Errorf("command at %q has an empty name", path)
 		}
-		if seen[c.name] {
-			t.Errorf("duplicate command %q in registry", c.name)
+		if seen[path] {
+			t.Errorf("duplicate command path %q", path)
 		}
-		seen[c.name] = true
+		seen[path] = true
 		if c.summary == "" {
-			t.Errorf("command %q has no summary", c.name)
+			t.Errorf("command %q has no summary", path)
 		}
-		if c.run == nil {
-			t.Errorf("command %q has no run function", c.name)
+		switch {
+		case c.isGroup() && c.run != nil:
+			t.Errorf("group %q must not declare a run function", path)
+		case !c.isGroup() && c.run == nil:
+			t.Errorf("leaf %q has no run function", path)
 		}
-		subSeen := map[string]bool{}
-		for _, sub := range c.subcommands {
-			if subSeen[sub.name] {
-				t.Errorf("duplicate subcommand %q under %q", sub.name, c.name)
-			}
-			subSeen[sub.name] = true
-			if sub.summary == "" {
-				t.Errorf("subcommand %q %q has no summary", c.name, sub.name)
-			}
-		}
-	}
+	})
 }
 
 // TestUsageListsEveryRegisteredCommand ensures the usage output cannot drift
@@ -43,17 +36,9 @@ func TestUsageListsEveryRegisteredCommand(t *testing.T) {
 	printUsage(&buf)
 	got := buf.String()
 
-	for _, c := range visibleCommands() {
-		if len(c.subcommands) == 0 {
-			if !strings.Contains(got, c.name) {
-				t.Errorf("usage output is missing command %q", c.name)
-			}
-			continue
-		}
-		for _, sub := range c.subcommands {
-			if !strings.Contains(got, c.name+" "+sub.name) {
-				t.Errorf("usage output is missing %q", c.name+" "+sub.name)
-			}
+	for _, path := range leafPaths(visibleCommands()) {
+		if !strings.Contains(got, path) {
+			t.Errorf("usage output is missing command %q", path)
 		}
 	}
 
@@ -177,7 +162,7 @@ func TestCommandFlagSetsAreIntrospectable(t *testing.T) {
 		if c.flags == nil {
 			continue
 		}
-		fs, _ := c.flags()
+		fs := c.flags().set
 		if fs == nil {
 			t.Errorf("command %q returned a nil flag set", c.name)
 			continue

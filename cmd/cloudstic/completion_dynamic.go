@@ -126,3 +126,9 @@ func splitCompletionFlag(arg string) (name string, hasValue bool, value string) 
 	}
 	return trimmed, false, ""
 }
+
+// completeCommand is the internal dynamic-completion helper.
+func completeCommand() command {
+	return leaf("__complete", "Internal dynamic completion helper",
+		runCompletionQuery, asHidden())
+}

@@ -29,24 +29,6 @@ func defaultProfilesPathNoCreate() string {
 	return defaultProfilesFilename
 }
 
-func runSetup(r *runner, ctx context.Context) int {
-	if len(r.args) < 1 {
-		_, _ = fmt.Fprintln(r.errOut, "Usage: cloudstic setup <subcommand> [options]")
-		_, _ = fmt.Fprintln(r.errOut, "")
-		_, _ = fmt.Fprintln(r.errOut, "Available subcommands: workstation")
-		return 1
-	}
-
-	subcommand := r.args[0]
-	subRunner := r.withArgs(r.args[1:])
-	switch subcommand {
-	case "workstation":
-		return runSetupWorkstation(subRunner, ctx)
-	default:
-		return r.fail("Unknown setup subcommand: %s", subcommand)
-	}
-}
-
 type setupWorkstationArgs struct {
 	dryRun       bool
 	yes          bool
@@ -458,4 +440,11 @@ func sanitizeWorkstationProfileName(value string) string {
 		}
 	}
 	return strings.Trim(b.String(), "-._")
+}
+
+// setupCommand declares the `setup` command group.
+func setupCommand() command {
+	return group("setup", "Guided setup and onboarding flows",
+		leaf("workstation", "Guide workstation onboarding and profile scaffolding", runSetupWorkstation),
+	)
 }

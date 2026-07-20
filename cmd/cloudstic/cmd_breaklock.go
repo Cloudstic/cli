@@ -62,3 +62,9 @@ func printBreakLockResult(errOut io.Writer, removed []*cloudstic.RepoLock) {
 		_, _ = fmt.Fprintf(errOut, "  Shared:     %v\n\n", lock.IsShared)
 	}
 }
+
+// breakLockCommand declares the `break-lock` command.
+func breakLockCommand() command {
+	return leaf("break-lock", "Remove a stale repository lock left by a crashed process",
+		runBreakLock, withFlags(func() boundFlagSet { b, _ := newBreakLockFlagSet(); return b }))
+}

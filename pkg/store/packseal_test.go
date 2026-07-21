@@ -317,8 +317,10 @@ func TestPackStore_UnencryptedRepositoryStaysPlaintext(t *testing.T) {
 	}
 }
 
-// Sealing trades away reproducible pack names. Pin that so the change is a
-// decision rather than a surprise.
+// A sealed footer is not byte-reproducible, by design. Note this does not cost
+// reproducible *pack names* in an encrypted repository: those were already
+// nondeterministic, because every object reaching PackStore carries its own
+// random nonce. See TestPackStore_UnsealedPackNamesStayReproducible.
 func TestPackFooter_SealedFooterIsNotDeterministic(t *testing.T) {
 	entries := map[string]PackEntry{"filemeta/a": {Offset: 0, Length: 10}}
 	key := testIndexKey(t, 5)
@@ -346,4 +348,50 @@ func TestPackFooter_SealedFooterIsNotDeterministic(t *testing.T) {
 			t.Errorf("entry = %+v", got)
 		}
 	}
+}
+
+// Pins the reproducibility facts, so the claim in the sealing PR cannot drift
+// again: an encrypted repository never had reproducible pack names, and an
+// unencrypted one still does.
+func TestPackStore_UnsealedPackNamesStayReproducible(t *testing.T) {
+	ctx := context.Background()
+
+	writeOnce := func(t *testing.T, encrypted bool) string {
+		t.Helper()
+		base, err := NewLocalStore(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		pack, err := NewPackStore(base)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var target ObjectStore = pack
+		if encrypted {
+			target = NewEncryptedStore(NewMeteredStore(pack), testIndexKey(t, 1))
+		}
+		if err := target.Put(ctx, "filemeta/a", []byte("identical payload")); err != nil {
+			t.Fatal(err)
+		}
+		if err := pack.Flush(ctx); err != nil {
+			t.Fatal(err)
+		}
+		packs, err := base.List(ctx, packPrefix)
+		if err != nil || len(packs) != 1 {
+			t.Fatalf("want 1 pack, got %v (err %v)", packs, err)
+		}
+		return packs[0]
+	}
+
+	t.Run("unencrypted repositories stay reproducible", func(t *testing.T) {
+		if a, b := writeOnce(t, false), writeOnce(t, false); a != b {
+			t.Errorf("pack names diverged without encryption: %s vs %s", a, b)
+		}
+	})
+
+	t.Run("encrypted repositories were never reproducible", func(t *testing.T) {
+		if a, b := writeOnce(t, true), writeOnce(t, true); a == b {
+			t.Errorf("expected per-object nonces to make pack names differ, both were %s", a)
+		}
+	})
 }

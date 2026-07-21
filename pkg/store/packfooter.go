@@ -78,13 +78,18 @@ type packFooterInfo struct {
 // sealing the payload when indexKey is set.
 //
 // Entries are sorted by key so that an unsealed footer is a pure function of
-// the object set, which keeps the content-addressed packfile name reproducible.
-// A sealed footer is not: AES-GCM uses a fresh random nonce, so packing the
-// same objects twice yields different pack bytes and therefore different pack
-// names. That is deliberate. Nothing depends on pack names being reproducible —
-// the engine skips objects that already exist before they ever reach the pack
-// buffer — and a content-derived nonce would trade that non-property for the
-// risk of reusing a nonce across differing plaintexts.
+// the object set. A sealed footer is not: AES-GCM uses a fresh random nonce.
+//
+// This does not change whether packfile names are reproducible, which is worth
+// stating because it is easy to assume otherwise. In an encrypted repository
+// they never were: PackStore sits below EncryptedStore, so it receives object
+// bytes that already carry their own random nonce, and packing the same objects
+// twice has always produced different pack bytes. In an unencrypted repository
+// there is no index key, the footer stays plaintext, and packs remain
+// byte-identical exactly as before.
+//
+// A content-derived nonce would therefore buy nothing here, while trading a
+// non-property for the risk of reusing a nonce across differing plaintexts.
 func buildPackFooter(entries map[string]PackEntry, indexKey []byte) ([]byte, error) {
 	footer := packFooter{
 		Version: packFooterVersion,

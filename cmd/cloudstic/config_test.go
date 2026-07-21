@@ -11,6 +11,46 @@ import (
 	cloudstic "github.com/cloudstic/cli"
 )
 
+// TestResolveClientConfig_ProfileOverridesEnvironment documents and locks in
+// the precedence #266 asked to make explicit: a selected profile is a named
+// choice the user invoked with -profile, so it overrides an ambient
+// environment variable the same way it overrides a built-in default. Only an
+// explicit CLI flag (TestApplyProfileStore_CLIFlagOverrides) beats it.
+func TestResolveClientConfig_ProfileOverridesEnvironment(t *testing.T) {
+	t.Setenv("CLOUDSTIC_S3_REGION", "env-region")
+	g := newTestGlobalFlags()
+	if g.s3Region != "env-region" {
+		t.Fatalf("s3Region=%q want env-region (environment should win over default)", g.s3Region)
+	}
+	if g.origins["s3-region"] != originEnv {
+		t.Fatalf("origins[s3-region]=%v want originEnv", g.origins["s3-region"])
+	}
+
+	profilesPath := filepath.Join(t.TempDir(), "profiles.yaml")
+	err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
+		Version: 1,
+		Stores: map[string]cloudstic.ProfileStore{
+			"s": {URI: "s3:bucket", S3Region: "profile-region"},
+		},
+		Profiles: map[string]cloudstic.BackupProfile{
+			"p": {Source: "local:/data", Store: "s"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveProfilesFile: %v", err)
+	}
+	g.profile = "p"
+	g.profilesFile = profilesPath
+
+	resolved, err := resolveClientConfig(g)
+	if err != nil {
+		t.Fatalf("resolveClientConfig: %v", err)
+	}
+	if resolved.store.s3.region != "profile-region" {
+		t.Fatalf("store.s3.region=%q want profile-region (profile should win over environment)", resolved.store.s3.region)
+	}
+}
+
 func TestResolveClientConfig_AppliesProfileStore(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")

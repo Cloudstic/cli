@@ -1809,6 +1809,7 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 | Variable | Flag equivalent | Description |
 | :--- | :--- | :--- |
 | `CLOUDSTIC_STORE` | `-store` | Storage backend URI: `local:<path>`, `s3:<bucket>[/<prefix>]`, `b2:<bucket>[/<prefix>]`, `sftp://[user@]host[:port]/<path>` |
+| `CLOUDSTIC_PROFILE` | `-profile` | Active profile name from profiles.yaml |
 | `CLOUDSTIC_S3_ENDPOINT` | `-s3-endpoint` | S3 compatible endpoint (for MinIO, R2, etc.) |
 | `CLOUDSTIC_S3_REGION` | `-s3-region` | S3 Region |
 | `CLOUDSTIC_S3_PROFILE` | `-s3-profile` | AWS shared config profile for S3 auth |
@@ -1816,11 +1817,17 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 | `AWS_SECRET_ACCESS_KEY` | `-s3-secret-key` | S3 Secret Access Key |
 | `B2_KEY_ID` | `-b2-key-id` | Backblaze B2 application key ID |
 | `B2_APP_KEY` | `-b2-app-key` | Backblaze B2 application key |
+| `CLOUDSTIC_DISABLE_PACKFILE` | `-disable-packfile` | Disable bundling small objects into packs |
 | `CLOUDSTIC_STORE_SFTP_PASSWORD` | `-store-sftp-password` | SFTP password for the store |
 | `CLOUDSTIC_STORE_SFTP_KEY` | `-store-sftp-key` | Path to SSH private key for the store |
+| `CLOUDSTIC_STORE_SFTP_INSECURE` | `-store-sftp-insecure` | Skip host key validation for the store (INSECURE) |
+| `CLOUDSTIC_STORE_SFTP_KNOWN_HOSTS` | `-store-sftp-known-hosts` | Path to known_hosts file for the store |
 | `CLOUDSTIC_SOURCE` | `-source` | Source URI: `local:<path>`, `sftp://[user@]host[:port]/<path>`, `gdrive[://<Drive Name>][/<path>]`, `gdrive-changes[://<Drive Name>][/<path>]`, `onedrive[://<Drive Name>][/<path>]`, `onedrive-changes[://<Drive Name>][/<path>]` |
+| `CLOUDSTIC_VOLUME_UUID` | `-volume-uuid` | Override volume UUID for local source (see [Portable drives](#portable-drives)) |
 | `CLOUDSTIC_SOURCE_SFTP_PASSWORD` | `-source-sftp-password` | SFTP password for the source |
 | `CLOUDSTIC_SOURCE_SFTP_KEY` | `-source-sftp-key` | Path to SSH private key for the source |
+| `CLOUDSTIC_SOURCE_SFTP_INSECURE` | `-source-sftp-insecure` | Skip host key validation for the source (INSECURE) |
+| `CLOUDSTIC_SOURCE_SFTP_KNOWN_HOSTS` | `-source-sftp-known-hosts` | Path to known_hosts file for the source |
 | `CLOUDSTIC_ENCRYPTION_KEY` | `-encryption-key` | Platform key (hex) |
 | `CLOUDSTIC_PASSWORD` | `-password` | Encryption password |
 | `CLOUDSTIC_RECOVERY_KEY` | `-recovery-key` | Recovery seed phrase |
@@ -1832,5 +1839,8 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 | `GOOGLE_APPLICATION_CREDENTIALS` | `-google-credentials` | Path to your own Google OAuth credentials file (optional, overrides built-in) |
 | `GOOGLE_CREDENTIALS_JSON` | `-google-credentials-json` | Inline Google credentials JSON (OAuth client or service account) |
 | `GOOGLE_TOKEN_FILE` | `-google-token-file` | Override Google OAuth token path |
-| `ONEDRIVE_CLIENT_ID` | — | Microsoft app client ID (optional, overrides built-in) |
-| `ONEDRIVE_TOKEN_FILE` | — | Override OneDrive token path |
+| `ONEDRIVE_CLIENT_ID` | `-onedrive-client-id` | Microsoft app client ID (optional, overrides built-in) |
+| `ONEDRIVE_TOKEN_FILE` | `-onedrive-token-file` | Override OneDrive token path |
+
+This table is kept complete by an automated test: any flag declared with an
+environment binding must have a row here, or `go test ./cmd/cloudstic` fails.

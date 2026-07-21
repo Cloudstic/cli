@@ -47,10 +47,19 @@ or modify an object that was already stored.
 | HAMT Flush                     | Orphaned node + blob objects          | None        |
 | Snapshot write                 | Orphaned snapshot + all its objects    | None        |
 | `index/latest` update          | New snapshot exists but isn't "latest" | None        |
-| `index/packs` catalog          | Catalog stale; rebuilt on next load    | None        |
+| `index/packs` catalog          | Entries written since the last flush are unaddressable | **Data loss** |
 
-In every case the previous `index/latest` still points at a fully valid
-snapshot with a complete, consistent tree.
+For every row but the last, the previous `index/latest` still points at a fully
+valid snapshot with a complete, consistent tree.
+
+`index/packs` is the exception. Packfiles carry no framing or footer, so the
+catalog is the *only* record of an object's offset and length within its pack —
+it cannot be rebuilt by listing the store the way `index/snapshots` can. A lost
+or truncated catalog leaves the bytes physically present but permanently
+unaddressable. Because of this, an unreadable catalog fails the operation that
+needs it rather than degrading to an empty one, and a catalog is never written
+back before the stored copy has been merged in. See RFC 0018 for the
+self-describing packfile format that removes this single point of failure.
 
 ### Individual object atomicity
 

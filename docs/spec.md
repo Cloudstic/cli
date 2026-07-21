@@ -298,7 +298,19 @@ A catalog of lightweight snapshot summaries used to avoid fetching each full sna
 
 #### index/packs
 
-When packfiles are enabled, a bbolt database mapping logical object keys to their byte offset and length within a packfile. Rebuilt automatically if stale.
+When packfiles are enabled, a JSON object mapping logical object keys to the packfile, byte offset, and length where their bytes actually live:
+
+```json
+{
+  "filemeta/<hash>": { "p": "packs/<hash>", "o": 0, "l": 412 }
+}
+```
+
+Unlike `index/snapshots`, this catalog **cannot** be rebuilt by listing the store. Packfiles are a bare concatenation of object bytes with no framing, so the boundary between two objects exists nowhere except in this catalog. A packed object has no object of its own at its logical key — the key is resolvable only through `index/packs`.
+
+That makes it the one index in the repository whose loss is unrecoverable: the bytes remain intact and correctly hashed in their packfile, but nothing can locate them. Consequently a failed read of this catalog fails the operation that needed it rather than degrading to an empty catalog, and it is never written back before the stored copy has been merged in.
+
+RFC 0018 proposes a self-describing packfile format that adds a footer index to each packfile, which would demote `index/packs` to a rebuildable cache.
 
 ---
 

@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"flag"
+	"os"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -254,6 +257,50 @@ func TestHelpNamesEnvironmentVariables(t *testing.T) {
 			t.Errorf("help output should name the environment variable %s", want)
 		}
 	}
+}
+
+// TestUserGuideDocumentsEveryEnvVar guards against the environment-variable
+// documentation drifting from the actual command surface (#266): every flag
+// declared with an environment binding, anywhere in the command tree, must
+// have a row in docs/user-guide.md's "Environment Variables" table.
+func TestUserGuideDocumentsEveryEnvVar(t *testing.T) {
+	path := filepath.Join("..", "..", "docs", "user-guide.md")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+
+	const heading = "## Environment Variables"
+	start := bytes.Index(raw, []byte(heading))
+	if start < 0 {
+		t.Fatalf("%s has no %q section", path, heading)
+	}
+	section := raw[start+len(heading):]
+	if end := bytes.Index(section, []byte("\n## ")); end >= 0 {
+		section = section[:end]
+	}
+
+	documented := map[string]bool{}
+	for _, m := range regexp.MustCompile("`([A-Z0-9_]+)`").FindAllSubmatch(section, -1) {
+		documented[string(m[1])] = true
+	}
+
+	seen := map[string]bool{}
+	walk(commandRegistry(), func(cmdPath string, c command) {
+		if c.flags == nil {
+			return
+		}
+		for _, spec := range c.flags().specs() {
+			if spec.env == "" || seen[spec.env] {
+				continue
+			}
+			seen[spec.env] = true
+			if !documented[spec.env] {
+				t.Errorf("%s: flag -%s binds env %s, which has no row in docs/user-guide.md's Environment Variables table",
+					cmdPath, spec.name, spec.env)
+			}
+		}
+	})
 }
 
 func lookupCommandForTest(t *testing.T, name string) command {

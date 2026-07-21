@@ -114,6 +114,7 @@ Routes metadata objects to PostgreSQL (with RLS tenant isolation via `SET LOCAL 
 
 - **Config directory** — resolved by `internal/paths.ConfigDir()`: `CLOUDSTIC_CONFIG_DIR` if set, else `os.UserConfigDir()/cloudstic` (e.g. `~/.config/cloudstic`), created `0700`. Holds the profiles file, OAuth tokens, etc.
 - **Profiles** — a profile bundles a named source + store (+ secret refs) so users run `cloudstic backup -profile <name>` instead of re-specifying flags. Persisted via `LoadProfilesFile`/`SaveProfilesFile` (root package, implemented in `internal/engine/profiles.go`). Managed from the CLI (`cmd_profile.go`, `cmd_setup.go`) and the TUI. See RFC `rfcs/0010-backup-profiles.md`. The active profile / file come from `CLOUDSTIC_PROFILE` / `CLOUDSTIC_PROFILES_FILE`.
+- **Resolution precedence** — `resolveClientConfig` (`config.go`) resolves a command's store configuration as: explicit CLI flag > selected profile's store field > environment variable > built-in default. A profile is a named choice the user invoked with `-profile`, so once selected it overrides ambient environment variables the same way it overrides built-in defaults — only an explicit flag beats it. `applyProfileStore` decides this per field via `flagProvided`, which only recognizes `originFlag`; `originEnv` values are treated the same as `originDefault` and are eligible to be overridden. See `TestResolveClientConfig_ProfileOverridesEnvironment` (`config_test.go`).
 
 ### Secret References
 
@@ -140,9 +141,17 @@ Backends expose `Load`/`Save`/`Delete`; unsupported operations return a typed `s
 | `CLOUDSTIC_CONFIG_DIR` | Override the config/state directory (default `~/.config/cloudstic`). |
 | `CLOUDSTIC_{STORE,SOURCE}_SFTP_{PASSWORD,KEY,KNOWN_HOSTS,INSECURE}` | SFTP auth/host-key config for the store and source backends. |
 | `CLOUDSTIC_DISABLE_PACKFILE` | Disable the `PackStore` small-object bundling layer. |
+| `CLOUDSTIC_VOLUME_UUID` | Override the volume UUID for a local source (cross-machine incremental backup for portable drives). |
 | `CLOUDSTIC_E2E_MODE` | E2E test mode: `hermetic` (default), `live`, or `all` (see below). |
 
-`CLOUDSTIC_TEST_*` and `CLOUDSTIC_VOLUME_UUID` are test-only knobs, not user-facing.
+This table is a curated subset (`CLOUDSTIC_*` vars only) for orientation. The
+exhaustive, one-row-per-variable inventory — including provider-standard vars
+like `AWS_ACCESS_KEY_ID` and `B2_KEY_ID` that are deliberately unprefixed — is
+the "Environment Variables" table in `docs/user-guide.md`, kept complete by
+`TestUserGuideDocumentsEveryEnvVar` (`cmd/cloudstic/flagspec_test.go`), which
+fails if a flag's `env` binding has no matching row.
+
+`CLOUDSTIC_TEST_*` are test-only knobs, not user-facing.
 
 ## Documentation Map
 

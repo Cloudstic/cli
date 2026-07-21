@@ -47,19 +47,31 @@ or modify an object that was already stored.
 | HAMT Flush                     | Orphaned node + blob objects          | None        |
 | Snapshot write                 | Orphaned snapshot + all its objects    | None        |
 | `index/latest` update          | New snapshot exists but isn't "latest" | None        |
-| `index/packs` catalog          | Entries written since the last flush are unaddressable | **Data loss** |
+| `index/packs` catalog          | Catalog stale or lost; rebuilt from packfile footers | None (see below) |
 
-For every row but the last, the previous `index/latest` still points at a fully
-valid snapshot with a complete, consistent tree.
+In every case the previous `index/latest` still points at a fully valid
+snapshot with a complete, consistent tree.
 
-`index/packs` is the exception. Packfiles carry no framing or footer, so the
-catalog is the *only* record of an object's offset and length within its pack —
-it cannot be rebuilt by listing the store the way `index/snapshots` can. A lost
-or truncated catalog leaves the bytes physically present but permanently
-unaddressable. Because of this, an unreadable catalog fails the operation that
-needs it rather than degrading to an empty one, and a catalog is never written
-back before the stored copy has been merged in. See RFC 0018 for the
-self-describing packfile format that removes this single point of failure.
+`index/packs` needs a note. It records the offset and length of every packed
+object, and a packed object has no object of its own at its logical key — so
+losing the catalog would strand data that is otherwise intact. It is therefore
+the one index that must be recoverable by another route.
+
+Since RFC 0018 it is. Every packfile ends with a self-describing footer listing
+its contents, which makes the catalog a *cache*: if it is missing, it is rebuilt
+by listing `packs/` and reading footers, automatically and before any read is
+served. That is the same relationship `index/snapshots` has with
+`LIST snapshot/`.
+
+Two things still hold:
+
+- Packfiles written before RFC 0018 have no footer and cannot be recovered this
+  way. A rebuild reports how many such packs it found rather than returning a
+  silently partial catalog; `prune` rewrites them with footers over time.
+- An unreadable catalog is not treated as a missing one. A read failure fails
+  the operation rather than degrading to an empty catalog, because an empty
+  catalog is indistinguishable from "nothing is packed" and would make `prune`
+  treat every packed object as unreachable.
 
 ### Individual object atomicity
 

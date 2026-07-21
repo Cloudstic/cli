@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -89,13 +90,18 @@ func (s *PackStore) Put(ctx context.Context, key string, data []byte) error {
 
 	var packRef string
 	var packData []byte
+	var err error
 
 	// 4. If buffer is full, prepare it for flushing
 	if s.packBuffer.Len() >= maxPackSize {
-		packRef, packData = s.prepareFlushLocked()
+		packRef, packData, err = s.prepareFlushLocked()
 	}
 
 	s.mu.Unlock()
+
+	if err != nil {
+		return err
+	}
 
 	// 5. Upload outside the lock so we don't block concurrent operations
 	if packRef != "" {
@@ -141,19 +147,28 @@ func (s *PackStore) isSmallObject(key string, data []byte) bool {
 // prepareFlushLocked takes the current buffer, prepares a pack object, updates the catalog,
 // and returns the data to be uploaded so it can be done without holding the mutex.
 // mu must be locked before calling.
-func (s *PackStore) prepareFlushLocked() (string, []byte) {
+func (s *PackStore) prepareFlushLocked() (string, []byte, error) {
 	if s.packBuffer.Len() == 0 {
-		return "", nil
+		return "", nil, nil
 	}
 
-	// Hash the buffer contents to create a reproducible packfile name
-	packHash := core.ComputeHash(s.packBuffer.Bytes())
-	packRef := packPrefix + packHash
-	debugf("preparing packfile %s with %d objects (%d bytes)", packRef, len(s.packKeys), s.packBuffer.Len())
+	// Append a self-describing footer so the location of every object in this
+	// pack can be recovered without the catalog. See RFC 0018.
+	footer, err := buildPackFooter(s.packKeys)
+	if err != nil {
+		return "", nil, err
+	}
 
-	// Copy the buffer since it will be uploaded asynchronously
-	packData := make([]byte, s.packBuffer.Len())
-	copy(packData, s.packBuffer.Bytes())
+	// Copy the buffer since it will be uploaded asynchronously. The footer is
+	// part of the object, so the content-addressed name covers it too.
+	packData := make([]byte, 0, s.packBuffer.Len()+len(footer))
+	packData = append(packData, s.packBuffer.Bytes()...)
+	packData = append(packData, footer...)
+
+	packHash := core.ComputeHash(packData)
+	packRef := packPrefix + packHash
+	debugf("preparing packfile %s with %d objects (%d bytes + %d footer)",
+		packRef, len(s.packKeys), s.packBuffer.Len(), len(footer))
 
 	// Cache it immediately since we just wrote it, will speed up following Reads
 	s.packCache.Add(packRef, packData)
@@ -169,7 +184,7 @@ func (s *PackStore) prepareFlushLocked() (string, []byte) {
 	s.packBuffer.Reset()
 	s.packKeys = make(map[string]PackEntry)
 
-	return packRef, packData
+	return packRef, packData, nil
 }
 
 // Get retrieves an object from the active buffer, a cached pack, or downloads the pack.
@@ -314,10 +329,13 @@ func (s *PackStore) Flush(ctx context.Context) error {
 	}
 
 	s.mu.Lock()
-	packRef, packData := s.prepareFlushLocked()
+	packRef, packData, err := s.prepareFlushLocked()
+	if err != nil {
+		s.mu.Unlock()
+		return err
+	}
 
 	var catalogBytes []byte
-	var err error
 	if s.catalogDirty {
 		catalogBytes, err = json.Marshal(s.catalog)
 		if err != nil {
@@ -382,7 +400,10 @@ func (s *PackStore) loadCatalogLocked(ctx context.Context) error {
 	}
 	if !exists {
 		s.catalogLoaded = true // We checked, it doesn't exist, stop checking
-		return nil
+		// A fresh repository has no catalog and no packs. A repository that has
+		// packs but no catalog has lost it, so rebuild from the packs' own
+		// footers rather than proceeding as though nothing were packed.
+		return s.healMissingCatalogLocked(ctx)
 	}
 
 	data, err := s.ObjectStore.Get(ctx, indexPacksKey)
@@ -543,9 +564,25 @@ func (s *PackStore) Repack(ctx context.Context, maxWastedRatio float64) (int64, 
 			continue
 		}
 
+		// A pack's footer is bookkeeping, not garbage, so it must not count
+		// towards waste. Measuring naively first is a safe pre-filter: it can
+		// only overstate waste, so a pack that looks healthy by that measure is
+		// certainly healthy, and only a pack that looks fragmented is worth
+		// spending a footer read to measure accurately.
 		wasted := physicalSize - activeSize
 		if wasted <= 0 {
 			continue // No waste or unexpected size
+		}
+		if float64(wasted)/float64(physicalSize) > maxWastedRatio {
+			if info, ferr := s.readPackFooter(ctx, packRef); ferr == nil {
+				physicalSize = info.objectRegionLen
+				wasted = physicalSize - activeSize
+			} else if !errors.Is(ferr, errNoPackFooter) {
+				debugf("repack: failed to read footer of %s: %v", packRef, ferr)
+			}
+		}
+		if wasted <= 0 {
+			continue
 		}
 
 		wastedRatio := float64(wasted) / float64(physicalSize)
@@ -597,6 +634,14 @@ func (s *PackStore) Repack(ctx context.Context, maxWastedRatio float64) (int64, 
 	// Only now is it safe to drop the originals. An error here leaves a
 	// superseded pack behind, which the orphan pass above reclaims next run.
 	for _, pack := range retired {
+		// Packs are named by their content, so rewriting one whose objects are
+		// all still live reproduces the identical packfile — and retiring it
+		// would delete the very pack the catalog now points at. Deleting a pack
+		// is only safe once nothing references it.
+		if s.packIsReferenced(pack.ref) {
+			debugf("repack: keeping %s, still referenced after rewrite", pack.ref)
+			continue
+		}
 		if err := s.ObjectStore.Delete(ctx, pack.ref); err != nil {
 			return bytesReclaimed, packsDeleted, fmt.Errorf("delete old repacked pack %s: %w", pack.ref, err)
 		}
@@ -606,6 +651,18 @@ func (s *PackStore) Repack(ctx context.Context, maxWastedRatio float64) (int64, 
 	}
 
 	return bytesReclaimed, packsDeleted, nil
+}
+
+// packIsReferenced reports whether any catalog entry still resolves to packRef.
+func (s *PackStore) packIsReferenced(packRef string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, entry := range s.catalog {
+		if entry.PackRef == packRef {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *PackStore) TotalSize(ctx context.Context) (int64, error) {

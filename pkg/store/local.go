@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,6 +48,22 @@ func (s *LocalStore) Put(_ context.Context, key string, data []byte) error {
 
 func (s *LocalStore) Get(_ context.Context, key string) ([]byte, error) {
 	return os.ReadFile(s.getPath(key))
+}
+
+// GetRange implements RangeGetter, letting callers read a packfile footer
+// without loading the whole object.
+func (s *LocalStore) GetRange(_ context.Context, key string, offset, length int64) ([]byte, error) {
+	f, err := os.Open(s.getPath(key))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+
+	buf := make([]byte, length)
+	if _, err := io.ReadFull(io.NewSectionReader(f, offset, length), buf); err != nil {
+		return nil, fmt.Errorf("read %s at %d+%d: %w", key, offset, length, err)
+	}
+	return buf, nil
 }
 
 func (s *LocalStore) Exists(_ context.Context, key string) (bool, error) {

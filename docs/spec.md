@@ -275,9 +275,36 @@ The token format is source-specific:
 
 To avoid issuing hundreds of thousands of S3 `PUT` and `GET` requests for tiny metadata objects, the storage layer implements a stateless PackStore.
 
-* All small objects (< 512KB) like `filemeta/`, `node/`, and small `content/` objects are buffered in memory and flushed as aggregated 8MB `packs/<hash>` files.
+* Only content-addressed prefixes are eligible: `filemeta/`, `node/`, `snapshot/`, `chunk/`, and `content/`. Mutable keys such as `index/latest` are never packed.
+* Small objects (< 512KB) are buffered in memory and flushed as aggregated 8MB `packs/<hash>` files.
 * The `index/packs` catalog is then updated to record the exact byte offset and length of each logical object within its packfile.
 * When reading, the entire 8MB packfile is fetched and cached in an LRU, meaning thousands of subsequent metadata reads take 0 network requests.
+
+#### Packfile layout
+
+Each packfile ends with a self-describing footer, so its contents can be located without the catalog:
+
+```text
+┌──────────────────────────────────────────────┐
+│ object bytes (concatenated)                   │
+├──────────────────────────────────────────────┤
+│ footer payload (JSON)                         │
+├──────────────────────────────────────────────┤
+│ footer length   uint32 big-endian   4 bytes   │
+│ format version  uint8               1 byte    │
+│ magic "CSPACK"                      6 bytes   │
+└──────────────────────────────────────────────┘
+```
+
+The footer payload lists every object in the pack:
+
+```json
+{ "v": 1, "entries": [ { "k": "filemeta/<hash>", "o": 0, "l": 412 } ] }
+```
+
+Entries are sorted by key, so an identical set of objects produces a byte-identical packfile and the content-addressed packfile name stays reproducible. The packfile hash covers the footer.
+
+Object bytes keep their position and meaning, so a reader that resolves objects by explicit offset and length is unaffected by the footer's presence. Packfiles written before RFC 0018 have no footer and remain readable through the catalog.
 
 ### 7. Index
 
@@ -306,11 +333,14 @@ When packfiles are enabled, a JSON object mapping logical object keys to the pac
 }
 ```
 
-Unlike `index/snapshots`, this catalog **cannot** be rebuilt by listing the store. Packfiles are a bare concatenation of object bytes with no framing, so the boundary between two objects exists nowhere except in this catalog. A packed object has no object of its own at its logical key — the key is resolvable only through `index/packs`.
+A packed object has no object of its own at its logical key, so the key is resolvable only through this catalog or through the footer of the packfile holding it.
 
-That makes it the one index in the repository whose loss is unrecoverable: the bytes remain intact and correctly hashed in their packfile, but nothing can locate them. Consequently a failed read of this catalog fails the operation that needed it rather than degrading to an empty catalog, and it is never written back before the stored copy has been merged in.
+The catalog is a **cache**, not the source of truth. Packfiles written since RFC 0018 carry a self-describing footer (see above), so a missing catalog is rebuilt by listing `packs/` and reading footers — the same relationship `index/snapshots` has with `LIST snapshot/`. Recovery is automatic: when `index/packs` is absent but packfiles exist, `PackStore` reconstructs it before serving any read.
 
-RFC 0018 proposes a self-describing packfile format that adds a footer index to each packfile, which would demote `index/packs` to a rebuildable cache.
+Two caveats remain:
+
+* **Packfiles written before footers existed cannot be recovered this way.** Their offsets genuinely exist nowhere but the catalog. When a rebuild encounters one, it reports how many packs are unrecoverable rather than silently returning a partial catalog. A `repack` rewrites such packs with footers.
+* **An unreadable catalog is not the same as a missing one.** A read failure fails the operation that needed it rather than degrading to an empty catalog, because an empty catalog is indistinguishable from "nothing is packed" and would make `prune` treat every packed object as garbage.
 
 ---
 

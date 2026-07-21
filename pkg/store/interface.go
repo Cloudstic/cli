@@ -30,6 +30,17 @@ type Unwrapper interface {
 	Unwrap() ObjectStore
 }
 
+// RangeGetter is an optional interface for backends that can read a byte range
+// without transferring the whole object. It lets PackStore read a packfile's
+// trailing footer without downloading the entire 8 MB pack.
+//
+// Implementations return exactly length bytes starting at offset, or an error.
+// Backends that cannot do this simply do not implement it; callers fall back to
+// a full Get, which is correct everywhere and merely slower.
+type RangeGetter interface {
+	GetRange(ctx context.Context, key string, offset, length int64) ([]byte, error)
+}
+
 // GetConcurrencyHint walks the store wrapper chain and returns the first
 // ConcurrencyHint it finds, defaulting to defaultConcurrency if none exists.
 func GetConcurrencyHint(s ObjectStore, defaultConcurrency int) int {

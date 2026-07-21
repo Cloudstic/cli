@@ -125,6 +125,25 @@ func (pm *PruneManager) mark(ctx context.Context, phase ui.Phase) (map[string]bo
 		return nil, err
 	}
 
+	// A repository holding objects but no listable snapshots would make the
+	// sweep below delete everything. That is never a legitimate state: it means
+	// the snapshot listing is incomplete, most often because an index could not
+	// be read. Refuse rather than act on it.
+	if len(snapRefs) == 0 {
+		orphan, err := pm.firstObject(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if orphan != "" {
+			return nil, fmt.Errorf(
+				"prune aborted: no snapshots found, but the repository still contains objects (e.g. %s). "+
+					"This usually means a repository index could not be read; "+
+					"re-run once the store is reachable, or run 'cloudstic check' to inspect the repository",
+				orphan,
+			)
+		}
+	}
+
 	phase.Log(fmt.Sprintf("Found %d unique snapshots", len(snapRefs)))
 
 	for ref := range snapRefs {
@@ -135,6 +154,22 @@ func (pm *PruneManager) mark(ctx context.Context, phase ui.Phase) (map[string]bo
 	}
 
 	return reachable, nil
+}
+
+// firstObject returns any one key under the sweepable prefixes, or "" when the
+// repository holds none. Errors are propagated: an unreadable listing must not
+// be mistaken for an empty repository.
+func (pm *PruneManager) firstObject(ctx context.Context) (string, error) {
+	for _, prefix := range objectPrefixes {
+		keys, err := pm.store.List(ctx, prefix)
+		if err != nil {
+			return "", fmt.Errorf("list %s: %w", prefix, err)
+		}
+		if len(keys) > 0 {
+			return keys[0], nil
+		}
+	}
+	return "", nil
 }
 
 func (pm *PruneManager) collectSnapshots(ctx context.Context, reachable map[string]bool) (map[string]bool, error) {

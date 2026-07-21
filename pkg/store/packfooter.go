@@ -37,6 +37,16 @@ const (
 	packMagic         = "CSPACK"
 	packFooterVersion = 1
 	packTrailerLen    = 4 + 1 + len(packMagic)
+
+	// maxPackFooterSize bounds the footer payload on both the write and the
+	// read path. Writing, it keeps the footer plus trailer comfortably within
+	// an int on every platform, so the allocation size cannot overflow.
+	// Reading, it caps how much a packfile's own trailer can make us allocate,
+	// so a corrupt or hostile trailer cannot request an arbitrary buffer.
+	//
+	// A pack holds at most maxPackSize bytes of objects, so even a pathological
+	// pack of single-byte objects stays far below this.
+	maxPackFooterSize = 1 << 30 // 1 GiB
 )
 
 // errNoPackFooter reports a packfile written before footers existed. It is an
@@ -85,8 +95,10 @@ func buildPackFooter(entries map[string]PackEntry) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("marshal pack footer: %w", err)
 	}
-	if uint64(len(payload)) > uint64(^uint32(0)) {
-		return nil, fmt.Errorf("pack footer too large: %d bytes", len(payload))
+	// Bound the payload before it is used to size an allocation, so that
+	// len(payload)+packTrailerLen cannot overflow.
+	if len(payload) > maxPackFooterSize {
+		return nil, fmt.Errorf("pack footer too large: %d bytes (limit %d)", len(payload), maxPackFooterSize)
 	}
 
 	out := make([]byte, 0, len(payload)+packTrailerLen)
@@ -109,7 +121,14 @@ func parsePackTrailer(trailer []byte) (int64, error) {
 	if version := trailer[4]; version != packFooterVersion {
 		return 0, fmt.Errorf("unsupported pack footer version %d", version)
 	}
-	return int64(binary.BigEndian.Uint32(trailer[:4])), nil
+
+	// The declared length drives a read and an allocation, so reject an
+	// implausible one rather than trusting the packfile's own trailer.
+	payloadLen := int64(binary.BigEndian.Uint32(trailer[:4]))
+	if payloadLen > maxPackFooterSize {
+		return 0, fmt.Errorf("pack footer declares %d bytes, above the %d limit", payloadLen, maxPackFooterSize)
+	}
+	return payloadLen, nil
 }
 
 // decodePackFooter reads the footer from a complete packfile.

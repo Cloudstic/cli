@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"os"
 	"strings"
@@ -125,6 +126,21 @@ func TestPackFooter_RejectsCorruptFooter(t *testing.T) {
 		pack := append(make([]byte, 10), bad...)
 		if _, err := decodePackFooter("packs/x", pack); err == nil {
 			t.Error("want an error for an entry outside the object region")
+		}
+	})
+
+	t.Run("implausible declared length", func(t *testing.T) {
+		// A corrupt or hostile trailer must not be able to drive an
+		// arbitrarily large read and allocation.
+		trailer := make([]byte, packTrailerLen)
+		binary.BigEndian.PutUint32(trailer[:4], ^uint32(0))
+		trailer[4] = packFooterVersion
+		copy(trailer[5:], packMagic)
+
+		if _, err := parsePackTrailer(trailer); err == nil {
+			t.Error("want an error for a footer length above the limit")
+		} else if !strings.Contains(err.Error(), "limit") {
+			t.Errorf("error should name the limit, got: %v", err)
 		}
 	})
 

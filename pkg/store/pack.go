@@ -107,22 +107,31 @@ func (s *PackStore) Put(ctx context.Context, key string, data []byte) error {
 	return nil
 }
 
+// packablePrefixes are the content-addressed namespaces safe to bundle into a
+// packfile. Every key under them is immutable and named by its own hash, so a
+// packed copy can never go stale.
+//
+// The index/ namespace is deliberately absent: those keys are mutable pointers
+// (index/latest), rebuildable catalogs (index/packs, index/snapshots), or locks.
+// Packing a mutable key ties its freshness to catalog-flush ordering and leaves
+// every superseded copy behind as pack waste.
+var packablePrefixes = []string{
+	"filemeta/",
+	"node/",
+	"snapshot/",
+	"chunk/",
+	"content/",
+}
+
 // isSmallObject determines if a key/data pair should be bundled into a packfile.
 func (s *PackStore) isSmallObject(key string, data []byte) bool {
-	// Don't pack the pack index itself, lock files, or the snapshot catalog
-	// (mutable indexes that are read on every operation).
-	if key == indexPacksKey || key == "index/snapshots" || strings.HasPrefix(key, "index/lock") {
+	// We only pack metadata and small blobs to keep large data files randomly
+	// accessible natively.
+	if len(data) > maxObjectSize {
 		return false
 	}
-	// We only pack metadata to keep data files randomly accessible natively.
-	// Specifically: filemeta, nodes, snapshots, index, and small chunks/contents (up to 512KB)
-	if len(data) <= maxObjectSize {
-		if strings.HasPrefix(key, "filemeta/") ||
-			strings.HasPrefix(key, "node/") ||
-			strings.HasPrefix(key, "snapshot/") ||
-			strings.HasPrefix(key, "chunk/") ||
-			strings.HasPrefix(key, "content/") ||
-			strings.HasPrefix(key, "index/") {
+	for _, prefix := range packablePrefixes {
+		if strings.HasPrefix(key, prefix) {
 			return true
 		}
 	}
@@ -184,13 +193,12 @@ func (s *PackStore) Get(ctx context.Context, key string) ([]byte, error) {
 	// or it's just a normal large object.
 	if !inCatalog {
 		if key != indexPacksKey && !strings.HasPrefix(key, packPrefix) {
-			s.mu.Lock()
-			// Another thread might have loaded it while we waited for lock
-			if !s.catalogLoaded {
-				_ = s.loadCatalogLocked(ctx)
+			if err := s.ensureCatalogLoaded(ctx); err != nil {
+				return nil, err
 			}
+			s.mu.RLock()
 			entry, inCatalog = s.catalog[key]
-			s.mu.Unlock()
+			s.mu.RUnlock()
 		}
 
 		if !inCatalog {
@@ -253,20 +261,16 @@ func (s *PackStore) List(ctx context.Context, prefix string) ([]string, error) {
 		return nil, err
 	}
 
-	// 2. Add keys from catalog and active buffer matching prefix
-	s.mu.RLock()
-	var packedKeys []string
-	if !s.catalogLoaded {
-		// Try to load catalog if not loaded
-		s.mu.RUnlock()
-		s.mu.Lock()
-		if !s.catalogLoaded {
-			_ = s.loadCatalogLocked(ctx)
-		}
-		s.mu.Unlock()
-		s.mu.RLock()
+	// 2. Add keys from catalog and active buffer matching prefix.
+	// An unreadable catalog must fail the listing rather than silently omit
+	// every packed key: callers such as prune's mark phase treat a short list
+	// as "these objects are unreachable".
+	if err := s.ensureCatalogLoaded(ctx); err != nil {
+		return nil, err
 	}
 
+	s.mu.RLock()
+	var packedKeys []string
 	for key := range s.catalog {
 		if strings.HasPrefix(key, prefix) {
 			packedKeys = append(packedKeys, key)
@@ -301,6 +305,14 @@ func (s *PackStore) List(ctx context.Context, prefix string) ([]string, error) {
 // Flush ensures any pending small objects are written to a packfile,
 // and uploads the latest JSON catalog.
 func (s *PackStore) Flush(ctx context.Context) error {
+	// The catalog is written back wholesale, so it must first be merged with
+	// whatever is already stored. Flushing a catalog that was never loaded
+	// would replace the full history with only this session's entries and
+	// strand every previously packed object.
+	if err := s.ensureCatalogLoaded(ctx); err != nil {
+		return fmt.Errorf("refusing to overwrite %s: %w", indexPacksKey, err)
+	}
+
 	s.mu.Lock()
 	packRef, packData := s.prepareFlushLocked()
 
@@ -342,6 +354,15 @@ func (s *PackStore) Flush(ctx context.Context) error {
 }
 
 // loadCatalogLocked fetches the index/packs file from the inner store and populates the catalog.
+//
+// The catalog is the only record of where a packed object lives, so a failure
+// to read it must never be mistaken for "there are no packed objects". Callers
+// are required to propagate the error: silently continuing with an empty
+// catalog makes every packed object look absent, which is indistinguishable
+// from deletion to prune's mark-and-sweep.
+//
+// s.catalogLoaded is set only when the catalog was read successfully or proven
+// absent, and is the invariant Flush relies on before overwriting index/packs.
 func (s *PackStore) loadCatalogLocked(ctx context.Context) error {
 	// If it was already loaded or proven missing (noted by dirty flag or some other state), we wouldn't be here,
 	// but we need to track if we've already attempted loading so we don't spam 404s.
@@ -350,14 +371,29 @@ func (s *PackStore) loadCatalogLocked(ctx context.Context) error {
 	}
 
 	debugf("loading pack catalog from %s", indexPacksKey)
+
+	// A fresh repository legitimately has no catalog. Establish that up front so
+	// a missing object is never conflated with an unreadable one; backends do
+	// not expose a typed not-found error, so an existence check is the only
+	// reliable way to tell the two apart.
+	exists, err := s.ObjectStore.Exists(ctx, indexPacksKey)
+	if err != nil {
+		return fmt.Errorf("check pack catalog %s: %w", indexPacksKey, err)
+	}
+	if !exists {
+		s.catalogLoaded = true // We checked, it doesn't exist, stop checking
+		return nil
+	}
+
 	data, err := s.ObjectStore.Get(ctx, indexPacksKey)
 	if err != nil {
-		// It's normal for index/packs to not exist on a fresh repository
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") || strings.Contains(err.Error(), "NoSuchKey") {
-			s.catalogLoaded = true // We checked, it doesn't exist, stop checking
+		// Tolerate a backend that reports absence only on read (or that raced
+		// with a concurrent write), but treat every other error as fatal.
+		if isNotFoundErr(err) {
+			s.catalogLoaded = true
 			return nil
 		}
-		return err
+		return fmt.Errorf("load pack catalog %s: %w", indexPacksKey, err)
 	}
 
 	if err := json.Unmarshal(data, &s.catalog); err != nil {
@@ -368,9 +404,44 @@ func (s *PackStore) loadCatalogLocked(ctx context.Context) error {
 	return nil
 }
 
+// isNotFoundErr reports whether err indicates a missing object. Backends do not
+// share a typed error, so this matches the shapes they produce in practice.
+func isNotFoundErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "no such file") ||
+		strings.Contains(msg, "NoSuchKey")
+}
+
+// ensureCatalogLoaded loads the catalog if it has not been read yet, taking the
+// write lock only when a load is actually needed.
+func (s *PackStore) ensureCatalogLoaded(ctx context.Context) error {
+	s.mu.RLock()
+	loaded := s.catalogLoaded
+	s.mu.RUnlock()
+	if loaded {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Another goroutine may have loaded it while we waited for the lock.
+	return s.loadCatalogLocked(ctx)
+}
+
 // Delete removes an object. For packed objects, it just removes it from the catalog.
 // The actual packfile is not currently garbage collected.
 func (s *PackStore) Delete(ctx context.Context, key string) error {
+	// Without the catalog a packed key looks unpacked, and the delete would be
+	// forwarded to the backend where the object does not physically exist —
+	// reporting success while the entry survives the next flush.
+	if err := s.ensureCatalogLoaded(ctx); err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -412,12 +483,11 @@ func (s *PackStore) Size(ctx context.Context, key string) (int64, error) {
 // For example, 0.3 means a pack is repacked if it is more than 30% empty.
 // Returns the number of bytes reclaimed, number of packs deleted, and error.
 func (s *PackStore) Repack(ctx context.Context, maxWastedRatio float64) (int64, int, error) {
-	// Ensure catalog is loaded
-	s.mu.Lock()
-	if !s.catalogLoaded {
-		_ = s.loadCatalogLocked(ctx)
+	// Ensure catalog is loaded. Repack deletes packfiles whose entries are all
+	// gone from the catalog, so an empty catalog would condemn every pack.
+	if err := s.ensureCatalogLoaded(ctx); err != nil {
+		return 0, 0, err
 	}
-	s.mu.Unlock()
 
 	s.mu.RLock()
 	// Calculate active bytes per pack and map keys to packs
@@ -437,6 +507,16 @@ func (s *PackStore) Repack(ctx context.Context, maxWastedRatio float64) (int64, 
 
 	var bytesReclaimed int64
 	var packsDeleted int
+
+	// Packs whose live objects have been re-inserted but not yet made durable.
+	// They are deleted only after the replacement pack and the updated catalog
+	// have been flushed, so an interruption leaves recoverable orphans rather
+	// than losing the objects.
+	type retiredPack struct {
+		ref    string
+		wasted int64
+	}
+	var retired []retiredPack
 
 	for _, packRef := range packRefs {
 		activeSize := packActiveSizes[packRef]
@@ -502,20 +582,27 @@ func (s *PackStore) Repack(ctx context.Context, maxWastedRatio float64) (int64, 
 				}
 			}
 
-			// Delete the old packfile
-			if err := s.ObjectStore.Delete(ctx, packRef); err != nil {
-				return bytesReclaimed, packsDeleted, fmt.Errorf("delete old repacked pack %s: %w", packRef, err)
-			}
-
-			bytesReclaimed += wasted
-			packsDeleted++
-			s.packCache.Remove(packRef)
+			// The old packfile is retired, not deleted: its contents only become
+			// durable at the flush below.
+			retired = append(retired, retiredPack{ref: packRef, wasted: wasted})
 		}
 	}
 
-	// Ensure any final repacked objects are flushed
+	// Make the replacement packs and the updated catalog durable before
+	// anything they replace is removed.
 	if err := s.Flush(ctx); err != nil {
 		return bytesReclaimed, packsDeleted, fmt.Errorf("flush after repack: %w", err)
+	}
+
+	// Only now is it safe to drop the originals. An error here leaves a
+	// superseded pack behind, which the orphan pass above reclaims next run.
+	for _, pack := range retired {
+		if err := s.ObjectStore.Delete(ctx, pack.ref); err != nil {
+			return bytesReclaimed, packsDeleted, fmt.Errorf("delete old repacked pack %s: %w", pack.ref, err)
+		}
+		bytesReclaimed += pack.wasted
+		packsDeleted++
+		s.packCache.Remove(pack.ref)
 	}
 
 	return bytesReclaimed, packsDeleted, nil

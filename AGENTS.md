@@ -72,7 +72,7 @@ CompressedStore → EncryptedStore → MeteredStore → [PackStore] → KeyCache
 - `CompressedStore` — zstd compression on write, auto-detects zstd/gzip/raw on read.
 - `EncryptedStore` — AES-256-GCM. Passes through objects under `keys/` prefix unencrypted (key slots).
 - `MeteredStore` — Tracks bytes written for reporting.
-- `PackStore` (optional) — Bundles small objects (<512KB) into 8MB packfiles to reduce API calls. Uses a bbolt-backed catalog.
+- `PackStore` (optional) — Bundles small objects (<512KB) into 8MB packfiles to reduce API calls. Only content-addressed prefixes (`filemeta/`, `node/`, `snapshot/`, `chunk/`, `content/`) are packed; mutable keys such as `index/latest` are never bundled. The `index/packs` JSON catalog is the only record of an object's offset within its pack and cannot be rebuilt by listing the store, so a failed catalog load fails the calling operation instead of degrading to an empty catalog, and `Flush` refuses to overwrite a catalog it has not first merged with the stored copy.
 - `KeyCacheStore` — Caches key existence in a temporary bbolt database to avoid redundant `Exists`/`List` calls against remote backends. Uses `singleflight` to deduplicate concurrent writes for the same key.
 - Backend: `LocalStore`, `S3Store`, `B2Store`, `SFTPStore`, or `HybridStore` (PostgreSQL for metadata + B2 for chunks).
 

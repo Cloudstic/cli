@@ -257,7 +257,19 @@ func NewClient(ctx context.Context, base store.ObjectStore, opts ...ClientOption
 
 	log.Debugf("packfile enabled: %v", c.enablePackfile)
 	if c.enablePackfile {
-		packStore, err := store.NewPackStore(inner)
+		// PackStore sits below the encryption layer, so the catalog and pack
+		// footers it writes never pass through EncryptedStore. Give it its own
+		// derived key so they are not left in plaintext.
+		var packOpts []store.PackOption
+		if len(c.encryptionKey) > 0 {
+			indexKey, err := crypto.DeriveKey(c.encryptionKey, crypto.HKDFInfoPackIndexV1)
+			if err != nil {
+				return nil, fmt.Errorf("derive pack index key: %w", err)
+			}
+			packOpts = append(packOpts, store.WithPackIndexKey(indexKey))
+		}
+
+		packStore, err := store.NewPackStore(inner, packOpts...)
 		if err != nil {
 			return nil, fmt.Errorf("init packstore: %w", err)
 		}

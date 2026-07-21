@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/pkg/crypto"
 	lru "github.com/hashicorp/golang-lru/v2"
 )
 
@@ -37,6 +38,9 @@ type PackStore struct {
 	catalogDirty  bool
 	catalogLoaded bool
 
+	// Key sealing the catalog and pack footers; empty leaves them in plaintext.
+	indexKey []byte
+
 	// LRU cache for recently downloaded packfiles to accelerate Get() and HAMT walks
 	packCache *lru.Cache[string, []byte]
 }
@@ -48,8 +52,26 @@ type PackEntry struct {
 	Length  int64  `json:"l"`
 }
 
+// PackOption configures a PackStore.
+type PackOption func(*PackStore)
+
+// WithPackIndexKey seals the pack catalog and packfile footers with key.
+//
+// PackStore sits below EncryptedStore in the store chain, so the objects it
+// writes on its own behalf — index/packs and each pack's footer — never pass
+// through the encryption layer. Without a key they are stored in plaintext,
+// exposing every packed object's key, its exact ciphertext length, and which
+// objects share a pack. Pack *contents* are unaffected either way: they are
+// already ciphertext by the time PackStore sees them.
+//
+// Pass a key derived with crypto.HKDFInfoPackIndexV1, not the master key.
+// Repositories without encryption pass none and keep plaintext indexes.
+func WithPackIndexKey(key []byte) PackOption {
+	return func(s *PackStore) { s.indexKey = key }
+}
+
 // NewPackStore initializes a new MicroPackStore over an existing ObjectStore.
-func NewPackStore(inner ObjectStore) (*PackStore, error) {
+func NewPackStore(inner ObjectStore, opts ...PackOption) (*PackStore, error) {
 	debugf("init packstore: LRU size=%d", 4)
 	// Keep up to 30 MB of packfiles in memory (around 4 packs) to speed up reads
 	cache, err := lru.New[string, []byte](4)
@@ -57,13 +79,39 @@ func NewPackStore(inner ObjectStore) (*PackStore, error) {
 		return nil, fmt.Errorf("pack cache init: %w", err)
 	}
 
-	return &PackStore{
+	s := &PackStore{
 		ObjectStore: inner,
 		packBuffer:  new(bytes.Buffer),
 		packKeys:    make(map[string]PackEntry),
 		catalog:     make(map[string]PackEntry),
 		packCache:   cache,
-	}, nil
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s, nil
+}
+
+// sealIndex encrypts index material if this store has a key, and passes it
+// through unchanged otherwise.
+func (s *PackStore) sealIndex(plaintext []byte) ([]byte, error) {
+	if len(s.indexKey) == 0 {
+		return plaintext, nil
+	}
+	return crypto.Encrypt(plaintext, s.indexKey)
+}
+
+// openIndex reverses sealIndex. Plaintext input is returned unchanged, which is
+// what keeps repositories written before sealing — and repositories with no
+// encryption at all — readable.
+func openIndex(data, indexKey []byte) ([]byte, error) {
+	if !crypto.IsEncrypted(data) {
+		return data, nil
+	}
+	if len(indexKey) == 0 {
+		return nil, errors.New("pack index is encrypted but no index key is available")
+	}
+	return crypto.Decrypt(data, indexKey)
 }
 
 // Put stores data either in the active packbuffer or directly to the inner store.
@@ -154,7 +202,7 @@ func (s *PackStore) prepareFlushLocked() (string, []byte, error) {
 
 	// Append a self-describing footer so the location of every object in this
 	// pack can be recovered without the catalog. See RFC 0018.
-	footer, err := buildPackFooter(s.packKeys)
+	footer, err := buildPackFooter(s.packKeys, s.indexKey)
 	if err != nil {
 		return "", nil, err
 	}
@@ -342,6 +390,12 @@ func (s *PackStore) Flush(ctx context.Context) error {
 			s.mu.Unlock()
 			return fmt.Errorf("marshal catalog: %w", err)
 		}
+		// The catalog names every packed object and its exact size; seal it so
+		// that is not readable from the bucket alone.
+		if catalogBytes, err = s.sealIndex(catalogBytes); err != nil {
+			s.mu.Unlock()
+			return fmt.Errorf("seal catalog: %w", err)
+		}
 	}
 	s.mu.Unlock()
 
@@ -415,6 +469,13 @@ func (s *PackStore) loadCatalogLocked(ctx context.Context) error {
 			return nil
 		}
 		return fmt.Errorf("load pack catalog %s: %w", indexPacksKey, err)
+	}
+
+	// A catalog written before sealing, or by a repository without encryption,
+	// is plaintext and passes through unchanged.
+	data, err = openIndex(data, s.indexKey)
+	if err != nil {
+		return fmt.Errorf("open pack catalog %s: %w", indexPacksKey, err)
 	}
 
 	if err := json.Unmarshal(data, &s.catalog); err != nil {

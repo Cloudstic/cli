@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+
+	"github.com/cloudstic/cli/pkg/crypto"
 )
 
 // Packfiles carry a trailing, self-describing index so that the location of
@@ -72,10 +74,18 @@ type packFooterInfo struct {
 	objectRegionLen int64
 }
 
-// buildPackFooter serialises entries into a footer payload plus trailer.
-// Entries are sorted by key so that identical object sets produce byte-identical
-// packfiles, preserving the content-addressed packfile name.
-func buildPackFooter(entries map[string]PackEntry) ([]byte, error) {
+// buildPackFooter serialises entries into a footer payload plus trailer,
+// sealing the payload when indexKey is set.
+//
+// Entries are sorted by key so that an unsealed footer is a pure function of
+// the object set, which keeps the content-addressed packfile name reproducible.
+// A sealed footer is not: AES-GCM uses a fresh random nonce, so packing the
+// same objects twice yields different pack bytes and therefore different pack
+// names. That is deliberate. Nothing depends on pack names being reproducible —
+// the engine skips objects that already exist before they ever reach the pack
+// buffer — and a content-derived nonce would trade that non-property for the
+// risk of reusing a nonce across differing plaintexts.
+func buildPackFooter(entries map[string]PackEntry, indexKey []byte) ([]byte, error) {
 	footer := packFooter{
 		Version: packFooterVersion,
 		Entries: make([]packFooterEntry, 0, len(entries)),
@@ -94,6 +104,11 @@ func buildPackFooter(entries map[string]PackEntry) ([]byte, error) {
 	payload, err := json.Marshal(&footer)
 	if err != nil {
 		return nil, fmt.Errorf("marshal pack footer: %w", err)
+	}
+	if len(indexKey) > 0 {
+		if payload, err = crypto.Encrypt(payload, indexKey); err != nil {
+			return nil, fmt.Errorf("seal pack footer: %w", err)
+		}
 	}
 	// Bound the payload before it is used to size an allocation, so that
 	// len(payload)+packTrailerLen cannot overflow.
@@ -132,7 +147,7 @@ func parsePackTrailer(trailer []byte) (int64, error) {
 }
 
 // decodePackFooter reads the footer from a complete packfile.
-func decodePackFooter(packRef string, packData []byte) (*packFooterInfo, error) {
+func decodePackFooter(packRef string, packData []byte, indexKey []byte) (*packFooterInfo, error) {
 	if len(packData) < packTrailerLen {
 		return nil, errNoPackFooter
 	}
@@ -146,10 +161,15 @@ func decodePackFooter(packRef string, packData []byte) (*packFooterInfo, error) 
 		return nil, fmt.Errorf("pack %s declares a %d byte footer but is only %d bytes", packRef, payloadLen, len(packData))
 	}
 
-	return decodePackFooterPayload(packRef, packData[footerStart:int64(len(packData))-int64(packTrailerLen)], footerStart)
+	return decodePackFooterPayload(packRef, packData[footerStart:int64(len(packData))-int64(packTrailerLen)], footerStart, indexKey)
 }
 
-func decodePackFooterPayload(packRef string, payload []byte, objectRegionLen int64) (*packFooterInfo, error) {
+func decodePackFooterPayload(packRef string, payload []byte, objectRegionLen int64, indexKey []byte) (*packFooterInfo, error) {
+	payload, err := openIndex(payload, indexKey)
+	if err != nil {
+		return nil, fmt.Errorf("open footer of pack %s: %w", packRef, err)
+	}
+
 	var footer packFooter
 	if err := json.Unmarshal(payload, &footer); err != nil {
 		return nil, fmt.Errorf("unmarshal footer of pack %s: %w", packRef, err)
@@ -176,7 +196,7 @@ func decodePackFooterPayload(packRef string, payload []byte, objectRegionLen int
 // It must not take s.mu: callers may already hold it.
 func (s *PackStore) readPackFooter(ctx context.Context, packRef string) (*packFooterInfo, error) {
 	if packData, ok := s.packCache.Get(packRef); ok {
-		return decodePackFooter(packRef, packData)
+		return decodePackFooter(packRef, packData, s.indexKey)
 	}
 
 	ranger, ok := s.ObjectStore.(RangeGetter)
@@ -186,7 +206,7 @@ func (s *PackStore) readPackFooter(ctx context.Context, packRef string) (*packFo
 		if err != nil {
 			return nil, fmt.Errorf("read pack %s: %w", packRef, err)
 		}
-		return decodePackFooter(packRef, packData)
+		return decodePackFooter(packRef, packData, s.indexKey)
 	}
 
 	size, err := s.ObjectStore.Size(ctx, packRef)
@@ -215,7 +235,7 @@ func (s *PackStore) readPackFooter(ctx context.Context, packRef string) (*packFo
 	if err != nil {
 		return nil, fmt.Errorf("read footer of pack %s: %w", packRef, err)
 	}
-	return decodePackFooterPayload(packRef, payload, objectRegionLen)
+	return decodePackFooterPayload(packRef, payload, objectRegionLen, s.indexKey)
 }
 
 // RebuildCatalog reconstructs the pack catalog by reading every packfile's

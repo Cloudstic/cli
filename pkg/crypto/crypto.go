@@ -128,6 +128,12 @@ const HKDFInfoBackupV1 = "cloudstic-backup-v1"
 // for chunk deduplication hashing.
 const HKDFInfoDedupV1 = "cloudstic-dedup-mac-v1"
 
+// HKDFInfoPackIndexV1 is the info string used for deriving the AES-256 key
+// that seals the pack catalog and packfile footers. PackStore sits below the
+// EncryptedStore layer and writes those objects straight to the backend, so it
+// needs its own key rather than the master key.
+const HKDFInfoPackIndexV1 = "cloudstic-pack-index-v1"
+
 // ComputeHMAC computes an HMAC-SHA256 hash of the given data and returns it as a hex string.
 func ComputeHMAC(key, data []byte) string {
 	h := hmac.New(sha256.New, key)

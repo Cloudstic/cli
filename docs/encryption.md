@@ -15,6 +15,38 @@ engine does not need to be aware of it.
 - **Key loss prevention (SaaS)**: the platform always holds a recovery path via
   the platform key slot.
 
+### What is not confidential
+
+Some objects are deliberately readable without the key. An adversary holding
+the bucket can always see:
+
+| Object | Why |
+|--------|-----|
+| `config` | Repository marker, read before any key is available |
+| `keys/<slot>` | Key slots; each is independently wrapped |
+| `index/lock*` | Lock coordination |
+| Object *sizes* and the total object count | Inherent to flat object storage |
+
+Object **keys** are a subtler case, and the answer depends on whether
+packfiles are enabled:
+
+- `chunk/` and `content/` keys are HMAC-SHA256 under the dedup key, so they
+  reveal nothing about content even when visible.
+- `filemeta/`, `node/`, and `snapshot/` keys are plain SHA-256 of the object's
+  serialized JSON. Anyone who can guess an object's exact field values can
+  confirm its presence by hashing a candidate.
+
+With packfiles **enabled** (the default), those small metadata objects live
+inside packs rather than as objects of their own, so their keys do not appear
+in a bucket listing, and the two places that do record them — `index/packs` and
+each packfile footer — are sealed with the pack index key.
+
+With packfiles **disabled** (`CLOUDSTIC_DISABLE_PACKFILE`), each metadata
+object is stored under its own key and those keys are visible in a plain bucket
+listing. Sealing the pack index cannot help there, because there is no pack
+index. Treat metadata key confidentiality as a property of the packed
+configuration, not a guarantee of the repository format.
+
 ## Ciphertext Format
 
 Every encrypted value follows the same binary layout:
@@ -55,7 +87,20 @@ Recovery Key (optional, BIP39 mnemonic)       │
                                         Dedup HMAC Key (256-bit)
                                               │
                                        Chunker (HMAC-SHA256 refs)
+
+                                     HKDF-SHA256(enc_key, info="cloudstic-pack-index-v1")
+                                              │
+                                       Pack Index Key (256-bit AES)
+                                              │
+                                    PackStore (index/packs + pack footers)
 ```
+
+The pack index key exists because `PackStore` sits *below* `EncryptedStore` in
+the store stack. Objects written by the engine are already ciphertext when
+`PackStore` receives them, but the two things `PackStore` writes on its own
+behalf — the `index/packs` catalog and each packfile's footer — never pass
+through the encryption layer. They are sealed with their own derived key
+instead.
 
 ### Master key
 

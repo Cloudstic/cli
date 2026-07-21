@@ -395,3 +395,102 @@ func TestPackStore_UnsealedPackNamesStayReproducible(t *testing.T) {
 		}
 	})
 }
+
+// A repository migrated in place holds packs from both eras: plaintext footers
+// written before sealing, sealed footers written after. Self-healing must
+// recover from both, since that is the state every upgraded repository is in.
+func TestPackStore_SelfHealsAcrossMixedFooterEras(t *testing.T) {
+	ctx := context.Background()
+	indexKey := testIndexKey(t, 21)
+
+	base, err := NewLocalStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Era 1: a client with no sealing.
+	legacy, err := NewPackStore(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.Put(ctx, "filemeta/legacy", []byte("legacy payload")); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Era 2: a sealing client adds a second pack.
+	modern, err := NewPackStore(base, WithPackIndexKey(indexKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := modern.Put(ctx, "filemeta/modern", []byte("modern payload")); err != nil {
+		t.Fatal(err)
+	}
+	if err := modern.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	packs, err := base.List(ctx, packPrefix)
+	if err != nil || len(packs) != 2 {
+		t.Fatalf("expected 2 packs from two eras, got %v (err %v)", packs, err)
+	}
+
+	// Lose the catalog entirely and heal from the mixed footers.
+	if err := base.Delete(ctx, indexPacksKey); err != nil {
+		t.Fatal(err)
+	}
+	healed, err := NewPackStore(base, WithPackIndexKey(indexKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{
+		"filemeta/legacy": "legacy payload",
+		"filemeta/modern": "modern payload",
+	} {
+		got, err := healed.Get(ctx, key)
+		if err != nil {
+			t.Errorf("heal across eras failed for %s: %v", key, err)
+			continue
+		}
+		if string(got) != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+}
+
+// A client with no key must not silently treat sealed footers as unreadable
+// legacy packs during a rebuild — that would look like successful recovery of a
+// partial catalog, which is the shape of failure that made #287 destructive.
+func TestPackStore_RebuildWithoutKeyFailsOnSealedFooters(t *testing.T) {
+	ctx := context.Background()
+
+	base, err := NewLocalStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer, err := NewPackStore(base, WithPackIndexKey(testIndexKey(t, 23)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Put(ctx, "filemeta/a", []byte("payload")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	keyless, err := NewPackStore(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered, footerless, err := keyless.RebuildCatalog(ctx)
+	if err == nil {
+		t.Fatalf("rebuild succeeded (recovered=%d footerless=%d); want a failure without the key",
+			recovered, footerless)
+	}
+	if footerless > 0 {
+		t.Errorf("sealed footers must not be counted as legacy footerless packs, got %d", footerless)
+	}
+}

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -27,18 +28,19 @@ func writeLegacyPack(t *testing.T, inner ObjectStore, objects map[string][]byte)
 		t.Fatalf("write legacy pack: %v", err)
 	}
 
-	// The legacy catalog is the only record of these offsets.
-	ps := newPackStoreT(t, inner)
-	ps.mu.Lock()
-	ps.catalogLoaded = true
+	// The monolithic catalog is the only record of these offsets, and it is
+	// written directly: current code writes shards, so routing through Flush
+	// would not reproduce a pre-shard repository.
 	for key, entry := range entries {
 		entry.PackRef = packRef
-		ps.catalog[key] = entry
+		entries[key] = entry
 	}
-	ps.catalogDirty = true
-	ps.mu.Unlock()
-	if err := ps.Flush(ctx); err != nil {
-		t.Fatalf("flush legacy catalog: %v", err)
+	catalog, err := json.Marshal(entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := inner.Put(ctx, indexPacksKey, catalog); err != nil {
+		t.Fatalf("write legacy catalog: %v", err)
 	}
 	return packRef
 }
@@ -202,10 +204,8 @@ func TestPackStore_SelfHealsFromFootersWhenCatalogIsLost(t *testing.T) {
 
 	seedPackedRepo(t, inner, "filemeta/a", "node/b", "snapshot/c")
 
-	// Simulate total loss of the catalog.
-	if err := inner.Delete(ctx, indexPacksKey); err != nil {
-		t.Fatalf("delete catalog: %v", err)
-	}
+	// Simulate total loss of the index.
+	dropIndexObjects(t, inner)
 
 	recovered := newPackStoreT(t, inner)
 	for _, key := range []string{"filemeta/a", "node/b", "snapshot/c"} {
@@ -230,8 +230,8 @@ func TestPackStore_SelfHealsFromFootersWhenCatalogIsLost(t *testing.T) {
 	if err := recovered.Flush(ctx); err != nil {
 		t.Fatalf("flush healed catalog: %v", err)
 	}
-	if exists, _ := inner.Exists(ctx, indexPacksKey); !exists {
-		t.Error("healed catalog should be persisted")
+	if shards, err := inner.List(ctx, shardPrefix); err != nil || len(shards) == 0 {
+		t.Errorf("healed index should be persisted as a shard (shards=%v, err=%v)", shards, err)
 	}
 }
 
@@ -342,9 +342,7 @@ func TestPackStore_ReportsUnhealableLegacyPacks(t *testing.T) {
 	_, inner := newCatalogTestStore(t)
 
 	writeLegacyPack(t, inner, map[string][]byte{"filemeta/legacy1": []byte("legacy payload")})
-	if err := inner.Delete(ctx, indexPacksKey); err != nil {
-		t.Fatalf("delete catalog: %v", err)
-	}
+	dropIndexObjects(t, inner)
 
 	ps := newPackStoreT(t, inner)
 	_, err := ps.List(ctx, "filemeta/")

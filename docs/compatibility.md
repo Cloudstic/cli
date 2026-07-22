@@ -142,7 +142,9 @@ What actually happens when a newer build writes to an older repository:
 
 - new packfiles get footers; packfiles written before footers existed keep none,
   until a `prune` happens to repack them — which for a cold pack may be never
-- the pack catalog is re-sealed on the next flush; the footers of old packs stay
+- new pack index entries are written as shards; the pre-shard monolithic
+  `index/packs` is read alongside them and folded in by the next `prune`
+- the pack index is sealed from the next flush; the footers of old packs stay
   as they were
 - `index/latest` stops being packed, but an already-packed one keeps being read
   from where it is

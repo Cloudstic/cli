@@ -10,6 +10,12 @@ import (
 	"sync"
 )
 
+// tempFilePattern names in-progress writes. List skips anything matching it:
+// a partial write is not an object, and returning one lets a caller act on a
+// name that is about to disappear — or, for prune, delete another writer's
+// half-finished pack as an orphan.
+const tempFilePattern = ".cloudstic-tmp-*"
+
 // LocalStore implements ObjectStore for the local filesystem.
 type LocalStore struct {
 	BasePath  string
@@ -39,11 +45,29 @@ func (s *LocalStore) Put(_ context.Context, key string, data []byte) error {
 		s.knownDirs.Store(dir, struct{}{})
 	}
 
-	tmpFile := fullPath + ".tmp"
-	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
+	// A unique temporary name per write. A fixed "<path>.tmp" is shared by every
+	// writer of the same key, so two concurrent writers would interleave into
+	// one file and each rename a possibly torn result into place. Keys are
+	// content-addressed, so both are writing identical bytes — but only if
+	// neither corrupts the other's buffer first.
+	tmp, err := os.CreateTemp(dir, tempFilePattern)
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmpFile, fullPath)
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }() // No-op once renamed.
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, fullPath)
 }
 
 func (s *LocalStore) Get(_ context.Context, key string) ([]byte, error) {
@@ -141,6 +165,13 @@ func (s *LocalStore) List(_ context.Context, prefix string) ([]string, error) {
 		if err != nil {
 			return err
 		}
+		// An in-progress write is not an object. Returning one hands the caller
+		// a name that may vanish before it is read, or that prune would treat
+		// as an orphan and delete out from under the writer.
+		if strings.HasPrefix(info.Name(), ".cloudstic-tmp-") {
+			return nil
+		}
+
 		key := filepath.ToSlash(relPath)
 		if strings.HasPrefix(key, prefix) {
 			keys = append(keys, key)

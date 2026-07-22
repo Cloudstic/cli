@@ -148,9 +148,13 @@ const (
 	// MaxSupportedRepoFormat is the highest version this build can read. A
 	// repository above it is refused rather than misread.
 	//
-	// 2 covers a sealed pack index. Builds before that read the sealed catalog
-	// as unparseable and, without the fixes released in v1.15.0, as empty —
-	// which is how a prune deletes a live repository.
+	// 2 covers a sealed pack index and a sharded one. Builds before that read
+	// the sealed catalog as unparseable and, without the fixes released in
+	// v1.15.0, as empty — which is how a prune deletes a live repository. They
+	// would also read the pre-shard monolithic catalog as complete when it is
+	// merely stale, which is the same failure by a different route.
+	//
+	// Both changes ship in the same release, so one version covers them.
 	MaxSupportedRepoFormat = 2
 )
 

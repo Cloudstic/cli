@@ -18,8 +18,16 @@ type faultyCatalogStore struct {
 
 var errCatalogUnavailable = errors.New("RequestError: connection reset by peer")
 
+// isIndexKey reports whether a key is part of the pack index — a shard, or the
+// legacy monolithic catalog. The index is sharded, so faulting only
+// indexPacksKey would leave the real load path untouched and the tests below
+// passing for the wrong reason.
+func isIndexKey(key string) bool {
+	return key == indexPacksKey || strings.HasPrefix(key, shardPrefix)
+}
+
 func (f *faultyCatalogStore) Get(ctx context.Context, key string) ([]byte, error) {
-	if key == indexPacksKey && f.failsLeft > 0 {
+	if isIndexKey(key) && f.failsLeft > 0 {
 		f.failsLeft--
 		f.injected++
 		return nil, errCatalogUnavailable
@@ -28,12 +36,23 @@ func (f *faultyCatalogStore) Get(ctx context.Context, key string) ([]byte, error
 }
 
 func (f *faultyCatalogStore) Exists(ctx context.Context, key string) (bool, error) {
-	if key == indexPacksKey && f.failsLeft > 0 {
+	if isIndexKey(key) && f.failsLeft > 0 {
 		f.failsLeft--
 		f.injected++
 		return false, errCatalogUnavailable
 	}
 	return f.ObjectStore.Exists(ctx, key)
+}
+
+// List is faulted too: loading the index lists the shard prefix first, so a
+// backend that cannot be reached fails there before any Get is attempted.
+func (f *faultyCatalogStore) List(ctx context.Context, prefix string) ([]string, error) {
+	if prefix == shardPrefix && f.failsLeft > 0 {
+		f.failsLeft--
+		f.injected++
+		return nil, errCatalogUnavailable
+	}
+	return f.ObjectStore.List(ctx, prefix)
 }
 
 func newCatalogTestStore(t *testing.T) (*faultyCatalogStore, ObjectStore) {

@@ -20,13 +20,28 @@ func storeDir(t *testing.T, h *harness) string {
 	return local.dir
 }
 
-// readPackArtefacts returns the raw catalog and packfile bytes on disk.
-func readPackArtefacts(t *testing.T, dir string) (catalog []byte, packs [][]byte) {
+// readPackArtefacts returns the raw bytes of every pack index object and every
+// packfile on disk. The index is sharded, so this collects the shards plus the
+// pre-shard monolithic catalog if the repository still has one.
+func readPackArtefacts(t *testing.T, dir string) (index [][]byte, packs [][]byte) {
 	t.Helper()
 
-	catalog, err := os.ReadFile(filepath.Join(dir, "index", "packs"))
+	indexPaths, err := filepath.Glob(filepath.Join(dir, "index", "packmap", "*"))
 	if err != nil {
-		t.Fatalf("read index/packs: %v", err)
+		t.Fatal(err)
+	}
+	if legacy := filepath.Join(dir, "index", "packs"); fileExists(legacy) {
+		indexPaths = append(indexPaths, legacy)
+	}
+	if len(indexPaths) == 0 {
+		t.Fatal("no pack index objects were written; the test is not exercising the index path")
+	}
+	for _, p := range indexPaths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		index = append(index, data)
 	}
 
 	paths, err := filepath.Glob(filepath.Join(dir, "packs", "*"))
@@ -43,7 +58,12 @@ func readPackArtefacts(t *testing.T, dir string) (catalog []byte, packs [][]byte
 		}
 		packs = append(packs, data)
 	}
-	return catalog, packs
+	return index, packs
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // A real backup through the CLI must leave no object keys readable in the pack
@@ -62,14 +82,16 @@ func TestCLI_Feature_PackIndexIsSealedOnDisk(t *testing.T) {
 				MustInitEncrypted()
 			r.Backup()
 
-			catalog, packs := readPackArtefacts(t, dir)
+			index, packs := readPackArtefacts(t, dir)
 
-			if !crypto.IsEncrypted(catalog) {
-				t.Errorf("index/packs is not sealed; first bytes: %x", catalog[:min(16, len(catalog))])
-			}
-			for _, marker := range []string{"filemeta/", "node/", "snapshot/", "packs/"} {
-				if strings.Contains(string(catalog), marker) {
-					t.Errorf("index/packs leaks %q in plaintext", marker)
+			for i, obj := range index {
+				if !crypto.IsEncrypted(obj) {
+					t.Errorf("pack index object %d is not sealed; first bytes: %x", i, obj[:min(16, len(obj))])
+				}
+				for _, marker := range []string{"filemeta/", "node/", "snapshot/", "packs/"} {
+					if strings.Contains(string(obj), marker) {
+						t.Errorf("pack index object %d leaks %q in plaintext", i, marker)
+					}
 				}
 			}
 
@@ -104,12 +126,18 @@ func TestCLI_Feature_PackIndexUnsealedWithoutEncryption(t *testing.T) {
 			r := h.WithFile("plain.txt", "not secret").MustInitUnencrypted()
 			r.Backup()
 
-			catalog, _ := readPackArtefacts(t, dir)
-			if crypto.IsEncrypted(catalog) {
-				t.Error("an unencrypted repository should not seal its pack catalog")
+			index, _ := readPackArtefacts(t, dir)
+			plaintextEntries := false
+			for _, obj := range index {
+				if crypto.IsEncrypted(obj) {
+					t.Error("an unencrypted repository should not seal its pack index")
+				}
+				if strings.Contains(string(obj), "filemeta/") {
+					plaintextEntries = true
+				}
 			}
-			if !strings.Contains(string(catalog), "filemeta/") {
-				t.Errorf("expected a plaintext catalog, got: %.80s", catalog)
+			if !plaintextEntries {
+				t.Error("expected a plaintext pack index naming its entries")
 			}
 
 			r.Check()

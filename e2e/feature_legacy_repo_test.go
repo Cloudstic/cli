@@ -157,14 +157,24 @@ func TestCLI_Feature_ReadsLegacyRepositories(t *testing.T) {
 				args = append(args, "-source", "local:"+sourceDir)
 				run(t, bin, args...)
 
-				// Writing to a legacy repository must upgrade its pack index,
-				// so an upgraded repository does not stay exposed.
-				catalog, err := os.ReadFile(filepath.Join(storeDir, "index", "packs"))
+				// New entries land in a sealed shard. The pre-shard monolithic
+				// catalog is left as it is — it is still read, and a prune
+				// folds it in — so this asserts the shard, not the monolith.
+				shards, err := filepath.Glob(filepath.Join(storeDir, "index", "packmap", "*"))
 				if err != nil {
-					t.Fatalf("read catalog after backup: %v", err)
+					t.Fatal(err)
 				}
-				if !crypto.IsEncrypted(catalog) {
-					t.Errorf("pack catalog should be sealed after a backup, got: %.60s", catalog)
+				if len(shards) == 0 {
+					t.Fatal("a backup should have written a pack index shard")
+				}
+				for _, path := range shards {
+					data, err := os.ReadFile(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if !crypto.IsEncrypted(data) {
+						t.Errorf("shard %s should be sealed, got: %.60s", filepath.Base(path), data)
+					}
 				}
 
 				// The original snapshot must survive and still restore.

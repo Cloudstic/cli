@@ -691,9 +691,12 @@ func TestNodeCacheLRUEviction(t *testing.T) {
 	n := nodeCacheSize + 100
 	refs := make([]string, n)
 	for i := 0; i < n; i++ {
-		ref := fmt.Sprintf("node/test-%04d", i)
+		// Refs are content addresses, so they have to be computed, not made up:
+		// NodeStore verifies every node it loads against its own ref.
+		data := []byte(fmt.Sprintf(`{"type":"leaf","entries":[{"key":"k%d","filemeta":"v%d"}]}`, i, i))
+		ref := nodePrefix + core.ComputeHash(data)
 		refs[i] = ref
-		_ = persistent.inner.Put(ctx, ref, []byte(fmt.Sprintf(`{"type":"leaf","entries":[{"key":"k%d","filemeta":"v%d"}]}`, i, i)))
+		_ = persistent.inner.Put(ctx, ref, data)
 	}
 	persistent.reset()
 
@@ -751,5 +754,137 @@ func TestInternalNodeType(t *testing.T) {
 	}
 	if n.leaf {
 		t.Fatal("expected an internal node at the root once the leaf has split")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Integrity
+// ---------------------------------------------------------------------------
+
+// A node ref is a content address, so a node that does not hash to the ref it
+// was fetched under is corrupt or substituted. Every reader must refuse it
+// rather than serve whatever it decoded.
+func TestLoadRejectsTamperedNode(t *testing.T) {
+	persistent := newInMemoryStore()
+	tree := NewTree(persistent)
+
+	root := ""
+	var err error
+	for i := 0; i < 60; i++ {
+		key := fmt.Sprintf("k%02d", i)
+		root, err = insertCommit(tree, root, routingKey("", key), key, "filemeta/v"+key)
+		if err != nil {
+			t.Fatalf("insert %d: %v", i, err)
+		}
+	}
+
+	// Pick a node that is actually reachable from the final root — the store
+	// also holds superseded nodes from the intermediate commits.
+	var victim string
+	if err := tree.NodeRefs(ctx, root, func(ref string) error {
+		if ref != root && victim == "" {
+			victim = ref
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("NodeRefs: %v", err)
+	}
+	if victim == "" {
+		t.Fatal("no non-root node to tamper with")
+	}
+
+	// Rewrite its contents in place, leaving the ref untouched — exactly what a
+	// compromised or bit-rotted backend would produce.
+	persistent.data[victim] = []byte(`{"type":"leaf","entries":[{"key":"evil","filemeta":"filemeta/attacker"}]}`)
+
+	// A fresh Tree, so the tampered node is re-read rather than served from the
+	// cache populated while building.
+	reader := NewTree(persistent)
+	err = reader.Walk(ctx, root, func(string, string) error { return nil })
+	if err == nil {
+		t.Fatal("Walk accepted a tampered node")
+	}
+	if !strings.Contains(err.Error(), "integrity check") {
+		t.Fatalf("expected an integrity error, got: %v", err)
+	}
+}
+
+// buildOverDeepChain writes a chain of internal nodes ending in a leaf, nested
+// deeper than routing can address. Every node is written under its true content
+// address, so this passes the integrity check and isolates the depth guard: it
+// is what a valid-looking but malformed tree looks like.
+func buildOverDeepChain(t *testing.T, s *inMemoryStore, depth int) string {
+	t.Helper()
+
+	put := func(hn *core.HAMTNode) string {
+		hash, data, err := core.ComputeJSONHash(hn)
+		if err != nil {
+			t.Fatalf("encode: %v", err)
+		}
+		ref := nodePrefix + hash
+		if err := s.Put(ctx, ref, data); err != nil {
+			t.Fatalf("put: %v", err)
+		}
+		return ref
+	}
+
+	ref := put(&core.HAMTNode{
+		Type:    core.ObjectTypeLeaf,
+		Entries: []core.LeafEntry{{Key: "deep", PathKey: routingKey("", "deep"), Value: "filemeta/deep"}},
+	})
+	for i := 0; i < depth; i++ {
+		ref = put(&core.HAMTNode{Type: core.ObjectTypeInternal, Bitmap: 1, Children: []string{ref}})
+	}
+	return ref
+}
+
+func TestTraversalRefusesUnboundedNesting(t *testing.T) {
+	persistent := newInMemoryStore()
+	root := buildOverDeepChain(t, persistent, maxTreeDepth+3)
+	nodes := NewNodeStore(persistent)
+
+	t.Run("walk", func(t *testing.T) {
+		assertTooDeep(t, walk(ctx, nodes, child{ref: root}, 0, func(string, string) error { return nil }))
+	})
+	t.Run("nodeRefs", func(t *testing.T) {
+		assertTooDeep(t, nodeRefs(ctx, nodes, root, 0, func(string) error { return nil }))
+	})
+	t.Run("collectAll", func(t *testing.T) {
+		n, err := nodes.load(ctx, root)
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		assertTooDeep(t, collectAll(ctx, nodes, n, 0, func(string, string) error { return nil }))
+	})
+	t.Run("diffNodes", func(t *testing.T) {
+		n, err := nodes.load(ctx, root)
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		assertTooDeep(t, diffNodes(ctx, nodes, n, n, 0, func(DiffEntry) error { return nil }))
+	})
+
+	// Lookup is bounded independently, and more tightly: it consumes 5 routing
+	// bits per level, so a 32-bit prefix runs out at level 6 — before the depth
+	// guard is ever reached. "00000000" routes to bucket 0 at every level,
+	// following this chain as far as it can go.
+	t.Run("lookup", func(t *testing.T) {
+		_, err := lookup(ctx, nodes, child{ref: root}, "00000000", "deep")
+		if err == nil {
+			t.Fatal("expected Lookup to refuse an over-deep tree")
+		}
+		if !strings.Contains(err.Error(), "too deep") {
+			t.Fatalf("expected a depth error, got: %v", err)
+		}
+	})
+}
+
+func assertTooDeep(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected a depth-limit error, got nil")
+	}
+	if !strings.Contains(err.Error(), "cyclic or corrupt") {
+		t.Fatalf("expected a depth-limit error, got: %v", err)
 	}
 }

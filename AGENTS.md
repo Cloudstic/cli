@@ -257,7 +257,7 @@ When implementing new functionality, always consider the following:
 
 ### Documentation Formatting
 
-Markdown files are linted with `markdownlint` (rules from `.markdownlint.json`). Follow these conventions to avoid CI failures:
+Markdown files are linted with `markdownlint-cli2` (rules from `.markdownlint-cli2.jsonc`). Follow these conventions to avoid CI failures:
 
 - Use `-` (dash) for unordered list items, not `*`.
 - Surround fenced code blocks with blank lines (even when nested inside a list item).

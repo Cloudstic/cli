@@ -1,0 +1,11 @@
+{
+  "release": "v1.15.0",
+  "password": "fixture-password",
+  "snapshot": "cd98c30e096507497480e93e0b45dca038fa8c85f4856829574e5802ddbc4ddc",
+  "files": {
+    "doc.txt": "legacy document contents\n",
+    "sub/nested.txt": "nested legacy content\n"
+  },
+  "sealed_index": false,
+  "notes": "Repository format 1 with an RFC 0018 packfile footer, a plaintext (unsealed) index/packs, and index/latest outside the pack. The last release before the framed storage encoding."
+}

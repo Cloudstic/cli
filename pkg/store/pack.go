@@ -35,11 +35,25 @@ type PackStore struct {
 
 	// The stateless JSON catalog mapped from index/packs
 	catalog       map[string]PackEntry
-	catalogDirty  bool
 	catalogLoaded bool
+
+	// Set when entries have been removed from the in-memory catalog. Shards are
+	// append-only, so a deletion cannot be expressed by writing another one —
+	// only compaction, which rewrites the index wholesale, makes it durable.
+	needsCompaction bool
+
+	// Index objects whose contents are known to be in the catalog. Compaction
+	// removes only these, so a shard written by someone else after this store
+	// loaded cannot be deleted unread.
+	mergedIndex map[string]bool
 
 	// Key sealing the catalog and pack footers; empty leaves them in plaintext.
 	indexKey []byte
+
+	// Entries added since the last shard was written. Flushed as one immutable
+	// shard rather than merged into a shared object, so concurrent writers
+	// cannot erase each other. See packshard.go.
+	pendingShard map[string]PackEntry
 
 	// LRU cache for recently downloaded packfiles to accelerate Get() and HAMT walks
 	packCache *lru.Cache[string, []byte]
@@ -80,11 +94,13 @@ func NewPackStore(inner ObjectStore, opts ...PackOption) (*PackStore, error) {
 	}
 
 	s := &PackStore{
-		ObjectStore: inner,
-		packBuffer:  new(bytes.Buffer),
-		packKeys:    make(map[string]PackEntry),
-		catalog:     make(map[string]PackEntry),
-		packCache:   cache,
+		ObjectStore:  inner,
+		packBuffer:   new(bytes.Buffer),
+		packKeys:     make(map[string]PackEntry),
+		catalog:      make(map[string]PackEntry),
+		pendingShard: make(map[string]PackEntry),
+		mergedIndex:  make(map[string]bool),
+		packCache:    cache,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -230,8 +246,8 @@ func (s *PackStore) prepareFlushLocked() (string, []byte, error) {
 	for key, entry := range s.packKeys {
 		entry.PackRef = packRef
 		s.catalog[key] = entry
+		s.pendingShard[key] = entry
 	}
-	s.catalogDirty = true
 
 	// Reset active buffer
 	s.packBuffer.Reset()
@@ -388,43 +404,49 @@ func (s *PackStore) Flush(ctx context.Context) error {
 		return err
 	}
 
-	var catalogBytes []byte
-	if s.catalogDirty {
-		catalogBytes, err = json.Marshal(s.catalog)
-		if err != nil {
-			s.mu.Unlock()
-			return fmt.Errorf("marshal catalog: %w", err)
-		}
-		// The catalog names every packed object and its exact size; seal it so
-		// that is not readable from the bucket alone.
-		if catalogBytes, err = sealIndex(catalogBytes, s.indexKey); err != nil {
-			s.mu.Unlock()
-			return fmt.Errorf("seal catalog: %w", err)
-		}
-	}
+	// Take this flush's entries. They are written as their own immutable shard
+	// rather than merged into a shared object, so a concurrent writer cannot
+	// erase them. See packshard.go.
+	pending := s.pendingShard
+	s.pendingShard = make(map[string]PackEntry)
+	totalEntries := len(s.catalog)
 	s.mu.Unlock()
 
 	if packRef != "" {
 		if err := s.ObjectStore.Put(ctx, packRef, packData); err != nil {
+			// The entries are still ours to write; put them back so a retry
+			// does not lose them.
+			s.mu.Lock()
+			for k, v := range pending {
+				s.pendingShard[k] = v
+			}
+			s.mu.Unlock()
 			return fmt.Errorf("flush pack %s: %w", packRef, err)
 		}
 	}
 
-	if catalogBytes != nil {
-		if err := s.ObjectStore.Put(ctx, indexPacksKey, catalogBytes); err != nil {
-			return fmt.Errorf("upload catalog: %w", err)
-		}
-		s.mu.Lock()
-		s.catalogDirty = false
-		totalEntries := len(s.catalog)
-		nodeCount := 0
-		for k := range s.catalog {
-			if strings.HasPrefix(k, "node/") {
-				nodeCount++
+	if len(pending) > 0 {
+		if err := s.writeShard(ctx, pending); err != nil {
+			s.mu.Lock()
+			for k, v := range pending {
+				s.pendingShard[k] = v
 			}
+			s.mu.Unlock()
+			return err
 		}
-		s.mu.Unlock()
-		debugf("pack: catalog flushed — %d total entries, %d node/* entries", totalEntries, nodeCount)
+		debugf("pack: flushed %d new entries (%d total)", len(pending), totalEntries)
+	}
+
+	// Shards are append-only, so a removal is durable only once the index is
+	// rewritten. Compaction is safe here without a lock because it deletes only
+	// what this store has absorbed.
+	s.mu.RLock()
+	pendingRemoval := s.needsCompaction
+	s.mu.RUnlock()
+	if pendingRemoval {
+		if _, err := s.CompactCatalog(ctx); err != nil {
+			return fmt.Errorf("compact pack index: %w", err)
+		}
 	}
 
 	return nil
@@ -447,8 +469,34 @@ func (s *PackStore) loadCatalogLocked(ctx context.Context) error {
 		return nil
 	}
 
-	debugf("loading pack catalog from %s", indexPacksKey)
+	debugf("loading pack catalog")
 
+	// The monolithic catalog is the pre-shard layout. It is still read so that
+	// repositories written before sharding stay readable, but nothing writes it
+	// any more; compaction folds it into a shard and removes it.
+	if err := s.loadLegacyCatalogLocked(ctx); err != nil {
+		return err
+	}
+	if _, err := s.loadShardsLocked(ctx); err != nil {
+		return err
+	}
+
+	s.catalogLoaded = true
+
+	// Nothing found. On a fresh repository that is correct; on one that has
+	// packfiles it means the index was lost, so rebuild from the packs' own
+	// footers rather than proceeding as though nothing were packed.
+	if len(s.catalog) == 0 {
+		return s.healMissingCatalogLocked(ctx)
+	}
+
+	debugf("loaded %d entries into the pack catalog", len(s.catalog))
+	return nil
+}
+
+// loadLegacyCatalogLocked merges the pre-shard monolithic catalog, if the
+// repository still has one. mu must be held.
+func (s *PackStore) loadLegacyCatalogLocked(ctx context.Context) error {
 	// A fresh repository legitimately has no catalog. Establish that up front so
 	// a missing object is never conflated with an unreadable one; backends do
 	// not expose a typed not-found error, so an existence check is the only
@@ -458,11 +506,7 @@ func (s *PackStore) loadCatalogLocked(ctx context.Context) error {
 		return fmt.Errorf("check pack catalog %s: %w", indexPacksKey, err)
 	}
 	if !exists {
-		s.catalogLoaded = true // We checked, it doesn't exist, stop checking
-		// A fresh repository has no catalog and no packs. A repository that has
-		// packs but no catalog has lost it, so rebuild from the packs' own
-		// footers rather than proceeding as though nothing were packed.
-		return s.healMissingCatalogLocked(ctx)
+		return nil
 	}
 
 	data, err := s.ObjectStore.Get(ctx, indexPacksKey)
@@ -470,7 +514,6 @@ func (s *PackStore) loadCatalogLocked(ctx context.Context) error {
 		// Tolerate a backend that reports absence only on read (or that raced
 		// with a concurrent write), but treat every other error as fatal.
 		if isNotFoundErr(err) {
-			s.catalogLoaded = true
 			return nil
 		}
 		return fmt.Errorf("load pack catalog %s: %w", indexPacksKey, err)
@@ -486,8 +529,8 @@ func (s *PackStore) loadCatalogLocked(ctx context.Context) error {
 	if err := json.Unmarshal(data, &s.catalog); err != nil {
 		return fmt.Errorf("unmarshal packs catalog: %w", err)
 	}
-	s.catalogLoaded = true
-	debugf("loaded %d entries from pack catalog", len(s.catalog))
+	s.mergedIndex[indexPacksKey] = true
+	debugf("merged %d entries from the legacy catalog", len(s.catalog))
 	return nil
 }
 
@@ -538,10 +581,11 @@ func (s *PackStore) Delete(ctx context.Context, key string) error {
 		return nil
 	}
 
-	// 2. Remove from catalog
+	// 2. Remove from catalog. Shards are append-only, so this is durable only
+	// once the index is compacted — see CompactCatalog.
 	if _, ok := s.catalog[key]; ok {
 		delete(s.catalog, key)
-		s.catalogDirty = true
+		s.needsCompaction = true
 		return nil
 	}
 

@@ -282,8 +282,10 @@ func (s *PackStore) rebuildFromPacksLocked(ctx context.Context, packRefs []strin
 		for key, entry := range info.entries {
 			if _, exists := s.catalog[key]; !exists {
 				s.catalog[key] = entry
+				// Recovered entries are pending like any other, so the next
+				// flush persists them and the repair is paid for once.
+				s.pendingShard[key] = entry
 				recovered++
-				s.catalogDirty = true
 			}
 		}
 	}

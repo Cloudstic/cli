@@ -62,15 +62,17 @@ func TestPackStore_SealedCatalogIsNotPlaintextOnDisk(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(tmp, "index", "packs"))
+	base, err := NewLocalStore(tmp)
 	if err != nil {
-		t.Fatalf("read raw catalog: %v", err)
+		t.Fatal(err)
 	}
-	if bytes.Contains(raw, []byte("filemeta/deadbeefcafe")) {
-		t.Error("catalog still exposes object keys in plaintext")
-	}
-	if !crypto.IsEncrypted(raw) {
-		t.Errorf("catalog should be sealed, first bytes: %x", raw[:min(8, len(raw))])
+	for _, raw := range indexObjects(t, base) {
+		if bytes.Contains(raw, []byte("filemeta/deadbeefcafe")) {
+			t.Error("the pack index still exposes object keys in plaintext")
+		}
+		if !crypto.IsEncrypted(raw) {
+			t.Errorf("the pack index should be sealed, first bytes: %x", raw[:min(8, len(raw))])
+		}
 	}
 }
 
@@ -144,9 +146,7 @@ func TestPackStore_SealedRoundTripAndSelfHeal(t *testing.T) {
 	}
 
 	// Self-healing must still work when the footers are sealed.
-	if err := base.Delete(ctx, indexPacksKey); err != nil {
-		t.Fatal(err)
-	}
+	dropIndexObjects(t, base)
 	healed, err := NewPackStore(base, WithPackIndexKey(indexKey))
 	if err != nil {
 		t.Fatal(err)
@@ -212,17 +212,8 @@ func TestPackStore_MigratesPlaintextIndexOnNextFlush(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Written by a client with no sealing.
-	legacy, err := NewPackStore(base)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := legacy.Put(ctx, "filemeta/old", []byte("legacy payload")); err != nil {
-		t.Fatal(err)
-	}
-	if err := legacy.Flush(ctx); err != nil {
-		t.Fatal(err)
-	}
+	// A pre-sealing, pre-shard repository: a monolithic plaintext catalog.
+	writeLegacyPack(t, base, map[string][]byte{"filemeta/old": []byte("legacy payload")})
 
 	rawBefore, err := base.Get(ctx, indexPacksKey)
 	if err != nil {
@@ -251,12 +242,20 @@ func TestPackStore_MigratesPlaintextIndexOnNextFlush(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rawAfter, err := base.Get(ctx, indexPacksKey)
-	if err != nil {
-		t.Fatal(err)
+	// The new entries land in a sealed shard. The legacy monolith is left as it
+	// is until a compaction folds it in — it is still read, so nothing is lost.
+	shards, err := base.List(ctx, shardPrefix)
+	if err != nil || len(shards) == 0 {
+		t.Fatalf("expected a shard after the flush, got %v (err %v)", shards, err)
 	}
-	if !crypto.IsEncrypted(rawAfter) {
-		t.Error("catalog should be sealed after a flush by a keyed store")
+	for _, key := range shards {
+		data, err := base.Get(ctx, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !crypto.IsEncrypted(data) {
+			t.Errorf("shard %s should be sealed by a keyed store", key)
+		}
 	}
 
 	// Both the legacy and the new object survive the migration. The legacy
@@ -300,12 +299,10 @@ func TestPackStore_UnencryptedRepositoryStaysPlaintext(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	raw, err := base.Get(ctx, indexPacksKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if crypto.IsEncrypted(raw) {
-		t.Error("an unencrypted repository should not seal its catalog")
+	for _, raw := range indexObjects(t, base) {
+		if crypto.IsEncrypted(raw) {
+			t.Error("an unencrypted repository should not seal its pack index")
+		}
 	}
 
 	fresh, err := NewPackStore(base)
@@ -437,10 +434,8 @@ func TestPackStore_SelfHealsAcrossMixedFooterEras(t *testing.T) {
 		t.Fatalf("expected 2 packs from two eras, got %v (err %v)", packs, err)
 	}
 
-	// Lose the catalog entirely and heal from the mixed footers.
-	if err := base.Delete(ctx, indexPacksKey); err != nil {
-		t.Fatal(err)
-	}
+	// Lose the index entirely and heal from the mixed footers.
+	dropIndexObjects(t, base)
 	healed, err := NewPackStore(base, WithPackIndexKey(indexKey))
 	if err != nil {
 		t.Fatal(err)
@@ -492,5 +487,62 @@ func TestPackStore_RebuildWithoutKeyFailsOnSealedFooters(t *testing.T) {
 	}
 	if footerless > 0 {
 		t.Errorf("sealed footers must not be counted as legacy footerless packs, got %d", footerless)
+	}
+}
+
+// indexObjects returns the raw bytes of every object making up the pack index:
+// the shards, plus the legacy monolithic catalog if the repository still has
+// one. Tests use it rather than reading index/packs directly, since the index
+// is sharded and its object names are content-addressed.
+func indexObjects(t *testing.T, base ObjectStore) [][]byte {
+	t.Helper()
+	ctx := context.Background()
+
+	var out [][]byte
+	keys, err := base.List(ctx, shardPrefix)
+	if err != nil {
+		t.Fatalf("list shards: %v", err)
+	}
+	for _, key := range keys {
+		data, err := base.Get(ctx, key)
+		if err != nil {
+			t.Fatalf("read shard %s: %v", key, err)
+		}
+		out = append(out, data)
+	}
+
+	if exists, _ := base.Exists(ctx, indexPacksKey); exists {
+		data, err := base.Get(ctx, indexPacksKey)
+		if err != nil {
+			t.Fatalf("read legacy catalog: %v", err)
+		}
+		out = append(out, data)
+	}
+
+	if len(out) == 0 {
+		t.Fatal("no pack index objects found; the test is not exercising the index path")
+	}
+	return out
+}
+
+// dropIndexObjects removes every object making up the pack index, standing in
+// for total loss of the index.
+func dropIndexObjects(t *testing.T, base ObjectStore) {
+	t.Helper()
+	ctx := context.Background()
+
+	keys, err := base.List(ctx, shardPrefix)
+	if err != nil {
+		t.Fatalf("list shards: %v", err)
+	}
+	for _, key := range keys {
+		if err := base.Delete(ctx, key); err != nil {
+			t.Fatalf("delete shard %s: %v", key, err)
+		}
+	}
+	if exists, _ := base.Exists(ctx, indexPacksKey); exists {
+		if err := base.Delete(ctx, indexPacksKey); err != nil {
+			t.Fatalf("delete legacy catalog: %v", err)
+		}
 	}
 }

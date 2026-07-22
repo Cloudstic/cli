@@ -109,6 +109,22 @@ func (pm *PruneManager) Run(ctx context.Context, opts ...PruneOption) (*PruneRes
 			result.BytesReclaimed += bytesReclaimed
 			result.ObjectsDeleted += packsDeleted
 			repackPhase.Done()
+
+			// The pack index is append-only, so the sweep's deletions exist
+			// only in memory until the index is rewritten wholesale. Compaction
+			// is what makes them durable — it is required here, not an
+			// optimisation. prune holds the exclusive lock, which is the
+			// condition compaction needs.
+			compactPhase := pm.reporter.StartPhase("Compacting the pack index", 0, false)
+			removed, err := packStore.CompactCatalog(ctx)
+			if err != nil {
+				compactPhase.Error()
+				return nil, fmt.Errorf("compact pack index: %w", err)
+			}
+			if cfg.verbose {
+				compactPhase.Log(fmt.Sprintf("Consolidated %d index objects", removed))
+			}
+			compactPhase.Done()
 		}
 
 		_ = pm.store.Flush(ctx)

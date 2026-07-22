@@ -135,12 +135,21 @@ func TestClient_PackfileBackupRestoreRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalog, err := base.Get(ctx, "index/packs")
+	shards, err := base.List(ctx, "index/packmap/")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !crypto.IsEncrypted(catalog) {
-		t.Error("the pack catalog written through the Client should be sealed")
+	if len(shards) == 0 {
+		t.Fatal("expected the pack index to be written as a shard")
+	}
+	for _, key := range shards {
+		data, err := base.Get(ctx, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !crypto.IsEncrypted(data) {
+			t.Errorf("pack index shard %s written through the Client should be sealed", key)
+		}
 	}
 
 	reader := newPackfileClient(t, storeDir)

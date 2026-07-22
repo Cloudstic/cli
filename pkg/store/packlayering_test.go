@@ -91,10 +91,11 @@ func TestPackStore_CatalogIsSealedExactlyOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	raw, err := base.Get(ctx, indexPacksKey)
-	if err != nil {
-		t.Fatal(err)
+	objects := indexObjects(t, base)
+	if len(objects) != 1 {
+		t.Fatalf("expected a single index object, got %d", len(objects))
 	}
+	raw := objects[0]
 	opened, err := crypto.Decrypt(raw, indexKey)
 	if err != nil {
 		t.Fatalf("catalog did not decrypt: %v", err)

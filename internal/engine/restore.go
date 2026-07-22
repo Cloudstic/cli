@@ -3,6 +3,8 @@ package engine
 import (
 	"archive/zip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,6 +27,7 @@ type restoreConfig struct {
 	dryRun     bool
 	verbose    bool
 	pathFilter string
+	noVerify   bool
 }
 
 type restorePlan struct {
@@ -43,6 +46,14 @@ func WithRestoreDryRun() RestoreOption {
 // WithRestoreVerbose logs each file/dir being written.
 func WithRestoreVerbose() RestoreOption {
 	return func(cfg *restoreConfig) { cfg.verbose = true }
+}
+
+// WithRestoreNoVerify skips the content-hash check that restore normally runs
+// over every file it writes. Verification is on by default; this exists as an
+// escape hatch for the case where a snapshot records a hash that disagrees with
+// its own content, so that the data can still be recovered.
+func WithRestoreNoVerify() RestoreOption {
+	return func(cfg *restoreConfig) { cfg.noVerify = true }
 }
 
 // WithRestorePath limits the restore to files matching the given path.
@@ -148,7 +159,7 @@ func (rm *RestoreManager) runWithWriter(ctx context.Context, plan restorePlan, w
 		}
 
 		if err := writer.WriteFile(rel, meta, func(out io.Writer) error {
-			return rm.writeFileContent(ctx, out, meta)
+			return rm.writeFileContent(ctx, out, meta, !plan.cfg.noVerify)
 		}); err != nil {
 			if err == errRestoreSkipped {
 				phase.Increment(1)
@@ -366,9 +377,14 @@ func (w *fsRestoreWriter) WriteFile(relPath string, meta core.FileMeta, writeCon
 	writeErr := writeContent(cw)
 	closeErr := f.Close()
 	if writeErr != nil {
+		// Never leave known-bad bytes behind under the user's own filename.
+		// This covers a failed content-hash check as well as a stream that
+		// died partway, which previously left a truncated file on disk.
+		_ = os.Remove(fullPath)
 		return writeErr
 	}
 	if closeErr != nil {
+		_ = os.Remove(fullPath)
 		return closeErr
 	}
 
@@ -475,7 +491,7 @@ func (cw *countingWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func (rm *RestoreManager) writeFileContent(ctx context.Context, w io.Writer, meta core.FileMeta) error {
+func (rm *RestoreManager) writeFileContent(ctx context.Context, w io.Writer, meta core.FileMeta, verify bool) error {
 	contentKey := meta.ContentRef
 	if contentKey == "" {
 		contentKey = meta.ContentHash
@@ -485,14 +501,34 @@ func (rm *RestoreManager) writeFileContent(ctx context.Context, w io.Writer, met
 	if err != nil {
 		return err
 	}
+
+	// Hash the reconstructed stream as it is written. meta.ContentHash is a
+	// SHA-256 over the whole plaintext for both storage paths — the chunked
+	// path accumulates it in Chunker.ProcessStream, the inline path computes it
+	// directly — so one digest of the output is directly comparable. Nothing
+	// below this line authenticates the bytes otherwise: an object replaced in
+	// the backing store is returned by the store stack without complaint.
+	hasher := sha256.New()
+	out := w
+	if verify {
+		out = io.MultiWriter(w, hasher)
+	}
+
 	for _, chunkRef := range content.Chunks {
-		if err := rm.writeChunk(ctx, w, chunkRef); err != nil {
+		if err := rm.writeChunk(ctx, out, chunkRef); err != nil {
 			return err
 		}
 	}
 	if len(content.DataInlineB64) > 0 {
-		if _, err := w.Write(content.DataInlineB64); err != nil {
+		if _, err := out.Write(content.DataInlineB64); err != nil {
 			return err
+		}
+	}
+
+	if verify {
+		got := hex.EncodeToString(hasher.Sum(nil))
+		if got != meta.ContentHash {
+			return fmt.Errorf("content hash mismatch: expected %s, got %s", meta.ContentHash, got)
 		}
 	}
 	return nil

@@ -92,13 +92,18 @@ func NewPackStore(inner ObjectStore, opts ...PackOption) (*PackStore, error) {
 	return s, nil
 }
 
-// sealIndex encrypts index material if this store has a key, and passes it
-// through unchanged otherwise.
-func (s *PackStore) sealIndex(plaintext []byte) ([]byte, error) {
-	if len(s.indexKey) == 0 {
+// sealIndex encrypts index material when indexKey is set, and passes it through
+// unchanged otherwise.
+//
+// This and openIndex are free functions taking the key explicitly rather than
+// methods reading s.indexKey, so that the footer encode/decode path in
+// packfooter.go stays independent of PackStore and can be exercised with a key
+// of the test's choosing.
+func sealIndex(plaintext, indexKey []byte) ([]byte, error) {
+	if len(indexKey) == 0 {
 		return plaintext, nil
 	}
-	return crypto.Encrypt(plaintext, s.indexKey)
+	return crypto.Encrypt(plaintext, indexKey)
 }
 
 // openIndex reverses sealIndex. Plaintext input is returned unchanged, which is
@@ -392,7 +397,7 @@ func (s *PackStore) Flush(ctx context.Context) error {
 		}
 		// The catalog names every packed object and its exact size; seal it so
 		// that is not readable from the bucket alone.
-		if catalogBytes, err = s.sealIndex(catalogBytes); err != nil {
+		if catalogBytes, err = sealIndex(catalogBytes, s.indexKey); err != nil {
 			s.mu.Unlock()
 			return fmt.Errorf("seal catalog: %w", err)
 		}

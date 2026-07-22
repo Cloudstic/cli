@@ -7,8 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-
-	"github.com/cloudstic/cli/pkg/crypto"
 )
 
 // Packfiles carry a trailing, self-describing index so that the location of
@@ -110,10 +108,8 @@ func buildPackFooter(entries map[string]PackEntry, indexKey []byte) ([]byte, err
 	if err != nil {
 		return nil, fmt.Errorf("marshal pack footer: %w", err)
 	}
-	if len(indexKey) > 0 {
-		if payload, err = crypto.Encrypt(payload, indexKey); err != nil {
-			return nil, fmt.Errorf("seal pack footer: %w", err)
-		}
+	if payload, err = sealIndex(payload, indexKey); err != nil {
+		return nil, fmt.Errorf("seal pack footer: %w", err)
 	}
 	// Bound the payload before it is used to size an allocation, so that
 	// len(payload)+packTrailerLen cannot overflow.

@@ -19,7 +19,21 @@ const (
 	maxLeafSize  = 32
 
 	nodePrefix = "node/"
+
+	// maxTreeDepth bounds every recursive descent. Routing consumes 5 bits per
+	// level out of a 32-bit prefix, so a well-formed tree cannot nest deeper
+	// than maxDepth internal levels plus its leaves. Going past it means the
+	// structure is not a tree: a child ref reaching back into its own ancestry
+	// would otherwise recurse until the stack runs out. Hash verification in
+	// NodeStore.load makes such a cycle hard to build, but this guard costs one
+	// comparison and turns a hang into an error.
+	maxTreeDepth = maxDepth + 2
 )
+
+// errTooDeep reports a descent past maxTreeDepth.
+func errTooDeep(depth int) error {
+	return fmt.Errorf("hamt node nesting exceeds %d levels at depth %d: tree is cyclic or corrupt", maxTreeDepth, depth)
+}
 
 // DiffEntry represents a single change between two trees.
 // OldValue is empty for additions; NewValue is empty for deletions.
@@ -88,7 +102,7 @@ func (t *Tree) Walk(ctx context.Context, root string, fn func(key, value string)
 	if root == "" {
 		return nil
 	}
-	return walk(ctx, t.nodes, child{ref: root}, fn)
+	return walk(ctx, t.nodes, child{ref: root}, 0, fn)
 }
 
 // Diff structurally compares two persisted trees and calls fn for every entry
@@ -107,7 +121,7 @@ func (t *Tree) NodeRefs(ctx context.Context, root string, fn func(ref string) er
 	if root == "" {
 		return nil
 	}
-	return nodeRefs(ctx, t.nodes, root, fn)
+	return nodeRefs(ctx, t.nodes, root, 0, fn)
 }
 
 // ---------------------------------------------------------------------------
@@ -194,7 +208,7 @@ func (tx *Txn) Walk(ctx context.Context, fn func(key, value string) error) error
 	if tx.root.isZero() {
 		return nil
 	}
-	return walk(ctx, tx.nodes, tx.root, fn)
+	return walk(ctx, tx.nodes, tx.root, 0, fn)
 }
 
 // DiffFrom compares a persisted tree against the working tree, reporting what
@@ -485,7 +499,7 @@ func lookup(ctx context.Context, ns *NodeStore, c child, routingKey, key string)
 	if err != nil {
 		return "", err
 	}
-	for level := 0; ; level++ {
+	for level := 0; level <= maxTreeDepth; level++ {
 		n, err := resolve(ctx, ns, c)
 		if err != nil {
 			return "", err
@@ -510,11 +524,12 @@ func lookup(ctx context.Context, ns *NodeStore, c child, routingKey, key string)
 		}
 		c = n.children[pos]
 	}
+	return "", errTooDeep(maxTreeDepth)
 }
 
 func lookupByKey(ctx context.Context, ns *NodeStore, root child, key string) (string, error) {
 	var found string
-	err := walk(ctx, ns, root, func(k, value string) error {
+	err := walk(ctx, ns, root, 0, func(k, value string) error {
 		if k == key {
 			found = value
 			return errFoundSentinel
@@ -527,7 +542,10 @@ func lookupByKey(ctx context.Context, ns *NodeStore, root child, key string) (st
 	return "", err
 }
 
-func walk(ctx context.Context, ns *NodeStore, c child, fn func(key, value string) error) error {
+func walk(ctx context.Context, ns *NodeStore, c child, depth int, fn func(key, value string) error) error {
+	if depth > maxTreeDepth {
+		return errTooDeep(depth)
+	}
 	n, err := resolve(ctx, ns, c)
 	if err != nil {
 		return err
@@ -541,14 +559,17 @@ func walk(ctx context.Context, ns *NodeStore, c child, fn func(key, value string
 		return nil
 	}
 	for _, cc := range n.children {
-		if err := walk(ctx, ns, cc, fn); err != nil {
+		if err := walk(ctx, ns, cc, depth+1, fn); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func nodeRefs(ctx context.Context, ns *NodeStore, ref string, fn func(string) error) error {
+func nodeRefs(ctx context.Context, ns *NodeStore, ref string, depth int, fn func(string) error) error {
+	if depth > maxTreeDepth {
+		return errTooDeep(depth)
+	}
 	if err := fn(ref); err != nil {
 		return err
 	}
@@ -560,7 +581,7 @@ func nodeRefs(ctx context.Context, ns *NodeStore, ref string, fn func(string) er
 		return nil
 	}
 	for _, cc := range n.children {
-		if err := nodeRefs(ctx, ns, cc.ref, fn); err != nil {
+		if err := nodeRefs(ctx, ns, cc.ref, depth+1, fn); err != nil {
 			return err
 		}
 	}
@@ -589,6 +610,9 @@ func diff(ctx context.Context, ns *NodeStore, c1, c2 child, fn func(DiffEntry) e
 }
 
 func diffNodes(ctx context.Context, ns *NodeStore, n1, n2 *node, level int, fn func(DiffEntry) error) error {
+	if level > maxTreeDepth {
+		return errTooDeep(level)
+	}
 	if n1.leaf && n2.leaf {
 		return diffLeaves(n1, n2, fn)
 	}
@@ -607,11 +631,11 @@ func diffNodes(ctx context.Context, ns *NodeStore, n1, n2 *node, level int, fn f
 		case c1 == nil && c2 == nil:
 			continue
 		case c1 == nil:
-			if err := collectAll(ctx, ns, c2, func(k, v string) error { return fn(DiffEntry{Key: k, NewValue: v}) }); err != nil {
+			if err := collectAll(ctx, ns, c2, level, func(k, v string) error { return fn(DiffEntry{Key: k, NewValue: v}) }); err != nil {
 				return err
 			}
 		case c2 == nil:
-			if err := collectAll(ctx, ns, c1, func(k, v string) error { return fn(DiffEntry{Key: k, OldValue: v}) }); err != nil {
+			if err := collectAll(ctx, ns, c1, level, func(k, v string) error { return fn(DiffEntry{Key: k, OldValue: v}) }); err != nil {
 				return err
 			}
 		default:
@@ -685,7 +709,10 @@ func diffLeaves(n1, n2 *node, fn func(DiffEntry) error) error {
 	return nil
 }
 
-func collectAll(ctx context.Context, ns *NodeStore, n *node, fn func(key, value string) error) error {
+func collectAll(ctx context.Context, ns *NodeStore, n *node, depth int, fn func(key, value string) error) error {
+	if depth > maxTreeDepth {
+		return errTooDeep(depth)
+	}
 	if n.leaf {
 		for _, e := range n.entries {
 			if err := fn(e.Key, e.Value); err != nil {
@@ -699,7 +726,7 @@ func collectAll(ctx context.Context, ns *NodeStore, n *node, fn func(key, value 
 		if err != nil {
 			return err
 		}
-		if err := collectAll(ctx, ns, child, fn); err != nil {
+		if err := collectAll(ctx, ns, child, depth+1, fn); err != nil {
 			return err
 		}
 	}

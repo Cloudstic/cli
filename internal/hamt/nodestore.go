@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	lru "github.com/hashicorp/golang-lru/v2"
 	"golang.org/x/sync/errgroup"
@@ -16,8 +17,8 @@ import (
 var log = logger.New("hamt", logger.ColorCyan)
 
 const (
-	nodeCacheSize        = 4096
-	defaultWriteWorkers  = 20
+	nodeCacheSize       = 4096
+	defaultWriteWorkers = 20
 )
 
 // NodeStore is the only part of this package that knows HAMT nodes are bytes.
@@ -49,6 +50,9 @@ func (ns *NodeStore) load(ctx context.Context, ref string) (*node, error) {
 	}
 	data, err := ns.store.Get(ctx, ref)
 	if err != nil {
+		return nil, err
+	}
+	if err := verifyNodeRef(ref, data); err != nil {
 		return nil, err
 	}
 	var hn core.HAMTNode
@@ -97,4 +101,22 @@ func (ns *NodeStore) putAll(ctx context.Context, batch map[string][]byte) error 
 		})
 	}
 	return g.Wait()
+}
+
+// verifyNodeRef checks that data is what ref names.
+//
+// A node ref is its own checksum: "node/" + SHA-256 of the bytes written under
+// it. Checking it on the way in means every consumer of the tree — restore,
+// ls, diff, prune, check — detects a corrupted or substituted node, not just
+// `check -read-data`. It also closes the recursion hole: a node cannot claim a
+// child that hashes to one of its own ancestors without failing this check.
+func verifyNodeRef(ref string, data []byte) error {
+	want, ok := strings.CutPrefix(ref, nodePrefix)
+	if !ok {
+		return fmt.Errorf("node ref %q is missing the %q prefix", ref, nodePrefix)
+	}
+	if got := core.ComputeHash(data); got != want {
+		return fmt.Errorf("node %s failed its integrity check: %d bytes hashing to %s", ref, len(data), got)
+	}
+	return nil
 }

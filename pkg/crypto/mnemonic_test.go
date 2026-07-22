@@ -46,17 +46,24 @@ func TestMnemonicToKey_InvalidMnemonic(t *testing.T) {
 	}
 }
 
+// canonicalMnemonic is the BIP39 vector for 256 bits of zero entropy. Its last
+// word carries the checksum, so replacing that word alone yields a mnemonic
+// that is well-formed but fails validation.
+const (
+	canonicalMnemonic   = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art"
+	badChecksumMnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon"
+)
+
 func TestMnemonicToKey_BadChecksum(t *testing.T) {
-	mnemonic, _, _ := GenerateRecoveryMnemonic()
-	words := strings.Fields(mnemonic)
-	// Swap the last word to break the checksum.
-	if words[23] == "abandon" {
-		words[23] = "ability"
-	} else {
-		words[23] = "abandon"
+	// Both halves are asserted so the test cannot quietly become vacuous: if the
+	// baseline stopped being valid, a rejection of the corrupted one would prove
+	// nothing about checksums.
+	if _, err := MnemonicToKey(canonicalMnemonic); err != nil {
+		t.Fatalf("the canonical BIP39 vector should be valid: %v", err)
 	}
-	bad := strings.Join(words, " ")
-	if _, err := MnemonicToKey(bad); err == nil {
+
+	// The two differ only in the final, checksum-bearing word.
+	if _, err := MnemonicToKey(badChecksumMnemonic); err == nil {
 		t.Fatal("expected error for bad checksum")
 	}
 }

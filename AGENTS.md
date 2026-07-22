@@ -193,10 +193,11 @@ short version, which applies to any change touching what is written to a store:
   and rewritten only when a write happens to pass over them. A repository stays
   a mixture of eras indefinitely, and that is the steady state — permanent
   backward compatibility means no code ever needs to know whether migration
-  "finished". `config.version` is the *minimum reader version*, not a completion
-  marker: stamp it with `UpgradeRepoFormat` at the moment a write first stores
-  something older builds would misread, never merely because a newer binary
-  opened the repository.
+  "finished". `config.version` is not a completion marker: it is the signal that
+  tells other machines sharing the repository to upgrade. `UpgradeRepoFormat`
+  stamps it after a successful `backup`, `prune`, or `forget`, and never on a
+  read — a read changes nothing, and `LoadRepoConfig` runs on restore paths where
+  a write would break read-only credentials.
 - **Changing the on-disk format** requires, per `docs/compatibility.md`: keeping
   older layouts readable, upgrading only opportunistically, committing a fixture
   from the last release using the old format, deciding on the version gate,

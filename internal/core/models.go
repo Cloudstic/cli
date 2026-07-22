@@ -158,6 +158,19 @@ const (
 	//
 	// Both changes ship in the same release, so one version covers them.
 	MaxSupportedRepoFormat = 2
+
+	// FramedCompressionFormat is the lowest recorded format at which the
+	// compression layer may write framed objects (see pkg/store/compressed.go).
+	//
+	// It gates writes rather than reads: a framed object is always readable,
+	// but a build predating the frame reads one as opaque bytes and returns
+	// them, which is a misread rather than a clean refusal. The version gate
+	// cannot prevent that on its own, because the stamp is applied after a
+	// mutation completes — so a repository still recording format 1 would
+	// otherwise be handed framed objects that an older build sails straight
+	// into. Framing only once the repository already records this version
+	// closes that window without stamping repositories speculatively.
+	FramedCompressionFormat = 2
 )
 
 type RepoConfig struct {

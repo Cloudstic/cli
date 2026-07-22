@@ -186,8 +186,60 @@ func TestCLI_Feature_ReadsLegacyRepositories(t *testing.T) {
 					assertFixtureFiles(t, outDir, m.Files)
 				}
 			})
+
+			// A repository below the framing format must be raised before the
+			// first object is written, not after. An object written unframed is
+			// unframed permanently — content-addressed objects are never
+			// rewritten, so a later framed backup skips them on the Exists
+			// check — and an already-compressed file stored that way is
+			// unrestorable forever.
+			//
+			// This needs its own copy of the fixture: it has to be the *first*
+			// backup onto the repository, while it still records the old
+			// format. Sharing storeDir with the subtest above would run it
+			// against a repository that backup had already stamped, which is
+			// exactly the case that was never broken.
+			//
+			// Every released repository is below the framing format, so the
+			// window this covers is every user's first backup after upgrading.
+			t.Run("already-compressed file survives the format upgrade", func(t *testing.T) {
+				freshStore := materialiseFixture(t, dir)
+				freshAuth := []string{"-store", "local:" + freshStore, "-password", m.Password}
+
+				archive := gzipFixture(t, incompressibleBytes(768*1024))
+				gzDir := t.TempDir()
+				if err := os.WriteFile(filepath.Join(gzDir, "archive.gz"), []byte(archive), 0o644); err != nil {
+					t.Fatal(err)
+				}
+
+				backupArgs := append([]string{"backup"}, freshAuth...)
+				backupArgs = append(backupArgs, "-source", "local:"+gzDir)
+				snapshot := snapshotIDFrom(t, run(t, bin, backupArgs...))
+
+				// Restore by id. The fixture holds snapshots from another
+				// source, and "latest" resolves per source identity, so it
+				// would not name the one just written.
+				outDir := filepath.Join(t.TempDir(), "compressed")
+				restoreArgs := append([]string{"restore"}, freshAuth...)
+				restoreArgs = append(restoreArgs, "-format", "dir", "-output", outDir, snapshot)
+				run(t, bin, restoreArgs...)
+				mustHaveExactBytes(t, outDir, "archive.gz", archive)
+			})
 		})
 	}
+}
+
+// snapshotIDFrom extracts the id a backup reported writing.
+func snapshotIDFrom(t *testing.T, backupOutput string) string {
+	t.Helper()
+	for _, line := range strings.Split(backupOutput, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 3 && fields[0] == "Snapshot" && fields[2] == "saved" {
+			return fields[1]
+		}
+	}
+	t.Fatalf("no snapshot id in backup output:\n%s", backupOutput)
+	return ""
 }
 
 func assertFixtureFiles(t *testing.T, dir string, want map[string]string) {

@@ -148,6 +148,9 @@ What actually happens when a newer build writes to an older repository:
   as they were
 - `index/latest` stops being packed, but an already-packed one keeps being read
   from where it is
+- objects are written inside a compression frame once the repository records
+  format 2; objects stored before the frame existed keep none, and are read by
+  detecting a gzip or zstd stream as before
 
 So a long-lived repository is a mixture of eras indefinitely, and that is the
 intended steady state rather than a transitional one. Because backward
@@ -173,6 +176,41 @@ The correct rule is narrower:
 
 > Stamp the repository when a build **writes** to it — not when it is opened,
 > and not when migration finishes.
+
+### Before the write, when the write depends on it
+
+"When a build writes to it" leaves the timing open, and the timing matters.
+
+The default is to stamp *after* a successful mutation: the data is already
+written, a failed stamp is not fatal, and the next mutation stamps again. That
+is right for a change whose output older builds can still read — `prune` and
+`forget` write JSON manifests, which are unremarkable to any reader.
+
+It is wrong when the write itself is gated on the format. The compression frame
+is the case that forced this distinction:
+
+- an object written unframed is unframed **permanently** — content-addressed
+  objects are never rewritten, so a later framed backup finds the object already
+  present and skips it
+- writers must not frame while the repository still records an older format, or
+  a build predating the frame will read a framed object as opaque bytes
+
+Stamp afterwards and the two combine badly. Every repository ever released is
+below the framing format, so the first backup after upgrading would write
+unframed objects — permanently — and only then raise the format. For an
+already-compressed file that is unrecoverable data loss, inflicted once on every
+existing user.
+
+So the rule for this class of change is:
+
+> When a write is only correct at a given format, raise the format **before** the
+> first object is written, and treat the failure as fatal to the operation.
+
+`Client.prepareFramedWrites` implements that for `backup`. It stays within the
+"writes stamp, reads do not" rule — `backup` is a mutation — and it costs one
+thing: a mutation that fails early leaves the repository stamped, locking out
+older builds from a repository that gained nothing. That is recoverable by
+upgrading the other machine. The alternative is not recoverable at all.
 
 `UpgradeRepoFormat` (`client.go`) does this. It raises the recorded version,
 never lowers it, and refuses to stamp a version the running build could not
@@ -264,12 +302,35 @@ deletes the packfiles. See "What the gate cannot do" above.
 
 ### v1.15.0 against a repository written by a later build
 
-Refused cleanly:
+Refused cleanly, on `list`, `check`, and `restore` alike:
 
 ```text
 repository format version 2 is newer than this build supports (up to 1):
 upgrade cloudstic to work with this repository
 ```
+
+### v1.15.0 against a compression frame
+
+It never meets one. This was verified rather than assumed, because the frame is
+the one structure an older build would misread instead of refusing: v1.15.0
+recognises neither the magic nor the algorithm byte, so it would return the
+framed bytes verbatim — header included — and write them to a restored file.
+
+Two runs establish that it cannot reach that state:
+
+- A repository this build created is stamped format 2, and v1.15.0 refuses it at
+  the gate before reading any object.
+- A repository v1.15.0 created (format 1), backed up into by this build, is
+  raised to format 2 *before* the first object is written, so no framed object
+  is ever added to a repository still recording format 1. Both machines see a
+  consistent repository: either format 1 with no frames, or format 2, which
+  v1.15.0 declines.
+
+Confirmed on the second path by inspecting the store after the backup: the
+chunk, packfile, snapshot catalog, and `index/latest` are all framed, and the
+repository records version 2. The one unframed object is the pack index shard
+under `index/packmap/`, which `PackStore` writes *below* the compression layer
+and which therefore never carries a frame by construction.
 
 ## Fixtures
 

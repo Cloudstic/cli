@@ -72,7 +72,7 @@ flowchart TD
 
 The pipeline from outermost (application layer) to innermost (network layer) is:
 
-1. **Compressed Store**: Compresses outgoing objects using `zstd` and decompresses incoming objects.
+1. **Compressed Store**: Compresses outgoing objects using `zstd` and decompresses incoming objects. The encoding is recorded in a frame header (see [Compression Frame](#compression-frame)) rather than recovered by inspecting the stored bytes.
 2. **Encrypted Store** *(optional)*: Encrypts the compressed data using AES-256-GCM, and decrypts/authenticates the ciphertext on read.
 3. **Metered Store**: Tracks bytes written to and read from the underlying layer to precisely report progress reflecting the actual physical bytes stored/retrieved.
 4. **Pack Store** *(optional)*: Intercepts small objects (like `filemeta/`, `node/`, and small manifests). Buffers them in memory and groups them into 8MB pack files (`packs/<hash>`) to drastically reduce bucket API requests and billing. Large objects bypass the buffer and pass through directly.
@@ -81,6 +81,40 @@ The pipeline from outermost (application layer) to innermost (network layer) is:
 **Data Flow Example (Read):**
 
 `App ← [decompress] ← [decrypt] ← [measure] ← [extract from pack or get] ← [Base Store]`
+
+#### Compression Frame
+
+zstd does not shrink every input. When it cannot, the Compressed Store keeps the
+object verbatim — so "compressed" is a per-object property, and the reader has to
+know which it holds.
+
+Repositories at format `2` or above record that in a header:
+
+```text
+┌──────────────────────────────────────────────┐
+│ magic 0x43 0x53 0x00 0x01           4 bytes  │
+│ algorithm (0x00 raw, 0x01 zstd)     1 byte   │
+│ uncompressed length (big-endian)    8 bytes  │
+│ payload                             …        │
+└──────────────────────────────────────────────┘
+```
+
+The length field makes the frame self-checking: a payload that does not decode to
+exactly that many bytes is an error, never data.
+
+Objects without the header are read by detecting a gzip or zstd stream and
+otherwise returning the bytes unchanged. That path is permanent — every
+repository keeps unframed objects from before the frame existed — but it is only
+a fallback, and it is the reason the frame exists. Sniffing cannot distinguish
+"this store compressed the object" from "the user's file begins with those
+bytes", so backing up an already-compressed `.gz` or `.zst` file yielded its
+*decompressed* contents on restore.
+
+Writers frame only once the repository records format `2`, because the format
+stamp is applied after a mutation completes: a build predating the frame reads
+one as opaque bytes rather than refusing it, so a repository still recording
+format `1` must not be handed framed objects. See
+[compatibility.md](compatibility.md).
 
 ### Commands
 
@@ -110,7 +144,9 @@ All objects are stored under a flat key namespace of the form `<type>/<hash>`.
 * Raw file data, zstd-compressed.
 * Object key: `chunk/<hmac_sha256>` (HMAC-SHA256 keyed by the dedup key when
   encryption is enabled, plain SHA-256 otherwise)
-* **Format:** Raw binary (zstd stream). Not JSON-wrapped.
+* **Format:** Raw binary, not JSON-wrapped. Written inside a
+  [compression frame](#compression-frame) at format `2` and above, which records
+  whether the payload is a zstd stream or the chunk verbatim.
 * Produced by **FastCDC** content-defined chunking:
 
 | Parameter | Value    |

@@ -124,6 +124,21 @@ type SnapshotSummary struct {
 // RepoConfig is the repository marker written by "init". It is stored as
 // plaintext at key "config" so it can be read without the encryption key.
 // Key: config
+// Repository format versioning. See docs/compatibility.md for the contract
+// these constants enforce.
+//
+// RepoFormatVersion is stamped into every repository this build creates.
+// MaxSupportedRepoFormat is the highest version this build can read; a
+// repository above it is refused rather than misread.
+//
+// Raise both together when a change makes a repository unreadable by earlier
+// builds. Do not raise them for a change earlier builds can still read: a
+// needless bump locks users out of their own data for no benefit.
+const (
+	RepoFormatVersion      = 1
+	MaxSupportedRepoFormat = 1
+)
+
 type RepoConfig struct {
 	Version   int    `json:"version"`
 	Created   string `json:"created"` // ISO8601

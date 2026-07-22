@@ -131,6 +131,22 @@ func LoadRepoConfig(ctx context.Context, rawStore store.ObjectStore) (*RepoConfi
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse repo config: %w", err)
 	}
+
+	// Refuse a repository written by a newer build rather than operating on a
+	// format we only partly understand. Every path that opens a repository
+	// funnels through here, so this is the one gate that has to hold.
+	//
+	// A version we do not recognise means indexes or objects may be encoded in
+	// ways we would misread — and misreading an index as empty is how a prune
+	// deletes a live repository. Failing here is the safe outcome.
+	if cfg.Version > core.MaxSupportedRepoFormat {
+		return nil, fmt.Errorf(
+			"repository format version %d is newer than this build supports (up to %d): "+
+				"upgrade cloudstic to work with this repository",
+			cfg.Version, core.MaxSupportedRepoFormat,
+		)
+	}
+
 	return &cfg, nil
 }
 

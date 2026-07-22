@@ -157,12 +157,48 @@ fails if a flag's `env` binding has no matching row.
 
 Deep-dive docs live in `docs/` and design records in `rfcs/`:
 
+- `docs/compatibility.md` — **normative** repository compatibility contract. Read it before changing anything on disk.
 - `docs/spec.md` — format/protocol specification.
 - `docs/storage-model.md` — object model and store layering.
 - `docs/encryption.md` — key hierarchy, slots, and the encryption model.
 - `docs/sources.md` — supported data sources and their identity model.
 - `docs/user-guide.md` — end-user command reference.
 - `rfcs/NNNN-*.md` — numbered design proposals; add a new one for substantial features (see RFC 0010 for the profiles design as a template).
+
+## Repository Compatibility
+
+`docs/compatibility.md` is normative and takes precedence over convenience. The
+short version, which applies to any change touching what is written to a store:
+
+- **Backward compatibility is permanent.** A repository written by any released
+  version must stay readable by every later version — `list`, `ls`, `check`,
+  `cat`, `diff`, `restore`. There is no deprecation window and no migration you
+  may require in order to *read*. Legacy read paths may be refactored, never
+  removed.
+- **Forward compatibility is not guaranteed, but failure must be safe.** Older
+  builds may be unable to read newer repositories. They must never *misread*
+  them. Two rules carry the weight:
+  - Never treat "cannot decode" as "empty". A failed index load is an error, not
+    an index with no entries — "no entries" is what makes a garbage collector
+    delete a live repository.
+  - Never let `prune`, `forget`, or repacking proceed on data that could not be
+    fully read.
+- **The version gate.** `core.RepoFormatVersion` and
+  `core.MaxSupportedRepoFormat` (`internal/core/models.go`) gate every repository
+  open through `LoadRepoConfig`. Raise both when a change would make a
+  repository unreadable or misreadable by earlier builds; leave them alone when
+  earlier builds cope, since a needless bump locks users out of their own data.
+- **Changing the on-disk format** requires, per `docs/compatibility.md`: keeping
+  older layouts readable, upgrading only opportunistically, committing a fixture
+  from the last release using the old format, deciding on the version gate,
+  adding the baseline to the doc's table, and stating in the PR what older
+  builds do when they meet the new format — **verified by running an old binary,
+  not by reasoning about it**.
+
+Enforcement lives in `e2e/feature_legacy_repo_test.go`
+(`TestCLI_Feature_ReadsLegacyRepositories` runs the current build against every
+committed baseline; `TestCompatibilityDocListsEveryFixture` fails when a fixture
+is missing from the doc's table) and in `repo_format_test.go` for the gate.
 
 ## Development Best Practices
 

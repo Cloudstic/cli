@@ -31,21 +31,8 @@ func TestPruneManager_Run(t *testing.T) {
 	metaRef := "filemeta/" + metaHash
 	_ = mockStore.Put(ctx, metaRef, metaData)
 
-	// HAMT Construction using BackupManager's tree for flushing.
-	src := NewMockSource()
-	bkMgr := NewBackupManager(src, mockStore, ui.NewNoOpReporter(), nil, WithVerbose())
-	rootRef, err := bkMgr.tree.Insert(ctx, "", AffinityKey("", "file1"), "file1", metaRef)
-	if err != nil {
-		t.Fatalf("Failed to create hamt: %v", err)
-	}
-	// Flush to persistent
-	if err := bkMgr.cache.FlushReachable(rootRef); err != nil {
-		t.Fatalf("Flush failed: %v", err)
-	}
-
-	// Also insert directly into mock store (non-transactional).
 	directTree := hamt.NewTree(mockStore)
-	rootRef, err = directTree.Insert(ctx, "", AffinityKey("", "file1"), "file1", metaRef)
+	rootRef, err := insertCommit(ctx, directTree, "", "", "file1", metaRef)
 	if err != nil {
 		t.Fatalf("Failed to insert: %v", err)
 	}

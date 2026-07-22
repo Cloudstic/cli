@@ -126,7 +126,7 @@ func createHamt(ctx context.Context, t *testing.T, s *MockStore, ids []string, r
 	root := ""
 	for i, id := range ids {
 		var err error
-		root, err = tree.Insert(ctx, root, AffinityKey("", id), id, refs[i])
+		root, err = insertCommit(ctx, tree, root, "", id, refs[i])
 		if err != nil {
 			t.Fatalf("Insert failed: %v", err)
 		}

@@ -90,7 +90,7 @@ type BackupManager struct {
 	store      store.ObjectStore
 	keyCache   *store.KeyCacheStore
 	tree       *hamt.Tree
-	cache      *hamt.TransactionalStore
+	txn        *hamt.Txn // working tree; opened by scanSource, written by Commit
 	chunker    *Chunker
 	reporter   ui.Reporter
 	stats      *backupStats
@@ -116,13 +116,11 @@ func NewBackupManager(src source.Source, dest store.ObjectStore, reporter ui.Rep
 
 	sourceInfo := src.Info()
 	keyCache := store.NewKeyCacheStore(dest)
-	cache := hamt.NewTransactionalStore(keyCache)
 	return &BackupManager{
 		source:       src,
 		store:        keyCache,
 		keyCache:     keyCache,
-		tree:         hamt.NewTree(cache),
-		cache:        cache,
+		tree:         hamt.NewTree(keyCache),
 		chunker:      NewChunker(keyCache, hmacKey),
 		reporter:     reporter,
 		sourceInfo:   sourceInfo,
@@ -217,16 +215,22 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 		backupLog.Debugf("no previous snapshot found, running full scan")
 	}
 
-	newRoot, pending, totalBytes, newToken, usedFullScan, err := bm.scanSource(ctx, oldRoot, changeToken)
+	pending, totalBytes, newToken, usedFullScan, err := bm.scanSource(ctx, oldRoot, changeToken)
 	if err != nil {
 		return nil, err
 	}
 
 	if bm.cfg.dryRun {
 		if usedFullScan {
-			if err := bm.countRemoved(ctx, oldRoot, newRoot); err != nil {
+			if err := bm.countRemoved(ctx, oldRoot); err != nil {
 				return nil, fmt.Errorf("counting removed entries: %w", err)
 			}
+		}
+		// Root computes the ref the tree would have without writing it, which
+		// is what makes a dry run genuinely read-only.
+		newRoot, err := bm.txn.Root(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("compute hamt root: %w", err)
 		}
 		r := bm.buildResult()
 		r.Root = newRoot
@@ -243,15 +247,22 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 		return nil, fmt.Errorf("preload key cache: %w", err)
 	}
 
-	newRoot, err = bm.upload(ctx, pending, totalBytes, newRoot)
-	if err != nil {
+	if err := bm.upload(ctx, pending, totalBytes); err != nil {
 		return nil, err
 	}
 
 	if usedFullScan {
-		if err := bm.countRemoved(ctx, oldRoot, newRoot); err != nil {
+		if err := bm.countRemoved(ctx, oldRoot); err != nil {
 			return nil, fmt.Errorf("counting removed entries: %w", err)
 		}
+	}
+
+	// Commit the tree before anything points at it. A snapshot naming a root
+	// whose nodes are not yet written is unreadable, so the order here —
+	// nodes, then snapshot, then index/latest — is load-bearing, not stylistic.
+	newRoot, err := bm.txn.Commit(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("commit hamt: %w", err)
 	}
 
 	if bm.cfg.ignoreEmptySnapshot && prevSnap != nil && newRoot == oldRoot {
@@ -268,10 +279,6 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 
 	// Update snapshot catalog (best-effort).
 	AppendSnapshotCatalog(bm.store, snapshotToSummary(snapRef, snap))
-
-	if err := bm.cache.FlushReachable(newRoot); err != nil {
-		return nil, fmt.Errorf("flush hamt: %w", err)
-	}
 
 	r := bm.buildResult()
 	r.SnapshotHash = snapHash

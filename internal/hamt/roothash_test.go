@@ -94,9 +94,9 @@ func runScenario(t *testing.T, s scenario) string {
 	var err error
 	for i, o := range s.ops {
 		if o.del {
-			root, err = tree.Delete(ctx, root, routingKey(o.parentID, o.fileID), o.fileID)
+			root, err = deleteCommit(tree, root, routingKey(o.parentID, o.fileID), o.fileID)
 		} else {
-			root, err = tree.Insert(ctx, root, routingKey(o.parentID, o.fileID), o.fileID, o.value)
+			root, err = insertCommit(tree, root, routingKey(o.parentID, o.fileID), o.fileID, o.value)
 		}
 		if err != nil {
 			t.Fatalf("%s: op %d (%+v): %v", s.name, i, o, err)

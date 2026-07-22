@@ -6,64 +6,95 @@ import (
 	"fmt"
 
 	lru "github.com/hashicorp/golang-lru/v2"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/pkg/store"
 )
 
-const nodeCacheSize = 4096
+var log = logger.New("hamt", logger.ColorCyan)
+
+const (
+	nodeCacheSize        = 4096
+	defaultWriteWorkers  = 20
+)
 
 // NodeStore is the only part of this package that knows HAMT nodes are bytes.
-// It maps a node ref ("node/<sha256>") to a decoded *core.HAMTNode and back,
-// owning the key prefix, the canonical encoding, and a read cache.
+// It maps a node ref ("node/<sha256>") to a decoded node and back, owning the
+// key prefix, the canonical encoding, and a read cache.
 //
-// Nodes are content-addressed, so a ref's decoded form never changes; the cache
-// therefore needs no invalidation. For the same reason Load hands out a shared
-// pointer: callers must treat the returned node as read-only and copy before
-// mutating.
+// Nodes are content-addressed, so a ref's decoded form never changes and the
+// cache needs no invalidation. For the same reason Load hands out a shared
+// pointer: a loaded node is clean, and clean nodes are immutable (see child).
 type NodeStore struct {
 	store store.ObjectStore
-	cache *lru.Cache[string, *core.HAMTNode]
+	cache *lru.Cache[string, *node]
 }
 
 // NewNodeStore returns a NodeStore reading and writing through s.
 func NewNodeStore(s store.ObjectStore) *NodeStore {
-	c, _ := lru.New[string, *core.HAMTNode](nodeCacheSize)
+	c, _ := lru.New[string, *node](nodeCacheSize)
 	return &NodeStore{store: s, cache: c}
 }
 
-// Load fetches and decodes the node identified by ref.
-// The returned node is shared with the cache and must not be mutated.
-func (ns *NodeStore) Load(ctx context.Context, ref string) (*core.HAMTNode, error) {
+// load fetches and decodes the node identified by ref. The returned node is
+// clean: it is shared with the cache and must not be mutated.
+func (ns *NodeStore) load(ctx context.Context, ref string) (*node, error) {
 	if ref == "" {
 		return nil, fmt.Errorf("empty node ref")
 	}
-	if node, ok := ns.cache.Get(ref); ok {
-		return node, nil
+	if n, ok := ns.cache.Get(ref); ok {
+		return n, nil
 	}
 	data, err := ns.store.Get(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
-	var node core.HAMTNode
-	if err := json.Unmarshal(data, &node); err != nil {
-		return nil, err
+	var hn core.HAMTNode
+	if err := json.Unmarshal(data, &hn); err != nil {
+		return nil, fmt.Errorf("decode node %s: %w", ref, err)
 	}
-	ns.cache.Add(ref, &node)
-	return &node, nil
+	n := decodeNode(&hn)
+	ns.cache.Add(ref, n)
+	return n, nil
 }
 
-// Save encodes node canonically, writes it under its content address, and
-// returns the resulting ref.
-func (ns *NodeStore) Save(ctx context.Context, node *core.HAMTNode) (string, error) {
-	hash, data, err := core.ComputeJSONHash(node)
+// seal encodes hn under its content address and returns the ref plus the bytes
+// to write. It performs no I/O, so callers can compute a root ref without
+// committing to it.
+func (ns *NodeStore) seal(hn *core.HAMTNode) (string, []byte, error) {
+	hash, data, err := core.ComputeJSONHash(hn)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	ref := nodePrefix + hash
-	if err := ns.store.Put(ctx, ref, data); err != nil {
-		return "", err
+	return nodePrefix + hash, data, nil
+}
+
+// putAll writes a batch of sealed nodes concurrently. Node writes are
+// independent — every ref is a content address, so order and duplication are
+// both harmless — which is what makes the fan-out safe.
+func (ns *NodeStore) putAll(ctx context.Context, batch map[string][]byte) error {
+	if len(batch) == 0 {
+		return nil
 	}
-	ns.cache.Add(ref, node)
-	return ref, nil
+
+	var totalBytes int
+	for _, data := range batch {
+		totalBytes += len(data)
+	}
+	log.Debugf("commit: writing %d nodes (%d bytes total)", len(batch), totalBytes)
+
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(min(store.GetConcurrencyHint(ns.store, defaultWriteWorkers), len(batch)))
+
+	for key, data := range batch {
+		g.Go(func() error {
+			if err := ns.store.Put(ctx, key, data); err != nil {
+				return fmt.Errorf("write node %s: %w", key, err)
+			}
+			return nil
+		})
+	}
+	return g.Wait()
 }

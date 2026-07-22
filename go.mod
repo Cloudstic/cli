@@ -10,7 +10,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/kms v1.54.1
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.105.2
 	github.com/aws/smithy-go v1.27.3
-	github.com/buger/jsonparser v1.2.0
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/jedib0t/go-pretty/v6 v6.8.2

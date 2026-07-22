@@ -39,11 +39,13 @@ type uploadResult struct {
 	err           error
 }
 
-// upload processes the pending file queue with concurrent workers, inserts each
-// result into the HAMT, and returns the updated root.
-func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, totalBytes int64, root string) (string, error) {
+// upload processes the pending file queue with concurrent workers and inserts
+// each result into the working tree. Uploads run in parallel; the inserts do
+// not — they all happen on this goroutine, which is what keeps the Txn's
+// single-writer contract intact.
+func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, totalBytes int64) error {
 	if len(pending) == 0 {
-		return root, nil
+		return nil
 	}
 
 	phase := bm.reporter.StartPhase("Uploading", totalBytes, true)
@@ -85,23 +87,21 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 		close(jobs)
 	}()
 
-	var err error
 	for range pending {
 		res := <-results
 		if res.err != nil {
 			phase.Error()
-			return "", res.err
+			return res.err
 		}
-		root, err = bm.tree.Insert(ctx, root, AffinityKey(res.parentID, res.fileID), res.fileID, res.ref)
-		if err != nil {
+		if err := bm.txn.Insert(ctx, AffinityKey(res.parentID, res.fileID), res.fileID, res.ref); err != nil {
 			phase.Error()
-			return "", fmt.Errorf("hamt insert: %w", err)
+			return fmt.Errorf("hamt insert: %w", err)
 		}
 		bm.newMetas[res.ref] = res.meta
 	}
 
 	phase.Done()
-	return root, nil
+	return nil
 }
 
 // processFile uploads (or deduplicates) a single file's content and persists

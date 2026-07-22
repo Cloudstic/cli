@@ -14,26 +14,28 @@ import (
 
 // scanSource chooses the right scan strategy (full or incremental) and returns
 // the new HAMT root, files pending upload, and a change token for the next run.
-func (bm *BackupManager) scanSource(ctx context.Context, oldRoot, changeToken string) (newRoot string, pending []core.FileMeta, totalBytes int64, newToken string, usedFullScan bool, err error) {
+// scanSource chooses the right scan strategy and opens bm.txn over the right
+// base tree: an incremental scan edits the previous snapshot's tree in place,
+// while a full scan rebuilds one from nothing.
+func (bm *BackupManager) scanSource(ctx context.Context, oldRoot, changeToken string) (pending []core.FileMeta, totalBytes int64, newToken string, usedFullScan bool, err error) {
 	incSrc, isIncremental := bm.source.(source.IncrementalSource)
 	if isIncremental && changeToken != "" {
-		newRoot, pending, totalBytes, newToken, err = bm.scanIncremental(ctx, oldRoot, incSrc, changeToken)
-		return newRoot, pending, totalBytes, newToken, false, err
+		pending, totalBytes, newToken, err = bm.scanIncremental(ctx, oldRoot, incSrc, changeToken)
+		return pending, totalBytes, newToken, false, err
 	}
 
 	if isIncremental {
 		newToken, err = incSrc.GetStartPageToken()
 		if err != nil {
-			return "", nil, 0, "", false, fmt.Errorf("get start page token: %w", err)
+			return nil, 0, "", false, fmt.Errorf("get start page token: %w", err)
 		}
 	}
 
-	newRoot, pending, totalBytes, err = bm.scan(ctx, oldRoot)
-	return newRoot, pending, totalBytes, newToken, true, err
+	pending, totalBytes, err = bm.scan(ctx, oldRoot)
+	return pending, totalBytes, newToken, true, err
 }
 
 type scanState struct {
-	root       string
 	pending    []core.FileMeta
 	totalBytes int64
 }
@@ -60,7 +62,7 @@ func (bm *BackupManager) processEntry(ctx context.Context, meta *core.FileMeta, 
 	// Resolve Paths when the source hasn't populated it (incremental/changes
 	// sources only emit changed entries and can't build a full path map).
 	if len(meta.Paths) == 0 {
-		meta.Paths = []string{bm.buildPathFromTree(ctx, s.root, meta)}
+		meta.Paths = []string{bm.buildPathFromTree(ctx, meta)}
 	}
 
 	changed, oldRef, err := bm.detectChange(ctx, oldRoot, meta)
@@ -70,8 +72,7 @@ func (bm *BackupManager) processEntry(ctx context.Context, meta *core.FileMeta, 
 
 	if !changed {
 		bm.recordStat(meta.Type, false, false)
-		s.root, err = bm.tree.Insert(ctx, s.root, AffinityKey(primaryParentID(meta), meta.FileID), meta.FileID, oldRef)
-		if err != nil {
+		if err := bm.txn.Insert(ctx, AffinityKey(primaryParentID(meta), meta.FileID), meta.FileID, oldRef); err != nil {
 			return fmt.Errorf("hamt insert: %w", err)
 		}
 		return nil
@@ -80,8 +81,7 @@ func (bm *BackupManager) processEntry(ctx context.Context, meta *core.FileMeta, 
 	bm.recordStat(meta.Type, true, oldRef == "")
 
 	if meta.Type == core.FileTypeFolder {
-		s.root, err = bm.insertFolder(ctx, s.root, meta, phase)
-		return err
+		return bm.insertFolder(ctx, meta, phase)
 	}
 
 	if bm.cfg.verbose {
@@ -92,8 +92,9 @@ func (bm *BackupManager) processEntry(ctx context.Context, meta *core.FileMeta, 
 	return nil
 }
 
-func (bm *BackupManager) scan(ctx context.Context, oldRoot string) (newRoot string, pending []core.FileMeta, totalBytes int64, err error) {
+func (bm *BackupManager) scan(ctx context.Context, oldRoot string) (pending []core.FileMeta, totalBytes int64, err error) {
 	phase := bm.reporter.StartPhase("Scanning", 0, false)
+	bm.txn = bm.tree.Edit("")
 	s := &scanState{}
 
 	err = bm.source.Walk(ctx, func(meta core.FileMeta) error {
@@ -103,15 +104,16 @@ func (bm *BackupManager) scan(ctx context.Context, oldRoot string) (newRoot stri
 
 	if err != nil {
 		phase.Error()
-		return "", nil, 0, err
+		return nil, 0, err
 	}
 	phase.Done()
-	return s.root, s.pending, s.totalBytes, nil
+	return s.pending, s.totalBytes, nil
 }
 
-func (bm *BackupManager) scanIncremental(ctx context.Context, oldRoot string, incSrc source.IncrementalSource, token string) (newRoot string, pending []core.FileMeta, totalBytes int64, newToken string, err error) {
+func (bm *BackupManager) scanIncremental(ctx context.Context, oldRoot string, incSrc source.IncrementalSource, token string) (pending []core.FileMeta, totalBytes int64, newToken string, err error) {
 	phase := bm.reporter.StartPhase("Scanning (incremental)", 0, false)
-	s := &scanState{root: oldRoot}
+	bm.txn = bm.tree.Edit(oldRoot)
+	s := &scanState{}
 
 	newToken, walkErr := incSrc.WalkChanges(ctx, token, func(fc source.FileChange) error {
 		phase.Increment(1)
@@ -121,13 +123,12 @@ func (bm *BackupManager) scanIncremental(ctx context.Context, oldRoot string, in
 			bm.recordRemoved(fc.Meta.Type)
 			deleteParentID := primaryParentID(&fc.Meta)
 			if deleteParentID == "" {
-				deleteParentID, err = bm.lookupDeleteParentID(ctx, s.root, fc.Meta.FileID)
+				deleteParentID, err = bm.lookupDeleteParentID(ctx, fc.Meta.FileID)
 				if err != nil {
 					return err
 				}
 			}
-			s.root, err = bm.tree.Delete(ctx, s.root, AffinityKey(deleteParentID, fc.Meta.FileID), fc.Meta.FileID)
-			if err != nil {
+			if err := bm.txn.Delete(ctx, AffinityKey(deleteParentID, fc.Meta.FileID), fc.Meta.FileID); err != nil {
 				return fmt.Errorf("hamt delete %s: %w", fc.Meta.FileID, err)
 			}
 		case source.ChangeUpsert:
@@ -138,19 +139,15 @@ func (bm *BackupManager) scanIncremental(ctx context.Context, oldRoot string, in
 
 	if walkErr != nil {
 		phase.Error()
-		return "", nil, 0, "", walkErr
+		return nil, 0, "", walkErr
 	}
 
 	phase.Done()
-	return s.root, s.pending, s.totalBytes, newToken, nil
+	return s.pending, s.totalBytes, newToken, nil
 }
 
-func (bm *BackupManager) lookupDeleteParentID(ctx context.Context, root, fileID string) (string, error) {
-	if root == "" {
-		return "", nil
-	}
-
-	ref, err := bm.tree.LookupByKey(ctx, root, fileID)
+func (bm *BackupManager) lookupDeleteParentID(ctx context.Context, fileID string) (string, error) {
+	ref, err := bm.txn.LookupByKey(ctx, fileID)
 	if err != nil {
 		return "", fmt.Errorf("lookup old file for delete %s: %w", fileID, err)
 	}
@@ -267,7 +264,7 @@ func bytesEqual(a, b []byte) bool {
 	return true
 }
 
-func (bm *BackupManager) insertFolder(ctx context.Context, root string, meta *core.FileMeta, phase ui.Phase) (string, error) {
+func (bm *BackupManager) insertFolder(ctx context.Context, meta *core.FileMeta, phase ui.Phase) error {
 	if bm.cfg.verbose {
 		phase.Log(fmt.Sprintf("Folder: %s (New/Changed)", meta.Name))
 	}
@@ -277,7 +274,7 @@ func (bm *BackupManager) insertFolder(ctx context.Context, root string, meta *co
 	persisted := persistedFileMeta(*meta)
 	metaRef, metaData, err := persisted.Ref()
 	if err != nil {
-		return "", err
+		return err
 	}
 	bm.metaCacheMu.RLock()
 	_, inCache := bm.metaCache[metaRef]
@@ -286,7 +283,7 @@ func (bm *BackupManager) insertFolder(ctx context.Context, root string, meta *co
 		bm.pendingMetas[metaRef] = metaData
 	}
 	bm.trackFileMeta(metaRef, *meta)
-	return bm.tree.Insert(ctx, root, AffinityKey(primaryParentID(meta), meta.FileID), meta.FileID, metaRef)
+	return bm.txn.Insert(ctx, AffinityKey(primaryParentID(meta), meta.FileID), meta.FileID, metaRef)
 }
 
 func (bm *BackupManager) flushPendingMetas(ctx context.Context) error {
@@ -354,9 +351,9 @@ func (bm *BackupManager) recordRemoved(ft core.FileType) {
 // buildPathFromTree reconstructs the full path for a FileMeta entry by walking
 // the parent chain in the HAMT tree. This is used for incremental/changes
 // sources that can't build a path map (the parent may not be in the change set).
-func (bm *BackupManager) buildPathFromTree(ctx context.Context, root string, meta *core.FileMeta) string {
+func (bm *BackupManager) buildPathFromTree(ctx context.Context, meta *core.FileMeta) string {
 	return fileMetaPath(*meta, func(parentID string) (core.FileMeta, bool) {
-		parent := bm.lookupMetaByFileID(ctx, root, parentID)
+		parent := bm.lookupMetaByFileID(ctx, parentID)
 		if parent == nil {
 			return core.FileMeta{}, false
 		}
@@ -368,13 +365,13 @@ func (bm *BackupManager) buildPathFromTree(ctx context.Context, root string, met
 // It checks newMetas (just inserted this scan) first, then falls back to the store.
 // Uses parentIndex to resolve the affinity routing key; falls back to a full-tree walk
 // for entries not yet seen in this scan (e.g. incremental backups).
-func (bm *BackupManager) lookupMetaByFileID(ctx context.Context, root, fileID string) *core.FileMeta {
+func (bm *BackupManager) lookupMetaByFileID(ctx context.Context, fileID string) *core.FileMeta {
 	parentID := bm.parentIndex[fileID]
-	ref, err := bm.tree.Lookup(ctx, root, AffinityKey(parentID, fileID), fileID)
+	ref, err := bm.txn.Lookup(ctx, AffinityKey(parentID, fileID), fileID)
 	if err != nil || ref == "" {
 		// parentID not in index (e.g. entry from a previous snapshot not re-scanned);
 		// fall back to a walk-based lookup.
-		ref, err = bm.tree.LookupByKey(ctx, root, fileID)
+		ref, err = bm.txn.LookupByKey(ctx, fileID)
 		if err != nil || ref == "" {
 			return nil
 		}
@@ -391,11 +388,11 @@ func (bm *BackupManager) lookupMetaByFileID(ctx context.Context, root, fileID st
 
 // countRemoved uses a structural HAMT diff to count entries present in oldRoot
 // but absent from newRoot (full-scan path where deletions are implicit).
-func (bm *BackupManager) countRemoved(ctx context.Context, oldRoot, newRoot string) error {
+func (bm *BackupManager) countRemoved(ctx context.Context, oldRoot string) error {
 	if oldRoot == "" {
 		return nil
 	}
-	return bm.tree.Diff(ctx, oldRoot, newRoot, func(d hamt.DiffEntry) error {
+	return bm.txn.DiffFrom(ctx, oldRoot, func(d hamt.DiffEntry) error {
 		if d.OldValue != "" && d.NewValue == "" {
 			meta, err := bm.loadMeta(ctx, d.OldValue)
 			if err != nil {

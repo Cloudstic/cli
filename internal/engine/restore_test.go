@@ -705,11 +705,11 @@ func TestRestoreManager_PathFilter_MixedLegacyAndNormalizedFileMeta(t *testing.T
 	}
 
 	tree := hamt.NewTree(dest)
-	root, err := tree.Insert(ctx, "", AffinityKey("", rootMeta.FileID), rootMeta.FileID, rootRef)
+	root, err := insertCommit(ctx, tree, "", "", rootMeta.FileID, rootRef)
 	if err != nil {
 		t.Fatalf("insert root: %v", err)
 	}
-	root, err = tree.Insert(ctx, root, AffinityKey(rootMeta.FileID, childMeta.FileID), childMeta.FileID, childRef)
+	root, err = insertCommit(ctx, tree, root, rootMeta.FileID, childMeta.FileID, childRef)
 	if err != nil {
 		t.Fatalf("insert child: %v", err)
 	}

@@ -96,13 +96,13 @@ func TestTreeMatchesMapModel(t *testing.T) {
 
 				if rng.Intn(100) < 65 {
 					value := fmt.Sprintf("filemeta/v-%d-%d", i, rng.Intn(1000))
-					root, err = tree.Insert(ctx, root, routingKey(parentID, fileID), fileID, value)
+					root, err = insertCommit(tree, root, routingKey(parentID, fileID), fileID, value)
 					if err != nil {
 						t.Fatalf("op %d: Insert %s: %v", i, fileID, err)
 					}
 					m.put(parentID, fileID, value)
 				} else {
-					root, err = tree.Delete(ctx, root, routingKey(parentID, fileID), fileID)
+					root, err = deleteCommit(tree, root, routingKey(parentID, fileID), fileID)
 					if err != nil {
 						t.Fatalf("op %d: Delete %s: %v", i, fileID, err)
 					}

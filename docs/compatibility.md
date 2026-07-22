@@ -209,10 +209,22 @@ Each fixture needs a `manifest.json`:
 `TestCompatibilityDocListsEveryFixture` fails if a fixture is not named in the
 table below, so the written guarantee and the enforced one cannot drift apart.
 
-Generate fixtures with a neutral identity — a container with a fixed hostname
-and generic paths. A repository records the hostname and source path of the
-machine that wrote it, inside encrypted metadata that the fixture's published
-password makes readable, and that content is invisible in review.
+Generate fixtures with a **neutral identity**. A repository records the hostname
+and source path of the machine that wrote it, inside encrypted metadata that the
+fixture's published password makes readable — so a fixture generated on a
+workstation publishes a developer's machine name, invisibly to review.
+
+Either route works, since both leave the on-disk format untouched:
+
+- a container with a fixed hostname (`docker run --hostname fixture-host`) and
+  paths under a generic root, which needs no code changes at all; or
+- a throwaway worktree at the tag with the `os.Hostname()` call sites stubbed to
+  a fixed value, which is what `legacy-repo-v1.14.0` used. Those are identity
+  values rather than encodings, so the format being pinned is unaffected.
+
+Whichever is used, record it in the fixture's README, and verify afterwards that
+the real hostname appears nowhere in the fixture bytes and that the decrypted
+listing shows the neutral identity.
 
 ### Guaranteed baselines
 

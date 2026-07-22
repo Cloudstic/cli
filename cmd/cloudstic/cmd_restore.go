@@ -17,6 +17,7 @@ type restoreArgs struct {
 	format      string
 	dryRun      bool
 	pathFilter  string
+	noVerify    bool
 	snapshotRef string
 }
 
@@ -31,6 +32,7 @@ func declareRestoreArgs(g *globalFlags) (*restoreArgs, commandInput) {
 			boolFlag(&a.dryRun, "dry-run", false, "Show what would be restored without writing output"),
 			stringFlag(&a.pathFilter, "path", "", "Restore only the given file or subtree (e.g. Documents/report.pdf or Documents/)",
 				withPlaceholder("<path>")),
+			boolFlag(&a.noVerify, "no-verify", false, "Skip the content-hash check on each restored file (not recommended)"),
 		},
 		positionals: []positionalSpec{optionalPositional(&a.snapshotRef, "snapshot ID", "latest")},
 	}
@@ -106,6 +108,9 @@ func buildRestoreOpts(a *restoreArgs) []cloudstic.RestoreOption {
 	}
 	if a.pathFilter != "" {
 		restoreOpts = append(restoreOpts, engine.WithRestorePath(a.pathFilter))
+	}
+	if a.noVerify {
+		restoreOpts = append(restoreOpts, engine.WithRestoreNoVerify())
 	}
 	return restoreOpts
 }

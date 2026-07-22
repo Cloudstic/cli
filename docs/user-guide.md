@@ -851,8 +851,21 @@ cloudstic restore -dry-run
 | `-format` | auto | Restore format: `zip` or `dir` (auto-detected from `-output` when omitted) |
 | `-path` | | Restore only the given file or subtree. Use a trailing `/` to select an entire directory (e.g. `Documents/`). Without a trailing slash, the exact file path is matched (e.g. `Documents/report.pdf`). |
 | `-dry-run` | `false` | Show what would be restored without writing output |
+| `-no-verify` | `false` | Skip the content-hash check on each restored file (not recommended) |
 
 The snapshot ID is a positional argument (defaults to latest if omitted).
+
+**Integrity verification.** Every restored file is hashed as it is written and
+compared against the content hash recorded when the snapshot was taken. If they
+disagree — because an object was corrupted, truncated, or replaced in the
+storage backend — that file is reported as an error and **removed**, so a
+known-bad file is never left behind under its original name. The rest of the
+restore continues, and the command exits non-zero.
+
+`-no-verify` disables this. It exists as an escape hatch for the rare case where
+a snapshot records a hash that disagrees with its own content, so that the data
+can still be recovered; in ZIP mode a failed entry cannot be retracted from the
+archive, so treat an archive that reported errors as suspect.
 
 > **Locking:** `restore` always acquires a **shared lock** at the start of the run (including `-dry-run`). The lock is released when the command exits.
 

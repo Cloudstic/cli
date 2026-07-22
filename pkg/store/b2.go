@@ -124,6 +124,33 @@ func (s *B2Store) Get(ctx context.Context, key string) ([]byte, error) {
 	return io.ReadAll(r)
 }
 
+// GetRange implements RangeGetter using a B2 ranged download, so a caller
+// reading a packfile footer transfers a few hundred bytes rather than the whole
+// object.
+func (s *B2Store) GetRange(ctx context.Context, key string, offset, length int64) ([]byte, error) {
+	if offset < 0 || length < 0 {
+		return nil, fmt.Errorf("invalid range %d+%d for %s", offset, length, key)
+	}
+	if length == 0 {
+		return []byte{}, nil
+	}
+
+	ctx, cancel := s.opCtx(ctx)
+	defer cancel()
+
+	obj := s.bucket.Object(s.key(key))
+	r := obj.NewRangeReader(ctx, offset, length)
+	defer func() { _ = r.Close() }()
+
+	// Short reads mean the object ended early; the caller asked for bytes that
+	// are not there, which is an error rather than a truncated slice.
+	buf := make([]byte, length)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return nil, fmt.Errorf("read %s at %d+%d: %w", key, offset, length, err)
+	}
+	return buf, nil
+}
+
 func (s *B2Store) Exists(ctx context.Context, key string) (bool, error) {
 	ctx, cancel := s.opCtx(ctx)
 	defer cancel()

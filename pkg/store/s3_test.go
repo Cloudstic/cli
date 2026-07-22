@@ -158,6 +158,12 @@ func TestS3Store(t *testing.T) {
 	if exists {
 		t.Fatalf("Expected key to be deleted")
 	}
+
+	// Ranged reads are what let PackStore fetch a footer without pulling the
+	// whole packfile, so hold S3 to the same contract as every other backend.
+	t.Run("RangeGetter", func(t *testing.T) {
+		assertRangeGetterConformance(t, store)
+	})
 }
 
 func TestWithS3Prefix_NormalizesPrefix(t *testing.T) {

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 )
 
 // ObjectStore is the interface for content-addressable object storage.
@@ -55,4 +56,11 @@ func GetConcurrencyHint(s ObjectStore, defaultConcurrency int) int {
 		}
 	}
 	return defaultConcurrency
+}
+
+// httpRangeHeader renders an inclusive byte range for backends that speak HTTP
+// range requests. The end offset is inclusive, which is the classic off-by-one
+// in this header.
+func httpRangeHeader(offset, length int64) string {
+	return fmt.Sprintf("bytes=%d-%d", offset, offset+length-1)
 }

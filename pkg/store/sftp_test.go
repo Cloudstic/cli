@@ -203,4 +203,10 @@ func TestSFTPStore(t *testing.T) {
 	if exists {
 		t.Fatalf("Expected key to be deleted")
 	}
+
+	// Ranged reads are what let PackStore fetch a footer without pulling the
+	// whole packfile, so hold SFTP to the same contract as every other backend.
+	t.Run("RangeGetter", func(t *testing.T) {
+		assertRangeGetterConformance(t, st)
+	})
 }

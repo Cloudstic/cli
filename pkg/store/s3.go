@@ -180,6 +180,37 @@ func (s *S3Store) Get(ctx context.Context, key string) ([]byte, error) {
 	return io.ReadAll(out.Body)
 }
 
+// GetRange implements RangeGetter using an HTTP range request, so a caller
+// reading a packfile footer transfers a few hundred bytes instead of the whole
+// 8 MB object.
+func (s *S3Store) GetRange(ctx context.Context, key string, offset, length int64) ([]byte, error) {
+	if offset < 0 || length < 0 {
+		return nil, fmt.Errorf("invalid range %d+%d for %s", offset, length, key)
+	}
+	if length == 0 {
+		return []byte{}, nil
+	}
+
+	fullKey := s.key(key)
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucketName),
+		Key:    aws.String(fullKey),
+		Range:  aws.String(httpRangeHeader(offset, length)),
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = out.Body.Close() }()
+
+	// A short read means the object ended early: the caller asked for bytes
+	// that are not there, which must be an error rather than a truncated slice.
+	buf := make([]byte, length)
+	if _, err := io.ReadFull(out.Body, buf); err != nil {
+		return nil, fmt.Errorf("read %s at %d+%d: %w", key, offset, length, err)
+	}
+	return buf, nil
+}
+
 func (s *S3Store) Exists(ctx context.Context, key string) (bool, error) {
 	fullKey := s.key(key)
 	_, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{

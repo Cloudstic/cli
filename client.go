@@ -298,9 +298,18 @@ func NewClient(ctx context.Context, base store.ObjectStore, opts ...ClientOption
 		opt(c)
 	}
 
+	// Read the config before anything else touches the repository, whether or
+	// not a key was supplied. LoadRepoConfig carries the version gate, and
+	// gating only the key-resolution path would let a caller bypass it by
+	// passing WithEncryptionKey.
+	cfg, err := LoadRepoConfig(ctx, base)
+	if err != nil {
+		return nil, err
+	}
+
 	// Auto-detect encryption from the repo config if no explicit key is set.
 	if len(c.encryptionKey) == 0 {
-		encKey, err := c.resolveKeyFromConfig(ctx, base)
+		encKey, err := c.resolveKeyFromConfig(ctx, base, cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -352,13 +361,11 @@ func NewClient(ctx context.Context, base store.ObjectStore, opts ...ClientOption
 	return c, nil
 }
 
-// resolveKeyFromConfig reads the repo config and, if the repository is
-// encrypted, uses the Keychain to resolve the master key and derive the encryption key.
-func (c *Client) resolveKeyFromConfig(ctx context.Context, base store.ObjectStore) ([]byte, error) {
-	cfg, err := LoadRepoConfig(ctx, base)
-	if err != nil {
-		return nil, fmt.Errorf("read repo config: %w", err)
-	}
+// resolveKeyFromConfig uses the Keychain to resolve the master key and derive
+// the encryption key, for a repository the caller has already loaded the config
+// for. It takes cfg rather than re-reading it so that the version gate in
+// LoadRepoConfig runs exactly once per client, on every path.
+func (c *Client) resolveKeyFromConfig(ctx context.Context, base store.ObjectStore, cfg *RepoConfig) ([]byte, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("repository not initialized -- run 'cloudstic init' first")
 	}

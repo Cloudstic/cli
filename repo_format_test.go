@@ -187,3 +187,31 @@ func TestUpgradeRepoFormat_RefusesUnsupportedTarget(t *testing.T) {
 		t.Errorf("refused upgrade still changed the version to %d", cfg.Version)
 	}
 }
+
+// The gate must hold on every path that opens a repository, including the
+// library one. NewClient resolves the key from config only when no key was
+// supplied, so gating just that branch would let WithEncryptionKey walk past
+// the check — which is how the CLI stayed protected while the exported API did
+// not.
+func TestNewClient_RefusesNewerFormat(t *testing.T) {
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name string
+		opts []ClientOption
+	}{
+		{name: "explicit encryption key", opts: []ClientOption{WithEncryptionKey(make([]byte, 32))}},
+		{name: "key resolved from config", opts: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newFormatTestStore(t)
+			writeConfigVersion(t, s, core.MaxSupportedRepoFormat+1)
+
+			if _, err := NewClient(ctx, s, tc.opts...); err == nil {
+				t.Fatal("NewClient accepted a repository newer than this build supports")
+			} else if !strings.Contains(err.Error(), "newer than this build supports") {
+				t.Errorf("expected a format refusal, got: %v", err)
+			}
+		})
+	}
+}

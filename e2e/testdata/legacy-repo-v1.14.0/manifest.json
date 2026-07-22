@@ -1,7 +1,7 @@
 {
   "release": "v1.14.0",
   "password": "fixture-password",
-  "snapshot": "e05649fd8d4af2dc476cb4108e57d94118730d06a788fcedddd55c09cdee5456",
+  "snapshot": "b275d4848e945892b8e8b61decdb4cb71d46766de81546c00e047d583f475ea7",
   "files": {
     "doc.txt": "legacy document contents\n",
     "sub/nested.txt": "nested legacy content\n"

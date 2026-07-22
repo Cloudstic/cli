@@ -160,6 +160,9 @@ func execForgetSingle(r *runner, ctx context.Context, a *forgetArgs) int {
 	if a.prune {
 		forgetOpts = append(forgetOpts, cloudstic.WithPrune())
 	}
+	if a.dryRun {
+		forgetOpts = append(forgetOpts, cloudstic.WithDryRun())
+	}
 	if a.verbose {
 		forgetOpts = append(forgetOpts, cloudstic.WithForgetVerbose())
 	}
@@ -174,7 +177,11 @@ func execForgetSingle(r *runner, ctx context.Context, a *forgetArgs) int {
 		})
 	}
 	_, _ = fmt.Fprintln(r.out)
-	_, _ = fmt.Fprintln(r.out, "Snapshot removed.")
+	if a.dryRun {
+		_, _ = fmt.Fprintln(r.out, "Would remove snapshot (dry run; nothing was changed).")
+	} else {
+		_, _ = fmt.Fprintln(r.out, "Snapshot removed.")
+	}
 	if result.Prune != nil {
 		printPruneStats(r.out, result.Prune)
 	}

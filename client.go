@@ -40,6 +40,55 @@ func InitRepo(ctx context.Context, rawStore store.ObjectStore, opts ...InitOptio
 	return mgr.Run(ctx, opts...)
 }
 
+// UpgradeRepoFormat raises a repository's recorded format version to `to`,
+// leaving it alone if it already meets or exceeds that.
+//
+// Repositories are upgraded in place and partially: new structures are written
+// in the current format while older ones are read as they are and rewritten
+// only opportunistically. A repository is therefore a permanent mixture of
+// eras, and its recorded version is not a claim that migration finished. It is
+// the *minimum reader version*: the oldest build that can still read everything
+// the repository now contains.
+//
+// Call this from the write path that first stores something an older build
+// would misread — at the moment of that write, not on mere access. Stamping a
+// repository just because a newer binary opened it would lock older builds out
+// of data they can still read correctly, which is the same harm the version
+// gate exists to prevent.
+//
+// Nothing calls this yet: every format written today is readable by every build
+// that validates versions at all. The next change that is not will need it.
+// See docs/compatibility.md.
+func UpgradeRepoFormat(ctx context.Context, rawStore store.ObjectStore, to int) error {
+	if to > core.MaxSupportedRepoFormat {
+		return fmt.Errorf(
+			"refusing to stamp repository format %d: this build supports up to %d",
+			to, core.MaxSupportedRepoFormat,
+		)
+	}
+
+	cfg, err := LoadRepoConfig(ctx, rawStore)
+	if err != nil {
+		return err
+	}
+	if cfg == nil {
+		return fmt.Errorf("repository not initialized")
+	}
+	if cfg.Version >= to {
+		return nil
+	}
+
+	cfg.Version = to
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal repo config: %w", err)
+	}
+	if err := rawStore.Put(ctx, "config", data); err != nil {
+		return fmt.Errorf("write repo config: %w", err)
+	}
+	return nil
+}
+
 // requireEncryptedRepo loads the repository config and returns an error if
 // the repository has not been initialized or does not use encryption.
 func requireEncryptedRepo(ctx context.Context, rawStore store.ObjectStore) error {
@@ -131,6 +180,22 @@ func LoadRepoConfig(ctx context.Context, rawStore store.ObjectStore) (*RepoConfi
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse repo config: %w", err)
 	}
+
+	// Refuse a repository written by a newer build rather than operating on a
+	// format we only partly understand. Every path that opens a repository
+	// funnels through here, so this is the one gate that has to hold.
+	//
+	// A version we do not recognise means indexes or objects may be encoded in
+	// ways we would misread — and misreading an index as empty is how a prune
+	// deletes a live repository. Failing here is the safe outcome.
+	if cfg.Version > core.MaxSupportedRepoFormat {
+		return nil, fmt.Errorf(
+			"repository format version %d is newer than this build supports (up to %d): "+
+				"upgrade cloudstic to work with this repository",
+			cfg.Version, core.MaxSupportedRepoFormat,
+		)
+	}
+
 	return &cfg, nil
 }
 
@@ -233,9 +298,18 @@ func NewClient(ctx context.Context, base store.ObjectStore, opts ...ClientOption
 		opt(c)
 	}
 
+	// Read the config before anything else touches the repository, whether or
+	// not a key was supplied. LoadRepoConfig carries the version gate, and
+	// gating only the key-resolution path would let a caller bypass it by
+	// passing WithEncryptionKey.
+	cfg, err := LoadRepoConfig(ctx, base)
+	if err != nil {
+		return nil, err
+	}
+
 	// Auto-detect encryption from the repo config if no explicit key is set.
 	if len(c.encryptionKey) == 0 {
-		encKey, err := c.resolveKeyFromConfig(ctx, base)
+		encKey, err := c.resolveKeyFromConfig(ctx, base, cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -287,13 +361,11 @@ func NewClient(ctx context.Context, base store.ObjectStore, opts ...ClientOption
 	return c, nil
 }
 
-// resolveKeyFromConfig reads the repo config and, if the repository is
-// encrypted, uses the Keychain to resolve the master key and derive the encryption key.
-func (c *Client) resolveKeyFromConfig(ctx context.Context, base store.ObjectStore) ([]byte, error) {
-	cfg, err := LoadRepoConfig(ctx, base)
-	if err != nil {
-		return nil, fmt.Errorf("read repo config: %w", err)
-	}
+// resolveKeyFromConfig uses the Keychain to resolve the master key and derive
+// the encryption key, for a repository the caller has already loaded the config
+// for. It takes cfg rather than re-reading it so that the version gate in
+// LoadRepoConfig runs exactly once per client, on every path.
+func (c *Client) resolveKeyFromConfig(ctx context.Context, base store.ObjectStore, cfg *RepoConfig) ([]byte, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("repository not initialized -- run 'cloudstic init' first")
 	}

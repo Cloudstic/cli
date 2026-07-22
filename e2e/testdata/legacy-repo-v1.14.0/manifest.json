@@ -1,0 +1,11 @@
+{
+  "release": "v1.14.0",
+  "password": "fixture-password",
+  "snapshot": "e05649fd8d4af2dc476cb4108e57d94118730d06a788fcedddd55c09cdee5456",
+  "files": {
+    "doc.txt": "legacy document contents\n",
+    "sub/nested.txt": "nested legacy content\n"
+  },
+  "sealed_index": false,
+  "notes": "Plaintext index/packs, footerless packfile, and index/latest stored inside the pack. Predates RFC 0018 footers and pack index sealing."
+}

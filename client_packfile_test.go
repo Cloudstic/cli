@@ -49,17 +49,24 @@ func newPackfileClient(t *testing.T, dir string) *Client {
 	return client
 }
 
-// writeRepoConfig writes the repository marker directly. Init proper resolves
-// the master key through key slots; these tests supply it outright, which is
-// the same shortcut client_test.go takes for its encryption coverage.
-func writeRepoConfig(t *testing.T, client *Client) {
+// writeRepoConfig writes the repository marker the way init does: unencrypted,
+// straight to the backing store. Init proper resolves the master key through
+// key slots; these tests supply it outright.
+//
+// It must not go through the client chain — EncryptedStore would seal it, and
+// the marker has to be readable before any key is available.
+func writeRepoConfig(t *testing.T, dir string) {
 	t.Helper()
-	cfg := core.RepoConfig{Version: 1, Created: "2026-01-01T00:00:00Z", Encrypted: true}
+	base, err := store.NewLocalStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := core.RepoConfig{Version: core.RepoFormatVersion, Created: "2026-01-01T00:00:00Z", Encrypted: true}
 	data, err := json.Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.Store().Put(context.Background(), "config", data); err != nil {
+	if err := base.Put(context.Background(), "config", data); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 }
@@ -105,8 +112,8 @@ func TestClient_PackfileBackupRestoreRoundTrip(t *testing.T) {
 	}
 	writeSourceTree(t, sourceDir, files)
 
+	writeRepoConfig(t, storeDir)
 	client := newPackfileClient(t, storeDir)
-	writeRepoConfig(t, client)
 	if _, err := client.Backup(ctx, source.NewLocalSource(sourceDir)); err != nil {
 		t.Fatalf("backup: %v", err)
 	}

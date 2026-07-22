@@ -167,7 +167,7 @@ func (m *InitManager) addRecoverySlot(ctx context.Context, cfg initConfig) (stri
 
 func (m *InitManager) writeRepoConfig(ctx context.Context, encrypted bool) error {
 	cfg := core.RepoConfig{
-		Version:   1,
+		Version:   core.RepoFormatVersion,
 		Created:   time.Now().UTC().Format(time.RFC3339),
 		Encrypted: encrypted,
 	}

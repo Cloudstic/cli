@@ -9,6 +9,7 @@ import (
 
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/ui"
+	"github.com/cloudstic/cli/pkg/keychain"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/moby/term"
 )
@@ -118,10 +119,17 @@ func runKeyPasswd(r *runner, ctx context.Context, a *keyPasswdArgs) int {
 
 type addRecoveryKeyArgs struct {
 	*globalFlags
+	label string
+	force bool
 }
 
 func declareAddRecoveryKeyArgs(g *globalFlags) (*addRecoveryKeyArgs, commandInput) {
-	return &addRecoveryKeyArgs{globalFlags: g}, commandInput{}
+	a := &addRecoveryKeyArgs{globalFlags: g}
+	return a, commandInput{flags: []flagSpec{
+		stringFlag(&a.label, "label", keychain.DefaultSlotLabel, "Label for the new recovery key slot",
+			withPlaceholder("<name>")),
+		boolFlag(&a.force, "force", false, "Replace an existing slot with the same label (invalidates its recovery key)"),
+	}}
 }
 
 func runAddRecoveryKey(r *runner, ctx context.Context, a *addRecoveryKeyArgs) int {
@@ -139,7 +147,15 @@ func runAddRecoveryKey(r *runner, ctx context.Context, a *addRecoveryKeyArgs) in
 		return r.fail("%v", err)
 	}
 
-	mnemonic, err := cloudstic.AddRecoveryKey(ctx, raw, kc)
+	mnemonic, err := cloudstic.AddRecoveryKey(ctx, raw, kc, cloudstic.AddRecoveryKeyOptions{
+		Label:   a.label,
+		Replace: a.force,
+	})
+	var exists *keychain.SlotExistsError
+	if errors.As(err, &exists) {
+		return r.fail("%v.\nReplacing it invalidates the recovery key it was issued for.\n"+
+			"Use -label <name> to add a second recovery key, or -force to replace this one.", err)
+	}
 	if err != nil {
 		return r.fail("Failed to create recovery key: %v", err)
 	}

@@ -1,0 +1,32 @@
+# A recovery mnemonic is a last-resort credential: adding one must never
+# silently invalidate a mnemonic the user already wrote down.
+
+exec cloudstic init -store local:$WORK/repo -password hunter2 -no-prompt
+stderr 'Repository initialized \(encrypted: true\)'
+
+exec cloudstic key add-recovery -store local:$WORK/repo -password hunter2 -no-prompt
+stderr 'Recovery key slot has been added'
+
+# A second run with the same label refuses instead of overwriting.
+! exec cloudstic key add-recovery -store local:$WORK/repo -password hunter2 -no-prompt
+stderr 'already exists'
+stderr '-label'
+stderr '-force'
+
+# The existing slot is untouched.
+exec cloudstic key list -store local:$WORK/repo -no-prompt
+stdout 'recovery *. default'
+
+# A different label adds a second recovery key alongside the first.
+exec cloudstic key add-recovery -store local:$WORK/repo -password hunter2 -label offsite -no-prompt
+stderr 'Recovery key slot has been added'
+exec cloudstic key list -store local:$WORK/repo -no-prompt
+stdout 'recovery *. offsite'
+
+# -force replaces a slot deliberately.
+exec cloudstic key add-recovery -store local:$WORK/repo -password hunter2 -force -no-prompt
+stderr 'Recovery key slot has been added'
+
+# An invalid label is rejected before anything is written.
+! exec cloudstic key add-recovery -store local:$WORK/repo -password hunter2 -label 'bad/label' -no-prompt
+stderr 'invalid key slot label'

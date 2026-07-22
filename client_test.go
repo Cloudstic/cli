@@ -180,7 +180,7 @@ func TestAddRecoveryKey(t *testing.T) {
 		t.Fatalf("InitRepo: %v", err)
 	}
 
-	mnemonic, err := AddRecoveryKey(ctx, s, keychain.Chain{keychain.WithPassword("test-pass")})
+	mnemonic, err := AddRecoveryKey(ctx, s, keychain.Chain{keychain.WithPassword("test-pass")}, AddRecoveryKeyOptions{})
 	if err != nil {
 		t.Fatalf("AddRecoveryKey: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestAddRecoveryKey_WrongCredentials(t *testing.T) {
 	if _, err := InitRepo(ctx, s, WithInitCredentials(keychain.Chain{keychain.WithPassword("correct-pass")})); err != nil {
 		t.Fatalf("InitRepo: %v", err)
 	}
-	if _, err := AddRecoveryKey(ctx, s, keychain.Chain{keychain.WithPassword("wrong-pass")}); err == nil {
+	if _, err := AddRecoveryKey(ctx, s, keychain.Chain{keychain.WithPassword("wrong-pass")}, AddRecoveryKeyOptions{}); err == nil {
 		t.Error("expected error with wrong credentials")
 	}
 }

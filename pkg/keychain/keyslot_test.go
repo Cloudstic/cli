@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -270,7 +271,7 @@ func TestAddAndOpenRecoveryKey(t *testing.T) {
 		t.Fatalf("Resolve with platform key: %v", err)
 	}
 
-	mnemonic, err := AddRecoverySlot(context.Background(), inner, masterKey)
+	mnemonic, err := AddRecoverySlot(context.Background(), inner, masterKey, "", false)
 	if err != nil {
 		t.Fatalf("AddRecoverySlot: %v", err)
 	}
@@ -311,7 +312,7 @@ func TestOpenWithWrongRecoveryKey(t *testing.T) {
 
 	slots, _ := LoadKeySlots(context.Background(), inner)
 	mk, _ := (Chain{WithPlatformKey(platformKey)}).Resolve(context.Background(), slots)
-	_, _ = AddRecoverySlot(context.Background(), inner, mk)
+	_, _ = AddRecoverySlot(context.Background(), inner, mk, "", false)
 
 	slots, _ = LoadKeySlots(context.Background(), inner)
 
@@ -378,5 +379,118 @@ func TestHasKeySlots(t *testing.T) {
 	_, _ = initEncryptionKey(inner, key, "")
 	if !HasKeySlots(context.Background(), inner) {
 		t.Fatal("store should have key slots after init")
+	}
+}
+
+// setupRecoveryTestStore returns a store with a platform slot and its master key.
+func setupRecoveryTestStore(t *testing.T) (*mockStore, []byte) {
+	t.Helper()
+	inner := newMemStore()
+	platformKey, _ := crypto.GenerateKey()
+	if _, err := initEncryptionKey(inner, platformKey, ""); err != nil {
+		t.Fatal(err)
+	}
+	slots, _ := LoadKeySlots(context.Background(), inner)
+	masterKey, err := (Chain{WithPlatformKey(platformKey)}).Resolve(context.Background(), slots)
+	if err != nil {
+		t.Fatalf("Resolve with platform key: %v", err)
+	}
+	return inner, masterKey
+}
+
+func TestAddRecoverySlot_RefusesToOverwriteExistingSlot(t *testing.T) {
+	ctx := context.Background()
+	inner, masterKey := setupRecoveryTestStore(t)
+
+	first, err := AddRecoverySlot(ctx, inner, masterKey, "", false)
+	if err != nil {
+		t.Fatalf("AddRecoverySlot: %v", err)
+	}
+
+	_, err = AddRecoverySlot(ctx, inner, masterKey, "", false)
+	var exists *SlotExistsError
+	if !errors.As(err, &exists) {
+		t.Fatalf("expected *SlotExistsError, got %v", err)
+	}
+	if exists.Label != DefaultSlotLabel || exists.SlotType != SlotTypeRecovery {
+		t.Fatalf("unexpected error detail: %+v", exists)
+	}
+
+	// The first mnemonic must still open the repository.
+	slots, _ := LoadKeySlots(ctx, inner)
+	if _, err := (Chain{WithRecoveryKey(first)}).Resolve(ctx, slots); err != nil {
+		t.Fatalf("first mnemonic no longer resolves: %v", err)
+	}
+}
+
+func TestAddRecoverySlot_DistinctLabelsCoexist(t *testing.T) {
+	ctx := context.Background()
+	inner, masterKey := setupRecoveryTestStore(t)
+
+	first, err := AddRecoverySlot(ctx, inner, masterKey, "", false)
+	if err != nil {
+		t.Fatalf("AddRecoverySlot default: %v", err)
+	}
+	second, err := AddRecoverySlot(ctx, inner, masterKey, "offsite", false)
+	if err != nil {
+		t.Fatalf("AddRecoverySlot offsite: %v", err)
+	}
+	if first == second {
+		t.Fatal("expected two distinct mnemonics")
+	}
+
+	slots, _ := LoadKeySlots(ctx, inner)
+	for _, m := range []string{first, second} {
+		if _, err := (Chain{WithRecoveryKey(m)}).Resolve(ctx, slots); err != nil {
+			t.Fatalf("mnemonic does not resolve: %v", err)
+		}
+	}
+}
+
+func TestAddRecoverySlot_ReplaceInvalidatesPreviousMnemonic(t *testing.T) {
+	ctx := context.Background()
+	inner, masterKey := setupRecoveryTestStore(t)
+
+	first, err := AddRecoverySlot(ctx, inner, masterKey, "", false)
+	if err != nil {
+		t.Fatalf("AddRecoverySlot: %v", err)
+	}
+	second, err := AddRecoverySlot(ctx, inner, masterKey, "", true)
+	if err != nil {
+		t.Fatalf("AddRecoverySlot replace: %v", err)
+	}
+
+	slots, _ := LoadKeySlots(ctx, inner)
+	if _, err := (Chain{WithRecoveryKey(second)}).Resolve(ctx, slots); err != nil {
+		t.Fatalf("replacement mnemonic does not resolve: %v", err)
+	}
+	if _, err := (Chain{WithRecoveryKey(first)}).Resolve(ctx, slots); err == nil {
+		t.Fatal("expected the replaced mnemonic to stop resolving")
+	}
+}
+
+func TestAddRecoverySlot_RejectsInvalidLabel(t *testing.T) {
+	ctx := context.Background()
+	inner, masterKey := setupRecoveryTestStore(t)
+
+	for _, label := range []string{"../escape", "with space", "sub/dir", "."} {
+		if _, err := AddRecoverySlot(ctx, inner, masterKey, label, false); err == nil {
+			t.Fatalf("label %q: expected an error", label)
+		}
+	}
+	for key := range inner.data {
+		if strings.Contains(key, "escape") || strings.Contains(key, "dir") {
+			t.Fatalf("invalid label produced object key %q", key)
+		}
+	}
+}
+
+func TestNormalizeSlotLabel(t *testing.T) {
+	got, err := NormalizeSlotLabel("  ")
+	if err != nil || got != DefaultSlotLabel {
+		t.Fatalf("blank label: got %q, %v", got, err)
+	}
+	if got, err := NormalizeSlotLabel("offsite"); err != nil || got != "offsite" {
+		t.Fatalf("plain label: got %q, %v", got, err)
 	}
 }

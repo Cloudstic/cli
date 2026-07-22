@@ -311,8 +311,14 @@ cloudstic init --encryption-password <pw> --recovery
 Or add a recovery key to an existing repository:
 
 ```
-cloudstic add-recovery-key --encryption-password <pw>
+cloudstic key add-recovery -password <pw>
 ```
+
+Recovery slots are addressed as `keys/recovery-<label>`, so a repository can
+hold several of them and every issued mnemonic stays valid. `key add-recovery`
+refuses to overwrite an existing slot, since that would silently invalidate the
+mnemonic the user wrote down; pass `-label <name>` to add another key, or
+`-force` to replace one.
 
 Open a repository using the recovery key:
 

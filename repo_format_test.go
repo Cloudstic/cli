@@ -368,3 +368,87 @@ func TestWritesStampTheFormatButReadsDoNot(t *testing.T) {
 		t.Errorf("after a write the format is %d, want %d", cfg.Version, core.RepoFormatVersion)
 	}
 }
+
+// Adopting an existing repository rewrites its marker, and it reads that marker
+// directly rather than through LoadRepoConfig — so the version gate has to be
+// applied there too. Without it, `init --adopt-slots` on a repository this build
+// cannot read would stamp it back down to a version this build understands,
+// while leaving data it does not: a repository that failed safely becomes one
+// that is silently misread.
+func TestInitAdoptRefusesNewerFormat(t *testing.T) {
+	ctx := context.Background()
+	s := newFormatTestStore(t)
+	if _, err := InitRepo(ctx, s, WithInitNoEncryption()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	writeConfigVersion(t, s, core.MaxSupportedRepoFormat+1)
+
+	_, err := InitRepo(ctx, s, WithInitNoEncryption(), WithInitAdoptSlots())
+	if err == nil {
+		t.Fatal("adopting a repository newer than this build supports should be refused")
+	}
+	if !strings.Contains(err.Error(), "newer than this build supports") {
+		t.Errorf("expected a format refusal, got: %v", err)
+	}
+
+	// And the marker must be untouched by the refusal.
+	data, err := s.Get(ctx, "config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg core.RepoConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Version != core.MaxSupportedRepoFormat+1 {
+		t.Errorf("refused adopt changed the version to %d", cfg.Version)
+	}
+}
+
+// The recorded format is a floor. Even a supported adopt must not walk it back,
+// which it would if it simply stamped the build's own version.
+func TestInitAdoptNeverLowersTheFormat(t *testing.T) {
+	ctx := context.Background()
+	s := newFormatTestStore(t)
+	if _, err := InitRepo(ctx, s, WithInitNoEncryption()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	// A repository already at the highest version this build can read.
+	writeConfigVersion(t, s, core.MaxSupportedRepoFormat)
+	rewindEncrypted(t, s, false)
+
+	if _, err := InitRepo(ctx, s, WithInitNoEncryption(), WithInitAdoptSlots()); err != nil {
+		t.Fatalf("adopt: %v", err)
+	}
+
+	cfg, err := LoadRepoConfig(ctx, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Version < core.MaxSupportedRepoFormat {
+		t.Errorf("adopt lowered the recorded format to %d", cfg.Version)
+	}
+}
+
+// rewindEncrypted flips the encrypted flag without touching anything else.
+func rewindEncrypted(t *testing.T, s store.ObjectStore, encrypted bool) {
+	t.Helper()
+	ctx := context.Background()
+
+	data, err := s.Get(ctx, "config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg core.RepoConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Encrypted = encrypted
+	out, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Put(ctx, "config", out); err != nil {
+		t.Fatal(err)
+	}
+}

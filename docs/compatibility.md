@@ -88,6 +88,21 @@ build could not read may still refuse to open on one, because a newer build
 wrote to it. That is a lockout the user can fix by upgrading, traded against a
 silent divergence they cannot see.
 
+### The version is a floor
+
+`UpgradeRepoFormat` raises the recorded version and never lowers it, and the
+gate keeps an older build from opening — and therefore from writing to — a
+repository it does not understand.
+
+`init --adopt-slots` is the exception that needs guarding explicitly. It rewrites
+the marker, and it reads the existing one directly rather than through
+`LoadRepoConfig`, so the gate does not apply on that path. Left alone, adopting a
+repository from a newer build would stamp it back down to a version this build
+understands while leaving data it does not — turning a repository that fails
+safely into one that is silently misread. Adoption therefore refuses a format
+above `MaxSupportedRepoFormat`, and never writes a version lower than the one
+already recorded.
+
 ### Writes stamp, reads do not
 
 The stamp is tied to mutation — `backup`, `prune`, `forget` — never to opening a

@@ -171,6 +171,35 @@ func (s *SFTPStore) Get(_ context.Context, key string) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
+// GetRange implements RangeGetter by seeking, which sftp supports natively, so
+// a caller reading a packfile footer does not transfer the whole object.
+func (s *SFTPStore) GetRange(_ context.Context, key string, offset, length int64) ([]byte, error) {
+	if offset < 0 || length < 0 {
+		return nil, fmt.Errorf("invalid range %d+%d for %s", offset, length, key)
+	}
+	if length == 0 {
+		return []byte{}, nil
+	}
+
+	f, err := s.client.Open(s.key(key))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("seek %s to %d: %w", key, offset, err)
+	}
+
+	// Short reads mean the object ended early; the caller asked for bytes that
+	// are not there, which is an error rather than a truncated slice.
+	buf := make([]byte, length)
+	if _, err := io.ReadFull(f, buf); err != nil {
+		return nil, fmt.Errorf("read %s at %d+%d: %w", key, offset, length, err)
+	}
+	return buf, nil
+}
+
 func (s *SFTPStore) Exists(_ context.Context, key string) (bool, error) {
 	_, err := s.client.Stat(s.key(key))
 	if err == nil {

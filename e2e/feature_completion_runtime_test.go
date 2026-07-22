@@ -107,13 +107,28 @@ func newCompletionRuntime(t *testing.T) completionRuntime {
 	return completionRuntime{bin: bin, env: env}
 }
 
+// pathPrelude re-prepends the freshly built binary's directory to PATH from
+// inside the script. The generated completion scripts call the runtime query
+// helper as a bare `cloudstic`, so any cloudstic installed elsewhere on PATH
+// would answer instead of the build under test — and an older one silently
+// returns nothing for `__complete`. Shell startup files (notably macOS'
+// path_helper) reorder PATH, so setting it in the process environment alone is
+// not enough to guarantee the build under test wins.
+func (rt completionRuntime) pathPrelude(shell string) string {
+	dir := shellQuote(filepath.Dir(rt.bin))
+	if shell == "fish" {
+		return "set -gx PATH " + dir + " $PATH\n"
+	}
+	return "export PATH=" + dir + "${PATH:+:$PATH}\n"
+}
+
 func (rt completionRuntime) runBash(t *testing.T, words []string) string {
 	t.Helper()
 	var quoted []string
 	for _, word := range words {
 		quoted = append(quoted, shellQuote(word))
 	}
-	return runShell(t, "bash", rt.env, `
+	return runShell(t, "bash", rt.env, rt.pathPrelude("bash")+`
 completion_file="$(mktemp)"
 "`+rt.bin+`" completion bash > "$completion_file"
 source "$completion_file"
@@ -132,7 +147,7 @@ printf '%s\n' "${COMPREPLY[@]}"
 
 func (rt completionRuntime) runFish(t *testing.T, line string) string {
 	t.Helper()
-	return runShell(t, "fish", rt.env, `
+	return runShell(t, "fish", rt.env, rt.pathPrelude("fish")+`
 source ("`+rt.bin+`" completion fish | psub)
 complete --do-complete `+shellQuote(line)+`
 `)
@@ -182,7 +197,7 @@ compadd() {
 _cloudstic_store_prefixes
 `
 	}
-	return runShell(t, "zsh", append(append([]string{}, rt.env...), zshHomeEnv(t)...), `
+	return runShell(t, "zsh", append(append([]string{}, rt.env...), zshHomeEnv(t)...), rt.pathPrelude("zsh")+`
 autoload -Uz compinit
 compinit -i -d "$HOME/.zcompdump"
 source <("`+rt.bin+`" completion zsh)
@@ -221,7 +236,10 @@ func assertCompletionContains(t *testing.T, out string, values ...string) {
 
 func runShell(t *testing.T, shell string, env []string, script string) string {
 	t.Helper()
-	cmd := exec.Command(shell, "-lc", script)
+	// Deliberately not a login shell: startup files are user-specific (and on
+	// macOS path_helper rewrites PATH), which makes the harness depend on the
+	// developer's machine rather than on the build under test.
+	cmd := exec.Command(shell, "-c", script)
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	if err != nil {

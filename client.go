@@ -56,8 +56,9 @@ func InitRepo(ctx context.Context, rawStore store.ObjectStore, opts ...InitOptio
 // of data they can still read correctly, which is the same harm the version
 // gate exists to prevent.
 //
-// Nothing calls this yet: every format written today is readable by every build
-// that validates versions at all. The next change that is not will need it.
+// It is called after a successful mutation (backup, prune, forget) and from the
+// pack index seal path, so a repository written by this build tells other
+// machines sharing it to upgrade. It is deliberately not called on read.
 // See docs/compatibility.md.
 func UpgradeRepoFormat(ctx context.Context, rawStore store.ObjectStore, to int) error {
 	if to > core.MaxSupportedRepoFormat {
@@ -280,7 +281,11 @@ func WithPackfile(enable bool) ClientOption {
 
 // Client is the high-level interface for using Cloudstic as a library.
 type Client struct {
-	store          store.ObjectStore
+	store store.ObjectStore
+	// base is the raw, undecorated store. Kept so repository-level markers such
+	// as the format version can be written without passing through encryption
+	// or packing, which is where init writes them too.
+	base           store.ObjectStore
 	storedMeter    *store.MeteredStore
 	encryptionKey  []byte
 	hmacKey        []byte
@@ -291,6 +296,7 @@ type Client struct {
 
 func NewClient(ctx context.Context, base store.ObjectStore, opts ...ClientOption) (*Client, error) {
 	c := &Client{
+		base:           base,
 		enablePackfile: true, // Packfile is enabled by default
 		reporter:       ui.NewNoOpReporter(),
 	}
@@ -341,6 +347,7 @@ func NewClient(ctx context.Context, base store.ObjectStore, opts ...ClientOption
 				return nil, fmt.Errorf("derive pack index key: %w", err)
 			}
 			packOpts = append(packOpts, store.WithPackIndexKey(indexKey))
+
 		}
 
 		packStore, err := store.NewPackStore(inner, packOpts...)
@@ -415,6 +422,27 @@ var (
 	WithWorkstationStoreRef = engine.WithWorkstationStoreRef
 )
 
+// stampWriteFormat raises the repository's recorded format after a successful
+// mutation, so a repository written by this build tells every other machine
+// sharing it to upgrade.
+//
+// It is deliberately tied to writes rather than to opening a repository. A read
+// that silently changed the repository — locking out a machine that was only
+// listing snapshots — would be a surprising side effect of an innocuous
+// command. "A newer build has written here" is a real signal; "a newer build
+// looked at it" is not.
+//
+// Failure is not fatal to the operation that just succeeded: the data is
+// already written, and the next mutation stamps again.
+func (c *Client) stampWriteFormat(ctx context.Context) {
+	if c.base == nil {
+		return
+	}
+	if err := UpgradeRepoFormat(ctx, c.base, core.RepoFormatVersion); err != nil {
+		log.Debugf("could not stamp repository format: %v", err)
+	}
+}
+
 func (c *Client) Backup(ctx context.Context, src source.Source, opts ...BackupOption) (*BackupResult, error) {
 	rawMeter := store.NewMeteredStore(c.store)
 	c.storedMeter.Reset()
@@ -427,6 +455,7 @@ func (c *Client) Backup(ctx context.Context, src source.Source, opts ...BackupOp
 
 	result.BytesAddedRaw = rawMeter.BytesWritten()
 	result.BytesAddedStored = c.storedMeter.BytesWritten()
+	c.stampWriteFormat(ctx)
 	return result, nil
 }
 
@@ -525,7 +554,12 @@ var (
 
 func (c *Client) Prune(ctx context.Context, opts ...PruneOption) (*PruneResult, error) {
 	mgr := engine.NewPruneManager(c.store, c.reporter)
-	return mgr.Run(ctx, opts...)
+	result, err := mgr.Run(ctx, opts...)
+	if err != nil {
+		return nil, err
+	}
+	c.stampWriteFormat(ctx)
+	return result, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -556,7 +590,12 @@ type PolicyResult = engine.PolicyResult
 
 func (c *Client) Forget(ctx context.Context, snapshotID string, opts ...ForgetOption) (*ForgetResult, error) {
 	mgr := engine.NewForgetManager(c.store, c.reporter)
-	return mgr.Run(ctx, snapshotID, opts...)
+	result, err := mgr.Run(ctx, snapshotID, opts...)
+	if err != nil {
+		return nil, err
+	}
+	c.stampWriteFormat(ctx)
+	return result, nil
 }
 
 func (c *Client) ForgetPolicy(ctx context.Context, opts ...ForgetOption) (*PolicyResult, error) {

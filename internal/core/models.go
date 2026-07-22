@@ -135,8 +135,23 @@ type SnapshotSummary struct {
 // builds. Do not raise them for a change earlier builds can still read: a
 // needless bump locks users out of their own data for no benefit.
 const (
-	RepoFormatVersion      = 1
-	MaxSupportedRepoFormat = 1
+	// RepoFormatVersion is stamped into every repository this build creates.
+	//
+	// It tracks MaxSupportedRepoFormat deliberately. The version is not only a
+	// claim about the bytes currently present — it is the signal that tells
+	// other machines sharing this repository to upgrade. A heterogeneous fleet
+	// is the dangerous state, so a repository touched by a build that can seal
+	// says so, and older builds are told to catch up rather than left writing
+	// alongside it.
+	RepoFormatVersion = 2
+
+	// MaxSupportedRepoFormat is the highest version this build can read. A
+	// repository above it is refused rather than misread.
+	//
+	// 2 covers a sealed pack index. Builds before that read the sealed catalog
+	// as unparseable and, without the fixes released in v1.15.0, as empty —
+	// which is how a prune deletes a live repository.
+	MaxSupportedRepoFormat = 2
 )
 
 type RepoConfig struct {

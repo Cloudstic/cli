@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/pkg/source"
 	"github.com/cloudstic/cli/pkg/store"
 )
 
@@ -18,6 +19,30 @@ func writeConfigVersion(t *testing.T, s store.ObjectStore, version int) {
 		t.Fatal(err)
 	}
 	if err := s.Put(context.Background(), "config", data); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// rewindConfigVersion lowers the recorded format without disturbing the rest of
+// the marker, standing in for a repository created by an earlier build.
+func rewindConfigVersion(t *testing.T, s store.ObjectStore, version int) {
+	t.Helper()
+	ctx := context.Background()
+
+	data, err := s.Get(ctx, "config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg core.RepoConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Version = version
+	out, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Put(ctx, "config", out); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -213,5 +238,217 @@ func TestNewClient_RefusesNewerFormat(t *testing.T) {
 				t.Errorf("expected a format refusal, got: %v", err)
 			}
 		})
+	}
+}
+
+// A backup that seals the pack index leaves the repository unreadable by builds
+// that predate sealing, so the recorded format must have risen by the time the
+// operation returns. Sealing happens inside the flush a backup performs, so the
+// write-path stamp covers it without a separate hook.
+func TestBackupThatSealsStampsTheFormat(t *testing.T) {
+	ctx := context.Background()
+	storeDir := t.TempDir()
+	sourceDir := t.TempDir()
+	writeSourceTree(t, sourceDir, map[string]string{"a.txt": "alpha"})
+
+	writeRepoConfig(t, storeDir)
+
+	base, err := store.NewLocalStore(storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := LoadRepoConfig(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Version != core.RepoFormatVersion {
+		t.Fatalf("precondition: repository starts at %d, want %d", before.Version, core.RepoFormatVersion)
+	}
+
+	client := newPackfileClient(t, storeDir)
+	if _, err := client.Backup(ctx, source.NewLocalSource(sourceDir)); err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+
+	after, err := LoadRepoConfig(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Version != core.RepoFormatVersion {
+		t.Errorf("after sealing the format is %d, want %d", after.Version, core.RepoFormatVersion)
+	}
+
+	// And the repository it just stamped must still be one it can open.
+	if _, err := newPackfileClientOrErr(storeDir); err != nil {
+		t.Errorf("a build must be able to reopen a repository it stamped: %v", err)
+	}
+}
+
+// A repository with no encryption never seals, so it must stay at the creation
+// baseline. Stamping it would lock out builds that can read it perfectly well.
+func TestUnsealedRepositoryKeepsBaselineFormat(t *testing.T) {
+	ctx := context.Background()
+	storeDir := t.TempDir()
+	sourceDir := t.TempDir()
+	writeSourceTree(t, sourceDir, map[string]string{"a.txt": "alpha"})
+
+	base, err := store.NewLocalStore(storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InitRepo(ctx, base, WithInitNoEncryption()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	client, err := NewClient(ctx, base, WithPackfile(true))
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	if _, err := client.Backup(ctx, source.NewLocalSource(sourceDir)); err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+
+	cfg, err := LoadRepoConfig(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Version != core.RepoFormatVersion {
+		t.Errorf("an unencrypted repository was stamped %d, want %d",
+			cfg.Version, core.RepoFormatVersion)
+	}
+}
+
+// Writing to a repository created before this format tells the rest of the
+// fleet to upgrade, because a heterogeneous set of writers is the dangerous
+// state. Reading must not: a list or a restore that silently locked out another
+// machine would be a surprising side effect of an innocuous command.
+func TestWritesStampTheFormatButReadsDoNot(t *testing.T) {
+	ctx := context.Background()
+	storeDir := t.TempDir()
+	sourceDir := t.TempDir()
+	writeSourceTree(t, sourceDir, map[string]string{"a.txt": "alpha"})
+
+	base, err := store.NewLocalStore(storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InitRepo(ctx, base, WithInitNoEncryption()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	// Rewind to an older format, as a repository created by an earlier build,
+	// preserving everything else about the marker.
+	rewindConfigVersion(t, base, 1)
+
+	client, err := NewClient(ctx, base, WithPackfile(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A read must leave the recorded format alone.
+	if _, err := client.List(ctx); err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	cfg, err := LoadRepoConfig(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Version != 1 {
+		t.Errorf("a read stamped the repository to %d; reads must not mutate it", cfg.Version)
+	}
+
+	// A write must raise it.
+	if _, err := client.Backup(ctx, source.NewLocalSource(sourceDir)); err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+	cfg, err = LoadRepoConfig(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Version != core.RepoFormatVersion {
+		t.Errorf("after a write the format is %d, want %d", cfg.Version, core.RepoFormatVersion)
+	}
+}
+
+// Adopting an existing repository rewrites its marker, and it reads that marker
+// directly rather than through LoadRepoConfig — so the version gate has to be
+// applied there too. Without it, `init --adopt-slots` on a repository this build
+// cannot read would stamp it back down to a version this build understands,
+// while leaving data it does not: a repository that failed safely becomes one
+// that is silently misread.
+func TestInitAdoptRefusesNewerFormat(t *testing.T) {
+	ctx := context.Background()
+	s := newFormatTestStore(t)
+	if _, err := InitRepo(ctx, s, WithInitNoEncryption()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	writeConfigVersion(t, s, core.MaxSupportedRepoFormat+1)
+
+	_, err := InitRepo(ctx, s, WithInitNoEncryption(), WithInitAdoptSlots())
+	if err == nil {
+		t.Fatal("adopting a repository newer than this build supports should be refused")
+	}
+	if !strings.Contains(err.Error(), "newer than this build supports") {
+		t.Errorf("expected a format refusal, got: %v", err)
+	}
+
+	// And the marker must be untouched by the refusal.
+	data, err := s.Get(ctx, "config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg core.RepoConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Version != core.MaxSupportedRepoFormat+1 {
+		t.Errorf("refused adopt changed the version to %d", cfg.Version)
+	}
+}
+
+// The recorded format is a floor. Even a supported adopt must not walk it back,
+// which it would if it simply stamped the build's own version.
+func TestInitAdoptNeverLowersTheFormat(t *testing.T) {
+	ctx := context.Background()
+	s := newFormatTestStore(t)
+	if _, err := InitRepo(ctx, s, WithInitNoEncryption()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	// A repository already at the highest version this build can read.
+	writeConfigVersion(t, s, core.MaxSupportedRepoFormat)
+	rewindEncrypted(t, s, false)
+
+	if _, err := InitRepo(ctx, s, WithInitNoEncryption(), WithInitAdoptSlots()); err != nil {
+		t.Fatalf("adopt: %v", err)
+	}
+
+	cfg, err := LoadRepoConfig(ctx, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Version < core.MaxSupportedRepoFormat {
+		t.Errorf("adopt lowered the recorded format to %d", cfg.Version)
+	}
+}
+
+// rewindEncrypted flips the encrypted flag without touching anything else.
+func rewindEncrypted(t *testing.T, s store.ObjectStore, encrypted bool) {
+	t.Helper()
+	ctx := context.Background()
+
+	data, err := s.Get(ctx, "config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg core.RepoConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Encrypted = encrypted
+	out, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Put(ctx, "config", out); err != nil {
+		t.Fatal(err)
 	}
 }

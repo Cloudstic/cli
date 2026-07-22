@@ -100,8 +100,8 @@ func TestLoadRepoConfig_Unencrypted(t *testing.T) {
 	}
 	if cfg == nil {
 		t.Fatal("expected config, got nil")
-	} else if cfg.Version != 1 {
-		t.Errorf("version = %d, want 1", cfg.Version)
+	} else if cfg.Version != core.RepoFormatVersion {
+		t.Errorf("version = %d, want %d", cfg.Version, core.RepoFormatVersion)
 	} else if cfg.Encrypted {
 		t.Error("expected unencrypted config")
 	}

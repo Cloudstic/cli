@@ -98,6 +98,19 @@ func assertRestored(t *testing.T, dir string, want map[string]string) {
 	}
 }
 
+// newPackfileClientOrErr is newPackfileClient without the fatal, for tests that
+// assert a client can be constructed at all.
+func newPackfileClientOrErr(dir string) (*Client, error) {
+	base, err := store.NewLocalStore(dir)
+	if err != nil {
+		return nil, err
+	}
+	return NewClient(context.Background(), base,
+		WithEncryptionKey(packfileTestKey()),
+		WithPackfile(true),
+	)
+}
+
 // A library user backing up and restoring through the Client, with packfiles
 // and encryption on, must get their files back — and the pack index they leave
 // behind must be sealed.

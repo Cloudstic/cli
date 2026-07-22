@@ -52,7 +52,7 @@ govern it:
 
 | Constant | Meaning |
 |----------|---------|
-| `RepoFormatVersion` | The version stamped into repositories this build creates |
+| `RepoFormatVersion` | The version stamped into repositories this build creates and writes to |
 | `MaxSupportedRepoFormat` | The highest version this build will open |
 
 `LoadRepoConfig` refuses any repository whose version exceeds
@@ -64,12 +64,56 @@ stranded by a field they predate.
 
 ### When to raise the version
 
-Raise `RepoFormatVersion` and `MaxSupportedRepoFormat` together when a change
-makes a repository **unreadable or misreadable by earlier builds**.
+Raise `MaxSupportedRepoFormat` when a change makes a repository **unreadable or
+misreadable by earlier builds**, and stamp affected repositories with
+`UpgradeRepoFormat` from the write that introduces it.
 
-Do **not** raise them for a change earlier builds can still read correctly. A
+Do **not** raise it for a change earlier builds can still read correctly. A
 needless bump locks users out of their own data for no benefit, which is the
 same harm the gate exists to prevent, arriving from the other direction.
+
+`RepoFormatVersion` tracks it. Every repository this build creates is stamped at
+the current format, and every repository this build **writes to** is raised to
+it.
+
+That is a deliberate choice, and a stronger one than "record only what the bytes
+require". The version is not purely a claim about the data present — it is the
+signal that tells other machines sharing the repository to upgrade. A fleet
+running mixed versions against one repository is the dangerous state, and the
+narrower rule would leave those machines writing happily alongside each other
+until the day a format change made that fatal.
+
+The cost is accepted knowingly: a repository that contains nothing an older
+build could not read may still refuse to open on one, because a newer build
+wrote to it. That is a lockout the user can fix by upgrading, traded against a
+silent divergence they cannot see.
+
+### The version is a floor
+
+`UpgradeRepoFormat` raises the recorded version and never lowers it, and the
+gate keeps an older build from opening — and therefore from writing to — a
+repository it does not understand.
+
+`init --adopt-slots` is the exception that needs guarding explicitly. It rewrites
+the marker, and it reads the existing one directly rather than through
+`LoadRepoConfig`, so the gate does not apply on that path. Left alone, adopting a
+repository from a newer build would stamp it back down to a version this build
+understands while leaving data it does not — turning a repository that fails
+safely into one that is silently misread. Adoption therefore refuses a format
+above `MaxSupportedRepoFormat`, and never writes a version lower than the one
+already recorded.
+
+### Writes stamp, reads do not
+
+The stamp is tied to mutation — `backup`, `prune`, `forget` — never to opening a
+repository.
+
+Two reasons, one principled and one practical. A read changes nothing, so
+locking out another machine on the strength of it has no cause behind it: "a
+newer build has written here" is a real signal about divergence, "a newer build
+looked at it" is not. And `LoadRepoConfig` runs on every operation including
+`restore`, `cat`, and `ls`, so stamping there would make read-only work perform
+a write — breaking restores for anyone holding read-only credentials.
 
 ### What the gate cannot do
 
@@ -117,29 +161,29 @@ migration completed, and it is *not* a record of which build last wrote.
 
 That distinction decides when to raise it. Two tempting rules are both wrong:
 
-- **"Stamp it whenever a newer binary touches the repository."** This locks
-  older builds out of data they can still read perfectly well. An unencrypted
-  repository, for instance, never seals its pack index, so a newer build writing
-  to it produces nothing an older build would struggle with. Stamping there
-  causes exactly the harm the gate exists to prevent, arriving from the other
-  direction.
 - **"Stamp it once migration is complete."** Migration is never complete, so
   this never fires.
+- **"Stamp it whenever a newer binary opens the repository."** A read would
+  then mutate the repository and lock out other machines — a fleet-wide side
+  effect of running `list`.
 
 The correct rule is narrower:
 
-> Stamp the repository at the moment a write first stores something an older
-> build would **misread** — not when it is opened, and not when migration
-> finishes.
+> Stamp the repository when a build **writes** to it — not when it is opened,
+> and not when migration finishes.
 
 `UpgradeRepoFormat` (`client.go`) does this. It raises the recorded version,
 never lowers it, and refuses to stamp a version the running build could not
 itself read.
 
-Nothing calls it yet: everything written today is readable by every build that
-validates versions at all, because the version gate and the pack index sealing
-that motivated it ship in the same release. The next change that is not readable
-by earlier builds must call it from its write path.
+It is called after a successful `backup`, `prune`, or `forget`. Sealing happens
+inside the flush those operations perform, so the write-path stamp covers it
+without a separate hook in the store layer.
+
+An operation that fails after sealing but before returning leaves a sealed
+repository still claiming the older format. The next successful write corrects
+it, and in the meantime a build that cannot read the seal fails loudly rather
+than misreading — the safe direction.
 
 ### Why a single version number, and not feature flags
 
@@ -181,6 +225,49 @@ A change to the format must do all of the following.
 6. **State the failure mode.** If older builds will encounter the new format,
    say in the pull request what they do when they meet it — and verify that
    claim by running an old binary, rather than reasoning about it.
+
+## What older builds actually do
+
+Verified by running the released binaries, as the rules below require, rather
+than by reasoning about the code.
+
+### v1.14.0 against a repository written by v1.15.0
+
+Fully readable. `list`, `check`, and `restore` all succeed, and `prune` does not
+lose data — self-describing packfile footers are trailing bytes that a reader
+resolving objects by explicit offset and length never touches, and an unpacked
+`index/latest` is found by a normal `Get`.
+
+There is one non-obvious interaction. An older build **erodes footers as it
+writes**:
+
+- its `Repack` computes waste as `physicalSize - activeSize`, and the footer is
+  not in the catalog, so the footer itself reads as waste. Above the repack
+  threshold it rewrites the pack — without a footer, because it does not know
+  about them.
+- every pack it writes is footerless by construction.
+
+No data is lost, and those packs simply revert to pre-RFC-0018 behaviour, which
+is handled correctly: a rebuild reports them as unrecoverable rather than
+returning a partial catalog. But the ability to rebuild the catalog from footers
+is quietly lost for them, with nothing to signal it. A fleet split across
+versions therefore pays a slow cost in recoverability even while nothing appears
+wrong — a reason to converge rather than to linger.
+
+### v1.14.0 against a repository with a sealed pack index
+
+Destructive, and unfixable from this side. v1.14.0 reads the sealed catalog as
+unparseable, discards the error, reports `0 snapshots`, and its `prune` then
+deletes the packfiles. See "What the gate cannot do" above.
+
+### v1.15.0 against a repository written by a later build
+
+Refused cleanly:
+
+```text
+repository format version 2 is newer than this build supports (up to 1):
+upgrade cloudstic to work with this repository
+```
 
 ## Fixtures
 
@@ -231,6 +318,7 @@ listing shows the neutral identity.
 | Release | What makes it distinct |
 |---------|------------------------|
 | `v1.14.0` | Plaintext `index/packs`, footerless packfiles, and `index/latest` stored inside a packfile. Predates RFC 0018 footers and pack index sealing. |
+| `v1.15.0` | Format 1 with self-describing packfile footers, and the fixes that make an unreadable index fail loudly rather than read as empty. The last release that does **not** produce a sealed pack index. |
 
 ## What is not covered
 

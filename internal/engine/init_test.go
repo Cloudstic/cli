@@ -59,8 +59,8 @@ func TestInitManager_UnencryptedRepo(t *testing.T) {
 	if cfg.Encrypted {
 		t.Error("config should not be encrypted")
 	}
-	if cfg.Version != 1 {
-		t.Errorf("expected version 1, got %d", cfg.Version)
+	if cfg.Version != core.RepoFormatVersion {
+		t.Errorf("expected version %d, got %d", core.RepoFormatVersion, cfg.Version)
 	}
 }
 

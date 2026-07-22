@@ -78,6 +78,22 @@ func (m *InitManager) Run(ctx context.Context, opts ...InitOption) (*InitResult,
 		if !cfg.adoptSlots {
 			return nil, fmt.Errorf("repository is already initialized")
 		}
+		// Adopting an existing repository reads its marker directly rather
+		// than through LoadRepoConfig, so the version gate does not apply
+		// here. Apply it: adopting a repository whose format this build cannot
+		// read would rewrite its marker to a version this build understands
+		// while leaving data it does not — turning a repository that fails
+		// safely into one that is silently misread.
+		var existing core.RepoConfig
+		if err := json.Unmarshal(cfgData, &existing); err == nil {
+			if existing.Version > core.MaxSupportedRepoFormat {
+				return nil, fmt.Errorf(
+					"cannot adopt repository: format version %d is newer than this build supports (up to %d): "+
+						"upgrade cloudstic to work with this repository",
+					existing.Version, core.MaxSupportedRepoFormat,
+				)
+			}
+		}
 	}
 
 	hasCreds := len(cfg.chain) > 0
@@ -166,8 +182,20 @@ func (m *InitManager) addRecoverySlot(ctx context.Context, cfg initConfig) (stri
 }
 
 func (m *InitManager) writeRepoConfig(ctx context.Context, encrypted bool) error {
+	// The recorded format is a floor and must never move down. Adopting an
+	// existing repository rewrites this marker, and stamping a lower version
+	// than the repository has already reached would advertise it as readable by
+	// builds that would misread it.
+	version := core.RepoFormatVersion
+	if data, err := m.store.Get(ctx, configKey); err == nil && data != nil {
+		var existing core.RepoConfig
+		if err := json.Unmarshal(data, &existing); err == nil && existing.Version > version {
+			version = existing.Version
+		}
+	}
+
 	cfg := core.RepoConfig{
-		Version:   core.RepoFormatVersion,
+		Version:   version,
 		Created:   time.Now().UTC().Format(time.RFC3339),
 		Encrypted: encrypted,
 	}

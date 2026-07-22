@@ -188,6 +188,15 @@ short version, which applies to any change touching what is written to a store:
   open through `LoadRepoConfig`. Raise both when a change would make a
   repository unreadable or misreadable by earlier builds; leave them alone when
   earlier builds cope, since a needless bump locks users out of their own data.
+- **Upgrades are in place, opportunistic, and permanently partial.** New
+  structures are written in the current format; older ones are read as they are
+  and rewritten only when a write happens to pass over them. A repository stays
+  a mixture of eras indefinitely, and that is the steady state — permanent
+  backward compatibility means no code ever needs to know whether migration
+  "finished". `config.version` is the *minimum reader version*, not a completion
+  marker: stamp it with `UpgradeRepoFormat` at the moment a write first stores
+  something older builds would misread, never merely because a newer binary
+  opened the repository.
 - **Changing the on-disk format** requires, per `docs/compatibility.md`: keeping
   older layouts readable, upgrading only opportunistically, committing a fixture
   from the last release using the old format, deciding on the version gate,

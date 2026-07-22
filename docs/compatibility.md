@@ -88,6 +88,76 @@ Ship the release that can fail safely before the release that produces the new
 format, so a user who upgrades one machine and not another gets an error instead
 of a deletion.
 
+## How repositories are upgraded
+
+Upgrades are **in place, opportunistic, and permanently partial**. There is no
+migration command, no conversion step, and no moment at which a repository
+becomes "fully migrated".
+
+What actually happens when a newer build writes to an older repository:
+
+- new packfiles get footers; packfiles written before footers existed keep none,
+  until a `prune` happens to repack them — which for a cold pack may be never
+- the pack catalog is re-sealed on the next flush; the footers of old packs stay
+  as they were
+- `index/latest` stops being packed, but an already-packed one keeps being read
+  from where it is
+
+So a long-lived repository is a mixture of eras indefinitely, and that is the
+intended steady state rather than a transitional one. Because backward
+compatibility is permanent, nothing needs the mixture to resolve: no legacy read
+path is ever going to be deleted, so no code needs to know whether migration
+"finished". That is a deliberate simplification bought by the guarantee above.
+
+### What the version means, and when to stamp it
+
+`config.version` is the **minimum reader version**: the oldest build that can
+read everything the repository currently contains. It is *not* a statement that
+migration completed, and it is *not* a record of which build last wrote.
+
+That distinction decides when to raise it. Two tempting rules are both wrong:
+
+- **"Stamp it whenever a newer binary touches the repository."** This locks
+  older builds out of data they can still read perfectly well. An unencrypted
+  repository, for instance, never seals its pack index, so a newer build writing
+  to it produces nothing an older build would struggle with. Stamping there
+  causes exactly the harm the gate exists to prevent, arriving from the other
+  direction.
+- **"Stamp it once migration is complete."** Migration is never complete, so
+  this never fires.
+
+The correct rule is narrower:
+
+> Stamp the repository at the moment a write first stores something an older
+> build would **misread** — not when it is opened, and not when migration
+> finishes.
+
+`UpgradeRepoFormat` (`client.go`) does this. It raises the recorded version,
+never lowers it, and refuses to stamp a version the running build could not
+itself read.
+
+Nothing calls it yet: everything written today is readable by every build that
+validates versions at all, because the version gate and the pack index sealing
+that motivated it ship in the same release. The next change that is not readable
+by earlier builds must call it from its write path.
+
+### Why a single version number, and not feature flags
+
+A richer scheme — a set of required feature names, as Git does with
+`extensions.*` — is the right answer when several implementations support
+different subsets of features, so a reader needs to ask "do I understand
+*these particular* extensions?".
+
+Cloudstic has one implementation and a linear release history, so any build
+supports a prefix of the feature list and a monotonic integer expresses the
+question exactly. The case that looks like it needs feature flags — sealing
+applies to encrypted repositories but not unencrypted ones — is handled by *when*
+the stamp happens rather than by *what* is recorded: an unencrypted repository
+never seals, so it never triggers the stamp.
+
+Revisit this if a second implementation appears, or if an optional feature is
+ever introduced that some builds deliberately do not support.
+
 ## Changing the on-disk format
 
 A change to the format must do all of the following.
@@ -102,7 +172,11 @@ A change to the format must do all of the following.
    used the *old* format, under `e2e/testdata/legacy-repo-<tag>/` with a
    `manifest.json`. See "Fixtures" below.
 4. **Decide on the version gate.** Raise both constants if older builds would
-   misread the result; document why if not.
+   misread the result; document why if not. If you raise them, call
+   `UpgradeRepoFormat` from the write path that introduces the incompatibility,
+   or repositories upgraded in place will keep advertising a version that no
+   longer describes their contents — and the gate will not fire for exactly the
+   repositories that most need it.
 5. **Record it here.** Add the baseline to the table below.
 6. **State the failure mode.** If older builds will encounter the new format,
    say in the pull request what they do when they meet it — and verify that

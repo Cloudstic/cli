@@ -40,6 +40,55 @@ func InitRepo(ctx context.Context, rawStore store.ObjectStore, opts ...InitOptio
 	return mgr.Run(ctx, opts...)
 }
 
+// UpgradeRepoFormat raises a repository's recorded format version to `to`,
+// leaving it alone if it already meets or exceeds that.
+//
+// Repositories are upgraded in place and partially: new structures are written
+// in the current format while older ones are read as they are and rewritten
+// only opportunistically. A repository is therefore a permanent mixture of
+// eras, and its recorded version is not a claim that migration finished. It is
+// the *minimum reader version*: the oldest build that can still read everything
+// the repository now contains.
+//
+// Call this from the write path that first stores something an older build
+// would misread — at the moment of that write, not on mere access. Stamping a
+// repository just because a newer binary opened it would lock older builds out
+// of data they can still read correctly, which is the same harm the version
+// gate exists to prevent.
+//
+// Nothing calls this yet: every format written today is readable by every build
+// that validates versions at all. The next change that is not will need it.
+// See docs/compatibility.md.
+func UpgradeRepoFormat(ctx context.Context, rawStore store.ObjectStore, to int) error {
+	if to > core.MaxSupportedRepoFormat {
+		return fmt.Errorf(
+			"refusing to stamp repository format %d: this build supports up to %d",
+			to, core.MaxSupportedRepoFormat,
+		)
+	}
+
+	cfg, err := LoadRepoConfig(ctx, rawStore)
+	if err != nil {
+		return err
+	}
+	if cfg == nil {
+		return fmt.Errorf("repository not initialized")
+	}
+	if cfg.Version >= to {
+		return nil
+	}
+
+	cfg.Version = to
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal repo config: %w", err)
+	}
+	if err := rawStore.Put(ctx, "config", data); err != nil {
+		return fmt.Errorf("write repo config: %w", err)
+	}
+	return nil
+}
+
 // requireEncryptedRepo loads the repository config and returns an error if
 // the repository has not been initialized or does not use encryption.
 func requireEncryptedRepo(ctx context.Context, rawStore store.ObjectStore) error {

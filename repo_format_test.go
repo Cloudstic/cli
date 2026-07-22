@@ -120,3 +120,70 @@ func TestWrittenFormatIsSupported(t *testing.T) {
 			core.RepoFormatVersion, core.MaxSupportedRepoFormat)
 	}
 }
+
+// Upgrading in place must raise the recorded version, so a repository that has
+// been given newer-format content stops advertising itself as readable by
+// builds that would misread it.
+func TestUpgradeRepoFormat_RaisesVersion(t *testing.T) {
+	ctx := context.Background()
+	s := newFormatTestStore(t)
+	writeConfigVersion(t, s, 1)
+
+	if err := UpgradeRepoFormat(ctx, s, core.MaxSupportedRepoFormat); err != nil {
+		t.Fatalf("upgrade: %v", err)
+	}
+
+	cfg, err := LoadRepoConfig(ctx, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Version != core.MaxSupportedRepoFormat {
+		t.Errorf("version = %d, want %d", cfg.Version, core.MaxSupportedRepoFormat)
+	}
+	// Fields other than the version must survive the rewrite.
+	if !cfg.Encrypted {
+		t.Error("upgrade dropped the encrypted flag")
+	}
+	if cfg.Created == "" {
+		t.Error("upgrade dropped the created timestamp")
+	}
+}
+
+// The version is a floor, never a ceiling: upgrading must not walk it back.
+func TestUpgradeRepoFormat_NeverLowersVersion(t *testing.T) {
+	ctx := context.Background()
+	s := newFormatTestStore(t)
+	writeConfigVersion(t, s, core.MaxSupportedRepoFormat)
+
+	if err := UpgradeRepoFormat(ctx, s, 1); err != nil {
+		t.Fatalf("upgrade: %v", err)
+	}
+
+	cfg, err := LoadRepoConfig(ctx, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Version != core.MaxSupportedRepoFormat {
+		t.Errorf("version was lowered to %d", cfg.Version)
+	}
+}
+
+// A build must not stamp a version it cannot itself read, which would make the
+// repository unopenable by the very build that upgraded it.
+func TestUpgradeRepoFormat_RefusesUnsupportedTarget(t *testing.T) {
+	ctx := context.Background()
+	s := newFormatTestStore(t)
+	writeConfigVersion(t, s, 1)
+
+	if err := UpgradeRepoFormat(ctx, s, core.MaxSupportedRepoFormat+1); err == nil {
+		t.Fatal("expected a refusal to stamp an unsupported version")
+	}
+
+	cfg, err := LoadRepoConfig(ctx, s)
+	if err != nil {
+		t.Fatalf("repository should remain readable after a refused upgrade: %v", err)
+	}
+	if cfg.Version != 1 {
+		t.Errorf("refused upgrade still changed the version to %d", cfg.Version)
+	}
+}

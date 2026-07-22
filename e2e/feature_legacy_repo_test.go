@@ -210,16 +210,55 @@ func assertFixtureFiles(t *testing.T, dir string, want map[string]string) {
 func TestCompatibilityDocListsEveryFixture(t *testing.T) {
 	table := guaranteedBaselinesTable(t)
 
+	documented := documentedBaselines(table)
+	fixtured := make(map[string]bool)
+
 	for _, dir := range legacyFixtures(t) {
 		m := readFixtureManifest(t, dir)
+		fixtured[m.Release] = true
 		// Match the table-row form, not a bare mention: releases are named in
 		// the prose too, and searching the whole document would let an
 		// undocumented baseline pass.
-		if !strings.Contains(table, "`"+m.Release+"`") {
+		if !documented[m.Release] {
 			t.Errorf("the Guaranteed baselines table in docs/compatibility.md does not list %s (fixture %s)",
 				m.Release, dir)
 		}
 	}
+
+	// The other direction. A documented baseline with no fixture is the more
+	// dangerous drift of the two: the contract promises a guarantee that
+	// nothing enforces, and its absence is invisible precisely because no
+	// fixture exists to notice.
+	for release := range documented {
+		if !fixtured[release] {
+			t.Errorf("docs/compatibility.md guarantees baseline %s, but there is no %s%s fixture enforcing it",
+				release, legacyFixturePrefix, release)
+		}
+	}
+}
+
+// documentedBaselines returns the releases named in the first column of the
+// Guaranteed baselines table.
+func documentedBaselines(table string) map[string]bool {
+	out := make(map[string]bool)
+	for _, line := range strings.Split(table, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "|") {
+			continue
+		}
+		cells := strings.Split(strings.Trim(line, "|"), "|")
+		if len(cells) == 0 {
+			continue
+		}
+		release := strings.TrimSpace(cells[0])
+		// Skip the header row and the separator beneath it; only the data
+		// rows carry a release, and they carry it in backticks.
+		if !strings.HasPrefix(release, "`") || !strings.HasSuffix(release, "`") {
+			continue
+		}
+		out[strings.Trim(release, "`")] = true
+	}
+	return out
 }
 
 // guaranteedBaselinesTable returns only the "Guaranteed baselines" section of

@@ -22,8 +22,32 @@ func routingKey(parentID, fileID string) string {
 	return core.ComputeHash([]byte(parentID))[:4] + core.ComputeHash([]byte(fileID))[4:]
 }
 
-// inMemoryStore implements store.ObjectStore for testing.
+// insertCommit and deleteCommit apply a single mutation and commit it, which is
+// what the tree used to do implicitly on every step. Most tests here are about
+// tree semantics rather than transaction batching, so they drive the Txn through
+// these two helpers; the tests that care about batching (see
+// TestCommitWritesOnlyTheFinalTree) use Txn directly.
+func insertCommit(tree *Tree, root, routingKey, key, value string) (string, error) {
+	tx := tree.Edit(root)
+	if err := tx.Insert(ctx, routingKey, key, value); err != nil {
+		return "", err
+	}
+	return tx.Commit(ctx)
+}
+
+func deleteCommit(tree *Tree, root, routingKey, key string) (string, error) {
+	tx := tree.Edit(root)
+	if err := tx.Delete(ctx, routingKey, key); err != nil {
+		return "", err
+	}
+	return tx.Commit(ctx)
+}
+
+// inMemoryStore implements store.ObjectStore for testing. Commit fans its node
+// writes out across goroutines, so this must be safe for concurrent use like
+// every real backend.
 type inMemoryStore struct {
+	mu   sync.Mutex
 	data map[string][]byte
 }
 
@@ -32,10 +56,14 @@ func newInMemoryStore() *inMemoryStore {
 }
 
 func (s *inMemoryStore) Put(_ context.Context, key string, data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.data[key] = data
 	return nil
 }
 func (s *inMemoryStore) Get(_ context.Context, key string) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	d, ok := s.data[key]
 	if !ok {
 		return nil, fmt.Errorf("key not found: %s", key)
@@ -43,14 +71,20 @@ func (s *inMemoryStore) Get(_ context.Context, key string) ([]byte, error) {
 	return d, nil
 }
 func (s *inMemoryStore) Exists(_ context.Context, key string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	_, ok := s.data[key]
 	return ok, nil
 }
 func (s *inMemoryStore) Delete(_ context.Context, key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	delete(s.data, key)
 	return nil
 }
 func (s *inMemoryStore) List(_ context.Context, prefix string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var keys []string
 	for k := range s.data {
 		if strings.HasPrefix(k, prefix) {
@@ -60,6 +94,8 @@ func (s *inMemoryStore) List(_ context.Context, prefix string) ([]string, error)
 	return keys, nil
 }
 func (s *inMemoryStore) Size(_ context.Context, key string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	d, ok := s.data[key]
 	if !ok {
 		return 0, fmt.Errorf("key not found: %s", key)
@@ -68,11 +104,20 @@ func (s *inMemoryStore) Size(_ context.Context, key string) (int64, error) {
 }
 
 func (s *inMemoryStore) TotalSize(_ context.Context) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var total int64
 	for _, d := range s.data {
 		total += int64(len(d))
 	}
 	return total, nil
+}
+
+// len reports the number of stored objects.
+func (s *inMemoryStore) len() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.data)
 }
 
 func (s *inMemoryStore) Flush(_ context.Context) error {
@@ -87,7 +132,7 @@ func TestInsertAndLookup(t *testing.T) {
 	store := newInMemoryStore()
 	tree := NewTree(store)
 
-	root, err := tree.Insert(ctx, "", routingKey("", "file1"), "file1", "ref1")
+	root, err := insertCommit(tree, "", routingKey("", "file1"), "file1", "ref1")
 	if err != nil {
 		t.Fatalf("Insert: %v", err)
 	}
@@ -110,7 +155,7 @@ func TestMultipleInserts(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		key := fmt.Sprintf("file-%d", i)
 		value := fmt.Sprintf("ref-%d", i)
-		root, err = tree.Insert(ctx, root, routingKey("", key), key, value)
+		root, err = insertCommit(tree, root, routingKey("", key), key, value)
 		if err != nil {
 			t.Fatalf("Insert %d: %v", i, err)
 		}
@@ -133,8 +178,8 @@ func TestUpdate(t *testing.T) {
 	store := newInMemoryStore()
 	tree := NewTree(store)
 
-	root, _ := tree.Insert(ctx, "", routingKey("", "file1"), "file1", "ref-old")
-	root, _ = tree.Insert(ctx, root, routingKey("", "file1"), "file1", "ref-new")
+	root, _ := insertCommit(tree, "", routingKey("", "file1"), "file1", "ref-old")
+	root, _ = insertCommit(tree, root, routingKey("", "file1"), "file1", "ref-new")
 
 	val, _ := tree.Lookup(ctx, root, routingKey("", "file1"), "file1")
 	if val != "ref-new" {
@@ -146,7 +191,7 @@ func TestLookupMiss(t *testing.T) {
 	store := newInMemoryStore()
 	tree := NewTree(store)
 
-	root, _ := tree.Insert(ctx, "", routingKey("", "file1"), "file1", "ref1")
+	root, _ := insertCommit(tree, "", routingKey("", "file1"), "file1", "ref1")
 	val, err := tree.Lookup(ctx, root, routingKey("", "nonexistent"), "nonexistent")
 	if err != nil {
 		t.Fatalf("Lookup: %v", err)
@@ -163,7 +208,7 @@ func TestWalk(t *testing.T) {
 	root := ""
 	var err error
 	for i := 0; i < 50; i++ {
-		root, err = tree.Insert(ctx, root, routingKey("", fmt.Sprintf("k%d", i)), fmt.Sprintf("k%d", i), fmt.Sprintf("v%d", i))
+		root, err = insertCommit(tree, root, routingKey("", fmt.Sprintf("k%d", i)), fmt.Sprintf("k%d", i), fmt.Sprintf("v%d", i))
 		if err != nil {
 			t.Fatalf("Insert %d: %v", i, err)
 		}
@@ -188,11 +233,11 @@ func TestDelete(t *testing.T) {
 
 	root := ""
 	var err error
-	root, _ = tree.Insert(ctx, root, routingKey("", "a"), "a", "va")
-	root, _ = tree.Insert(ctx, root, routingKey("", "b"), "b", "vb")
-	root, _ = tree.Insert(ctx, root, routingKey("", "c"), "c", "vc")
+	root, _ = insertCommit(tree, root, routingKey("", "a"), "a", "va")
+	root, _ = insertCommit(tree, root, routingKey("", "b"), "b", "vb")
+	root, _ = insertCommit(tree, root, routingKey("", "c"), "c", "vc")
 
-	root, err = tree.Delete(ctx, root, routingKey("", "b"), "b")
+	root, err = deleteCommit(tree, root, routingKey("", "b"), "b")
 	if err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
@@ -216,8 +261,8 @@ func TestDeleteNonexistent(t *testing.T) {
 	store := newInMemoryStore()
 	tree := NewTree(store)
 
-	root, _ := tree.Insert(ctx, "", routingKey("", "a"), "a", "va")
-	root2, err := tree.Delete(ctx, root, routingKey("", "nonexistent"), "nonexistent")
+	root, _ := insertCommit(tree, "", routingKey("", "a"), "a", "va")
+	root2, err := deleteCommit(tree, root, routingKey("", "nonexistent"), "nonexistent")
 	if err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
@@ -230,8 +275,8 @@ func TestDeleteAll(t *testing.T) {
 	store := newInMemoryStore()
 	tree := NewTree(store)
 
-	root, _ := tree.Insert(ctx, "", routingKey("", "a"), "a", "va")
-	root, err := tree.Delete(ctx, root, routingKey("", "a"), "a")
+	root, _ := insertCommit(tree, "", routingKey("", "a"), "a", "va")
+	root, err := deleteCommit(tree, root, routingKey("", "a"), "a")
 	if err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
@@ -258,7 +303,7 @@ func TestDiffSameRoot(t *testing.T) {
 	store := newInMemoryStore()
 	tree := NewTree(store)
 
-	root, _ := tree.Insert(ctx, "", routingKey("", "a"), "a", "va")
+	root, _ := insertCommit(tree, "", routingKey("", "a"), "a", "va")
 	var called bool
 	err := tree.Diff(ctx, root, root, func(DiffEntry) error { called = true; return nil })
 	if err != nil {
@@ -273,11 +318,11 @@ func TestDiffAddsAndRemoves(t *testing.T) {
 	store := newInMemoryStore()
 	tree := NewTree(store)
 
-	root1, _ := tree.Insert(ctx, "", routingKey("", "a"), "a", "va")
-	root1, _ = tree.Insert(ctx, root1, routingKey("", "b"), "b", "vb")
+	root1, _ := insertCommit(tree, "", routingKey("", "a"), "a", "va")
+	root1, _ = insertCommit(tree, root1, routingKey("", "b"), "b", "vb")
 
-	root2, _ := tree.Insert(ctx, "", routingKey("", "b"), "b", "vb")
-	root2, _ = tree.Insert(ctx, root2, routingKey("", "c"), "c", "vc")
+	root2, _ := insertCommit(tree, "", routingKey("", "b"), "b", "vb")
+	root2, _ = insertCommit(tree, root2, routingKey("", "c"), "c", "vc")
 
 	var diffs []DiffEntry
 	err := tree.Diff(ctx, root1, root2, func(d DiffEntry) error {
@@ -314,7 +359,7 @@ func TestLargeTree(t *testing.T) {
 	var err error
 	count := 500
 	for i := 0; i < count; i++ {
-		root, err = tree.Insert(ctx, root, routingKey("", fmt.Sprintf("key-%04d", i)), fmt.Sprintf("key-%04d", i), fmt.Sprintf("val-%04d", i))
+		root, err = insertCommit(tree, root, routingKey("", fmt.Sprintf("key-%04d", i)), fmt.Sprintf("key-%04d", i), fmt.Sprintf("val-%04d", i))
 		if err != nil {
 			t.Fatalf("Insert %d: %v", i, err)
 		}
@@ -350,7 +395,7 @@ func TestNodeRefs(t *testing.T) {
 	root := ""
 	var err error
 	for i := 0; i < 100; i++ {
-		root, err = tree.Insert(ctx, root, routingKey("", fmt.Sprintf("k%d", i)), fmt.Sprintf("k%d", i), fmt.Sprintf("v%d", i))
+		root, err = insertCommit(tree, root, routingKey("", fmt.Sprintf("k%d", i)), fmt.Sprintf("k%d", i), fmt.Sprintf("v%d", i))
 		if err != nil {
 			t.Fatalf("Insert: %v", err)
 		}
@@ -379,28 +424,81 @@ func TestNodeRefs(t *testing.T) {
 	}
 }
 
-func TestTransactionalStore(t *testing.T) {
+func TestInsertWritesNothingUntilCommit(t *testing.T) {
 	persistent := newInMemoryStore()
-	ts := NewTransactionalStore(persistent)
+	tree := NewTree(persistent)
 
-	tree := NewTree(ts)
-	root, err := tree.Insert(ctx, "", routingKey("", "a"), "a", "va")
+	tx := tree.Edit("")
+	for i := 0; i < 50; i++ {
+		key := fmt.Sprintf("k%d", i)
+		if err := tx.Insert(ctx, routingKey("", key), key, "v"+key); err != nil {
+			t.Fatalf("Insert %d: %v", i, err)
+		}
+	}
+
+	if persistent.len() != 0 {
+		t.Fatalf("expected an empty store before Commit, got %d objects", persistent.len())
+	}
+
+	// Root reports the ref the tree would have without committing to it, so a
+	// dry run stays genuinely read-only.
+	previewed, err := tx.Root(ctx)
 	if err != nil {
+		t.Fatalf("Root: %v", err)
+	}
+	if persistent.len() != 0 {
+		t.Fatalf("Root wrote %d objects; it must write nothing", persistent.len())
+	}
+
+	root, err := tx.Commit(ctx)
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if root != previewed {
+		t.Fatalf("Commit returned %s but Root previewed %s", root, previewed)
+	}
+	if persistent.len() == 0 {
+		t.Fatal("expected nodes in the store after Commit")
+	}
+
+	// Everything is reachable from the committed root.
+	for i := 0; i < 50; i++ {
+		key := fmt.Sprintf("k%d", i)
+		got, err := tree.Lookup(ctx, root, routingKey("", key), key)
+		if err != nil {
+			t.Fatalf("Lookup %s: %v", key, err)
+		}
+		if got != "v"+key {
+			t.Fatalf("Lookup %s = %q, want %q", key, got, "v"+key)
+		}
+	}
+}
+
+// A second Commit of an unchanged transaction must be free: everything is
+// already clean, so there is nothing left to serialize or write.
+func TestCommitIsIdempotent(t *testing.T) {
+	persistent := newCountingStore()
+	tree := NewTree(persistent)
+
+	tx := tree.Edit("")
+	if err := tx.Insert(ctx, routingKey("", "a"), "a", "va"); err != nil {
 		t.Fatalf("Insert: %v", err)
 	}
-
-	// Before flush, persistent should be empty (or at least not contain the node).
-	if len(persistent.data) != 0 {
-		t.Fatalf("expected empty persistent store before flush, got %d entries", len(persistent.data))
+	first, err := tx.Commit(ctx)
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
 	}
 
-	if err := ts.FlushReachable(root); err != nil {
-		t.Fatalf("Flush: %v", err)
+	persistent.reset()
+	second, err := tx.Commit(ctx)
+	if err != nil {
+		t.Fatalf("second Commit: %v", err)
 	}
-
-	// After flush, persistent should have at least the root node.
-	if len(persistent.data) == 0 {
-		t.Fatal("expected non-empty persistent store after flush")
+	if second != first {
+		t.Fatalf("second Commit returned %s, want %s", second, first)
+	}
+	if persistent.puts != 0 {
+		t.Fatalf("second Commit wrote %d objects; expected none", persistent.puts)
 	}
 }
 
@@ -412,14 +510,14 @@ func TestDeleteFromLargeTree(t *testing.T) {
 	var err error
 	count := 200
 	for i := 0; i < count; i++ {
-		root, err = tree.Insert(ctx, root, routingKey("", fmt.Sprintf("key-%04d", i)), fmt.Sprintf("key-%04d", i), fmt.Sprintf("val-%04d", i))
+		root, err = insertCommit(tree, root, routingKey("", fmt.Sprintf("key-%04d", i)), fmt.Sprintf("key-%04d", i), fmt.Sprintf("val-%04d", i))
 		if err != nil {
 			t.Fatalf("Insert %d: %v", i, err)
 		}
 	}
 
 	for i := 0; i < count; i += 2 {
-		root, err = tree.Delete(ctx, root, routingKey("", fmt.Sprintf("key-%04d", i)), fmt.Sprintf("key-%04d", i))
+		root, err = deleteCommit(tree, root, routingKey("", fmt.Sprintf("key-%04d", i)), fmt.Sprintf("key-%04d", i))
 		if err != nil {
 			t.Fatalf("Delete %d: %v", i, err)
 		}
@@ -511,174 +609,128 @@ func (s *countingStore) reset() {
 	s.mu.Unlock()
 }
 
-// TestFlushReachable_NoExistsCalls verifies that writeParallel issues only Put
-// calls (no Exists) during FlushReachable. Before the refactor, every node was
-// preceded by an Exists check; now the KeyCacheStore layer handles dedup.
-func TestFlushReachable_NoExistsCalls(t *testing.T) {
+// Commit issues only Puts — no Exists probing. Dedup is the KeyCacheStore
+// layer's job, not the tree's.
+func TestCommitIssuesOnlyPuts(t *testing.T) {
 	persistent := newCountingStore()
-	ts := NewTransactionalStore(persistent)
-	tree := NewTree(ts)
+	tree := NewTree(persistent)
 
-	root := ""
-	var err error
+	tx := tree.Edit("")
 	for i := 0; i < 100; i++ {
-		root, err = tree.Insert(ctx, root, routingKey("", fmt.Sprintf("k%d", i)), fmt.Sprintf("k%d", i), fmt.Sprintf("v%d", i))
-		if err != nil {
+		key := fmt.Sprintf("k%d", i)
+		if err := tx.Insert(ctx, routingKey("", key), key, "v"+key); err != nil {
 			t.Fatalf("Insert %d: %v", i, err)
 		}
 	}
-
 	if persistent.puts != 0 {
-		t.Fatalf("expected 0 persistent Puts before flush, got %d", persistent.puts)
+		t.Fatalf("expected 0 Puts before Commit, got %d", persistent.puts)
 	}
 
-	if err := ts.FlushReachable(root); err != nil {
-		t.Fatalf("FlushReachable: %v", err)
+	if _, err := tx.Commit(ctx); err != nil {
+		t.Fatalf("Commit: %v", err)
 	}
-
 	if persistent.exists != 0 {
-		t.Fatalf("expected 0 Exists calls during flush, got %d (keys: %v)", persistent.exists, persistent.existsKeys)
+		t.Fatalf("expected 0 Exists calls during Commit, got %d", persistent.exists)
 	}
 	if persistent.puts == 0 {
-		t.Fatal("expected at least one Put during flush")
-	}
-
-	// Verify every flushed node is actually reachable from root.
-	reachable := map[string]bool{}
-	err = tree.NodeRefs(ctx, root, func(ref string) error {
-		reachable[ref] = true
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("NodeRefs: %v", err)
-	}
-	for _, key := range persistent.putKeys {
-		if !reachable[key] {
-			t.Fatalf("flushed unreachable node: %s", key)
-		}
+		t.Fatal("expected Commit to write nodes")
 	}
 }
 
-// TestFlushReachable_DiscardsIntermediateNodes verifies that FlushReachable
-// only writes the final reachable set, not every intermediate node produced
-// during 100 sequential inserts.
-func TestFlushReachable_DiscardsIntermediateNodes(t *testing.T) {
+// TestCommitWritesOnlyTheFinalTree is the point of the whole design: a node
+// superseded by a later insert in the same transaction is never serialized, so
+// Commit writes exactly the nodes the final tree is made of — no more.
+//
+// Under the previous design each of these 100 inserts persisted a fresh spine
+// and a reachability pass discarded the garbage afterwards. Here there is no
+// garbage to discard, which the assertion states directly: the number of Puts
+// equals the number of nodes reachable from the root.
+func TestCommitWritesOnlyTheFinalTree(t *testing.T) {
 	persistent := newCountingStore()
-	ts := NewTransactionalStore(persistent)
-	tree := NewTree(ts)
+	tree := NewTree(persistent)
 
-	root := ""
-	var err error
+	tx := tree.Edit("")
 	for i := 0; i < 100; i++ {
-		root, err = tree.Insert(ctx, root, routingKey("", fmt.Sprintf("k%d", i)), fmt.Sprintf("k%d", i), fmt.Sprintf("v%d", i))
-		if err != nil {
+		key := fmt.Sprintf("k%d", i)
+		if err := tx.Insert(ctx, routingKey("", key), key, "v"+key); err != nil {
 			t.Fatalf("Insert %d: %v", i, err)
 		}
 	}
 
-	stagedBefore := len(ts.staging)
-
-	if err := ts.FlushReachable(root); err != nil {
-		t.Fatalf("FlushReachable: %v", err)
+	root, err := tx.Commit(ctx)
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
 	}
 
-	// The final tree for 100 keys is much smaller than the sum of all
-	// intermediate trees generated during sequential inserts.
-	if persistent.puts >= stagedBefore {
-		t.Fatalf("expected fewer Puts (%d) than staged nodes (%d) — intermediate nodes should be discarded",
-			persistent.puts, stagedBefore)
+	reachable := 0
+	if err := tree.NodeRefs(ctx, root, func(string) error { reachable++; return nil }); err != nil {
+		t.Fatalf("NodeRefs: %v", err)
 	}
-	t.Logf("staged %d intermediate nodes, flushed %d reachable", stagedBefore, persistent.puts)
+
+	if persistent.puts != reachable {
+		t.Fatalf("Commit wrote %d nodes but only %d are reachable from the root",
+			persistent.puts, reachable)
+	}
+	t.Logf("100 inserts wrote %d nodes, all of them reachable", persistent.puts)
+
+	// Distinct keys must all have survived the batching.
+	seen := 0
+	if err := tree.Walk(ctx, root, func(string, string) error { seen++; return nil }); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	if seen != 100 {
+		t.Fatalf("Walk saw %d entries, want 100", seen)
+	}
 }
 
-// TestReadCache_LRUEviction verifies the bounded LRU read cache: once the
-// cache is full, evicted entries require a fresh Get from the persistent store.
-func TestReadCache_LRUEviction(t *testing.T) {
+// TestNodeCacheLRUEviction verifies the bounded read cache in NodeStore: once
+// it is full, evicted nodes require a fresh Get from the underlying store.
+func TestNodeCacheLRUEviction(t *testing.T) {
 	persistent := newCountingStore()
 
-	// Pre-populate the persistent store with many small node-like objects.
-	ctx := context.Background()
-	n := readCacheSize + 100
-	keys := make([]string, n)
+	n := nodeCacheSize + 100
+	refs := make([]string, n)
 	for i := 0; i < n; i++ {
-		key := fmt.Sprintf("node/test-%04d", i)
-		keys[i] = key
-		_ = persistent.inner.Put(ctx, key, []byte(fmt.Sprintf(`{"type":"leaf","entries":[{"key":"k%d","filemeta":"v%d"}]}`, i, i)))
+		ref := fmt.Sprintf("node/test-%04d", i)
+		refs[i] = ref
+		_ = persistent.inner.Put(ctx, ref, []byte(fmt.Sprintf(`{"type":"leaf","entries":[{"key":"k%d","filemeta":"v%d"}]}`, i, i)))
 	}
 	persistent.reset()
 
-	ts := NewTransactionalStore(persistent)
+	nodes := NewNodeStore(persistent)
 
-	// Read all keys — each triggers a persistent Get and fills the LRU.
-	for _, key := range keys {
-		if _, err := ts.Get(ctx, key); err != nil {
-			t.Fatalf("Get %s: %v", key, err)
+	for _, ref := range refs {
+		if _, err := nodes.load(ctx, ref); err != nil {
+			t.Fatalf("load %s: %v", ref, err)
 		}
 	}
-
-	firstPassGets := persistent.gets
-	if firstPassGets != n {
-		t.Fatalf("expected %d Gets on first pass, got %d", n, firstPassGets)
+	if persistent.gets != n {
+		t.Fatalf("expected %d Gets on first pass, got %d", n, persistent.gets)
 	}
 
 	persistent.reset()
 
-	// Re-read the last `readCacheSize` keys — these should be LRU-cached.
-	for _, key := range keys[n-readCacheSize:] {
-		if _, err := ts.Get(ctx, key); err != nil {
-			t.Fatalf("Get %s: %v", key, err)
+	// The most recent nodeCacheSize refs are still cached.
+	for _, ref := range refs[n-nodeCacheSize:] {
+		if _, err := nodes.load(ctx, ref); err != nil {
+			t.Fatalf("load %s: %v", ref, err)
 		}
 	}
 	if persistent.gets != 0 {
-		t.Fatalf("expected 0 Gets for recently cached keys, got %d", persistent.gets)
+		t.Fatalf("expected 0 Gets for cached nodes, got %d", persistent.gets)
 	}
 
-	// Re-read the first 100 keys — these were evicted and must be re-fetched.
-	for _, key := range keys[:100] {
-		if _, err := ts.Get(ctx, key); err != nil {
-			t.Fatalf("Get %s: %v", key, err)
+	// The first 100 were evicted and must be re-fetched.
+	for _, ref := range refs[:100] {
+		if _, err := nodes.load(ctx, ref); err != nil {
+			t.Fatalf("load %s: %v", ref, err)
 		}
 	}
 	if persistent.gets != 100 {
-		t.Fatalf("expected 100 Gets for evicted keys, got %d", persistent.gets)
+		t.Fatalf("expected 100 Gets for evicted nodes, got %d", persistent.gets)
 	}
 }
 
-// TestStagingTakesPrecedenceOverReadCache verifies that a key written to
-// staging is always returned, even if the read cache holds stale data.
-func TestStagingTakesPrecedenceOverReadCache(t *testing.T) {
-	persistent := newCountingStore()
-	ctx := context.Background()
-
-	_ = persistent.inner.Put(ctx, "node/x", []byte(`{"type":"leaf","entries":[{"key":"old","filemeta":"old-ref"}]}`))
-	persistent.reset()
-
-	ts := NewTransactionalStore(persistent)
-
-	// Populate the read cache.
-	_, _ = ts.Get(ctx, "node/x")
-	if persistent.gets != 1 {
-		t.Fatalf("expected 1 Get to populate read cache, got %d", persistent.gets)
-	}
-
-	// Write a new version to staging.
-	newData := []byte(`{"type":"leaf","entries":[{"key":"new","filemeta":"new-ref"}]}`)
-	_ = ts.Put(ctx, "node/x", newData)
-
-	persistent.reset()
-
-	// Get should return staging data, not read cache, and no persistent call.
-	got, err := ts.Get(ctx, "node/x")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if string(got) != string(newData) {
-		t.Fatalf("expected staging data, got %q", got)
-	}
-	if persistent.gets != 0 {
-		t.Fatalf("expected 0 persistent Gets when staging has the key, got %d", persistent.gets)
-	}
-}
 
 func TestInternalNodeType(t *testing.T) {
 	store := newInMemoryStore()
@@ -687,17 +739,17 @@ func TestInternalNodeType(t *testing.T) {
 	root := ""
 	var err error
 	for i := 0; i < maxLeafSize+10; i++ {
-		root, err = tree.Insert(ctx, root, routingKey("", fmt.Sprintf("key-%04d", i)), fmt.Sprintf("key-%04d", i), fmt.Sprintf("val-%04d", i))
+		root, err = insertCommit(tree, root, routingKey("", fmt.Sprintf("key-%04d", i)), fmt.Sprintf("key-%04d", i), fmt.Sprintf("val-%04d", i))
 		if err != nil {
 			t.Fatalf("Insert: %v", err)
 		}
 	}
 
-	node, err := tree.nodes.Load(ctx, root)
+	n, err := tree.nodes.load(ctx, root)
 	if err != nil {
 		t.Fatalf("load node: %v", err)
 	}
-	if node.Type != core.ObjectTypeInternal {
-		t.Fatalf("expected internal node, got %s", node.Type)
+	if n.leaf {
+		t.Fatal("expected an internal node at the root once the leaf has split")
 	}
 }

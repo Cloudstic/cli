@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/internal/hamt"
 	"github.com/cloudstic/cli/pkg/source"
 )
 
@@ -174,4 +175,15 @@ func (s *MockSource) GetFileStream(fileID string) (io.ReadCloser, error) {
 		return nil, fmt.Errorf("file not found: %s", fileID)
 	}
 	return io.NopCloser(bytes.NewReader(f.Content)), nil
+}
+
+// insertCommit inserts one entry into the tree rooted at root and commits,
+// returning the new root. Tests that only need a small tree on disk use this
+// rather than driving a hamt.Txn by hand.
+func insertCommit(ctx context.Context, tree *hamt.Tree, root, parentID, fileID, value string) (string, error) {
+	txn := tree.Edit(root)
+	if err := txn.Insert(ctx, AffinityKey(parentID, fileID), fileID, value); err != nil {
+		return "", err
+	}
+	return txn.Commit(ctx)
 }

@@ -25,20 +25,23 @@ func affinityParentFn(dirID, _ string) string { return dirID }
 // Every file gets a statistically independent routing key → no locality.
 func legacyParentFn(_, fileID string) string { return fileID }
 
-// buildTree inserts nDirs*filesPerDir entries using parentFn to derive each file's parentID.
+// buildTree inserts nDirs*filesPerDir entries using parentFn to derive each
+// file's parentID, and commits them as one transaction.
 func buildTree(tb testing.TB, tree *Tree, nDirs, filesPerDir int, parentFn func(dirID, fileID string) string) string {
 	tb.Helper()
-	root := ""
-	var err error
+	tx := tree.Edit("")
 	for d := 0; d < nDirs; d++ {
 		dirID := fmt.Sprintf("dir-%02d", d)
 		for f := 0; f < filesPerDir; f++ {
 			fileID := fmt.Sprintf("file-%04d", d*filesPerDir+f)
-			root, err = tree.Insert(ctx, root, routingKey(parentFn(dirID, fileID), fileID), fileID, "ref-"+fileID)
-			if err != nil {
+			if err := tx.Insert(ctx, routingKey(parentFn(dirID, fileID), fileID), fileID, "ref-"+fileID); err != nil {
 				tb.Fatalf("Insert dir=%s file=%s: %v", dirID, fileID, err)
 			}
 		}
+	}
+	root, err := tx.Commit(ctx)
+	if err != nil {
+		tb.Fatalf("Commit: %v", err)
 	}
 	return root
 }
@@ -69,8 +72,8 @@ func buildTree(tb testing.TB, tree *Tree, nDirs, filesPerDir int, parentFn func(
 // SHA256(fileID) distributes the 100 updates across ~31 of the 32 L0 buckets.
 // Each hit bucket requires its own path update; some buckets are 3 levels deep
 // (>32 entries trigger a split), so per-bucket cost is 1–3 nodes plus the shared root.
-// Total ≈ 68, not 150–300: FlushReachable writes only the final reachable set,
-// not every intermediate node produced during the 100 sequential inserts.
+// Total ≈ 68, not 150–300: Commit writes only the final tree, because
+// intermediate nodes superseded by a later insert are never serialized.
 func TestAffinityNodeWriteReduction(t *testing.T) {
 	const (
 		nDirs       = 10
@@ -83,32 +86,25 @@ func TestAffinityNodeWriteReduction(t *testing.T) {
 	measure := func(name string, parentFn func(string, string) string) result {
 		// Phase 1: initial backup.
 		persistent := newCountingStore()
-		ts := NewTransactionalStore(persistent)
-		tree := NewTree(ts)
-
+		tree := NewTree(persistent)
 		root := buildTree(t, tree, nDirs, filesPerDir, parentFn)
-		if err := ts.FlushReachable(root); err != nil {
-			t.Fatalf("%s FlushReachable (initial): %v", name, err)
-		}
 
-		// Phase 2: incremental backup — update all filesPerDir files in targetDir.
-		// A fresh TransactionalStore gives clean staging while reusing the same
-		// persistent data (the already-flushed initial tree).
+		// Phase 2: incremental backup — update all filesPerDir files in
+		// targetDir. A fresh Tree drops the node cache so the incremental run
+		// reads the persisted tree, as a real second backup would.
 		persistent.reset()
-		ts2 := NewTransactionalStore(persistent)
-		tree2 := NewTree(ts2)
+		tree2 := NewTree(persistent)
+		tx := tree2.Edit(root)
 
-		var err error
 		for f := 0; f < filesPerDir; f++ {
 			// dir-00 owns file-0000 … file-0099.
 			fileID := fmt.Sprintf("file-%04d", f)
-			root, err = tree2.Insert(ctx, root, routingKey(parentFn(targetDir, fileID), fileID), fileID, fmt.Sprintf("ref-%s-v2", fileID))
-			if err != nil {
+			if err := tx.Insert(ctx, routingKey(parentFn(targetDir, fileID), fileID), fileID, fmt.Sprintf("ref-%s-v2", fileID)); err != nil {
 				t.Fatalf("%s Insert (incremental): %v", name, err)
 			}
 		}
-		if err := ts2.FlushReachable(root); err != nil {
-			t.Fatalf("%s FlushReachable (incremental): %v", name, err)
+		if _, err := tx.Commit(ctx); err != nil {
+			t.Fatalf("%s Commit (incremental): %v", name, err)
 		}
 
 		return result{puts: persistent.puts}
@@ -153,38 +149,30 @@ func benchmarkIncrementalUpdate(b *testing.B, parentFn func(string, string) stri
 	)
 
 	// Build the initial 1 000-file tree once; this cost is excluded from the timer.
-	// countingStore is used (not inMemoryStore) because writeParallel issues concurrent
+	// countingStore is used (not inMemoryStore) because Commit issues concurrent
 	// Puts and inMemoryStore has no mutex.
 	persistent := newCountingStore()
-	ts := NewTransactionalStore(persistent)
-	tree := NewTree(ts)
+	tree := NewTree(persistent)
 	initialRoot := buildTree(b, tree, nDirs, filesPerDir, parentFn)
-	if err := ts.FlushReachable(initialRoot); err != nil {
-		b.Fatalf("FlushReachable (setup): %v", err)
-	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
-		// Fresh staging; reads fall through to the persistent initial tree.
-		ts2 := NewTransactionalStore(persistent)
-		tree2 := NewTree(ts2)
-		root := initialRoot
+		// Fresh tree; reads fall through to the persisted initial tree.
+		tx := NewTree(persistent).Edit(initialRoot)
 		b.StartTimer()
 
-		var err error
 		for f := 0; f < filesPerDir; f++ {
 			fileID := fmt.Sprintf("file-%04d", f)
-			root, err = tree2.Insert(ctx, root, routingKey(parentFn(targetDir, fileID), fileID), fileID, 
-				fmt.Sprintf("ref-v%d-%04d", i, f))
-			if err != nil {
+			if err := tx.Insert(ctx, routingKey(parentFn(targetDir, fileID), fileID), fileID,
+				fmt.Sprintf("ref-v%d-%04d", i, f)); err != nil {
 				b.Fatalf("Insert: %v", err)
 			}
 		}
-		if err := ts2.FlushReachable(root); err != nil {
-			b.Fatalf("FlushReachable: %v", err)
+		if _, err := tx.Commit(ctx); err != nil {
+			b.Fatalf("Commit: %v", err)
 		}
 	}
 }

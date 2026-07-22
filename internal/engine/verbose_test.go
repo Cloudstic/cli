@@ -97,7 +97,7 @@ func TestLsSnapshotManager_Verbose(t *testing.T) {
 	s := NewMockStore()
 
 	meta1 := createMeta(ctx, s, "file1.txt", 100)
-	root := createHamt(t, s, []string{"file1"}, []string{meta1})
+	root := createHamt(ctx, t, s, []string{"file1"}, []string{meta1})
 	snap := core.Snapshot{Seq: 1, Root: root, Created: "2025-01-01T00:00:00Z"}
 	snapRef := saveSnapshot(ctx, s, &snap)
 	_ = s.Put(ctx, "index/latest", createIndex(snapRef, 1))
@@ -143,10 +143,10 @@ func TestDiffManager_Verbose(t *testing.T) {
 	meta1 := createMeta(ctx, s, "file1.txt", 100)
 	meta2 := createMeta(ctx, s, "file2.txt", 200)
 
-	root1 := createHamt(t, s, []string{"file1"}, []string{meta1})
+	root1 := createHamt(ctx, t, s, []string{"file1"}, []string{meta1})
 	snap1Ref := saveSnapshotRef(ctx, s, root1, 1)
 
-	root2 := createHamt(t, s, []string{"file1", "file2"}, []string{meta1, meta2})
+	root2 := createHamt(ctx, t, s, []string{"file1", "file2"}, []string{meta1, meta2})
 	snap2Ref := saveSnapshotRef(ctx, s, root2, 2)
 	_ = s.Put(ctx, "index/latest", createIndex(snap2Ref, 2))
 

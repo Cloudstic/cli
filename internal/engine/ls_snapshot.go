@@ -44,7 +44,7 @@ type LsSnapshotManager struct {
 func NewLsSnapshotManager(s store.ObjectStore) *LsSnapshotManager {
 	return &LsSnapshotManager{
 		store: s,
-		tree:  hamt.NewTree(hamt.NewTransactionalStore(s)),
+		tree:  hamt.NewTree(s),
 	}
 }
 
@@ -132,7 +132,7 @@ func (lm *LsSnapshotManager) resolveSnapshot(ctx context.Context, id string) (*c
 
 func (lm *LsSnapshotManager) collectMeta(ctx context.Context, root string) (map[string]core.FileMeta, error) {
 	refToMeta := make(map[string]core.FileMeta)
-	err := lm.tree.Walk(root, func(_, valueRef string) error {
+	err := lm.tree.Walk(ctx, root, func(_, valueRef string) error {
 		fm, err := lm.loadMeta(ctx, valueRef)
 		if err != nil {
 			return err

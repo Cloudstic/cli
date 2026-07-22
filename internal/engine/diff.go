@@ -58,7 +58,7 @@ type DiffManager struct {
 func NewDiffManager(s store.ObjectStore) *DiffManager {
 	return &DiffManager{
 		store: s,
-		tree:  hamt.NewTree(hamt.NewTransactionalStore(s)),
+		tree:  hamt.NewTree(s),
 	}
 }
 
@@ -89,7 +89,7 @@ func (dm *DiffManager) Run(ctx context.Context, snapID1, snapID2 string, opts ..
 	if cfg.verbose {
 		fmt.Fprintf(os.Stderr, "Computing diff between %s and %s...\n", ref1, ref2)
 	}
-	changes, err := dm.diffRoots(root1, root2)
+	changes, err := dm.diffRoots(ctx, root1, root2)
 	if err != nil {
 		return nil, err
 	}
@@ -168,19 +168,19 @@ func (dm *DiffManager) loadSnapshot(ctx context.Context, ref string) (*core.Snap
 // Diff logic
 // ---------------------------------------------------------------------------
 
-func (dm *DiffManager) diffRoots(root1, root2 string) ([]FileChange, error) {
+func (dm *DiffManager) diffRoots(ctx context.Context, root1, root2 string) ([]FileChange, error) {
 	var changes []FileChange
-	oldByID, err := dm.collectMetadata(root1)
+	oldByID, err := dm.collectMetadata(ctx, root1)
 	if err != nil {
 		return nil, err
 	}
-	newByID, err := dm.collectMetadata(root2)
+	newByID, err := dm.collectMetadata(ctx, root2)
 	if err != nil {
 		return nil, err
 	}
 
-	err = dm.tree.Diff(root1, root2, func(d hamt.DiffEntry) error {
-		change, err := dm.toFileChange(d, oldByID, newByID)
+	err = dm.tree.Diff(ctx, root1, root2, func(d hamt.DiffEntry) error {
+		change, err := dm.toFileChange(ctx, d, oldByID, newByID)
 		if err != nil {
 			return err
 		}
@@ -190,10 +190,10 @@ func (dm *DiffManager) diffRoots(root1, root2 string) ([]FileChange, error) {
 	return changes, err
 }
 
-func (dm *DiffManager) toFileChange(d hamt.DiffEntry, oldByID, newByID map[string]core.FileMeta) (FileChange, error) {
+func (dm *DiffManager) toFileChange(ctx context.Context, d hamt.DiffEntry, oldByID, newByID map[string]core.FileMeta) (FileChange, error) {
 	ct, metaRef := classifyEntry(d)
 
-	meta, err := dm.loadMeta(metaRef)
+	meta, err := dm.loadMeta(ctx, metaRef)
 	if err != nil {
 		return FileChange{}, err
 	}
@@ -222,14 +222,14 @@ func classifyEntry(d hamt.DiffEntry) (ChangeType, string) {
 	}
 }
 
-func (dm *DiffManager) loadMeta(ref string) (*core.FileMeta, error) {
+func (dm *DiffManager) loadMeta(ctx context.Context, ref string) (*core.FileMeta, error) {
 	if dm.metaCache == nil {
 		dm.metaCache = make(map[string]core.FileMeta)
 	}
 	if fm, ok := dm.metaCache[ref]; ok {
 		return &fm, nil
 	}
-	data, err := dm.store.Get(context.Background(), ref)
+	data, err := dm.store.Get(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -241,10 +241,10 @@ func (dm *DiffManager) loadMeta(ref string) (*core.FileMeta, error) {
 	return &fm, nil
 }
 
-func (dm *DiffManager) collectMetadata(root string) (map[string]core.FileMeta, error) {
+func (dm *DiffManager) collectMetadata(ctx context.Context, root string) (map[string]core.FileMeta, error) {
 	byID := make(map[string]core.FileMeta)
-	err := dm.tree.Walk(root, func(_, valueRef string) error {
-		fm, err := dm.loadMeta(valueRef)
+	err := dm.tree.Walk(ctx, root, func(_, valueRef string) error {
+		fm, err := dm.loadMeta(ctx, valueRef)
 		if err != nil {
 			return err
 		}

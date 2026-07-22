@@ -64,7 +64,7 @@ func TestBackupManager_ResolvesPathsForOpaqueIDs(t *testing.T) {
 
 	checkNoStoredPath := func(parentID, fileID string) {
 		t.Helper()
-		ref, err := tree.Lookup(result.Root, parentID, fileID)
+		ref, err := tree.Lookup(ctx, result.Root, AffinityKey(parentID, fileID), fileID)
 		if err != nil || ref == "" {
 			t.Fatalf("Lookup %s: ref=%q err=%v", fileID, ref, err)
 		}
@@ -105,7 +105,7 @@ func TestBackupManager_Run(t *testing.T) {
 	lookupMeta := func(root, key string) *core.FileMeta {
 		t.Helper()
 		tree := hamt.NewTree(readStore)
-		ref, err := tree.Lookup(root, "", key)
+		ref, err := tree.Lookup(ctx, root, AffinityKey("", key), key)
 		if err != nil {
 			t.Fatalf("Lookup %s: %v", key, err)
 		}

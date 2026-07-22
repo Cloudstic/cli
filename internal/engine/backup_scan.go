@@ -70,7 +70,7 @@ func (bm *BackupManager) processEntry(ctx context.Context, meta *core.FileMeta, 
 
 	if !changed {
 		bm.recordStat(meta.Type, false, false)
-		s.root, err = bm.tree.Insert(s.root, primaryParentID(meta), meta.FileID, oldRef)
+		s.root, err = bm.tree.Insert(ctx, s.root, AffinityKey(primaryParentID(meta), meta.FileID), meta.FileID, oldRef)
 		if err != nil {
 			return fmt.Errorf("hamt insert: %w", err)
 		}
@@ -126,7 +126,7 @@ func (bm *BackupManager) scanIncremental(ctx context.Context, oldRoot string, in
 					return err
 				}
 			}
-			s.root, err = bm.tree.Delete(s.root, deleteParentID, fc.Meta.FileID)
+			s.root, err = bm.tree.Delete(ctx, s.root, AffinityKey(deleteParentID, fc.Meta.FileID), fc.Meta.FileID)
 			if err != nil {
 				return fmt.Errorf("hamt delete %s: %w", fc.Meta.FileID, err)
 			}
@@ -150,7 +150,7 @@ func (bm *BackupManager) lookupDeleteParentID(ctx context.Context, root, fileID 
 		return "", nil
 	}
 
-	ref, err := bm.tree.LookupByFileID(root, fileID)
+	ref, err := bm.tree.LookupByKey(ctx, root, fileID)
 	if err != nil {
 		return "", fmt.Errorf("lookup old file for delete %s: %w", fileID, err)
 	}
@@ -172,7 +172,7 @@ func (bm *BackupManager) lookupDeleteParentID(ctx context.Context, root, fileID 
 // fast-path compares observable metadata and carries the hash forward to avoid
 // false-positive diffs.
 func (bm *BackupManager) detectChange(ctx context.Context, oldRoot string, meta *core.FileMeta) (changed bool, oldRef string, err error) {
-	oldRef, err = bm.tree.Lookup(oldRoot, primaryParentID(meta), meta.FileID)
+	oldRef, err = bm.tree.Lookup(ctx, oldRoot, AffinityKey(primaryParentID(meta), meta.FileID), meta.FileID)
 	if err != nil {
 		return false, "", fmt.Errorf("hamt lookup: %w", err)
 	}
@@ -267,7 +267,7 @@ func bytesEqual(a, b []byte) bool {
 	return true
 }
 
-func (bm *BackupManager) insertFolder(_ context.Context, root string, meta *core.FileMeta, phase ui.Phase) (string, error) {
+func (bm *BackupManager) insertFolder(ctx context.Context, root string, meta *core.FileMeta, phase ui.Phase) (string, error) {
 	if bm.cfg.verbose {
 		phase.Log(fmt.Sprintf("Folder: %s (New/Changed)", meta.Name))
 	}
@@ -286,7 +286,7 @@ func (bm *BackupManager) insertFolder(_ context.Context, root string, meta *core
 		bm.pendingMetas[metaRef] = metaData
 	}
 	bm.trackFileMeta(metaRef, *meta)
-	return bm.tree.Insert(root, primaryParentID(meta), meta.FileID, metaRef)
+	return bm.tree.Insert(ctx, root, AffinityKey(primaryParentID(meta), meta.FileID), meta.FileID, metaRef)
 }
 
 func (bm *BackupManager) flushPendingMetas(ctx context.Context) error {
@@ -366,15 +366,15 @@ func (bm *BackupManager) buildPathFromTree(ctx context.Context, root string, met
 
 // lookupMetaByFileID resolves a FileID to its FileMeta via the HAMT tree.
 // It checks newMetas (just inserted this scan) first, then falls back to the store.
-// Uses parentIndex to resolve the AffinityKey; falls back to a full-tree walk
+// Uses parentIndex to resolve the affinity routing key; falls back to a full-tree walk
 // for entries not yet seen in this scan (e.g. incremental backups).
 func (bm *BackupManager) lookupMetaByFileID(ctx context.Context, root, fileID string) *core.FileMeta {
 	parentID := bm.parentIndex[fileID]
-	ref, err := bm.tree.Lookup(root, parentID, fileID)
+	ref, err := bm.tree.Lookup(ctx, root, AffinityKey(parentID, fileID), fileID)
 	if err != nil || ref == "" {
 		// parentID not in index (e.g. entry from a previous snapshot not re-scanned);
 		// fall back to a walk-based lookup.
-		ref, err = bm.tree.LookupByFileID(root, fileID)
+		ref, err = bm.tree.LookupByKey(ctx, root, fileID)
 		if err != nil || ref == "" {
 			return nil
 		}
@@ -395,7 +395,7 @@ func (bm *BackupManager) countRemoved(ctx context.Context, oldRoot, newRoot stri
 	if oldRoot == "" {
 		return nil
 	}
-	return bm.tree.Diff(oldRoot, newRoot, func(d hamt.DiffEntry) error {
+	return bm.tree.Diff(ctx, oldRoot, newRoot, func(d hamt.DiffEntry) error {
 		if d.OldValue != "" && d.NewValue == "" {
 			meta, err := bm.loadMeta(ctx, d.OldValue)
 			if err != nil {

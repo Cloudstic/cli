@@ -17,8 +17,28 @@ func DeriveEncryptionKey(masterKey []byte) ([]byte, error) {
 }
 
 // AddRecoverySlot generates a recovery key, wraps the given master key with
-// it, stores the recovery slot, and returns the BIP39 24-word mnemonic.
-func AddRecoverySlot(ctx context.Context, s store.ObjectStore, masterKey []byte) (mnemonic string, err error) {
+// it, stores the recovery slot under the given label, and returns the BIP39
+// 24-word mnemonic.
+//
+// A recovery mnemonic is a last-resort credential, so an existing slot with the
+// same label is never replaced silently: overwriting it invalidates the
+// mnemonic the user wrote down. Callers must pass replace=true to do so
+// deliberately, or use a different label to add a second recovery key that
+// leaves the first one working.
+func AddRecoverySlot(ctx context.Context, s store.ObjectStore, masterKey []byte, label string, replace bool) (mnemonic string, err error) {
+	label, err = NormalizeSlotLabel(label)
+	if err != nil {
+		return "", err
+	}
+	if !replace {
+		exists, err := s.Exists(ctx, slotObjectKey(SlotTypeRecovery, label))
+		if err != nil {
+			return "", fmt.Errorf("check existing recovery key slot: %w", err)
+		}
+		if exists {
+			return "", &SlotExistsError{SlotType: SlotTypeRecovery, Label: label}
+		}
+	}
 	mnemonic, recoveryKey, err := crypto.GenerateRecoveryMnemonic()
 	if err != nil {
 		return "", err
@@ -27,6 +47,7 @@ func AddRecoverySlot(ctx context.Context, s store.ObjectStore, masterKey []byte)
 	if err != nil {
 		return "", err
 	}
+	slot.Label = label
 	if err := WriteKeySlot(ctx, s, slot); err != nil {
 		return "", err
 	}
@@ -117,9 +138,9 @@ func CreatePlatformSlot(masterKey, platformKey []byte) (KeySlot, error) {
 		return KeySlot{}, fmt.Errorf("wrap master key with platform key: %w", err)
 	}
 	return KeySlot{
-		SlotType:   "platform",
+		SlotType:   SlotTypePlatform,
 		WrappedKey: base64.StdEncoding.EncodeToString(wrapped),
-		Label:      "default",
+		Label:      DefaultSlotLabel,
 	}, nil
 }
 
@@ -135,9 +156,9 @@ func CreatePasswordSlot(masterKey []byte, password string) (KeySlot, error) {
 		return KeySlot{}, fmt.Errorf("wrap master key with password: %w", err)
 	}
 	return KeySlot{
-		SlotType:   "password",
+		SlotType:   SlotTypePassword,
 		WrappedKey: base64.StdEncoding.EncodeToString(wrapped),
-		Label:      "default",
+		Label:      DefaultSlotLabel,
 		KDFParams: &KDFParams{
 			Algorithm: "argon2id",
 			Salt:      base64.StdEncoding.EncodeToString(salt),
@@ -154,9 +175,9 @@ func CreateRecoverySlot(masterKey, recoveryKey []byte) (KeySlot, error) {
 		return KeySlot{}, fmt.Errorf("wrap master key with recovery key: %w", err)
 	}
 	return KeySlot{
-		SlotType:   "recovery",
+		SlotType:   SlotTypeRecovery,
 		WrappedKey: base64.StdEncoding.EncodeToString(wrapped),
-		Label:      "default",
+		Label:      DefaultSlotLabel,
 	}, nil
 }
 
@@ -298,7 +319,7 @@ func (c kmsClientCred) Wrap(ctx context.Context, masterKey []byte) (KeySlot, err
 	}
 	return KeySlot{
 		SlotType:   "kms-platform",
-		Label:      "default",
+		Label:      DefaultSlotLabel,
 		WrappedKey: base64.StdEncoding.EncodeToString(ciphertext),
 	}, nil
 }
@@ -349,7 +370,7 @@ func (c kmsARNCred) Wrap(ctx context.Context, masterKey []byte) (KeySlot, error)
 	}
 	return KeySlot{
 		SlotType:   "kms-platform",
-		Label:      "default",
+		Label:      DefaultSlotLabel,
 		WrappedKey: base64.StdEncoding.EncodeToString(ciphertext),
 	}, nil
 }

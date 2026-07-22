@@ -9,6 +9,45 @@ import (
 	"github.com/cloudstic/cli/pkg/store"
 )
 
+// Slot types, as stored in KeySlot.SlotType.
+const (
+	SlotTypePlatform    = "platform"
+	SlotTypePassword    = "password"
+	SlotTypeRecovery    = "recovery"
+	SlotTypeKMSPlatform = "kms-platform"
+)
+
+// DefaultSlotLabel is the label used when a caller does not name a slot.
+const DefaultSlotLabel = "default"
+
+// SlotExistsError reports that a key slot already occupies the object key a
+// caller asked to write, and that overwriting it was not requested.
+type SlotExistsError struct {
+	SlotType string
+	Label    string
+}
+
+func (e *SlotExistsError) Error() string {
+	return fmt.Sprintf("a %s key slot labelled %q already exists", e.SlotType, e.Label)
+}
+
+// NormalizeSlotLabel validates a slot label and returns it, substituting
+// DefaultSlotLabel for the empty string. A label becomes part of the slot's
+// object key, so it may not be blank or contain separator characters.
+func NormalizeSlotLabel(label string) (string, error) {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return DefaultSlotLabel, nil
+	}
+	if strings.ContainsAny(label, "/\\ \t\r\n") {
+		return "", fmt.Errorf("invalid key slot label %q: must not contain whitespace or path separators", label)
+	}
+	if label == "." || label == ".." {
+		return "", fmt.Errorf("invalid key slot label %q", label)
+	}
+	return label, nil
+}
+
 // KeySlot is the JSON representation of an encryption key slot stored in B2.
 type KeySlot struct {
 	SlotType   string     `json:"slot_type"`

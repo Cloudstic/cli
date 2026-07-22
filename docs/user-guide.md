@@ -1108,9 +1108,23 @@ cloudstic key add-recovery -password "my secret passphrase"
 
 # For KMS-managed repositories
 cloudstic key add-recovery -kms-key-arn arn:aws:kms:us-east-1:123:key/abc
+
+# A second, separately labelled recovery key — the first one keeps working
+cloudstic key add-recovery -label offsite
 ```
 
+| Flag | Description |
+|------|-------------|
+| `-label <name>` | Label for the new slot, stored as `keys/recovery-<label>` (default `default`) |
+| `-force` | Replace an existing slot with the same label |
+
 The recovery key is displayed once. Write it down immediately.
+
+A repository can hold several recovery slots, one per label, and every issued
+mnemonic keeps working until its slot is replaced. Because replacing a slot
+invalidates the mnemonic it was issued for — a loss you would only discover
+during an actual recovery — `key add-recovery` refuses to overwrite an existing
+slot. Use `-label` to add another key, or `-force` to replace one deliberately.
 
 > The legacy `add-recovery-key` command is still accepted but deprecated.
 

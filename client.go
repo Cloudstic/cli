@@ -140,10 +140,24 @@ func ChangePassword(ctx context.Context, rawStore store.ObjectStore, kc keychain
 	return keychain.ChangePasswordSlot(ctx, rawStore, masterKey, newPassword)
 }
 
+// AddRecoveryKeyOptions controls which recovery slot AddRecoveryKey writes.
+type AddRecoveryKeyOptions struct {
+	// Label names the slot (object key keys/recovery-<label>). Empty means the
+	// default slot. Distinct labels let a repository hold several recovery keys,
+	// all of which stay valid.
+	Label string
+	// Replace permits overwriting an existing slot with the same label, which
+	// invalidates the mnemonic that slot was issued for.
+	Replace bool
+}
+
 // AddRecoveryKey generates a BIP39 recovery key for the repository,
 // authenticating with kc to obtain the master key.
 // Returns the 24-word mnemonic phrase.
-func AddRecoveryKey(ctx context.Context, rawStore store.ObjectStore, kc keychain.Chain) (string, error) {
+//
+// If a recovery slot with the requested label already exists and opts.Replace
+// is false, it returns a *keychain.SlotExistsError and writes nothing.
+func AddRecoveryKey(ctx context.Context, rawStore store.ObjectStore, kc keychain.Chain, opts AddRecoveryKeyOptions) (string, error) {
 	if err := requireEncryptedRepo(ctx, rawStore); err != nil {
 		return "", err
 	}
@@ -155,7 +169,7 @@ func AddRecoveryKey(ctx context.Context, rawStore store.ObjectStore, kc keychain
 	if err != nil {
 		return "", fmt.Errorf("unlock repository: %w", err)
 	}
-	return keychain.AddRecoverySlot(ctx, rawStore, masterKey)
+	return keychain.AddRecoverySlot(ctx, rawStore, masterKey, opts.Label, opts.Replace)
 }
 
 // LoadRepoConfig reads the repository marker from a raw (undecorated) store.

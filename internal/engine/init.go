@@ -174,7 +174,9 @@ func (m *InitManager) addRecoverySlot(ctx context.Context, cfg initConfig) (stri
 	if err != nil {
 		return "", fmt.Errorf("extract master key for recovery slot: %w", err)
 	}
-	mnemonic, err := keychain.AddRecoverySlot(ctx, m.store, masterKey)
+	// The repository is being created here, so there is no earlier mnemonic to
+	// invalidate: write the default slot unconditionally.
+	mnemonic, err := keychain.AddRecoverySlot(ctx, m.store, masterKey, keychain.DefaultSlotLabel, true)
 	if err != nil {
 		return "", fmt.Errorf("create recovery key: %w", err)
 	}

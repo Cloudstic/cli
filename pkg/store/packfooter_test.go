@@ -48,13 +48,13 @@ func TestPackFooter_RoundTrip(t *testing.T) {
 		"filemeta/a": {Offset: 0, Length: 10},
 		"node/b":     {Offset: 10, Length: 25},
 	}
-	footer, err := buildPackFooter(entries)
+	footer, err := buildPackFooter(entries, nil)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
 
 	pack := append(make([]byte, 35), footer...)
-	info, err := decodePackFooter("packs/test", pack)
+	info, err := decodePackFooter("packs/test", pack, nil)
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -84,12 +84,12 @@ func TestPackFooter_IsDeterministic(t *testing.T) {
 		"node/a": {Offset: 0, Length: 20},
 		"node/m": {Offset: 25, Length: 7},
 	}
-	first, err := buildPackFooter(entries)
+	first, err := buildPackFooter(entries, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for range 20 {
-		again, err := buildPackFooter(entries)
+		again, err := buildPackFooter(entries, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -101,30 +101,30 @@ func TestPackFooter_IsDeterministic(t *testing.T) {
 
 func TestPackFooter_RejectsCorruptFooter(t *testing.T) {
 	entries := map[string]PackEntry{"filemeta/a": {Offset: 0, Length: 10}}
-	footer, err := buildPackFooter(entries)
+	footer, err := buildPackFooter(entries, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	t.Run("no magic", func(t *testing.T) {
-		if _, err := decodePackFooter("packs/x", []byte("just some object bytes")); !errors.Is(err, errNoPackFooter) {
+		if _, err := decodePackFooter("packs/x", []byte("just some object bytes"), nil); !errors.Is(err, errNoPackFooter) {
 			t.Errorf("want errNoPackFooter, got %v", err)
 		}
 	})
 
 	t.Run("too short", func(t *testing.T) {
-		if _, err := decodePackFooter("packs/x", []byte{1, 2}); !errors.Is(err, errNoPackFooter) {
+		if _, err := decodePackFooter("packs/x", []byte{1, 2}, nil); !errors.Is(err, errNoPackFooter) {
 			t.Errorf("want errNoPackFooter, got %v", err)
 		}
 	})
 
 	t.Run("offset outside object region", func(t *testing.T) {
-		bad, err := buildPackFooter(map[string]PackEntry{"filemeta/a": {Offset: 0, Length: 999}})
+		bad, err := buildPackFooter(map[string]PackEntry{"filemeta/a": {Offset: 0, Length: 999}}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		pack := append(make([]byte, 10), bad...)
-		if _, err := decodePackFooter("packs/x", pack); err == nil {
+		if _, err := decodePackFooter("packs/x", pack, nil); err == nil {
 			t.Error("want an error for an entry outside the object region")
 		}
 	})
@@ -149,7 +149,7 @@ func TestPackFooter_RejectsCorruptFooter(t *testing.T) {
 		// Keep the trailer but destroy the payload it points at.
 		trimmed := append([]byte{}, pack[:5]...)
 		trimmed = append(trimmed, pack[len(pack)-packTrailerLen:]...)
-		if _, err := decodePackFooter("packs/x", trimmed); err == nil {
+		if _, err := decodePackFooter("packs/x", trimmed, nil); err == nil {
 			t.Error("want an error for a truncated footer payload")
 		}
 	})

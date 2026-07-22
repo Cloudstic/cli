@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cloudstic/cli/pkg/crypto"
 )
 
 // legacyFixtureVersion is the release that produced the committed fixture.
@@ -109,6 +111,16 @@ func TestCLI_Feature_ReadsLegacyRepository(t *testing.T) {
 		args := append([]string{"backup"}, auth...)
 		args = append(args, "-source", "local:"+sourceDir)
 		run(t, bin, args...)
+
+		// The legacy plaintext catalog must be sealed once a current binary
+		// flushes it, so an upgraded repository does not stay exposed.
+		catalog, err := os.ReadFile(filepath.Join(storeDir, "index", "packs"))
+		if err != nil {
+			t.Fatalf("read catalog after backup: %v", err)
+		}
+		if !crypto.IsEncrypted(catalog) {
+			t.Errorf("catalog should be sealed after a backup by a current binary, got: %.60s", catalog)
+		}
 
 		out := run(t, bin, append([]string{"list"}, auth...)...)
 		if !strings.Contains(out, "e05649fd8d4af2dc") {

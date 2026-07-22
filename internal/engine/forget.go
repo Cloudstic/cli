@@ -97,6 +97,11 @@ func WithFilterPath(path string) ForgetOption {
 // ForgetResult holds the outcome of a forget operation.
 type ForgetResult struct {
 	Prune *PruneResult // nil when prune was not requested
+
+	// DryRun reports that nothing was written. Callers need this to tell a
+	// preview from a real mutation — stamping the repository format after a
+	// dry run would make a read-only command lock other machines out.
+	DryRun bool
 }
 
 // ForgetManager removes a snapshot and its index pointers, optionally pruning
@@ -135,6 +140,14 @@ func (fm *ForgetManager) Run(ctx context.Context, snapshotID string, opts ...For
 		phase.Log(fmt.Sprintf("Forgetting %s", targetRef))
 	}
 
+	// A dry run resolves the snapshot so the caller learns what would go, and
+	// stops before touching anything. Deleting here regardless — which is what
+	// this did — turns a preview of a destructive command into the command.
+	if cfg.dryRun {
+		phase.Done()
+		return &ForgetResult{DryRun: true}, nil
+	}
+
 	if err := fm.store.Delete(ctx, targetRef); err != nil {
 		phase.Error()
 		return nil, fmt.Errorf("delete snapshot %s: %w", targetRef, err)
@@ -154,7 +167,7 @@ func (fm *ForgetManager) Run(ctx context.Context, snapshotID string, opts ...For
 		return nil, fmt.Errorf("flush store: %w", err)
 	}
 
-	result := &ForgetResult{}
+	result := &ForgetResult{DryRun: cfg.dryRun}
 	if cfg.prune {
 		pruneResult, err := fm.pruner.Run(ctx)
 		if err != nil {
@@ -230,6 +243,9 @@ type PolicyGroupResult struct {
 type PolicyResult struct {
 	Groups []PolicyGroupResult
 	Prune  *PruneResult
+
+	// DryRun reports that nothing was written. See ForgetResult.DryRun.
+	DryRun bool
 }
 
 // RunPolicy applies a retention policy to all snapshots and removes those not
@@ -274,7 +290,7 @@ func (fm *ForgetManager) RunPolicy(ctx context.Context, opts ...ForgetOption) (*
 	})
 
 	// Apply policy per group
-	result := &PolicyResult{}
+	result := &PolicyResult{DryRun: cfg.dryRun}
 	var toRemove []SnapshotEntry
 
 	for _, key := range keys {

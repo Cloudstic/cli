@@ -558,7 +558,9 @@ func (c *Client) Prune(ctx context.Context, opts ...PruneOption) (*PruneResult, 
 	if err != nil {
 		return nil, err
 	}
-	c.stampWriteFormat(ctx)
+	if !result.DryRun {
+		c.stampWriteFormat(ctx)
+	}
 	return result, nil
 }
 
@@ -594,13 +596,22 @@ func (c *Client) Forget(ctx context.Context, snapshotID string, opts ...ForgetOp
 	if err != nil {
 		return nil, err
 	}
-	c.stampWriteFormat(ctx)
+	if !result.DryRun {
+		c.stampWriteFormat(ctx)
+	}
 	return result, nil
 }
 
 func (c *Client) ForgetPolicy(ctx context.Context, opts ...ForgetOption) (*PolicyResult, error) {
 	mgr := engine.NewForgetManager(c.store, c.reporter)
-	return mgr.RunPolicy(ctx, opts...)
+	result, err := mgr.RunPolicy(ctx, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if !result.DryRun {
+		c.stampWriteFormat(ctx)
+	}
+	return result, nil
 }
 
 // ---------------------------------------------------------------------------

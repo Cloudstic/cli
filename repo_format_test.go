@@ -452,3 +452,96 @@ func rewindEncrypted(t *testing.T, s store.ObjectStore, encrypted bool) {
 		t.Fatal(err)
 	}
 }
+
+// A preview must not mutate. Stamping the format on a dry run would make a
+// read-only command lock other machines out of the repository — the exact harm
+// the "writes stamp, reads do not" rule exists to prevent, arriving through an
+// operation the user asked not to change anything.
+func TestDryRunsDoNotStampTheFormat(t *testing.T) {
+	ctx := context.Background()
+	storeDir := t.TempDir()
+	sourceDir := t.TempDir()
+	writeSourceTree(t, sourceDir, map[string]string{"a.txt": "alpha"})
+
+	base, err := store.NewLocalStore(storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InitRepo(ctx, base, WithInitNoEncryption()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	client, err := NewClient(ctx, base, WithPackfile(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Backup(ctx, source.NewLocalSource(sourceDir)); err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+
+	// Rewind, as a repository written by an earlier build.
+	rewindConfigVersion(t, base, 1)
+
+	t.Run("prune", func(t *testing.T) {
+		if _, err := client.Prune(ctx, WithPruneDryRun()); err != nil {
+			t.Fatalf("prune dry run: %v", err)
+		}
+		assertFormatVersion(t, base, 1)
+	})
+
+	t.Run("forget", func(t *testing.T) {
+		if _, err := client.Forget(ctx, "latest", WithDryRun()); err != nil {
+			t.Fatalf("forget dry run: %v", err)
+		}
+		assertFormatVersion(t, base, 1)
+	})
+
+	// And a real mutation still stamps, so the guard is not simply disabling it.
+	t.Run("a real prune still stamps", func(t *testing.T) {
+		if _, err := client.Prune(ctx); err != nil {
+			t.Fatalf("prune: %v", err)
+		}
+		assertFormatVersion(t, base, core.RepoFormatVersion)
+	})
+}
+
+// ForgetPolicy mutates like Forget does, so it has to stamp like Forget does.
+// It was missed when the other write paths were wired up.
+func TestForgetPolicyStampsTheFormat(t *testing.T) {
+	ctx := context.Background()
+	storeDir := t.TempDir()
+	sourceDir := t.TempDir()
+	writeSourceTree(t, sourceDir, map[string]string{"a.txt": "alpha"})
+
+	base, err := store.NewLocalStore(storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InitRepo(ctx, base, WithInitNoEncryption()); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	client, err := NewClient(ctx, base, WithPackfile(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Backup(ctx, source.NewLocalSource(sourceDir)); err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+	rewindConfigVersion(t, base, 1)
+
+	if _, err := client.ForgetPolicy(ctx, WithKeepLast(1)); err != nil {
+		t.Fatalf("forget policy: %v", err)
+	}
+	assertFormatVersion(t, base, core.RepoFormatVersion)
+}
+
+func assertFormatVersion(t *testing.T, s store.ObjectStore, want int) {
+	t.Helper()
+	cfg, err := LoadRepoConfig(context.Background(), s)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.Version != want {
+		t.Errorf("recorded format is %d, want %d", cfg.Version, want)
+	}
+}

@@ -118,3 +118,36 @@ func TestForgetManager_RunPolicy_FilterOnlyAllowed(t *testing.T) {
 		t.Fatalf("expected 1 snapshot to be removed by filter-only policy, got %d", len(result.Groups[0].Remove))
 	}
 }
+
+// A dry run must resolve the snapshot and stop. Deleting anyway — which is what
+// this did — turns a preview of a destructive command into the command itself,
+// and the CLI even reported "Snapshot removed."
+func TestForgetManager_DryRunRemovesNothing(t *testing.T) {
+	ctx := context.Background()
+	s := NewMockStore()
+
+	snap := core.Snapshot{Seq: 1, Root: "node/1"}
+	snapRef := saveSnapshot(ctx, s, &snap)
+	_ = s.Put(ctx, "index/latest", createIndex(snapRef, 1))
+
+	fm := NewForgetManager(s, ui.NewNoOpReporter())
+	result, err := fm.Run(ctx, snapRef, WithDryRun())
+	if err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+	if !result.DryRun {
+		t.Error("the result should report that it was a dry run")
+	}
+
+	if exists, _ := s.Exists(ctx, snapRef); !exists {
+		t.Error("a dry run deleted the snapshot")
+	}
+
+	// And without the flag it really goes.
+	if _, err := fm.Run(ctx, snapRef); err != nil {
+		t.Fatalf("forget: %v", err)
+	}
+	if exists, _ := s.Exists(ctx, snapRef); exists {
+		t.Error("a real forget left the snapshot behind")
+	}
+}

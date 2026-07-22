@@ -1,6 +1,6 @@
 # RFC 0018: Self-Describing Packfiles
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Date:** 2026-07-21
 - **Affects:** `pkg/store`, `internal/engine`, `cmd/cloudstic`, docs
 

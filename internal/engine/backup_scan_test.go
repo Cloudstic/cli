@@ -66,7 +66,7 @@ func TestDetectChange_NativeFileFastPath(t *testing.T) {
 	// Verify the file was stored.
 	readStore := store.NewCompressedStore(dest)
 	tree := hamt.NewTree(readStore)
-	ref1, err := tree.Lookup(result1.Root, "", "DOC_1")
+	ref1, err := tree.Lookup(ctx, result1.Root, AffinityKey("", "DOC_1"), "DOC_1")
 	if err != nil || ref1 == "" {
 		t.Fatalf("DOC_1 not found in first snapshot: ref=%q err=%v", ref1, err)
 	}
@@ -113,7 +113,7 @@ func TestDetectChange_NativeFileFastPath(t *testing.T) {
 	}
 
 	// Verify the stored content changed.
-	ref3, err := tree.Lookup(result3.Root, "", "DOC_1")
+	ref3, err := tree.Lookup(ctx, result3.Root, AffinityKey("", "DOC_1"), "DOC_1")
 	if err != nil || ref3 == "" {
 		t.Fatalf("DOC_1 not found in third snapshot: ref=%q err=%v", ref3, err)
 	}
@@ -190,7 +190,7 @@ func TestDetectChange_NativeFileCarriesForwardMetadata(t *testing.T) {
 
 	// Read the stored meta to get the ContentHash and Size set by the upload.
 	readStore := store.NewCompressedStore(dest)
-	ref, err := hamt.NewTree(readStore).Lookup(result1.Root, "", "DOC_1")
+	ref, err := hamt.NewTree(readStore).Lookup(ctx, result1.Root, AffinityKey("", "DOC_1"), "DOC_1")
 	if err != nil {
 		t.Fatalf("Lookup: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestDetectChange_NativeFileCarriesForwardMetadata(t *testing.T) {
 	}
 
 	// Verify the ref is the same (metadata carried forward correctly).
-	ref2, err := hamt.NewTree(readStore).Lookup(result2.Root, "", "DOC_1")
+	ref2, err := hamt.NewTree(readStore).Lookup(ctx, result2.Root, AffinityKey("", "DOC_1"), "DOC_1")
 	if err != nil {
 		t.Fatalf("Lookup: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestScanIncremental_DeleteWithoutParentUsesExistingMetadataParent(t *testin
 	}
 
 	tree := hamt.NewTree(store.NewCompressedStore(dest))
-	ref, err := tree.Lookup(second.Root, "FOLDER_1", "FILE_1")
+	ref, err := tree.Lookup(ctx, second.Root, AffinityKey("FOLDER_1", "FILE_1"), "FILE_1")
 	if err != nil {
 		t.Fatalf("lookup failed: %v", err)
 	}

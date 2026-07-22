@@ -47,7 +47,7 @@ func NewPruneManager(s store.ObjectStore, reporter ui.Reporter) *PruneManager {
 	meteredStore := store.NewMeteredStore(s)
 	return &PruneManager{
 		store:    meteredStore,
-		tree:     hamt.NewTree(hamt.NewTransactionalStore(meteredStore)),
+		tree:     hamt.NewTree(meteredStore),
 		reporter: reporter,
 	}
 }
@@ -220,14 +220,14 @@ func (pm *PruneManager) markSnapshot(ctx context.Context, ref string, reachable 
 		return err
 	}
 
-	if err := pm.tree.NodeRefs(snap.Root, func(r string) error {
+	if err := pm.tree.NodeRefs(ctx, snap.Root, func(r string) error {
 		reachable[r] = true
 		return nil
 	}); err != nil {
 		return err
 	}
 
-	return pm.tree.Walk(snap.Root, func(_, valueRef string) error {
+	return pm.tree.Walk(ctx, snap.Root, func(_, valueRef string) error {
 		return pm.markFileMeta(ctx, valueRef, reachable)
 	})
 }

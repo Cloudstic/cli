@@ -70,7 +70,7 @@ type CheckManager struct {
 func NewCheckManager(s store.ObjectStore, reporter ui.Reporter, hmacKey []byte) *CheckManager {
 	return &CheckManager{
 		store:    s,
-		tree:     hamt.NewTree(hamt.NewTransactionalStore(s)),
+		tree:     hamt.NewTree(s),
 		reporter: reporter,
 		hmacKey:  hmacKey,
 	}
@@ -163,7 +163,7 @@ func (cm *CheckManager) checkSnapshot(ctx context.Context, ref string, result *C
 	}
 
 	// 2. Walk HAMT nodes — verify each node is readable.
-	if err := cm.tree.NodeRefs(snap.Root, func(nodeRef string) error {
+	if err := cm.tree.NodeRefs(ctx, snap.Root, func(nodeRef string) error {
 		return cm.verifyObject(ctx, nodeRef, result, cfg, phase)
 	}); err != nil {
 		result.Errors = append(result.Errors, CheckError{
@@ -173,7 +173,7 @@ func (cm *CheckManager) checkSnapshot(ctx context.Context, ref string, result *C
 	}
 
 	// 3. Walk leaf entries — verify filemeta → content → chunks.
-	if err := cm.tree.Walk(snap.Root, func(_, valueRef string) error {
+	if err := cm.tree.Walk(ctx, snap.Root, func(_, valueRef string) error {
 		return cm.checkFileMeta(ctx, valueRef, result, cfg, phase)
 	}); err != nil {
 		result.Errors = append(result.Errors, CheckError{

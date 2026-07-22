@@ -1,0 +1,152 @@
+package hamt
+
+import (
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// The root ref of a HAMT is part of the on-disk contract, not an implementation
+// detail. `newRoot == oldRoot` is what WithIgnoreEmptySnapshot tests to decide a
+// backup was a no-op, and unchanged-subtree deduplication across snapshots works
+// only because identical trees serialize to identical bytes and therefore
+// identical refs.
+//
+// This test pins the roots produced by a set of fixed operation sequences. A
+// refactor of this package must reproduce them exactly. If this test fails, the
+// bytes written to repositories have changed: that is a repository format change
+// governed by docs/compatibility.md, not something to regenerate away. Only
+// re-run with -update when the format change is deliberate and the compatibility
+// checklist has been followed.
+
+var updateGolden = flag.Bool("update", false, "rewrite the root-hash golden file")
+
+// op is a single tree mutation in a scenario.
+type op struct {
+	del      bool
+	parentID string
+	fileID   string
+	value    string
+}
+
+func ins(parent, file, value string) op { return op{parentID: parent, fileID: file, value: value} }
+func del(parent, file string) op        { return op{del: true, parentID: parent, fileID: file} }
+
+// scenario is a named sequence of operations whose resulting root is pinned.
+type scenario struct {
+	name string
+	ops  []op
+}
+
+func rootHashScenarios() []scenario {
+	var flat []op
+	for i := 0; i < 200; i++ {
+		flat = append(flat, ins("", fmt.Sprintf("file-%04d", i), fmt.Sprintf("filemeta/ref-%04d", i)))
+	}
+
+	var affinity []op
+	for d := 0; d < 10; d++ {
+		for f := 0; f < 30; f++ {
+			affinity = append(affinity, ins(
+				fmt.Sprintf("dir-%02d", d),
+				fmt.Sprintf("file-%02d-%03d", d, f),
+				fmt.Sprintf("filemeta/ref-%02d-%03d", d, f),
+			))
+		}
+	}
+
+	// Grow past several splits, then delete most of it so collapse-on-delete and
+	// the single-leaf promotion path are covered.
+	var collapse []op
+	for i := 0; i < 120; i++ {
+		collapse = append(collapse, ins("", fmt.Sprintf("k%03d", i), fmt.Sprintf("filemeta/v%03d", i)))
+	}
+	for i := 0; i < 120; i += 2 {
+		collapse = append(collapse, del("", fmt.Sprintf("k%03d", i)))
+	}
+
+	// Overwrites and deletes of absent keys must not perturb the root.
+	var updates []op
+	for i := 0; i < 60; i++ {
+		updates = append(updates, ins("shared", fmt.Sprintf("u%02d", i), "filemeta/first"))
+	}
+	for i := 0; i < 60; i++ {
+		updates = append(updates, ins("shared", fmt.Sprintf("u%02d", i), fmt.Sprintf("filemeta/second-%02d", i)))
+	}
+	updates = append(updates, del("shared", "absent"), del("other", "u00"))
+
+	return []scenario{
+		{name: "flat-200-no-parent", ops: flat},
+		{name: "affinity-10-dirs-30-files", ops: affinity},
+		{name: "insert-120-delete-even", ops: collapse},
+		{name: "overwrite-and-absent-delete", ops: updates},
+	}
+}
+
+// runScenario applies ops in order and returns the final root ref.
+func runScenario(t *testing.T, s scenario) string {
+	t.Helper()
+	tree := NewTree(newInMemoryStore())
+	root := ""
+	var err error
+	for i, o := range s.ops {
+		if o.del {
+			root, err = tree.Delete(ctx, root, routingKey(o.parentID, o.fileID), o.fileID)
+		} else {
+			root, err = tree.Insert(ctx, root, routingKey(o.parentID, o.fileID), o.fileID, o.value)
+		}
+		if err != nil {
+			t.Fatalf("%s: op %d (%+v): %v", s.name, i, o, err)
+		}
+	}
+	return root
+}
+
+func TestRootHashGolden(t *testing.T) {
+	scenarios := rootHashScenarios()
+
+	var lines []string
+	for _, s := range scenarios {
+		lines = append(lines, s.name+" "+runScenario(t, s))
+	}
+	got := strings.Join(lines, "\n") + "\n"
+
+	path := filepath.Join("testdata", "root_hashes.golden")
+	if *updateGolden {
+		if err := os.MkdirAll("testdata", 0o755); err != nil {
+			t.Fatalf("mkdir testdata: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
+			t.Fatalf("write golden: %v", err)
+		}
+		return
+	}
+
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
+	if got != string(want) {
+		t.Fatalf("HAMT root hashes changed — this is an on-disk format change.\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// TestRootHashIsOrderIndependent pins the other half of the contract: two trees
+// holding the same entries must share a root regardless of insertion order, or
+// unchanged-subtree deduplication silently stops working.
+func TestRootHashIsOrderIndependent(t *testing.T) {
+	forward := scenario{name: "forward"}
+	backward := scenario{name: "backward"}
+	for i := 0; i < 150; i++ {
+		o := ins(fmt.Sprintf("dir-%d", i%7), fmt.Sprintf("f%03d", i), fmt.Sprintf("filemeta/v%03d", i))
+		forward.ops = append(forward.ops, o)
+		backward.ops = append([]op{o}, backward.ops...)
+	}
+
+	if a, b := runScenario(t, forward), runScenario(t, backward); a != b {
+		t.Fatalf("insertion order changed the root: forward=%s backward=%s", a, b)
+	}
+}

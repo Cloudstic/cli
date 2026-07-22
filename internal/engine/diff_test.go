@@ -16,17 +16,17 @@ func TestDiffManager_Run(t *testing.T) {
 	meta2 := createMeta(ctx, store, "file2.txt", 200)
 	meta3 := createMeta(ctx, store, "file3.txt", 300)
 
-	root1 := createHamt(t, store, []string{"file1", "file2"}, []string{meta1, meta2})
+	root1 := createHamt(ctx, t, store, []string{"file1", "file2"}, []string{meta1, meta2})
 	_ = saveSnapshotRef(ctx, store, root1, 1)
 
 	meta2Mod := createMeta(ctx, store, "file2.txt", 250)
-	root2 := createHamt(t, store, []string{"file1", "file2", "file3"}, []string{meta1, meta2Mod, meta3})
+	root2 := createHamt(ctx, t, store, []string{"file1", "file2", "file3"}, []string{meta1, meta2Mod, meta3})
 	snap2Ref := saveSnapshotRef(ctx, store, root2, 2)
 	_ = store.Put(ctx, "index/latest", createIndex(snap2Ref, 2))
 
 	dm := NewDiffManager(store)
 
-	changes, err := dm.diffRoots(root1, root2)
+	changes, err := dm.diffRoots(ctx, root1, root2)
 	if err != nil {
 		t.Fatalf("Diff failed: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestDiffManager_Run(t *testing.T) {
 		t.Errorf("Expected file3.txt to be Added, got %v", m["file3.txt"])
 	}
 
-	changesRev, err := dm.diffRoots(root2, root1)
+	changesRev, err := dm.diffRoots(ctx, root2, root1)
 	if err != nil {
 		t.Fatalf("Diff reverse failed: %v", err)
 	}
@@ -90,11 +90,11 @@ func TestDiffManager_DerivesPathsFromParentsWithoutPersistedPaths(t *testing.T) 
 		Size:    200,
 	})
 
-	root1 := createHamt(t, store, []string{"dir", "file"}, []string{rootDir, oldFile})
-	root2 := createHamt(t, store, []string{"dir", "file"}, []string{rootDir, newFile})
+	root1 := createHamt(ctx, t, store, []string{"dir", "file"}, []string{rootDir, oldFile})
+	root2 := createHamt(ctx, t, store, []string{"dir", "file"}, []string{rootDir, newFile})
 
 	dm := NewDiffManager(store)
-	changes, err := dm.diffRoots(root1, root2)
+	changes, err := dm.diffRoots(ctx, root1, root2)
 	if err != nil {
 		t.Fatalf("Diff failed: %v", err)
 	}
@@ -121,12 +121,12 @@ func createMetaWithID(ctx context.Context, s *MockStore, m core.FileMeta) string
 	return ref
 }
 
-func createHamt(t *testing.T, s *MockStore, ids []string, refs []string) string {
+func createHamt(ctx context.Context, t *testing.T, s *MockStore, ids []string, refs []string) string {
 	tree := hamt.NewTree(s)
 	root := ""
 	for i, id := range ids {
 		var err error
-		root, err = tree.Insert(root, "", id, refs[i])
+		root, err = tree.Insert(ctx, root, AffinityKey("", id), id, refs[i])
 		if err != nil {
 			t.Fatalf("Insert failed: %v", err)
 		}

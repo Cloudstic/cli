@@ -2,8 +2,8 @@ package hamt
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"math/bits"
 	"sort"
 	"strconv"
 
@@ -16,6 +16,8 @@ const (
 	branching    = 32 // 2^bitsPerLevel
 	maxDepth     = 6
 	maxLeafSize  = 32
+
+	nodePrefix = "node/"
 )
 
 // DiffEntry represents a single change between two trees.
@@ -26,64 +28,73 @@ type DiffEntry struct {
 	NewValue string
 }
 
-// Tree is a persistent Hash Array Mapped Trie backed by a content-addressed store.
-// Keys and values are opaque strings; values are typically object refs ("filemeta/<hash>").
+// Tree is a persistent Hash Array Mapped Trie.
+//
+// It is a map from (routing key, key) to an opaque string value. The routing
+// key is a hex string chosen by the caller; its first 32 bits decide the path
+// through the trie, so callers that want locality between related keys give
+// them a shared prefix. The key identifies the entry within its leaf and the
+// value is opaque — callers store object refs there, but the tree never
+// interprets them.
+//
+// All persistence is delegated to NodeStore; nothing below this line knows
+// that nodes are bytes.
 type Tree struct {
-	store store.ObjectStore
+	nodes *NodeStore
 }
 
 // NewTree creates a Tree backed by the given object store.
 func NewTree(s store.ObjectStore) *Tree {
-	return &Tree{store: s}
+	return &Tree{nodes: NewNodeStore(s)}
+}
+
+// NewTreeWithNodes creates a Tree over an existing NodeStore, so that several
+// trees can share one read cache.
+func NewTreeWithNodes(ns *NodeStore) *Tree {
+	return &Tree{nodes: ns}
 }
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
-// AffinityKey produces a locality-preserving HAMT routing key.
-// parentID is the raw source-level parent identifier (e.g. a GDrive folder ID).
-// fileID is the raw source-level file identifier.
-// Files sharing the same parent will share the top routing levels in the trie,
-// reducing metadata rewrites during incremental backups of a single directory.
-func AffinityKey(parentID, fileID string) string {
-	parentHash := core.ComputeHash([]byte(parentID))
-	fileHash := core.ComputeHash([]byte(fileID))
-	return parentHash[:4] + fileHash[4:]
-}
-
-// errFoundSentinel is used to short-circuit a Walk in LookupByFileID.
+// errFoundSentinel is used to short-circuit a Walk in LookupByKey.
 var errFoundSentinel = fmt.Errorf("found")
 
-// Insert adds or updates the entry for (parentID, fileID), returning a new root ref.
-// parentID is the raw source-level parent identifier ("" for root-level entries).
-// fileID is the raw source-level file identifier; it is stored as the leaf key.
-// Pass an empty root to start a new tree.
-func (t *Tree) Insert(root, parentID, fileID, value string) (string, error) {
-	pathKey := AffinityKey(parentID, fileID)
-	return t.insertAt(root, pathKey, fileID, value, 0)
+// Insert adds or updates the entry for key, returning a new root ref.
+// routingKey decides the entry's path through the trie; key is stored as the
+// leaf key. Pass an empty root to start a new tree.
+func (t *Tree) Insert(ctx context.Context, root, routingKey, key, value string) (string, error) {
+	r, err := newRouting(routingKey)
+	if err != nil {
+		return "", err
+	}
+	return t.insertAt(ctx, root, r, key, value, 0)
 }
 
-// Lookup returns the value associated with (parentID, fileID), or ("", nil) if not found.
-// parentID is the raw source-level parent identifier ("" for root-level entries).
-func (t *Tree) Lookup(root, parentID, fileID string) (string, error) {
+// Lookup returns the value associated with key, or ("", nil) if not found.
+// routingKey must be the same routing key the entry was inserted under.
+func (t *Tree) Lookup(ctx context.Context, root, routingKey, key string) (string, error) {
 	if root == "" {
 		return "", nil
 	}
-	pathKey := AffinityKey(parentID, fileID)
-	return t.lookupAt(root, pathKey, fileID, 0)
+	r, err := newRouting(routingKey)
+	if err != nil {
+		return "", err
+	}
+	return t.lookupAt(ctx, root, r, key, 0)
 }
 
-// LookupByFileID finds a value by walking the entire tree and matching on the raw fileID.
-// This is O(N) and slower than Lookup, but does not require the parentID context.
-// Use only when the parentID is not available (e.g. path resolution for legacy entries).
-func (t *Tree) LookupByFileID(root, fileID string) (string, error) {
+// LookupByKey finds a value by walking the entire tree and matching on the raw
+// key. This is O(N) and slower than Lookup, but does not require the entry's
+// routing key. Use only when the routing key cannot be reconstructed.
+func (t *Tree) LookupByKey(ctx context.Context, root, key string) (string, error) {
 	if root == "" {
 		return "", nil
 	}
 	var found string
-	err := t.Walk(root, func(key, value string) error {
-		if key == fileID {
+	err := t.Walk(ctx, root, func(k, value string) error {
+		if k == key {
 			found = value
 			return errFoundSentinel
 		}
@@ -96,49 +107,51 @@ func (t *Tree) LookupByFileID(root, fileID string) (string, error) {
 }
 
 // Walk visits every (key, value) pair stored in the tree rooted at root.
-func (t *Tree) Walk(root string, fn func(key, value string) error) error {
+func (t *Tree) Walk(ctx context.Context, root string, fn func(key, value string) error) error {
 	if root == "" {
 		return nil
 	}
-	return t.walk(root, fn)
+	return t.walk(ctx, root, fn)
 }
 
 // Diff structurally compares two trees and calls fn for every entry that was
 // added, removed, or modified between root1 and root2.
-func (t *Tree) Diff(root1, root2 string, fn func(DiffEntry) error) error {
+func (t *Tree) Diff(ctx context.Context, root1, root2 string, fn func(DiffEntry) error) error {
 	if root1 == root2 {
 		return nil
 	}
-	n1, err := t.loadNode(root1)
+	n1, err := t.nodes.Load(ctx, root1)
 	if err != nil {
 		return err
 	}
-	n2, err := t.loadNode(root2)
+	n2, err := t.nodes.Load(ctx, root2)
 	if err != nil {
 		return err
 	}
-	return t.diffNodes(n1, n2, 0, fn)
+	return t.diffNodes(ctx, n1, n2, 0, fn)
 }
 
 // NodeRefs visits every HAMT node ref reachable from root (including root itself).
 // This is useful for garbage-collection marking.
-func (t *Tree) NodeRefs(root string, fn func(ref string) error) error {
+func (t *Tree) NodeRefs(ctx context.Context, root string, fn func(ref string) error) error {
 	if root == "" {
 		return nil
 	}
-	return t.nodeRefs(root, fn)
+	return t.nodeRefs(ctx, root, fn)
 }
 
-// Delete removes the entry for (parentID, fileID), returning a new root ref.
+// Delete removes the entry for key, returning a new root ref.
 // If the key is not found the original root is returned unchanged.
 // Deleting from an empty tree is a no-op.
-// parentID is the raw source-level parent identifier ("" for root-level entries).
-func (t *Tree) Delete(root, parentID, fileID string) (string, error) {
+func (t *Tree) Delete(ctx context.Context, root, routingKey, key string) (string, error) {
 	if root == "" {
 		return "", nil
 	}
-	pathKey := AffinityKey(parentID, fileID)
-	newRef, err := t.deleteAt(root, pathKey, fileID, 0)
+	r, err := newRouting(routingKey)
+	if err != nil {
+		return "", err
+	}
+	newRef, err := t.deleteAt(ctx, root, r, key, 0)
 	if err != nil {
 		return "", err
 	}
@@ -146,67 +159,46 @@ func (t *Tree) Delete(root, parentID, fileID string) (string, error) {
 }
 
 // ---------------------------------------------------------------------------
-// Internal: persistence
+// Internal: routing keys
 // ---------------------------------------------------------------------------
 
-func (t *Tree) loadNode(ref string) (*core.HAMTNode, error) {
-	if ref == "" {
-		return nil, fmt.Errorf("empty node ref")
-	}
-	data, err := t.store.Get(context.Background(), ref)
-	if err != nil {
-		return nil, err
-	}
-	var node core.HAMTNode
-	if err := json.Unmarshal(data, &node); err != nil {
-		return nil, err
-	}
-	return &node, nil
+// routing is a parsed routing key: the hex form, as stored on leaf entries, plus
+// its leading 32 bits. Parsing once per operation keeps the per-level index a
+// shift and a mask instead of re-parsing the same 8 hex characters at every
+// level of every descent.
+type routing struct {
+	hex    string
+	prefix uint32
 }
 
-func (t *Tree) saveNode(node *core.HAMTNode) (string, error) {
-	hash, data, err := core.ComputeJSONHash(node)
-	if err != nil {
-		return "", err
-	}
-	key := "node/" + hash
-	if err := t.store.Put(context.Background(), key, data); err != nil {
-		return "", err
-	}
-	return key, nil
-}
-
-// ---------------------------------------------------------------------------
-// Internal: path key helpers
-// ---------------------------------------------------------------------------
-
-func computePathKey(id string) string {
-	return core.ComputeHash([]byte(id))
-}
-
-func indexForLevel(keyHex string, level int) (int, error) {
+func newRouting(keyHex string) (routing, error) {
 	if len(keyHex) < 8 {
-		return 0, fmt.Errorf("key too short")
+		return routing{}, fmt.Errorf("key too short")
 	}
 	val, err := strconv.ParseUint(keyHex[:8], 16, 32)
 	if err != nil {
-		return 0, err
+		return routing{}, err
 	}
+	return routing{hex: keyHex, prefix: uint32(val)}, nil
+}
+
+// routingForEntry returns the routing key of a stored leaf entry, falling back
+// to SHA256(Key) for legacy entries written before PathKey existed.
+func routingForEntry(e core.LeafEntry) (routing, error) {
+	pk := e.PathKey
+	if pk == "" {
+		pk = core.ComputeHash([]byte(e.Key))
+	}
+	return newRouting(pk)
+}
+
+func (r routing) indexAt(level int) (int, error) {
 	shift := 32 - (level+1)*bitsPerLevel
 	if shift < 0 {
 		return 0, fmt.Errorf("level too deep for 32-bit key prefix")
 	}
-	mask := uint64((1 << bitsPerLevel) - 1)
-	return int((val >> shift) & mask), nil
-}
-
-func popcount(n uint32) int {
-	count := 0
-	for n > 0 {
-		n &= n - 1
-		count++
-	}
-	return count
+	mask := uint32((1 << bitsPerLevel) - 1)
+	return int((r.prefix >> shift) & mask), nil
 }
 
 func sortEntries(entries []core.LeafEntry) {
@@ -215,38 +207,47 @@ func sortEntries(entries []core.LeafEntry) {
 	})
 }
 
+// childPos returns the index of bucket idx within a node's packed children
+// array, and whether the node has a child in that bucket at all.
+func childPos(bitmap uint32, idx int) (int, bool) {
+	bit := uint32(1) << idx
+	return bits.OnesCount32(bitmap & (bit - 1)), bitmap&bit != 0
+}
+
 // ---------------------------------------------------------------------------
 // Internal: insert
 // ---------------------------------------------------------------------------
 
-func (t *Tree) insertAt(nodeRef, pathKey, key, value string, level int) (string, error) {
+func (t *Tree) insertAt(ctx context.Context, nodeRef string, r routing, key, value string, level int) (string, error) {
 	var node *core.HAMTNode
 	var err error
 
 	if nodeRef == "" {
 		node = &core.HAMTNode{Type: core.ObjectTypeLeaf, Entries: []core.LeafEntry{}}
 	} else {
-		node, err = t.loadNode(nodeRef)
+		node, err = t.nodes.Load(ctx, nodeRef)
 		if err != nil {
 			return "", fmt.Errorf("load node %s: %w", nodeRef, err)
 		}
 	}
 
 	if node.Type == core.ObjectTypeLeaf {
-		return t.insertIntoLeaf(node, pathKey, key, value, level)
+		return t.insertIntoLeaf(ctx, node, r, key, value, level)
 	}
 
-	return t.insertIntoInternal(node, pathKey, key, value, level)
+	return t.insertIntoInternal(ctx, node, r, key, value, level)
 }
 
-func (t *Tree) insertIntoLeaf(node *core.HAMTNode, pathKey, key, value string, level int) (string, error) {
+func (t *Tree) insertIntoLeaf(ctx context.Context, node *core.HAMTNode, r routing, key, value string, level int) (string, error) {
+	entry := core.LeafEntry{Key: key, PathKey: r.hex, Value: value}
+
 	// Update existing entry.
 	for i, e := range node.Entries {
 		if e.Key == key {
 			newEntries := make([]core.LeafEntry, len(node.Entries))
 			copy(newEntries, node.Entries)
-			newEntries[i] = core.LeafEntry{Key: key, PathKey: pathKey, FileMeta: value}
-			return t.saveNode(&core.HAMTNode{Type: core.ObjectTypeLeaf, Entries: newEntries})
+			newEntries[i] = entry
+			return t.nodes.Save(ctx, &core.HAMTNode{Type: core.ObjectTypeLeaf, Entries: newEntries})
 		}
 	}
 
@@ -254,34 +255,32 @@ func (t *Tree) insertIntoLeaf(node *core.HAMTNode, pathKey, key, value string, l
 	if len(node.Entries) < maxLeafSize || level >= maxDepth {
 		newEntries := make([]core.LeafEntry, len(node.Entries)+1)
 		copy(newEntries, node.Entries)
-		newEntries[len(node.Entries)] = core.LeafEntry{Key: key, PathKey: pathKey, FileMeta: value}
+		newEntries[len(node.Entries)] = entry
 		sortEntries(newEntries)
-		return t.saveNode(&core.HAMTNode{Type: core.ObjectTypeLeaf, Entries: newEntries})
+		return t.nodes.Save(ctx, &core.HAMTNode{Type: core.ObjectTypeLeaf, Entries: newEntries})
 	}
 
 	// Leaf full: split into an internal node.
 	all := make([]core.LeafEntry, len(node.Entries)+1)
 	copy(all, node.Entries)
-	all[len(node.Entries)] = core.LeafEntry{Key: key, PathKey: pathKey, FileMeta: value}
-	return t.buildNode(all, level)
+	all[len(node.Entries)] = entry
+	return t.buildNode(ctx, all, level)
 }
 
-func (t *Tree) insertIntoInternal(node *core.HAMTNode, pathKey, key, value string, level int) (string, error) {
-	idx, err := indexForLevel(pathKey, level)
+func (t *Tree) insertIntoInternal(ctx context.Context, node *core.HAMTNode, r routing, key, value string, level int) (string, error) {
+	idx, err := r.indexAt(level)
 	if err != nil {
 		return "", err
 	}
 
-	bit := uint32(1 << idx)
-	exists := node.Bitmap&bit != 0
-	childPos := popcount(node.Bitmap & (bit - 1))
+	pos, exists := childPos(node.Bitmap, idx)
 
 	var childRef string
 	if exists {
-		childRef = node.Children[childPos]
+		childRef = node.Children[pos]
 	}
 
-	newChildRef, err := t.insertAt(childRef, pathKey, key, value, level+1)
+	newChildRef, err := t.insertAt(ctx, childRef, r, key, value, level+1)
 	if err != nil {
 		return "", err
 	}
@@ -289,37 +288,36 @@ func (t *Tree) insertIntoInternal(node *core.HAMTNode, pathKey, key, value strin
 	newNode := core.HAMTNode{Type: core.ObjectTypeInternal, Bitmap: node.Bitmap}
 
 	if !exists {
-		newNode.Bitmap |= bit
-		childPos = popcount(newNode.Bitmap & (bit - 1))
+		newNode.Bitmap |= uint32(1) << idx
 		newChildren := make([]string, len(node.Children)+1)
-		copy(newChildren[:childPos], node.Children[:childPos])
-		newChildren[childPos] = newChildRef
-		copy(newChildren[childPos+1:], node.Children[childPos:])
+		copy(newChildren[:pos], node.Children[:pos])
+		newChildren[pos] = newChildRef
+		copy(newChildren[pos+1:], node.Children[pos:])
 		newNode.Children = newChildren
 	} else {
 		newChildren := make([]string, len(node.Children))
 		copy(newChildren, node.Children)
-		newChildren[childPos] = newChildRef
+		newChildren[pos] = newChildRef
 		newNode.Children = newChildren
 	}
 
-	return t.saveNode(&newNode)
+	return t.nodes.Save(ctx, &newNode)
 }
 
 // buildNode recursively partitions entries into a tree starting at level.
-func (t *Tree) buildNode(entries []core.LeafEntry, level int) (string, error) {
+func (t *Tree) buildNode(ctx context.Context, entries []core.LeafEntry, level int) (string, error) {
 	if len(entries) <= maxLeafSize || level >= maxDepth {
 		sortEntries(entries)
-		return t.saveNode(&core.HAMTNode{Type: core.ObjectTypeLeaf, Entries: entries})
+		return t.nodes.Save(ctx, &core.HAMTNode{Type: core.ObjectTypeLeaf, Entries: entries})
 	}
 
 	buckets := make(map[int][]core.LeafEntry)
 	for _, e := range entries {
-		pk := e.PathKey
-		if pk == "" {
-			pk = computePathKey(e.Key) // backward compat: legacy entries without PathKey
+		r, err := routingForEntry(e)
+		if err != nil {
+			return "", err
 		}
-		idx, err := indexForLevel(pk, level)
+		idx, err := r.indexAt(level)
 		if err != nil {
 			return "", err
 		}
@@ -333,7 +331,7 @@ func (t *Tree) buildNode(entries []core.LeafEntry, level int) (string, error) {
 		if !ok {
 			continue
 		}
-		ref, err := t.buildNode(bucket, level+1)
+		ref, err := t.buildNode(ctx, bucket, level+1)
 		if err != nil {
 			return "", err
 		}
@@ -341,27 +339,27 @@ func (t *Tree) buildNode(entries []core.LeafEntry, level int) (string, error) {
 		children = append(children, ref)
 	}
 
-	return t.saveNode(&core.HAMTNode{Type: core.ObjectTypeInternal, Bitmap: bitmap, Children: children})
+	return t.nodes.Save(ctx, &core.HAMTNode{Type: core.ObjectTypeInternal, Bitmap: bitmap, Children: children})
 }
 
 // ---------------------------------------------------------------------------
 // Internal: delete
 // ---------------------------------------------------------------------------
 
-func (t *Tree) deleteAt(nodeRef, pathKey, key string, level int) (string, error) {
-	node, err := t.loadNode(nodeRef)
+func (t *Tree) deleteAt(ctx context.Context, nodeRef string, r routing, key string, level int) (string, error) {
+	node, err := t.nodes.Load(ctx, nodeRef)
 	if err != nil {
 		return nodeRef, err
 	}
 
 	if node.Type == core.ObjectTypeLeaf {
-		return t.deleteFromLeaf(node, key)
+		return t.deleteFromLeaf(ctx, node, nodeRef, key)
 	}
 
-	return t.deleteFromInternal(node, nodeRef, pathKey, key, level)
+	return t.deleteFromInternal(ctx, node, nodeRef, r, key, level)
 }
 
-func (t *Tree) deleteFromLeaf(node *core.HAMTNode, key string) (string, error) {
+func (t *Tree) deleteFromLeaf(ctx context.Context, node *core.HAMTNode, nodeRef, key string) (string, error) {
 	idx := -1
 	for i, e := range node.Entries {
 		if e.Key == key {
@@ -370,10 +368,8 @@ func (t *Tree) deleteFromLeaf(node *core.HAMTNode, key string) (string, error) {
 		}
 	}
 	if idx < 0 {
-		// Key not present; return the node unchanged. We need to re-save to
-		// get its ref, but since content hasn't changed saveNode is
-		// deterministic and will return the same ref.
-		return t.saveNode(node)
+		// Key not present; the node is unchanged, so its ref is unchanged too.
+		return nodeRef, nil
 	}
 
 	newEntries := make([]core.LeafEntry, 0, len(node.Entries)-1)
@@ -383,63 +379,62 @@ func (t *Tree) deleteFromLeaf(node *core.HAMTNode, key string) (string, error) {
 	if len(newEntries) == 0 {
 		return "", nil
 	}
-	return t.saveNode(&core.HAMTNode{Type: core.ObjectTypeLeaf, Entries: newEntries})
+	return t.nodes.Save(ctx, &core.HAMTNode{Type: core.ObjectTypeLeaf, Entries: newEntries})
 }
 
-func (t *Tree) deleteFromInternal(node *core.HAMTNode, nodeRef, pathKey, key string, level int) (string, error) {
-	idx, err := indexForLevel(pathKey, level)
+func (t *Tree) deleteFromInternal(ctx context.Context, node *core.HAMTNode, nodeRef string, r routing, key string, level int) (string, error) {
+	idx, err := r.indexAt(level)
 	if err != nil {
 		return nodeRef, err
 	}
 
-	bit := uint32(1 << idx)
-	if node.Bitmap&bit == 0 {
+	pos, exists := childPos(node.Bitmap, idx)
+	if !exists {
 		return nodeRef, nil
 	}
 
-	childPos := popcount(node.Bitmap & (bit - 1))
-	newChildRef, err := t.deleteAt(node.Children[childPos], pathKey, key, level+1)
+	newChildRef, err := t.deleteAt(ctx, node.Children[pos], r, key, level+1)
 	if err != nil {
 		return nodeRef, err
 	}
 
-	if newChildRef == node.Children[childPos] {
+	if newChildRef == node.Children[pos] {
 		return nodeRef, nil
 	}
 
 	if newChildRef == "" {
 		// Child became empty; remove the slot from this internal node.
-		newBitmap := node.Bitmap &^ bit
+		newBitmap := node.Bitmap &^ (uint32(1) << idx)
 		if newBitmap == 0 {
 			return "", nil
 		}
 		newChildren := make([]string, 0, len(node.Children)-1)
-		newChildren = append(newChildren, node.Children[:childPos]...)
-		newChildren = append(newChildren, node.Children[childPos+1:]...)
+		newChildren = append(newChildren, node.Children[:pos]...)
+		newChildren = append(newChildren, node.Children[pos+1:]...)
 
 		// Collapse: if only one child remains and it is a leaf, promote it.
 		if len(newChildren) == 1 {
-			child, err := t.loadNode(newChildren[0])
+			child, err := t.nodes.Load(ctx, newChildren[0])
 			if err == nil && child.Type == core.ObjectTypeLeaf {
-				return t.saveNode(child)
+				return newChildren[0], nil
 			}
 		}
-		return t.saveNode(&core.HAMTNode{Type: core.ObjectTypeInternal, Bitmap: newBitmap, Children: newChildren})
+		return t.nodes.Save(ctx, &core.HAMTNode{Type: core.ObjectTypeInternal, Bitmap: newBitmap, Children: newChildren})
 	}
 
 	// Child still exists but changed; update in place.
 	newChildren := make([]string, len(node.Children))
 	copy(newChildren, node.Children)
-	newChildren[childPos] = newChildRef
-	return t.saveNode(&core.HAMTNode{Type: core.ObjectTypeInternal, Bitmap: node.Bitmap, Children: newChildren})
+	newChildren[pos] = newChildRef
+	return t.nodes.Save(ctx, &core.HAMTNode{Type: core.ObjectTypeInternal, Bitmap: node.Bitmap, Children: newChildren})
 }
 
 // ---------------------------------------------------------------------------
 // Internal: lookup
 // ---------------------------------------------------------------------------
 
-func (t *Tree) lookupAt(nodeRef, pathKey, key string, level int) (string, error) {
-	node, err := t.loadNode(nodeRef)
+func (t *Tree) lookupAt(ctx context.Context, nodeRef string, r routing, key string, level int) (string, error) {
+	node, err := t.nodes.Load(ctx, nodeRef)
 	if err != nil {
 		return "", err
 	}
@@ -447,42 +442,40 @@ func (t *Tree) lookupAt(nodeRef, pathKey, key string, level int) (string, error)
 	if node.Type == core.ObjectTypeLeaf {
 		for _, e := range node.Entries {
 			if e.Key == key {
-				return e.FileMeta, nil
+				return e.Value, nil
 			}
 		}
 		return "", nil
 	}
 
-	idx, err := indexForLevel(pathKey, level)
+	idx, err := r.indexAt(level)
 	if err != nil {
 		return "", err
 	}
 
-	bit := uint32(1 << idx)
-	if node.Bitmap&bit == 0 {
+	pos, exists := childPos(node.Bitmap, idx)
+	if !exists {
 		return "", nil
 	}
-
-	childPos := popcount(node.Bitmap & (bit - 1))
-	if childPos >= len(node.Children) {
+	if pos >= len(node.Children) {
 		return "", fmt.Errorf("corrupt node: bitmap indicates child but array too short")
 	}
-	return t.lookupAt(node.Children[childPos], pathKey, key, level+1)
+	return t.lookupAt(ctx, node.Children[pos], r, key, level+1)
 }
 
 // ---------------------------------------------------------------------------
 // Internal: walk
 // ---------------------------------------------------------------------------
 
-func (t *Tree) walk(nodeRef string, fn func(key, value string) error) error {
-	node, err := t.loadNode(nodeRef)
+func (t *Tree) walk(ctx context.Context, nodeRef string, fn func(key, value string) error) error {
+	node, err := t.nodes.Load(ctx, nodeRef)
 	if err != nil {
 		return err
 	}
 
 	if node.Type == core.ObjectTypeLeaf {
 		for _, e := range node.Entries {
-			if err := fn(e.Key, e.FileMeta); err != nil {
+			if err := fn(e.Key, e.Value); err != nil {
 				return err
 			}
 		}
@@ -490,7 +483,7 @@ func (t *Tree) walk(nodeRef string, fn func(key, value string) error) error {
 	}
 
 	for _, childRef := range node.Children {
-		if err := t.walk(childRef, fn); err != nil {
+		if err := t.walk(ctx, childRef, fn); err != nil {
 			return err
 		}
 	}
@@ -501,17 +494,17 @@ func (t *Tree) walk(nodeRef string, fn func(key, value string) error) error {
 // Internal: diff
 // ---------------------------------------------------------------------------
 
-func (t *Tree) diffNodes(n1, n2 *core.HAMTNode, level int, fn func(DiffEntry) error) error {
+func (t *Tree) diffNodes(ctx context.Context, n1, n2 *core.HAMTNode, level int, fn func(DiffEntry) error) error {
 	if n1.Type == core.ObjectTypeLeaf && n2.Type == core.ObjectTypeLeaf {
-		return t.diffLeaves(n1, n2, fn)
+		return diffLeaves(n1, n2, fn)
 	}
 
 	for i := 0; i < branching; i++ {
-		c1, err := t.childForBucket(n1, i, level)
+		c1, err := t.childForBucket(ctx, n1, i, level)
 		if err != nil {
 			return err
 		}
-		c2, err := t.childForBucket(n2, i, level)
+		c2, err := t.childForBucket(ctx, n2, i, level)
 		if err != nil {
 			return err
 		}
@@ -520,18 +513,18 @@ func (t *Tree) diffNodes(n1, n2 *core.HAMTNode, level int, fn func(DiffEntry) er
 			continue
 		}
 		if c1 == nil {
-			if err := t.collectAll(c2, func(k, v string) error { return fn(DiffEntry{Key: k, NewValue: v}) }); err != nil {
+			if err := t.collectAll(ctx, c2, func(k, v string) error { return fn(DiffEntry{Key: k, NewValue: v}) }); err != nil {
 				return err
 			}
 			continue
 		}
 		if c2 == nil {
-			if err := t.collectAll(c1, func(k, v string) error { return fn(DiffEntry{Key: k, OldValue: v}) }); err != nil {
+			if err := t.collectAll(ctx, c1, func(k, v string) error { return fn(DiffEntry{Key: k, OldValue: v}) }); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := t.diffNodes(c1, c2, level+1, fn); err != nil {
+		if err := t.diffNodes(ctx, c1, c2, level+1, fn); err != nil {
 			return err
 		}
 	}
@@ -541,24 +534,23 @@ func (t *Tree) diffNodes(n1, n2 *core.HAMTNode, level int, fn func(DiffEntry) er
 // childForBucket returns the child node for bucket idx.
 // When the node is a leaf acting as a virtual internal (mixed-type comparison),
 // it returns a synthetic leaf containing only entries that hash to this bucket.
-func (t *Tree) childForBucket(n *core.HAMTNode, idx, level int) (*core.HAMTNode, error) {
+func (t *Tree) childForBucket(ctx context.Context, n *core.HAMTNode, idx, level int) (*core.HAMTNode, error) {
 	if n.Type == core.ObjectTypeInternal {
-		bit := uint32(1 << idx)
-		if n.Bitmap&bit == 0 {
+		pos, exists := childPos(n.Bitmap, idx)
+		if !exists {
 			return nil, nil
 		}
-		pos := popcount(n.Bitmap & (bit - 1))
-		return t.loadNode(n.Children[pos])
+		return t.nodes.Load(ctx, n.Children[pos])
 	}
 
 	// Leaf: filter entries belonging to this bucket.
 	var filtered []core.LeafEntry
 	for _, e := range n.Entries {
-		pk := e.PathKey
-		if pk == "" {
-			pk = computePathKey(e.Key) // backward compat: legacy entries without PathKey
+		r, err := routingForEntry(e)
+		if err != nil {
+			continue
 		}
-		i, err := indexForLevel(pk, level)
+		i, err := r.indexAt(level)
 		if err != nil {
 			continue
 		}
@@ -572,21 +564,21 @@ func (t *Tree) childForBucket(n *core.HAMTNode, idx, level int) (*core.HAMTNode,
 	return &core.HAMTNode{Type: core.ObjectTypeLeaf, Entries: filtered}, nil
 }
 
-func (t *Tree) diffLeaves(n1, n2 *core.HAMTNode, fn func(DiffEntry) error) error {
+func diffLeaves(n1, n2 *core.HAMTNode, fn func(DiffEntry) error) error {
 	left := make(map[string]string, len(n1.Entries))
 	for _, e := range n1.Entries {
-		left[e.Key] = e.FileMeta
+		left[e.Key] = e.Value
 	}
 
 	for _, e := range n2.Entries {
 		old, ok := left[e.Key]
 		if !ok {
-			if err := fn(DiffEntry{Key: e.Key, NewValue: e.FileMeta}); err != nil {
+			if err := fn(DiffEntry{Key: e.Key, NewValue: e.Value}); err != nil {
 				return err
 			}
 		} else {
-			if old != e.FileMeta {
-				if err := fn(DiffEntry{Key: e.Key, OldValue: old, NewValue: e.FileMeta}); err != nil {
+			if old != e.Value {
+				if err := fn(DiffEntry{Key: e.Key, OldValue: old, NewValue: e.Value}); err != nil {
 					return err
 				}
 			}
@@ -602,21 +594,21 @@ func (t *Tree) diffLeaves(n1, n2 *core.HAMTNode, fn func(DiffEntry) error) error
 	return nil
 }
 
-func (t *Tree) collectAll(node *core.HAMTNode, fn func(key, value string) error) error {
+func (t *Tree) collectAll(ctx context.Context, node *core.HAMTNode, fn func(key, value string) error) error {
 	if node.Type == core.ObjectTypeLeaf {
 		for _, e := range node.Entries {
-			if err := fn(e.Key, e.FileMeta); err != nil {
+			if err := fn(e.Key, e.Value); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 	for _, ref := range node.Children {
-		child, err := t.loadNode(ref)
+		child, err := t.nodes.Load(ctx, ref)
 		if err != nil {
 			return err
 		}
-		if err := t.collectAll(child, fn); err != nil {
+		if err := t.collectAll(ctx, child, fn); err != nil {
 			return err
 		}
 	}
@@ -627,17 +619,17 @@ func (t *Tree) collectAll(node *core.HAMTNode, fn func(key, value string) error)
 // Internal: node refs (GC)
 // ---------------------------------------------------------------------------
 
-func (t *Tree) nodeRefs(ref string, fn func(string) error) error {
+func (t *Tree) nodeRefs(ctx context.Context, ref string, fn func(string) error) error {
 	if err := fn(ref); err != nil {
 		return err
 	}
-	node, err := t.loadNode(ref)
+	node, err := t.nodes.Load(ctx, ref)
 	if err != nil {
 		return err
 	}
 	if node.Type == core.ObjectTypeInternal {
 		for _, childRef := range node.Children {
-			if err := t.nodeRefs(childRef, fn); err != nil {
+			if err := t.nodeRefs(ctx, childRef, fn); err != nil {
 				return err
 			}
 		}

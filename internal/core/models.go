@@ -66,11 +66,13 @@ type HAMTNode struct {
 	Entries  []LeafEntry `json:"entries,omitempty"`
 }
 
-// LeafEntry represents an entry in a Leaf node
+// LeafEntry represents an entry in a Leaf node.
+// The HAMT treats Value as opaque; the backup engine stores filemeta refs in
+// it, which is why the wire tag is "filemeta".
 type LeafEntry struct {
-	Key      string `json:"key"`                // FileID
-	PathKey  string `json:"path_key,omitempty"` // AffinityKey routing key; falls back to SHA256(Key) if empty
-	FileMeta string `json:"filemeta"`           // "filemeta/<sha256>"
+	Key     string `json:"key"`                // caller's entry key (the source file ID)
+	PathKey string `json:"path_key,omitempty"` // routing key; falls back to SHA256(Key) if empty
+	Value   string `json:"filemeta"`           // "filemeta/<sha256>"
 }
 
 // SourceInfo describes the origin of a backup snapshot. It is stored as a

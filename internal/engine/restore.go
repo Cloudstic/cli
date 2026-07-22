@@ -94,7 +94,7 @@ type RestoreManager struct {
 func NewRestoreManager(s store.ObjectStore, reporter ui.Reporter) *RestoreManager {
 	return &RestoreManager{
 		store:    s,
-		tree:     hamt.NewTree(hamt.NewTransactionalStore(s)),
+		tree:     hamt.NewTree(s),
 		reporter: reporter,
 	}
 }
@@ -199,7 +199,7 @@ func (rm *RestoreManager) prepareRestore(ctx context.Context, snapshotRef string
 		return restorePlan{}, err
 	}
 
-	byID, err := rm.collectMetadata(snap.Root)
+	byID, err := rm.collectMetadata(ctx, snap.Root)
 	if err != nil {
 		return restorePlan{}, err
 	}
@@ -643,9 +643,9 @@ func (rm *RestoreManager) resolveSnapshot(ctx context.Context, ref string) (*cor
 // Metadata collection
 // ---------------------------------------------------------------------------
 
-func (rm *RestoreManager) collectMetadata(root string) (map[string]core.FileMeta, error) {
+func (rm *RestoreManager) collectMetadata(ctx context.Context, root string) (map[string]core.FileMeta, error) {
 	var refs []string
-	err := rm.tree.Walk(root, func(_, valueRef string) error {
+	err := rm.tree.Walk(ctx, root, func(_, valueRef string) error {
 		refs = append(refs, valueRef)
 		return nil
 	})
@@ -657,7 +657,7 @@ func (rm *RestoreManager) collectMetadata(root string) (map[string]core.FileMeta
 
 	byID := make(map[string]core.FileMeta, len(refs))
 	for _, ref := range refs {
-		fm, err := rm.loadMeta(ref)
+		fm, err := rm.loadMeta(ctx, ref)
 		if err != nil {
 			phase.Error()
 			return nil, err
@@ -669,11 +669,11 @@ func (rm *RestoreManager) collectMetadata(root string) (map[string]core.FileMeta
 	return byID, nil
 }
 
-func (rm *RestoreManager) loadMeta(ref string) (*core.FileMeta, error) {
+func (rm *RestoreManager) loadMeta(ctx context.Context, ref string) (*core.FileMeta, error) {
 	if fm, ok := rm.metaCache[ref]; ok {
 		return &fm, nil
 	}
-	data, err := rm.store.Get(context.Background(), ref)
+	data, err := rm.store.Get(ctx, ref)
 	if err != nil {
 		return nil, err
 	}

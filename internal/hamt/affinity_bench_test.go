@@ -34,7 +34,7 @@ func buildTree(tb testing.TB, tree *Tree, nDirs, filesPerDir int, parentFn func(
 		dirID := fmt.Sprintf("dir-%02d", d)
 		for f := 0; f < filesPerDir; f++ {
 			fileID := fmt.Sprintf("file-%04d", d*filesPerDir+f)
-			root, err = tree.Insert(root, parentFn(dirID, fileID), fileID, "ref-"+fileID)
+			root, err = tree.Insert(ctx, root, routingKey(parentFn(dirID, fileID), fileID), fileID, "ref-"+fileID)
 			if err != nil {
 				tb.Fatalf("Insert dir=%s file=%s: %v", dirID, fileID, err)
 			}
@@ -102,7 +102,7 @@ func TestAffinityNodeWriteReduction(t *testing.T) {
 		for f := 0; f < filesPerDir; f++ {
 			// dir-00 owns file-0000 … file-0099.
 			fileID := fmt.Sprintf("file-%04d", f)
-			root, err = tree2.Insert(root, parentFn(targetDir, fileID), fileID, fmt.Sprintf("ref-%s-v2", fileID))
+			root, err = tree2.Insert(ctx, root, routingKey(parentFn(targetDir, fileID), fileID), fileID, fmt.Sprintf("ref-%s-v2", fileID))
 			if err != nil {
 				t.Fatalf("%s Insert (incremental): %v", name, err)
 			}
@@ -177,7 +177,7 @@ func benchmarkIncrementalUpdate(b *testing.B, parentFn func(string, string) stri
 		var err error
 		for f := 0; f < filesPerDir; f++ {
 			fileID := fmt.Sprintf("file-%04d", f)
-			root, err = tree2.Insert(root, parentFn(targetDir, fileID), fileID,
+			root, err = tree2.Insert(ctx, root, routingKey(parentFn(targetDir, fileID), fileID), fileID, 
 				fmt.Sprintf("ref-v%d-%04d", i, f))
 			if err != nil {
 				b.Fatalf("Insert: %v", err)

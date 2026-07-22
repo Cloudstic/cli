@@ -10,6 +10,18 @@ import (
 	"github.com/cloudstic/cli/internal/core"
 )
 
+// ctx is the context every tree call in these tests runs under. The hamt
+// package does no cancellation-sensitive work of its own; it only forwards ctx
+// to the object store.
+var ctx = context.Background()
+
+// routingKey mirrors engine.AffinityKey, the routing policy the backup engine
+// feeds this package. The tree itself is policy-free — it only needs a hex
+// routing key — so its tests derive one the same way a caller does.
+func routingKey(parentID, fileID string) string {
+	return core.ComputeHash([]byte(parentID))[:4] + core.ComputeHash([]byte(fileID))[4:]
+}
+
 // inMemoryStore implements store.ObjectStore for testing.
 type inMemoryStore struct {
 	data map[string][]byte
@@ -75,12 +87,12 @@ func TestInsertAndLookup(t *testing.T) {
 	store := newInMemoryStore()
 	tree := NewTree(store)
 
-	root, err := tree.Insert("", "", "file1", "ref1")
+	root, err := tree.Insert(ctx, "", routingKey("", "file1"), "file1", "ref1")
 	if err != nil {
 		t.Fatalf("Insert: %v", err)
 	}
 
-	val, err := tree.Lookup(root, "", "file1")
+	val, err := tree.Lookup(ctx, root, routingKey("", "file1"), "file1")
 	if err != nil {
 		t.Fatalf("Lookup: %v", err)
 	}
@@ -98,7 +110,7 @@ func TestMultipleInserts(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		key := fmt.Sprintf("file-%d", i)
 		value := fmt.Sprintf("ref-%d", i)
-		root, err = tree.Insert(root, "", key, value)
+		root, err = tree.Insert(ctx, root, routingKey("", key), key, value)
 		if err != nil {
 			t.Fatalf("Insert %d: %v", i, err)
 		}
@@ -107,7 +119,7 @@ func TestMultipleInserts(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		key := fmt.Sprintf("file-%d", i)
 		expected := fmt.Sprintf("ref-%d", i)
-		val, err := tree.Lookup(root, "", key)
+		val, err := tree.Lookup(ctx, root, routingKey("", key), key)
 		if err != nil {
 			t.Fatalf("Lookup %d: %v", i, err)
 		}
@@ -121,10 +133,10 @@ func TestUpdate(t *testing.T) {
 	store := newInMemoryStore()
 	tree := NewTree(store)
 
-	root, _ := tree.Insert("", "", "file1", "ref-old")
-	root, _ = tree.Insert(root, "", "file1", "ref-new")
+	root, _ := tree.Insert(ctx, "", routingKey("", "file1"), "file1", "ref-old")
+	root, _ = tree.Insert(ctx, root, routingKey("", "file1"), "file1", "ref-new")
 
-	val, _ := tree.Lookup(root, "", "file1")
+	val, _ := tree.Lookup(ctx, root, routingKey("", "file1"), "file1")
 	if val != "ref-new" {
 		t.Fatalf("got %q, want %q", val, "ref-new")
 	}
@@ -134,8 +146,8 @@ func TestLookupMiss(t *testing.T) {
 	store := newInMemoryStore()
 	tree := NewTree(store)
 
-	root, _ := tree.Insert("", "", "file1", "ref1")
-	val, err := tree.Lookup(root, "", "nonexistent")
+	root, _ := tree.Insert(ctx, "", routingKey("", "file1"), "file1", "ref1")
+	val, err := tree.Lookup(ctx, root, routingKey("", "nonexistent"), "nonexistent")
 	if err != nil {
 		t.Fatalf("Lookup: %v", err)
 	}
@@ -151,14 +163,14 @@ func TestWalk(t *testing.T) {
 	root := ""
 	var err error
 	for i := 0; i < 50; i++ {
-		root, err = tree.Insert(root, "", fmt.Sprintf("k%d", i), fmt.Sprintf("v%d", i))
+		root, err = tree.Insert(ctx, root, routingKey("", fmt.Sprintf("k%d", i)), fmt.Sprintf("k%d", i), fmt.Sprintf("v%d", i))
 		if err != nil {
 			t.Fatalf("Insert %d: %v", i, err)
 		}
 	}
 
 	seen := map[string]string{}
-	err = tree.Walk(root, func(key, value string) error {
+	err = tree.Walk(ctx, root, func(key, value string) error {
 		seen[key] = value
 		return nil
 	})
@@ -176,25 +188,25 @@ func TestDelete(t *testing.T) {
 
 	root := ""
 	var err error
-	root, _ = tree.Insert(root, "", "a", "va")
-	root, _ = tree.Insert(root, "", "b", "vb")
-	root, _ = tree.Insert(root, "", "c", "vc")
+	root, _ = tree.Insert(ctx, root, routingKey("", "a"), "a", "va")
+	root, _ = tree.Insert(ctx, root, routingKey("", "b"), "b", "vb")
+	root, _ = tree.Insert(ctx, root, routingKey("", "c"), "c", "vc")
 
-	root, err = tree.Delete(root, "", "b")
+	root, err = tree.Delete(ctx, root, routingKey("", "b"), "b")
 	if err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 
-	val, _ := tree.Lookup(root, "", "b")
+	val, _ := tree.Lookup(ctx, root, routingKey("", "b"), "b")
 	if val != "" {
 		t.Fatalf("expected empty after delete, got %q", val)
 	}
 
-	val, _ = tree.Lookup(root, "", "a")
+	val, _ = tree.Lookup(ctx, root, routingKey("", "a"), "a")
 	if val != "va" {
 		t.Fatalf("expected va, got %q", val)
 	}
-	val, _ = tree.Lookup(root, "", "c")
+	val, _ = tree.Lookup(ctx, root, routingKey("", "c"), "c")
 	if val != "vc" {
 		t.Fatalf("expected vc, got %q", val)
 	}
@@ -204,8 +216,8 @@ func TestDeleteNonexistent(t *testing.T) {
 	store := newInMemoryStore()
 	tree := NewTree(store)
 
-	root, _ := tree.Insert("", "", "a", "va")
-	root2, err := tree.Delete(root, "", "nonexistent")
+	root, _ := tree.Insert(ctx, "", routingKey("", "a"), "a", "va")
+	root2, err := tree.Delete(ctx, root, routingKey("", "nonexistent"), "nonexistent")
 	if err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
@@ -218,8 +230,8 @@ func TestDeleteAll(t *testing.T) {
 	store := newInMemoryStore()
 	tree := NewTree(store)
 
-	root, _ := tree.Insert("", "", "a", "va")
-	root, err := tree.Delete(root, "", "a")
+	root, _ := tree.Insert(ctx, "", routingKey("", "a"), "a", "va")
+	root, err := tree.Delete(ctx, root, routingKey("", "a"), "a")
 	if err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
@@ -233,7 +245,7 @@ func TestDiffBothEmpty(t *testing.T) {
 	tree := NewTree(store)
 
 	var called bool
-	err := tree.Diff("", "", func(DiffEntry) error { called = true; return nil })
+	err := tree.Diff(ctx, "", "", func(DiffEntry) error { called = true; return nil })
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
@@ -246,9 +258,9 @@ func TestDiffSameRoot(t *testing.T) {
 	store := newInMemoryStore()
 	tree := NewTree(store)
 
-	root, _ := tree.Insert("", "", "a", "va")
+	root, _ := tree.Insert(ctx, "", routingKey("", "a"), "a", "va")
 	var called bool
-	err := tree.Diff(root, root, func(DiffEntry) error { called = true; return nil })
+	err := tree.Diff(ctx, root, root, func(DiffEntry) error { called = true; return nil })
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
@@ -261,14 +273,14 @@ func TestDiffAddsAndRemoves(t *testing.T) {
 	store := newInMemoryStore()
 	tree := NewTree(store)
 
-	root1, _ := tree.Insert("", "", "a", "va")
-	root1, _ = tree.Insert(root1, "", "b", "vb")
+	root1, _ := tree.Insert(ctx, "", routingKey("", "a"), "a", "va")
+	root1, _ = tree.Insert(ctx, root1, routingKey("", "b"), "b", "vb")
 
-	root2, _ := tree.Insert("", "", "b", "vb")
-	root2, _ = tree.Insert(root2, "", "c", "vc")
+	root2, _ := tree.Insert(ctx, "", routingKey("", "b"), "b", "vb")
+	root2, _ = tree.Insert(ctx, root2, routingKey("", "c"), "c", "vc")
 
 	var diffs []DiffEntry
-	err := tree.Diff(root1, root2, func(d DiffEntry) error {
+	err := tree.Diff(ctx, root1, root2, func(d DiffEntry) error {
 		diffs = append(diffs, d)
 		return nil
 	})
@@ -302,14 +314,14 @@ func TestLargeTree(t *testing.T) {
 	var err error
 	count := 500
 	for i := 0; i < count; i++ {
-		root, err = tree.Insert(root, "", fmt.Sprintf("key-%04d", i), fmt.Sprintf("val-%04d", i))
+		root, err = tree.Insert(ctx, root, routingKey("", fmt.Sprintf("key-%04d", i)), fmt.Sprintf("key-%04d", i), fmt.Sprintf("val-%04d", i))
 		if err != nil {
 			t.Fatalf("Insert %d: %v", i, err)
 		}
 	}
 
 	for i := 0; i < count; i++ {
-		val, err := tree.Lookup(root, "", fmt.Sprintf("key-%04d", i))
+		val, err := tree.Lookup(ctx, root, routingKey("", fmt.Sprintf("key-%04d", i)), fmt.Sprintf("key-%04d", i))
 		if err != nil {
 			t.Fatalf("Lookup %d: %v", i, err)
 		}
@@ -319,7 +331,7 @@ func TestLargeTree(t *testing.T) {
 	}
 
 	walked := 0
-	err = tree.Walk(root, func(key, value string) error {
+	err = tree.Walk(ctx, root, func(key, value string) error {
 		walked++
 		return nil
 	})
@@ -338,14 +350,14 @@ func TestNodeRefs(t *testing.T) {
 	root := ""
 	var err error
 	for i := 0; i < 100; i++ {
-		root, err = tree.Insert(root, "", fmt.Sprintf("k%d", i), fmt.Sprintf("v%d", i))
+		root, err = tree.Insert(ctx, root, routingKey("", fmt.Sprintf("k%d", i)), fmt.Sprintf("k%d", i), fmt.Sprintf("v%d", i))
 		if err != nil {
 			t.Fatalf("Insert: %v", err)
 		}
 	}
 
 	var refs []string
-	err = tree.NodeRefs(root, func(ref string) error {
+	err = tree.NodeRefs(ctx, root, func(ref string) error {
 		refs = append(refs, ref)
 		return nil
 	})
@@ -372,7 +384,7 @@ func TestTransactionalStore(t *testing.T) {
 	ts := NewTransactionalStore(persistent)
 
 	tree := NewTree(ts)
-	root, err := tree.Insert("", "", "a", "va")
+	root, err := tree.Insert(ctx, "", routingKey("", "a"), "a", "va")
 	if err != nil {
 		t.Fatalf("Insert: %v", err)
 	}
@@ -400,21 +412,21 @@ func TestDeleteFromLargeTree(t *testing.T) {
 	var err error
 	count := 200
 	for i := 0; i < count; i++ {
-		root, err = tree.Insert(root, "", fmt.Sprintf("key-%04d", i), fmt.Sprintf("val-%04d", i))
+		root, err = tree.Insert(ctx, root, routingKey("", fmt.Sprintf("key-%04d", i)), fmt.Sprintf("key-%04d", i), fmt.Sprintf("val-%04d", i))
 		if err != nil {
 			t.Fatalf("Insert %d: %v", i, err)
 		}
 	}
 
 	for i := 0; i < count; i += 2 {
-		root, err = tree.Delete(root, "", fmt.Sprintf("key-%04d", i))
+		root, err = tree.Delete(ctx, root, routingKey("", fmt.Sprintf("key-%04d", i)), fmt.Sprintf("key-%04d", i))
 		if err != nil {
 			t.Fatalf("Delete %d: %v", i, err)
 		}
 	}
 
 	for i := 0; i < count; i++ {
-		val, err := tree.Lookup(root, "", fmt.Sprintf("key-%04d", i))
+		val, err := tree.Lookup(ctx, root, routingKey("", fmt.Sprintf("key-%04d", i)), fmt.Sprintf("key-%04d", i))
 		if err != nil {
 			t.Fatalf("Lookup %d: %v", i, err)
 		}
@@ -510,7 +522,7 @@ func TestFlushReachable_NoExistsCalls(t *testing.T) {
 	root := ""
 	var err error
 	for i := 0; i < 100; i++ {
-		root, err = tree.Insert(root, "", fmt.Sprintf("k%d", i), fmt.Sprintf("v%d", i))
+		root, err = tree.Insert(ctx, root, routingKey("", fmt.Sprintf("k%d", i)), fmt.Sprintf("k%d", i), fmt.Sprintf("v%d", i))
 		if err != nil {
 			t.Fatalf("Insert %d: %v", i, err)
 		}
@@ -533,7 +545,7 @@ func TestFlushReachable_NoExistsCalls(t *testing.T) {
 
 	// Verify every flushed node is actually reachable from root.
 	reachable := map[string]bool{}
-	err = tree.NodeRefs(root, func(ref string) error {
+	err = tree.NodeRefs(ctx, root, func(ref string) error {
 		reachable[ref] = true
 		return nil
 	})
@@ -558,7 +570,7 @@ func TestFlushReachable_DiscardsIntermediateNodes(t *testing.T) {
 	root := ""
 	var err error
 	for i := 0; i < 100; i++ {
-		root, err = tree.Insert(root, "", fmt.Sprintf("k%d", i), fmt.Sprintf("v%d", i))
+		root, err = tree.Insert(ctx, root, routingKey("", fmt.Sprintf("k%d", i)), fmt.Sprintf("k%d", i), fmt.Sprintf("v%d", i))
 		if err != nil {
 			t.Fatalf("Insert %d: %v", i, err)
 		}
@@ -675,15 +687,15 @@ func TestInternalNodeType(t *testing.T) {
 	root := ""
 	var err error
 	for i := 0; i < maxLeafSize+10; i++ {
-		root, err = tree.Insert(root, "", fmt.Sprintf("key-%04d", i), fmt.Sprintf("val-%04d", i))
+		root, err = tree.Insert(ctx, root, routingKey("", fmt.Sprintf("key-%04d", i)), fmt.Sprintf("key-%04d", i), fmt.Sprintf("val-%04d", i))
 		if err != nil {
 			t.Fatalf("Insert: %v", err)
 		}
 	}
 
-	node, err := tree.loadNode(root)
+	node, err := tree.nodes.Load(ctx, root)
 	if err != nil {
-		t.Fatalf("loadNode: %v", err)
+		t.Fatalf("load node: %v", err)
 	}
 	if node.Type != core.ObjectTypeInternal {
 		t.Fatalf("expected internal node, got %s", node.Type)

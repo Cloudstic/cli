@@ -102,11 +102,12 @@ func NewRestoreManager(s store.ObjectStore, reporter ui.Reporter) *RestoreManage
 // Run restores the snapshot's file tree to the provided writer format.
 // snapshotRef can be "", "latest", a bare hash, or "snapshot/<hash>".
 func (rm *RestoreManager) Run(ctx context.Context, writer RestoreWriter, snapshotRef string, opts ...RestoreOption) (*RestoreResult, error) {
-	lock, err := AcquireSharedLock(ctx, rm.store, "restore")
+	lock, lockedCtx, err := AcquireSharedLock(ctx, rm.store, "restore")
 	if err != nil {
 		return nil, err
 	}
 	defer lock.Release()
+	ctx = lockedCtx
 
 	plan, err := rm.prepareRestore(ctx, snapshotRef, opts...)
 	if err != nil {

@@ -59,11 +59,12 @@ func (pm *PruneManager) Run(ctx context.Context, opts ...PruneOption) (*PruneRes
 	}
 
 	if !cfg.dryRun {
-		lock, err := AcquireRepoLock(ctx, pm.store, "prune")
+		lock, lockedCtx, err := AcquireRepoLock(ctx, pm.store, "prune")
 		if err != nil {
 			return nil, err
 		}
 		defer lock.Release()
+		ctx = lockedCtx
 	}
 
 	pm.metaCache = make(map[string]core.FileMeta)

@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -352,7 +353,10 @@ func TestFindPreviousSnapshot_Identity(t *testing.T) {
 		Identity: "A1B2C3D4-1234-5678-ABCD-EF0123456789",
 		PathID:   ".",
 	}
-	prev := bm.findPreviousSnapshot(info)
+	prev, err := bm.findPreviousSnapshot(info)
+	if err != nil {
+		t.Fatalf("findPreviousSnapshot: %v", err)
+	}
 	if prev == nil {
 		t.Fatal("expected to find previous snapshot via identity match")
 	} else if prev.Root != "node/linux" {
@@ -391,7 +395,10 @@ func TestFindPreviousSnapshot_LegacyFallback(t *testing.T) {
 		Account: "myhost",
 		Path:    "/data",
 	}
-	prev := bm.findPreviousSnapshot(info)
+	prev, err := bm.findPreviousSnapshot(info)
+	if err != nil {
+		t.Fatalf("findPreviousSnapshot: %v", err)
+	}
 	if prev == nil {
 		t.Fatal("expected to find previous snapshot via legacy match")
 	} else if prev.Root != "node/legacy" {
@@ -449,7 +456,10 @@ func TestFindPreviousSnapshot_IdentityPreferredOverLegacy(t *testing.T) {
 		Identity: "UUID-1234",
 		PathID:   ".",
 	}
-	prev := bm.findPreviousSnapshot(info)
+	prev, err := bm.findPreviousSnapshot(info)
+	if err != nil {
+		t.Fatalf("findPreviousSnapshot: %v", err)
+	}
 	if prev == nil {
 		t.Fatal("expected to find previous snapshot")
 	} else if prev.Root != "node/new" {
@@ -491,8 +501,33 @@ func TestFindPreviousSnapshot_IdentityDifferentSubdirs(t *testing.T) {
 		Identity: "UUID-SAME-DRIVE",
 		PathID:   "Documents",
 	}
-	prev := bm.findPreviousSnapshot(info)
+	prev, err := bm.findPreviousSnapshot(info)
+	if err != nil {
+		t.Fatalf("findPreviousSnapshot: %v", err)
+	}
 	if prev != nil {
 		t.Errorf("expected nil (different subdir on same drive), got root=%s", prev.Root)
+	}
+}
+
+// TestBackupManager_Run_PropagatesLatestIndexError verifies that a real
+// backend failure reading index/latest aborts the backup instead of being
+// silently treated as a fresh repository — which would reset the sequence
+// number and force an unnecessary full rescan.
+func TestBackupManager_Run_PropagatesLatestIndexError(t *testing.T) {
+	ctx := context.Background()
+	backendErr := errors.New("simulated network error")
+	dest := newErrorOnGetStore(NewMockStore(), backendErr, "index/latest")
+
+	src := NewMockSource()
+	src.AddFile("file1.txt", "id1", []byte("hello"))
+
+	mgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil)
+	_, err := mgr.Run(ctx)
+	if err == nil {
+		t.Fatal("expected Run to fail when index/latest cannot be read")
+	}
+	if !errors.Is(err, backendErr) {
+		t.Errorf("Run error = %v, want it to wrap %v", err, backendErr)
 	}
 }

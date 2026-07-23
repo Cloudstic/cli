@@ -12,6 +12,7 @@ import (
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
 	"github.com/cloudstic/cli/pkg/source"
+	"github.com/cloudstic/cli/pkg/store"
 )
 
 // MockStore implements store.ObjectStore. It is safe for concurrent use.
@@ -38,7 +39,7 @@ func (s *MockStore) Get(_ context.Context, key string) ([]byte, error) {
 	data, ok := s.Data[key]
 	s.mu.RUnlock()
 	if !ok {
-		return nil, fmt.Errorf("key not found: %s", key)
+		return nil, fmt.Errorf("%s: %w", key, store.ErrNotFound)
 	}
 	return data, nil
 }
@@ -74,7 +75,7 @@ func (s *MockStore) Size(_ context.Context, key string) (int64, error) {
 	data, ok := s.Data[key]
 	s.mu.RUnlock()
 	if !ok {
-		return 0, fmt.Errorf("key not found: %s", key)
+		return 0, fmt.Errorf("%s: %w", key, store.ErrNotFound)
 	}
 	return int64(len(data)), nil
 }
@@ -91,6 +92,32 @@ func (s *MockStore) TotalSize(_ context.Context) (int64, error) {
 
 func (s *MockStore) Flush(_ context.Context) error {
 	return nil
+}
+
+// errorOnGetStore wraps a store.ObjectStore and forces Get to return a fixed
+// error for a chosen set of keys, simulating a real backend failure (network,
+// permission, ...) as distinct from the key simply not existing. Tests use
+// this to verify that such an error is propagated rather than silently
+// treated as "not found".
+type errorOnGetStore struct {
+	store.ObjectStore
+	errKeys map[string]bool
+	err     error
+}
+
+func newErrorOnGetStore(inner store.ObjectStore, err error, keys ...string) *errorOnGetStore {
+	m := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		m[k] = true
+	}
+	return &errorOnGetStore{ObjectStore: inner, errKeys: m, err: err}
+}
+
+func (s *errorOnGetStore) Get(ctx context.Context, key string) ([]byte, error) {
+	if s.errKeys[key] {
+		return nil, s.err
+	}
+	return s.ObjectStore.Get(ctx, key)
 }
 
 // MockSource implements source.Source

@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -161,6 +162,11 @@ func TestSFTPStore(t *testing.T) {
 	}
 	if exists {
 		t.Fatalf("Expected nonexistent key to report false")
+	}
+
+	// Get (not found)
+	if _, err := st.Get(ctx, "nonexistent/key"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get(nonexistent) error = %v, want errors.Is(err, ErrNotFound)", err)
 	}
 
 	// Size

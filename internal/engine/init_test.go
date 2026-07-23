@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/cloudstic/cli/internal/core"
@@ -142,6 +143,41 @@ func TestInitManager_AlreadyInitialized(t *testing.T) {
 	_, err := mgr.Run(context.Background(), WithInitNoEncryption())
 	if err == nil {
 		t.Fatal("expected error for already-initialized repo")
+	}
+}
+
+// A real backend failure while checking for an existing "config" marker must
+// abort Run rather than be treated as "not yet initialized" — otherwise a
+// transient store error could make init overwrite an existing repository's
+// key slots and config.
+func TestInitManager_Run_PropagatesConfigCheckError(t *testing.T) {
+	backendErr := errors.New("simulated network error")
+	s := newErrorOnGetStore(NewMockStore(), backendErr, configKey)
+	mgr := NewInitManager(s)
+
+	_, err := mgr.Run(context.Background(), WithInitNoEncryption())
+	if err == nil {
+		t.Fatal("expected Run to fail when the existing config cannot be read")
+	}
+	if !errors.Is(err, backendErr) {
+		t.Errorf("Run error = %v, want it to wrap %v", err, backendErr)
+	}
+}
+
+// writeRepoConfig must not silently move the recorded format version down
+// when it cannot read the existing config to compare against — that floor is
+// permanent (see docs/compatibility.md).
+func TestInitManager_WriteRepoConfig_PropagatesReadError(t *testing.T) {
+	backendErr := errors.New("simulated network error")
+	s := newErrorOnGetStore(NewMockStore(), backendErr, configKey)
+	mgr := NewInitManager(s)
+
+	err := mgr.writeRepoConfig(context.Background(), false)
+	if err == nil {
+		t.Fatal("expected writeRepoConfig to fail when the existing config cannot be read")
+	}
+	if !errors.Is(err, backendErr) {
+		t.Errorf("writeRepoConfig error = %v, want it to wrap %v", err, backendErr)
 	}
 }
 

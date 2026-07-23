@@ -77,12 +77,6 @@ func (s *countingStore) TotalSize(_ context.Context) (int64, error) { return 0, 
 
 func (s *countingStore) Flush(_ context.Context) error { return nil }
 
-var ErrNotFound = &notFoundError{}
-
-type notFoundError struct{}
-
-func (e *notFoundError) Error() string { return "not found" }
-
 func TestKeyCacheStore_ExistsAfterPreload(t *testing.T) {
 	ctx := context.Background()
 	inner := newCountingStore()

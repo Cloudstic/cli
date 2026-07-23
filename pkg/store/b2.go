@@ -121,7 +121,14 @@ func (s *B2Store) Get(ctx context.Context, key string) ([]byte, error) {
 	r := obj.NewReader(ctx)
 	defer func() { _ = r.Close() }()
 
-	return io.ReadAll(r)
+	data, err := io.ReadAll(r)
+	if err != nil {
+		if b2.IsNotExist(err) {
+			return nil, fmt.Errorf("%s: %w", key, ErrNotFound)
+		}
+		return nil, err
+	}
+	return data, nil
 }
 
 // GetRange implements RangeGetter using a B2 ranged download, so a caller

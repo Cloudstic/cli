@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -110,5 +111,18 @@ func TestLocalStore(t *testing.T) {
 	}
 	if len(keys) != 2 {
 		t.Errorf("Expected 2 keys under 'nested', got %d", len(keys))
+	}
+}
+
+func TestLocalStore_GetNotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+	s, err := NewLocalStore(tmpDir)
+	if err != nil {
+		t.Fatalf("NewLocalStore failed: %v", err)
+	}
+
+	_, err = s.Get(context.Background(), "missing/key")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get(missing) error = %v, want errors.Is(err, ErrNotFound)", err)
 	}
 }

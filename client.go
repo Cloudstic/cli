@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sync/atomic"
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/engine"
@@ -56,10 +57,14 @@ func InitRepo(ctx context.Context, rawStore store.ObjectStore, opts ...InitOptio
 // of data they can still read correctly, which is the same harm the version
 // gate exists to prevent.
 //
-// It is called after a successful mutation (backup, prune, forget) and from the
-// pack index seal path, so a repository written by this build tells other
-// machines sharing it to upgrade. It is deliberately not called on read.
-// See docs/compatibility.md.
+// A mutation calls it — never a read — so a repository written by this build
+// tells other machines sharing it to upgrade. When it stamps relative to the
+// write depends on the mutation: prune and forget stamp afterwards (best-effort,
+// via Client.stampWriteFormat), because what they write is decoded correctly at
+// either format; backup stamps beforehand (fatal, via Client.raiseRepoFormat),
+// because it writes content whose encoding an older build would misread and
+// which cannot be rewritten once stored. See core.FramedCompressionFormat and
+// docs/compatibility.md.
 func UpgradeRepoFormat(ctx context.Context, rawStore store.ObjectStore, to int) error {
 	if to > core.MaxSupportedRepoFormat {
 		return fmt.Errorf(
@@ -299,7 +304,12 @@ type Client struct {
 	// base is the raw, undecorated store. Kept so repository-level markers such
 	// as the format version can be written without passing through encryption
 	// or packing, which is where init writes them too.
-	base           store.ObjectStore
+	base store.ObjectStore
+	// repoFormat is the in-process view of the on-disk format version, and the
+	// single source of truth for format-dependent write policy. The compression
+	// layer's frame gate reads it, and raiseRepoFormat is its only writer, so
+	// framing cannot disagree with the format a mutation has stamped.
+	repoFormat     atomic.Int64
 	storedMeter    *store.MeteredStore
 	encryptionKey  []byte
 	hmacKey        []byte
@@ -377,9 +387,24 @@ func NewClient(ctx context.Context, base store.ObjectStore, opts ...ClientOption
 		inner = store.NewEncryptedStore(storedMeter, c.encryptionKey)
 	}
 
-	c.store = store.NewCompressedStore(inner)
+	// Seed the in-process format from disk, then let the compression layer read
+	// it through the gate. Framing is thus derived from the format, not a
+	// separate switch: a mutation raises the format (raiseRepoFormat) and every
+	// subsequent write frames, with nothing to keep in sync. A repository below
+	// core.FramedCompressionFormat starts unframed and is raised before its
+	// first framed write.
+	if cfg != nil {
+		c.repoFormat.Store(int64(cfg.Version))
+	}
+	c.store = store.NewCompressedStore(inner, store.WithFrameGate(c.framingEnabled))
 	c.storedMeter = storedMeter
 	return c, nil
+}
+
+// framingEnabled reports whether writes should be framed at the repository's
+// current recorded format. It is the gate the compression layer consults.
+func (c *Client) framingEnabled() bool {
+	return c.repoFormat.Load() >= core.FramedCompressionFormat
 }
 
 // resolveKeyFromConfig uses the Keychain to resolve the master key and derive
@@ -436,28 +461,59 @@ var (
 	WithWorkstationStoreRef = engine.WithWorkstationStoreRef
 )
 
-// stampWriteFormat raises the repository's recorded format after a successful
-// mutation, so a repository written by this build tells every other machine
-// sharing it to upgrade.
+// raiseRepoFormat stamps the on-disk format and updates the in-process view in
+// lockstep, so format-dependent write policy — framing — follows immediately.
+// It is the only writer of c.repoFormat.
 //
-// It is deliberately tied to writes rather than to opening a repository. A read
-// that silently changed the repository — locking out a machine that was only
-// listing snapshots — would be a surprising side effect of an innocuous
-// command. "A newer build has written here" is a real signal; "a newer build
-// looked at it" is not.
-//
-// Failure is not fatal to the operation that just succeeded: the data is
-// already written, and the next mutation stamps again.
-func (c *Client) stampWriteFormat(ctx context.Context) {
+// Raising is a write, so it obeys the "writes stamp, reads do not" rule: a read
+// that silently changed the repository would be a surprising side effect of an
+// innocuous command, and would lock out a machine that was only listing
+// snapshots. A newer build having *written* here is a real signal; a newer
+// build having *looked* is not.
+func (c *Client) raiseRepoFormat(ctx context.Context) error {
 	if c.base == nil {
-		return
+		return nil
 	}
 	if err := UpgradeRepoFormat(ctx, c.base, core.RepoFormatVersion); err != nil {
+		return err
+	}
+	c.repoFormat.Store(int64(core.RepoFormatVersion))
+	return nil
+}
+
+// stampWriteFormat raises the format after a successful mutation, best-effort:
+// the data is already written and the next mutation stamps again, so a failure
+// is logged rather than surfaced.
+//
+// This is right for prune and forget. What they write through the compression
+// layer is JSON — snapshot and index manifests — which always compresses, so an
+// unframed one is decoded correctly by the legacy read path and nothing is lost
+// by stamping afterwards. Backup is the exception: it stamps *before* writing
+// (see its comment), because it stores user file content, the one thing an
+// unframed write corrupts permanently.
+func (c *Client) stampWriteFormat(ctx context.Context) {
+	if err := c.raiseRepoFormat(ctx); err != nil {
 		log.Debugf("could not stamp repository format: %v", err)
 	}
 }
 
 func (c *Client) Backup(ctx context.Context, src source.Source, opts ...BackupOption) (*BackupResult, error) {
+	// Raise the format before writing anything, and fail if it cannot be raised.
+	//
+	// Backup stores user file content, which may be incompressible and may begin
+	// with a magic header — the combination the frame exists for. An object this
+	// build writes unframed is unframed permanently: content-addressed objects
+	// are never rewritten, so a later framed backup skips it on the Exists check
+	// and nothing repairs it. Stamping afterwards, as prune and forget do, would
+	// mean every repository below the framing format lost its already-compressed
+	// files on the first backup after upgrading. Raising first makes framing
+	// (which follows the format) already on by the time the first object is
+	// written; continuing on a raise error would write exactly those unframed
+	// objects, so the error is fatal.
+	if err := c.raiseRepoFormat(ctx); err != nil {
+		return nil, fmt.Errorf("raise repository format before writing: %w", err)
+	}
+
 	rawMeter := store.NewMeteredStore(c.store)
 	c.storedMeter.Reset()
 
@@ -469,7 +525,6 @@ func (c *Client) Backup(ctx context.Context, src source.Source, opts ...BackupOp
 
 	result.BytesAddedRaw = rawMeter.BytesWritten()
 	result.BytesAddedStored = c.storedMeter.BytesWritten()
-	c.stampWriteFormat(ctx)
 	return result, nil
 }
 

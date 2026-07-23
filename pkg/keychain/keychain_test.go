@@ -138,6 +138,54 @@ func TestResolve_EmptyConfig(t *testing.T) {
 	}
 }
 
+// A wrong password must produce an error naming the specific failure
+// (the underlying decrypt error), not just a generic "no slot matches"
+// message indistinguishable from a corrupt slot or an unreachable KMS.
+func TestPasswordCred_WrongPassword_ReportsUnderlyingFailure(t *testing.T) {
+	ctx := context.Background()
+	masterKey, _ := crypto.GenerateKey()
+	slot, _ := CreatePasswordSlot(masterKey, "correct-password")
+
+	_, err := WithPassword("wrong-password").Resolve(ctx, []KeySlot{slot})
+	if err == nil {
+		t.Fatal("expected error for wrong password")
+	}
+	if !strings.Contains(err.Error(), "no compatible password key slot found") {
+		t.Errorf("error = %v, want it to mention the password slot kind", err)
+	}
+	if !strings.Contains(err.Error(), slot.Label) {
+		t.Errorf("error = %v, want it to name the slot label %q", err, slot.Label)
+	}
+}
+
+// Chain.Resolve must accumulate each resolver's specific error rather than
+// collapsing them into one generic message, so a wrong password and an
+// incompatible platform key are distinguishable in the final error.
+func TestChainResolve_JoinsEachResolverError(t *testing.T) {
+	ctx := context.Background()
+	masterKey, _ := crypto.GenerateKey()
+	pwSlot, _ := CreatePasswordSlot(masterKey, "correct-password")
+	platformKey := []byte("0123456789abcdef0123456789abcdef")
+	platformSlot, _ := CreatePlatformSlot(masterKey, platformKey)
+	slots := []KeySlot{pwSlot, platformSlot}
+
+	wrongPlatformKey := []byte("badbadbadbadbadbadbadbadbadbadba")
+	c := Chain{WithPassword("wrong-password"), WithPlatformKey(wrongPlatformKey)}
+	_, err := c.Resolve(ctx, slots)
+	if err == nil {
+		t.Fatal("expected error when no credential matches")
+	}
+	if !strings.Contains(err.Error(), "no provided credential matches") {
+		t.Errorf("error = %v, want it to mention the top-level failure", err)
+	}
+	if !strings.Contains(err.Error(), "no compatible password key slot found") {
+		t.Errorf("error = %v, want it to include the password resolver's failure", err)
+	}
+	if !strings.Contains(err.Error(), "no compatible platform key slot found") {
+		t.Errorf("error = %v, want it to include the platform resolver's failure", err)
+	}
+}
+
 func TestWithPrompt(t *testing.T) {
 	ctx := context.Background()
 	masterKey, _ := crypto.GenerateKey()

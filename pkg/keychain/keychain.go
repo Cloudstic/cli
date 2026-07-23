@@ -4,12 +4,24 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 
 	"github.com/cloudstic/cli/pkg/crypto"
 	"github.com/cloudstic/cli/pkg/store"
 )
+
+// noMatchingSlotErr builds the error a Credential.Resolve returns when its
+// slots exist but none could be unwrapped. It joins each slot's specific
+// failure (wrong password, corrupt slot, unreachable KMS, ...) instead of one
+// generic message that looks identical regardless of cause.
+func noMatchingSlotErr(kind string, errs []error) error {
+	if len(errs) == 0 {
+		return fmt.Errorf("no %s key slot found", kind)
+	}
+	return fmt.Errorf("no compatible %s key slot found: %w", kind, errors.Join(errs...))
+}
 
 // DeriveEncryptionKey derives the AES-256 encryption key from a master key.
 func DeriveEncryptionKey(masterKey []byte) ([]byte, error) {
@@ -93,13 +105,21 @@ func (c Chain) Resolve(ctx context.Context, slots []KeySlot) ([]byte, error) {
 		return nil, fmt.Errorf("repository is encrypted: no resolvers configured in the keychain")
 	}
 
+	var errs []error
 	for _, resolver := range c {
 		mk, err := resolver.Resolve(ctx, slots)
 		if err == nil && len(mk) > 0 {
 			return mk, nil
 		}
+		if err != nil {
+			errs = append(errs, err)
+		}
 	}
-	return nil, fmt.Errorf("repository is encrypted: no provided credential matches the stored key slots (types: %s)", SlotTypes(slots))
+	if len(errs) == 0 {
+		return nil, fmt.Errorf("repository is encrypted: no provided credential matches the stored key slots (types: %s)", SlotTypes(slots))
+	}
+	return nil, fmt.Errorf("repository is encrypted: no provided credential matches the stored key slots (types: %s): %w",
+		SlotTypes(slots), errors.Join(errs...))
 }
 
 // WrapAll attempts to wrap the master key using all configured credentials in the chain.
@@ -194,15 +214,18 @@ func (c platformKeyCred) Resolve(ctx context.Context, slots []KeySlot) ([]byte, 
 	if len(c.key) == 0 {
 		return nil, fmt.Errorf("empty platform key")
 	}
+	var errs []error
 	for _, slot := range slots {
 		if slot.SlotType != "platform" {
 			continue
 		}
-		if mk, err := unwrapMasterKey(slot, c.key); err == nil {
+		mk, err := unwrapMasterKey(slot, c.key)
+		if err == nil {
 			return mk, nil
 		}
+		errs = append(errs, fmt.Errorf("slot %q: %w", slot.Label, err))
 	}
-	return nil, fmt.Errorf("no compatible platform key slot found")
+	return nil, noMatchingSlotErr("platform", errs)
 }
 
 func (c platformKeyCred) Wrap(ctx context.Context, masterKey []byte) (KeySlot, error) {
@@ -225,12 +248,18 @@ func (c passwordCred) Resolve(ctx context.Context, slots []KeySlot) ([]byte, err
 	if c.password == "" {
 		return nil, fmt.Errorf("empty password")
 	}
+	var errs []error
 	for _, slot := range slots {
-		if slot.SlotType != "password" || slot.KDFParams == nil {
+		if slot.SlotType != "password" {
+			continue
+		}
+		if slot.KDFParams == nil {
+			errs = append(errs, fmt.Errorf("slot %q: missing KDF params", slot.Label))
 			continue
 		}
 		salt, err := base64.StdEncoding.DecodeString(slot.KDFParams.Salt)
 		if err != nil {
+			errs = append(errs, fmt.Errorf("slot %q: decode salt: %w", slot.Label, err))
 			continue
 		}
 		wrappingKey := crypto.DeriveKeyFromPassword(c.password, salt, crypto.Argon2Params{
@@ -238,11 +267,13 @@ func (c passwordCred) Resolve(ctx context.Context, slots []KeySlot) ([]byte, err
 			Memory:  slot.KDFParams.Memory,
 			Threads: slot.KDFParams.Threads,
 		})
-		if mk, err := unwrapMasterKey(slot, wrappingKey); err == nil {
+		mk, err := unwrapMasterKey(slot, wrappingKey)
+		if err == nil {
 			return mk, nil
 		}
+		errs = append(errs, fmt.Errorf("slot %q: %w", slot.Label, err))
 	}
-	return nil, fmt.Errorf("no compatible password key slot found")
+	return nil, noMatchingSlotErr("password", errs)
 }
 
 func (c passwordCred) Wrap(ctx context.Context, masterKey []byte) (KeySlot, error) {
@@ -266,15 +297,18 @@ func (c recoveryCred) Resolve(ctx context.Context, slots []KeySlot) ([]byte, err
 	if err != nil {
 		return nil, fmt.Errorf("invalid recovery key mnemonic: %w", err)
 	}
+	var errs []error
 	for _, slot := range slots {
 		if slot.SlotType != "recovery" {
 			continue
 		}
-		if mk, err := unwrapMasterKey(slot, recoveryKey); err == nil {
+		mk, err := unwrapMasterKey(slot, recoveryKey)
+		if err == nil {
 			return mk, nil
 		}
+		errs = append(errs, fmt.Errorf("slot %q: %w", slot.Label, err))
 	}
-	return nil, fmt.Errorf("no compatible recovery key slot found")
+	return nil, noMatchingSlotErr("recovery", errs)
 }
 
 func (c recoveryCred) Wrap(ctx context.Context, masterKey []byte) (KeySlot, error) {
@@ -294,19 +328,23 @@ func (c kmsClientCred) Resolve(ctx context.Context, slots []KeySlot) ([]byte, er
 	if c.client == nil {
 		return nil, fmt.Errorf("nil KMS client")
 	}
+	var errs []error
 	for _, slot := range slots {
 		if slot.SlotType != "kms-platform" {
 			continue
 		}
 		wrapped, err := base64.StdEncoding.DecodeString(slot.WrappedKey)
 		if err != nil {
+			errs = append(errs, fmt.Errorf("slot %q: decode wrapped key: %w", slot.Label, err))
 			continue
 		}
-		if mk, err := c.client.Decrypt(ctx, wrapped); err == nil {
+		mk, err := c.client.Decrypt(ctx, wrapped)
+		if err == nil {
 			return mk, nil
 		}
+		errs = append(errs, fmt.Errorf("slot %q: %w", slot.Label, err))
 	}
-	return nil, fmt.Errorf("no compatible kms-platform key slot found")
+	return nil, noMatchingSlotErr("kms-platform", errs)
 }
 
 func (c kmsClientCred) Wrap(ctx context.Context, masterKey []byte) (KeySlot, error) {
@@ -341,19 +379,23 @@ func (c kmsARNCred) Resolve(ctx context.Context, slots []KeySlot) ([]byte, error
 	if err != nil {
 		return nil, fmt.Errorf("init kms client: %w", err)
 	}
+	var errs []error
 	for _, slot := range slots {
 		if slot.SlotType != "kms-platform" {
 			continue
 		}
 		wrapped, err := base64.StdEncoding.DecodeString(slot.WrappedKey)
 		if err != nil {
+			errs = append(errs, fmt.Errorf("slot %q: decode wrapped key: %w", slot.Label, err))
 			continue
 		}
-		if mk, err := client.Decrypt(ctx, wrapped); err == nil {
+		mk, err := client.Decrypt(ctx, wrapped)
+		if err == nil {
 			return mk, nil
 		}
+		errs = append(errs, fmt.Errorf("slot %q: %w", slot.Label, err))
 	}
-	return nil, fmt.Errorf("no compatible kms-platform key slot found")
+	return nil, noMatchingSlotErr("kms-platform", errs)
 }
 
 func (c kmsARNCred) Wrap(ctx context.Context, masterKey []byte) (KeySlot, error) {

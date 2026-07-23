@@ -275,9 +275,25 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 		return r, nil
 	}
 
-	snapRef, snapHash, snap, err := bm.saveSnapshot(ctx, newRoot, seq+1, newToken)
+	newSeq := seq + 1
+	snapRef, snapHash, snap, err := bm.writeSnapshotObject(ctx, newRoot, newSeq, newToken)
 	if err != nil {
 		return nil, err
+	}
+
+	// Both the HAMT nodes committed above and the snapshot object just
+	// written are content-addressed, so PackStore may still be holding them
+	// only in its in-memory buffer. index/latest is a mutable key and is
+	// never packed, so writing it lands on the backend immediately — if that
+	// happened before this flush, a crash in between would leave index/latest
+	// pointing at a snapshot whose bytes (or tree) were never actually
+	// uploaded. Flushing first, then pointing index/latest at the result,
+	// keeps that pointer always valid.
+	if err := bm.store.Flush(ctx); err != nil {
+		return nil, fmt.Errorf("flush store before updating index/latest: %w", err)
+	}
+	if err := updateLatest(bm.store, snapRef, newSeq); err != nil {
+		return nil, fmt.Errorf("update index/latest: %w", err)
 	}
 
 	// Update snapshot catalog (best-effort).
@@ -364,7 +380,13 @@ func (bm *BackupManager) findPreviousSnapshot(info core.SourceInfo) (*core.Snaps
 	return nil, nil
 }
 
-func (bm *BackupManager) saveSnapshot(ctx context.Context, root string, seq int, changeToken string) (ref, hash string, snap core.Snapshot, err error) {
+// writeSnapshotObject builds and writes the snapshot object for the given
+// root and sequence number, but deliberately does not update index/latest —
+// that pointer is a mutable, unpacked key that lands durably the instant it
+// is written, so the caller must flush the store first to make sure the
+// snapshot object (and the HAMT nodes it names) are durable before anything
+// points at them.
+func (bm *BackupManager) writeSnapshotObject(ctx context.Context, root string, seq int, changeToken string) (ref, hash string, snap core.Snapshot, err error) {
 	meta := make(map[string]string, len(bm.cfg.meta)+1)
 	for k, v := range bm.cfg.meta {
 		meta[k] = v
@@ -390,10 +412,6 @@ func (bm *BackupManager) saveSnapshot(ctx context.Context, root string, seq int,
 
 	ref = "snapshot/" + hash
 	if err := bm.store.Put(ctx, ref, snapData); err != nil {
-		return "", "", snap, err
-	}
-
-	if err := updateLatest(bm.store, ref, seq); err != nil {
 		return "", "", snap, err
 	}
 

@@ -157,6 +157,34 @@ func (s *concurrencyTrackingStore) peakConcurrency() int {
 	return s.peak
 }
 
+// recordingStore wraps a store.ObjectStore and records, in order, every key
+// that actually lands a Put on it. Placed underneath PackStore in a test, it
+// stands in for "the true backend": PackStore's own Puts of a packfile or of
+// an unpacked mutable key (like index/latest) only reach it once genuinely
+// durable, so the recorded order is exactly what a crash-consistency test
+// needs to check.
+type recordingStore struct {
+	store.ObjectStore
+	mu      sync.Mutex
+	putKeys []string
+}
+
+func (s *recordingStore) Put(ctx context.Context, key string, data []byte) error {
+	if err := s.ObjectStore.Put(ctx, key, data); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.putKeys = append(s.putKeys, key)
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *recordingStore) recordedPutKeys() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.putKeys...)
+}
+
 // MockSource implements source.Source
 type MockSource struct {
 	Files map[string]MockFile

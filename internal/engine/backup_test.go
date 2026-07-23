@@ -531,3 +531,52 @@ func TestBackupManager_Run_PropagatesLatestIndexError(t *testing.T) {
 		t.Errorf("Run error = %v, want it to wrap %v", err, backendErr)
 	}
 }
+
+// TestBackupManager_Run_FlushesPacksBeforeUpdatingIndexLatest is a
+// crash-consistency check: the snapshot object and the HAMT nodes it names
+// are content-addressed, so PackStore may hold them only in its in-memory
+// buffer until Flush uploads a packfile. index/latest is a mutable,
+// unpacked key, so writing it lands on the real backend immediately. If
+// index/latest were written before that flush, a crash in between would
+// leave it pointing at a snapshot whose data was never actually uploaded.
+// This asserts the true backend receives a packfile before it ever
+// receives index/latest.
+func TestBackupManager_Run_FlushesPacksBeforeUpdatingIndexLatest(t *testing.T) {
+	ctx := context.Background()
+	rec := &recordingStore{ObjectStore: NewMockStore()}
+	packed, err := store.NewPackStore(rec)
+	if err != nil {
+		t.Fatalf("NewPackStore: %v", err)
+	}
+
+	src := NewMockSource()
+	src.AddFile("file1.txt", "id1", []byte("hello world"))
+
+	mgr := NewBackupManager(src, packed, ui.NewNoOpReporter(), nil)
+	if _, err := mgr.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	keys := rec.recordedPutKeys()
+
+	packIdx, latestIdx := -1, -1
+	for i, k := range keys {
+		if packIdx == -1 && strings.HasPrefix(k, "packs/") {
+			packIdx = i
+		}
+		if latestIdx == -1 && k == "index/latest" {
+			latestIdx = i
+		}
+	}
+
+	if latestIdx == -1 {
+		t.Fatal("index/latest was never durably written to the backend")
+	}
+	if packIdx == -1 {
+		t.Fatal("no packfile was ever durably written to the backend")
+	}
+	if packIdx > latestIdx {
+		t.Errorf("packfile landed on the backend at position %d, after index/latest at position %d (order: %v)",
+			packIdx, latestIdx, keys)
+	}
+}

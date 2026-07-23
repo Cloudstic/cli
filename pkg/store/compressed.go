@@ -10,7 +10,6 @@ import (
 	"io"
 	"math"
 	"sync"
-	"sync/atomic"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -78,47 +77,50 @@ var ErrInvalidFrame = errors.New("store: invalid compression frame")
 // CompressedStore wraps an ObjectStore and transparently zstd-compresses on
 // write and decompresses on read.
 //
-// Writes are framed only when framing is enabled — see WithFramedWrites, and
-// core.FramedCompressionFormat for why that is tied to the repository format.
-// Reads accept both framed and unframed objects regardless: unframed objects
-// exist in every repository indefinitely, because upgrades are opportunistic and
-// permanently partial (docs/compatibility.md).
+// Whether a write is framed is not a mode this store is told to enter; it is
+// derived, per write, from a gate the caller supplies (WithFrameGate). Framing
+// belongs on only once the repository records a format whose readers understand
+// the frame, and that format is raised during a mutation — so the gate lets the
+// owner of the format flip one value and have every write follow, with no
+// second copy of the decision to keep in sync. See core.FramedCompressionFormat.
+//
+// Reads accept both framed and unframed objects regardless of the gate: unframed
+// objects exist in every repository indefinitely, because upgrades are
+// opportunistic and permanently partial (docs/compatibility.md).
 type CompressedStore struct {
 	inner ObjectStore
-	frame atomic.Bool
+	// frame reports whether the next write should be framed. Never nil — the
+	// constructor installs a default. The field itself is set once at
+	// construction; any dynamism lives in what the gate reads.
+	frame func() bool
 }
 
 // CompressedOption configures a CompressedStore.
 type CompressedOption func(*CompressedStore)
 
-// WithFramedWrites enables the framed object encoding on write.
+// WithFrameGate frames writes whenever gate reports true, evaluated per write.
 //
-// It is off by default so that a store built without an established repository
-// format — tests, and any caller that has not read the config — cannot write
-// objects an older build would misread.
-func WithFramedWrites(enabled bool) CompressedOption {
-	return func(s *CompressedStore) { s.frame.Store(enabled) }
+// This is how framing tracks the repository format without a second source of
+// truth: the caller owns one format value and points the gate at it, so raising
+// the format turns framing on for every subsequent write at once. Enabling
+// framing partway through a mutation is still the caller's responsibility to
+// avoid — an object written unframed by this build is unframed permanently,
+// since content-addressed objects are never rewritten once stored.
+func WithFrameGate(gate func() bool) CompressedOption {
+	return func(s *CompressedStore) { s.frame = gate }
 }
 
-// FramedWrites reports whether this store frames what it writes.
-func (s *CompressedStore) FramedWrites() bool { return s.frame.Load() }
-
-// SetFramedWrites turns framing on once the repository is known to record a
-// format whose readers understand the frame.
-//
-// It exists because that becomes true *during* a client's life: a mutation
-// raises the format of an older repository before writing to it, and everything
-// written from then on must be framed. Callers must enable framing before the
-// first write of that mutation, not partway through — an unframed object written
-// by this build is a permanent one, since content-addressed objects are never
-// rewritten once stored.
-func (s *CompressedStore) SetFramedWrites(enabled bool) { s.frame.Store(enabled) }
+// WithFramedWrites is the static form of WithFrameGate, for callers whose
+// framing decision does not change over the store's life (chiefly tests).
+func WithFramedWrites(enabled bool) CompressedOption {
+	return WithFrameGate(func() bool { return enabled })
+}
 
 func (s *CompressedStore) Unwrap() ObjectStore { return s.inner }
 
 func NewCompressedStore(inner ObjectStore, opts ...CompressedOption) *CompressedStore {
 	initZstd()
-	s := &CompressedStore{inner: inner}
+	s := &CompressedStore{inner: inner, frame: func() bool { return false }}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -131,7 +133,7 @@ func (s *CompressedStore) Put(ctx context.Context, key string, data []byte) erro
 	if len(out) >= len(data) {
 		out, algo = data, frameAlgoRaw
 	}
-	if s.frame.Load() {
+	if s.frame() {
 		out = encodeFrame(algo, len(data), out)
 	}
 	return s.inner.Put(ctx, key, out)

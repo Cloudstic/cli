@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -73,7 +75,10 @@ func LoadSnapshotCatalog(s store.ObjectStore) ([]SnapshotEntry, error) {
 
 	// 5. Fetch missing snapshot objects concurrently.
 	if len(missing) > 0 {
-		fetched := fetchSnapshots(s, missing)
+		fetched, err := fetchSnapshots(s, missing)
+		if err != nil {
+			return nil, fmt.Errorf("load snapshot catalog: %w", err)
+		}
 		for ref, snap := range fetched {
 			catalogMap[ref] = snapshotToSummary(ref, snap)
 		}
@@ -134,13 +139,33 @@ func SaveSnapshotCatalog(s store.ObjectStore, catalog []core.SnapshotSummary) er
 	return s.Put(context.Background(), snapshotCatalogKey, data)
 }
 
+// loadCatalogForUpdate reads the current catalog for AppendSnapshotCatalog and
+// RemoveFromSnapshotCatalog. ok is false when the read failed for a real
+// reason (not simply "no catalog yet"): callers must not treat that as an
+// empty catalog, since persisting one would clobber every existing entry with
+// a base that just happens to be wrong rather than absent. The self-heal in
+// LoadSnapshotCatalog recovers a merely stale catalog on the next read; it
+// cannot recover one that was overwritten with fabricated emptiness.
+func loadCatalogForUpdate(s store.ObjectStore) (catalog []core.SnapshotSummary, ok bool) {
+	data, err := s.Get(context.Background(), snapshotCatalogKey)
+	switch {
+	case err == nil:
+		_ = json.Unmarshal(data, &catalog)
+		return catalog, true
+	case errors.Is(err, store.ErrNotFound):
+		return nil, true
+	default:
+		return nil, false
+	}
+}
+
 // AppendSnapshotCatalog loads the current catalog, appends a new summary, and
 // persists it. This is best-effort; errors are logged but not propagated.
 func AppendSnapshotCatalog(s store.ObjectStore, summary core.SnapshotSummary) {
-	ctx := context.Background()
-	var catalog []core.SnapshotSummary
-	if data, err := s.Get(ctx, snapshotCatalogKey); err == nil {
-		_ = json.Unmarshal(data, &catalog)
+	catalog, ok := loadCatalogForUpdate(s)
+	if !ok {
+		snapLog.Debugf("failed to append snapshot catalog: could not read existing catalog")
+		return
 	}
 	catalog = append(catalog, summary)
 	if err := SaveSnapshotCatalog(s, catalog); err != nil {
@@ -151,10 +176,10 @@ func AppendSnapshotCatalog(s store.ObjectStore, summary core.SnapshotSummary) {
 // RemoveFromSnapshotCatalog loads the current catalog, removes entries whose
 // refs match, and persists the result. This is best-effort.
 func RemoveFromSnapshotCatalog(s store.ObjectStore, refs ...string) {
-	ctx := context.Background()
-	var catalog []core.SnapshotSummary
-	if data, err := s.Get(ctx, snapshotCatalogKey); err == nil {
-		_ = json.Unmarshal(data, &catalog)
+	catalog, ok := loadCatalogForUpdate(s)
+	if !ok {
+		snapLog.Debugf("failed to update snapshot catalog after removal: could not read existing catalog")
+		return
 	}
 	if len(catalog) == 0 {
 		return
@@ -193,10 +218,17 @@ func snapshotToSummary(ref string, snap core.Snapshot) core.SnapshotSummary {
 // ---------------------------------------------------------------------------
 
 // fetchSnapshots concurrently fetches and unmarshals the given snapshot keys.
-func fetchSnapshots(s store.ObjectStore, keys []string) map[string]core.Snapshot {
+// A key that no longer exists (e.g. removed by a concurrent prune) is simply
+// omitted from the result — that is a legitimate "gone". Any other failure,
+// including a snapshot that fails to decode, aborts the whole fetch instead:
+// the caller cannot tell "gone" from "unreadable", and silently dropping an
+// unreadable-but-still-live snapshot would persist a catalog that is missing
+// an entry that is actually still there.
+func fetchSnapshots(s store.ObjectStore, keys []string) (map[string]core.Snapshot, error) {
 	ctx := context.Background()
 	result := make(map[string]core.Snapshot, len(keys))
 	var mu sync.Mutex
+	var firstErr error
 	var wg sync.WaitGroup
 
 	for _, key := range keys {
@@ -205,10 +237,23 @@ func fetchSnapshots(s store.ObjectStore, keys []string) map[string]core.Snapshot
 			defer wg.Done()
 			data, err := s.Get(ctx, k)
 			if err != nil {
+				if errors.Is(err, store.ErrNotFound) {
+					return
+				}
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("fetch %s: %w", k, err)
+				}
+				mu.Unlock()
 				return
 			}
 			var snap core.Snapshot
 			if err := json.Unmarshal(data, &snap); err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("decode %s: %w", k, err)
+				}
+				mu.Unlock()
 				return
 			}
 			mu.Lock()
@@ -218,7 +263,10 @@ func fetchSnapshots(s store.ObjectStore, keys []string) map[string]core.Snapshot
 	}
 
 	wg.Wait()
-	return result
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	return result, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -226,17 +274,24 @@ func fetchSnapshots(s store.ObjectStore, keys []string) map[string]core.Snapshot
 // ---------------------------------------------------------------------------
 
 // resolveLatest reads index/latest and returns the snapshot ref it points to.
-// Returns empty string on error (fresh repo).
-func resolveLatest(s store.ObjectStore) (ref string, seq int) {
+// Returns ("", 0, nil) on a fresh repository (no index/latest yet). Any other
+// read or decode failure is returned as an error rather than treated as a
+// fresh repo — a transient store error is not the same as "no snapshots
+// exist", and confusing the two would silently reset the sequence number and
+// downgrade the next backup from incremental to a full rescan.
+func resolveLatest(s store.ObjectStore) (ref string, seq int, err error) {
 	data, err := s.Get(context.Background(), "index/latest")
 	if err != nil {
-		return "", 0
+		if errors.Is(err, store.ErrNotFound) {
+			return "", 0, nil
+		}
+		return "", 0, fmt.Errorf("read index/latest: %w", err)
 	}
 	var idx core.Index
 	if err := json.Unmarshal(data, &idx); err != nil {
-		return "", 0
+		return "", 0, fmt.Errorf("decode index/latest: %w", err)
 	}
-	return idx.LatestSnapshot, idx.Seq
+	return idx.LatestSnapshot, idx.Seq, nil
 }
 
 // updateLatest sets index/latest to point to the given snapshot, or deletes it

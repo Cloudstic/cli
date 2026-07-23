@@ -3,10 +3,12 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/pkg/store"
 )
 
 // helper: store a snapshot object and return its ref.
@@ -269,5 +271,135 @@ func TestLoadSnapshotCatalog_EmptyRepo(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Errorf("expected 0 entries, got %d", len(entries))
+	}
+}
+
+// A real backend failure while reading index/latest must not be confused
+// with "no snapshots exist yet" — that would silently reset the sequence
+// number and downgrade the next backup from incremental to a full rescan.
+func TestResolveLatest_FreshRepoNoError(t *testing.T) {
+	s := NewMockStore()
+
+	ref, seq, err := resolveLatest(s)
+	if err != nil {
+		t.Fatalf("resolveLatest on fresh repo: %v", err)
+	}
+	if ref != "" || seq != 0 {
+		t.Errorf("resolveLatest on fresh repo = (%q, %d), want (\"\", 0)", ref, seq)
+	}
+}
+
+func TestResolveLatest_PropagatesRealError(t *testing.T) {
+	backendErr := errors.New("simulated network error")
+	s := newErrorOnGetStore(NewMockStore(), backendErr, "index/latest")
+
+	_, _, err := resolveLatest(s)
+	if err == nil {
+		t.Fatal("expected resolveLatest to propagate a real backend error")
+	}
+	if !errors.Is(err, backendErr) {
+		t.Errorf("resolveLatest error = %v, want it to wrap %v", err, backendErr)
+	}
+}
+
+// fetchSnapshots must distinguish a snapshot removed concurrently (a
+// legitimate omission) from any other failure, which must abort the fetch
+// rather than silently produce a catalog missing a snapshot that is still
+// there.
+func TestFetchSnapshots_SkipsConcurrentlyDeletedKey(t *testing.T) {
+	s := NewMockStore()
+	now := time.Now()
+	snap := &core.Snapshot{Seq: 1, Created: now.Format(time.RFC3339), Root: "node/a"}
+	ref := putSnapshot(t, s, snap)
+
+	result, err := fetchSnapshots(s, []string{ref, "snapshot/does-not-exist"})
+	if err != nil {
+		t.Fatalf("fetchSnapshots: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 fetched snapshot, got %d", len(result))
+	}
+	if _, ok := result[ref]; !ok {
+		t.Errorf("expected %s in result", ref)
+	}
+}
+
+func TestFetchSnapshots_PropagatesRealError(t *testing.T) {
+	backendErr := errors.New("simulated network error")
+	inner := NewMockStore()
+	ref := putSnapshot(t, inner, &core.Snapshot{Seq: 1, Root: "node/a"})
+	s := newErrorOnGetStore(inner, backendErr, ref)
+
+	_, err := fetchSnapshots(s, []string{ref})
+	if err == nil {
+		t.Fatal("expected fetchSnapshots to propagate a real backend error")
+	}
+	if !errors.Is(err, backendErr) {
+		t.Errorf("fetchSnapshots error = %v, want it to wrap %v", err, backendErr)
+	}
+}
+
+// LoadSnapshotCatalog must not persist a catalog that silently omits a
+// snapshot it failed to fetch for a real (non-not-found) reason.
+func TestLoadSnapshotCatalog_PropagatesFetchError(t *testing.T) {
+	backendErr := errors.New("simulated network error")
+	inner := NewMockStore()
+	snap := &core.Snapshot{Seq: 1, Root: "node/a"}
+	ref := putSnapshot(t, inner, snap)
+	// No catalog yet, so LoadSnapshotCatalog must fetch ref individually.
+	s := newErrorOnGetStore(inner, backendErr, ref)
+
+	_, err := LoadSnapshotCatalog(s)
+	if err == nil {
+		t.Fatal("expected LoadSnapshotCatalog to propagate a real fetch error")
+	}
+	if !errors.Is(err, backendErr) {
+		t.Errorf("LoadSnapshotCatalog error = %v, want it to wrap %v", err, backendErr)
+	}
+}
+
+// A real read failure on index/snapshots must not cause AppendSnapshotCatalog
+// to silently overwrite the existing catalog with one containing only the
+// new entry.
+func TestAppendSnapshotCatalog_DoesNotClobberOnReadError(t *testing.T) {
+	backendErr := errors.New("simulated network error")
+	inner := NewMockStore()
+	putCatalog(t, inner, []core.SnapshotSummary{
+		{Ref: "snapshot/existing", Seq: 1, Created: time.Now().Format(time.RFC3339)},
+	})
+	s := newErrorOnGetStore(inner, backendErr, snapshotCatalogKey)
+
+	AppendSnapshotCatalog(s, core.SnapshotSummary{Ref: "snapshot/new", Seq: 2})
+
+	catalog := readCatalog(t, inner)
+	if len(catalog) != 1 || catalog[0].Ref != "snapshot/existing" {
+		t.Errorf("catalog was clobbered on read error: %+v", catalog)
+	}
+}
+
+func TestRemoveFromSnapshotCatalog_DoesNotClobberOnReadError(t *testing.T) {
+	backendErr := errors.New("simulated network error")
+	inner := NewMockStore()
+	putCatalog(t, inner, []core.SnapshotSummary{
+		{Ref: "snapshot/existing", Seq: 1, Created: time.Now().Format(time.RFC3339)},
+	})
+	s := newErrorOnGetStore(inner, backendErr, snapshotCatalogKey)
+
+	RemoveFromSnapshotCatalog(s, "snapshot/existing")
+
+	catalog := readCatalog(t, inner)
+	if len(catalog) != 1 || catalog[0].Ref != "snapshot/existing" {
+		t.Errorf("catalog was clobbered on read error: %+v", catalog)
+	}
+}
+
+// MockStore.Get must wrap store.ErrNotFound for a missing key, matching real
+// backend behavior — resolveLatest and friends rely on errors.Is to tell a
+// genuinely missing object apart from a real failure.
+func TestMockStore_GetNotFound(t *testing.T) {
+	s := NewMockStore()
+	_, err := s.Get(context.Background(), "does/not/exist")
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("MockStore.Get(missing) error = %v, want errors.Is(err, store.ErrNotFound)", err)
 	}
 }

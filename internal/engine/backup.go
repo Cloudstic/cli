@@ -177,13 +177,15 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 	var g errgroup.Group
 
 	g.Go(func() error {
-		seq = bm.loadLatestSeq()
-		return nil
+		var err error
+		seq, err = bm.loadLatestSeq()
+		return err
 	})
 
 	g.Go(func() error {
-		prevSnap = bm.findPreviousSnapshot(bm.sourceInfo)
-		return nil
+		var err error
+		prevSnap, err = bm.findPreviousSnapshot(bm.sourceInfo)
+		return err
 	})
 
 	if err := g.Wait(); err != nil {
@@ -304,19 +306,23 @@ func (bm *BackupManager) buildResult() *RunResult {
 
 // loadLatestSeq returns the global sequence number from the most recent
 // snapshot. On a fresh repository it returns 0.
-func (bm *BackupManager) loadLatestSeq() int {
-	_, seq := resolveLatest(bm.store)
-	return seq
+func (bm *BackupManager) loadLatestSeq() (int, error) {
+	_, seq, err := resolveLatest(bm.store)
+	return seq, err
 }
 
 // findPreviousSnapshot lists all snapshots and returns the most recent one
 // whose Source matches the given info. Matching prefers the new identity
 // fields and falls back to legacy fields for backward compatibility.
-// Returns nil when no matching snapshot exists.
-func (bm *BackupManager) findPreviousSnapshot(info core.SourceInfo) *core.Snapshot {
+// Returns nil when no matching snapshot exists in an otherwise readable
+// catalog; returns an error when the catalog could not be read, since that is
+// not the same thing as "no previous snapshot" — treating it as such would
+// silently downgrade an incremental backup to a full rescan and reset the
+// sequence number.
+func (bm *BackupManager) findPreviousSnapshot(info core.SourceInfo) (*core.Snapshot, error) {
 	entries, err := LoadSnapshotCatalog(bm.store)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
 	// Pass 1: identity + path_id (preferred).
@@ -327,7 +333,7 @@ func (bm *BackupManager) findPreviousSnapshot(info core.SourceInfo) *core.Snapsh
 				e.Snap.Source.Identity == info.Identity &&
 				e.Snap.Source.PathID == info.PathID {
 				snap := e.Snap
-				return &snap
+				return &snap, nil
 			}
 		}
 	}
@@ -340,7 +346,7 @@ func (bm *BackupManager) findPreviousSnapshot(info core.SourceInfo) *core.Snapsh
 				e.Snap.Source.Identity == info.Identity &&
 				e.Snap.Source.Path == info.Path {
 				snap := e.Snap
-				return &snap
+				return &snap, nil
 			}
 		}
 	}
@@ -352,10 +358,10 @@ func (bm *BackupManager) findPreviousSnapshot(info core.SourceInfo) *core.Snapsh
 			e.Snap.Source.Account == info.Account &&
 			e.Snap.Source.Path == info.Path {
 			snap := e.Snap
-			return &snap
+			return &snap, nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 func (bm *BackupManager) saveSnapshot(ctx context.Context, root string, seq int, changeToken string) (ref, hash string, snap core.Snapshot, err error) {

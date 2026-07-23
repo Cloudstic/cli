@@ -71,7 +71,14 @@ func (s *LocalStore) Put(_ context.Context, key string, data []byte) error {
 }
 
 func (s *LocalStore) Get(_ context.Context, key string) ([]byte, error) {
-	return os.ReadFile(s.getPath(key))
+	data, err := os.ReadFile(s.getPath(key))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("%s: %w", key, ErrNotFound)
+		}
+		return nil, err
+	}
+	return data, nil
 }
 
 // GetRange implements RangeGetter, letting callers read a packfile footer

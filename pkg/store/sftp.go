@@ -165,6 +165,9 @@ func (s *SFTPStore) Put(_ context.Context, key string, data []byte) error {
 func (s *SFTPStore) Get(_ context.Context, key string) ([]byte, error) {
 	f, err := s.client.Open(s.key(key))
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("%s: %w", key, ErrNotFound)
+		}
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()

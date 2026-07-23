@@ -185,7 +185,10 @@ func (fm *ForgetManager) Run(ctx context.Context, snapshotID string, opts ...For
 
 func (fm *ForgetManager) resolveSnapshot(id string) (string, error) {
 	if id == "latest" {
-		ref, _ := resolveLatest(fm.store)
+		ref, _, err := resolveLatest(fm.store)
+		if err != nil {
+			return "", err
+		}
 		if ref == "" {
 			return "", fmt.Errorf("no latest snapshot found")
 		}
@@ -205,7 +208,10 @@ func (fm *ForgetManager) resolveSnapshot(id string) (string, error) {
 // If the deleted ref was the latest, pick the remaining snapshot with the
 // highest Seq. If no snapshots remain, delete index/latest.
 func (fm *ForgetManager) fixupLatest(deletedRef string) error {
-	curRef, _ := resolveLatest(fm.store)
+	curRef, _, err := resolveLatest(fm.store)
+	if err != nil {
+		return err
+	}
 	if curRef != deletedRef {
 		return nil
 	}

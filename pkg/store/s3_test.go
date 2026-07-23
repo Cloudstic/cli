@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"strings"
 	"testing"
@@ -118,6 +119,11 @@ func TestS3Store(t *testing.T) {
 	}
 	if exists {
 		t.Fatalf("Expected nonexistent key to report false")
+	}
+
+	// Get (not found)
+	if _, err := store.Get(ctx, "nonexistent"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get(nonexistent) error = %v, want errors.Is(err, ErrNotFound)", err)
 	}
 
 	// Size

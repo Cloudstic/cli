@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -72,9 +73,13 @@ func (m *InitManager) Run(ctx context.Context, opts ...InitOption) (*InitResult,
 	initLog.Debugf("InitRepo: encrypted=%v, noEncryption=%v, adoptSlots=%v, hasChain=%v, recovery=%v",
 		!cfg.noEncryption && len(cfg.chain) > 0, cfg.noEncryption, cfg.adoptSlots, len(cfg.chain) > 0, cfg.recovery)
 
-	// Check if already initialized.
+	// Check if already initialized. A read failure that is not "no config yet"
+	// must abort rather than fall through as if this were a fresh repository —
+	// otherwise a transient store error could make init overwrite an existing
+	// repository's key slots and config.
 	cfgData, err := m.store.Get(ctx, configKey)
-	if err == nil && cfgData != nil {
+	switch {
+	case err == nil && cfgData != nil:
 		if !cfg.adoptSlots {
 			return nil, fmt.Errorf("repository is already initialized")
 		}
@@ -94,6 +99,13 @@ func (m *InitManager) Run(ctx context.Context, opts ...InitOption) (*InitResult,
 				)
 			}
 		}
+	case err == nil, errors.Is(err, store.ErrNotFound):
+		// Not yet initialized. (Some ObjectStore test doubles return (nil,
+		// nil) rather than ErrNotFound for a missing key; a real backend
+		// never does, but treating a nil error as "not found" here is
+		// harmless either way.)
+	default:
+		return nil, fmt.Errorf("check for existing repository: %w", err)
 	}
 
 	hasCreds := len(cfg.chain) > 0
@@ -187,13 +199,19 @@ func (m *InitManager) writeRepoConfig(ctx context.Context, encrypted bool) error
 	// The recorded format is a floor and must never move down. Adopting an
 	// existing repository rewrites this marker, and stamping a lower version
 	// than the repository has already reached would advertise it as readable by
-	// builds that would misread it.
+	// builds that would misread it. A transient read failure here must not be
+	// mistaken for "no existing config" — that would silently move the floor
+	// down instead of leaving it alone.
 	version := core.RepoFormatVersion
-	if data, err := m.store.Get(ctx, configKey); err == nil && data != nil {
+	existingData, err := m.store.Get(ctx, configKey)
+	switch {
+	case err == nil:
 		var existing core.RepoConfig
-		if err := json.Unmarshal(data, &existing); err == nil && existing.Version > version {
+		if err := json.Unmarshal(existingData, &existing); err == nil && existing.Version > version {
 			version = existing.Version
 		}
+	case !errors.Is(err, store.ErrNotFound):
+		return fmt.Errorf("read existing repository config: %w", err)
 	}
 
 	cfg := core.RepoConfig{

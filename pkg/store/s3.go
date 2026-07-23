@@ -173,11 +173,32 @@ func (s *S3Store) Get(ctx context.Context, key string) ([]byte, error) {
 		Key:    aws.String(fullKey),
 	})
 	if err != nil {
+		if isS3NotFound(err) {
+			return nil, fmt.Errorf("%s: %w", key, ErrNotFound)
+		}
 		return nil, err
 	}
 	defer func() { _ = out.Body.Close() }()
 
 	return io.ReadAll(out.Body)
+}
+
+// isS3NotFound reports whether err indicates the requested key or object does
+// not exist. GetObject on a missing key typically returns *types.NoSuchKey;
+// HeadObject (used by Exists) tends to surface a generic *types.NotFound or an
+// APIError coded "NotFound" instead — S3-compatible services (MinIO, R2, ...)
+// are not consistent here, so the substring fallback catches the rest.
+func isS3NotFound(err error) bool {
+	if apiErr, ok := errors.AsType[smithy.APIError](err); ok && apiErr.ErrorCode() == "NotFound" {
+		return true
+	}
+	if _, ok := errors.AsType[*types.NotFound](err); ok {
+		return true
+	}
+	if _, ok := errors.AsType[*types.NoSuchKey](err); ok {
+		return true
+	}
+	return strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "404")
 }
 
 // GetRange implements RangeGetter using an HTTP range request, so a caller
@@ -219,16 +240,7 @@ func (s *S3Store) Exists(ctx context.Context, key string) (bool, error) {
 	})
 
 	if err != nil {
-		var apiErr smithy.APIError
-		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NotFound" {
-			return false, nil
-		}
-		// S3 HeadObject can also return generic 404s
-		var notFound *types.NotFound
-		if errors.As(err, &notFound) {
-			return false, nil
-		}
-		if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "404") {
+		if isS3NotFound(err) {
 			return false, nil
 		}
 		return false, err

@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/cloudstic/cli/internal/core"
@@ -62,6 +63,46 @@ func TestForgetManager_Run(t *testing.T) {
 	}
 	if idx.Seq != 1 {
 		t.Errorf("Latest seq should be 1, got %d", idx.Seq)
+	}
+}
+
+// A real backend failure while resolving "latest" must propagate rather than
+// be reported as "no latest snapshot found", which would be misleading.
+func TestForgetManager_ResolveSnapshot_PropagatesLatestError(t *testing.T) {
+	backendErr := errors.New("simulated network error")
+	s := newErrorOnGetStore(NewMockStore(), backendErr, "index/latest")
+	fm := NewForgetManager(s, ui.NewNoOpReporter())
+
+	_, err := fm.resolveSnapshot("latest")
+	if err == nil {
+		t.Fatal("expected resolveSnapshot(latest) to propagate a real backend error")
+	}
+	if !errors.Is(err, backendErr) {
+		t.Errorf("resolveSnapshot error = %v, want it to wrap %v", err, backendErr)
+	}
+}
+
+// A real backend failure while re-reading index/latest during fixupLatest
+// must abort rather than be silently treated as "not the deleted ref" —
+// otherwise index/latest could keep pointing at a snapshot that was just
+// deleted.
+func TestForgetManager_FixupLatest_PropagatesError(t *testing.T) {
+	backendErr := errors.New("simulated network error")
+	inner := NewMockStore()
+	ctx := context.Background()
+	snap := core.Snapshot{Seq: 1, Root: "node/1"}
+	ref := saveSnapshot(ctx, inner, &snap)
+	_ = inner.Put(ctx, "index/latest", createIndex(ref, 1))
+
+	s := newErrorOnGetStore(inner, backendErr, "index/latest")
+	fm := NewForgetManager(s, ui.NewNoOpReporter())
+
+	err := fm.fixupLatest(ref)
+	if err == nil {
+		t.Fatal("expected fixupLatest to propagate a real backend error")
+	}
+	if !errors.Is(err, backendErr) {
+		t.Errorf("fixupLatest error = %v, want it to wrap %v", err, backendErr)
 	}
 }
 

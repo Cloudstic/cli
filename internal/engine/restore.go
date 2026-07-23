@@ -85,10 +85,9 @@ type RestoreWriter interface {
 
 // RestoreManager recreates a snapshot's file tree using a RestoreWriter output format.
 type RestoreManager struct {
-	store     store.ObjectStore
-	tree      *hamt.Tree
-	reporter  ui.Reporter
-	metaCache map[string]core.FileMeta
+	store    store.ObjectStore
+	tree     *hamt.Tree
+	reporter ui.Reporter
 }
 
 func NewRestoreManager(s store.ObjectStore, reporter ui.Reporter) *RestoreManager {
@@ -192,8 +191,6 @@ func (rm *RestoreManager) prepareRestore(ctx context.Context, snapshotRef string
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-
-	rm.metaCache = make(map[string]core.FileMeta)
 
 	snap, resolvedRef, err := rm.resolveSnapshot(ctx, snapshotRef)
 	if err != nil {
@@ -671,9 +668,6 @@ func (rm *RestoreManager) collectMetadata(ctx context.Context, root string) (map
 }
 
 func (rm *RestoreManager) loadMeta(ctx context.Context, ref string) (*core.FileMeta, error) {
-	if fm, ok := rm.metaCache[ref]; ok {
-		return &fm, nil
-	}
 	data, err := rm.store.Get(ctx, ref)
 	if err != nil {
 		return nil, err

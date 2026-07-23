@@ -157,11 +157,12 @@ type RunResult struct {
 // files, build a new HAMT root, and persist a snapshot.
 func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 	if !bm.cfg.dryRun {
-		lock, err := AcquireSharedLock(ctx, bm.store, "backup")
+		lock, lockedCtx, err := AcquireSharedLock(ctx, bm.store, "backup")
 		if err != nil {
 			return nil, err
 		}
 		defer lock.Release()
+		ctx = lockedCtx
 	}
 
 	defer func() {

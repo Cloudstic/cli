@@ -15,7 +15,7 @@ func TestAcquireRepoLock_Success(t *testing.T) {
 	ctx := context.Background()
 	s := NewMockStore()
 
-	lock, err := AcquireRepoLock(ctx, s, "prune")
+	lock, _, err := AcquireRepoLock(ctx, s, "prune")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -41,13 +41,13 @@ func TestAcquireRepoLock_Conflict(t *testing.T) {
 	ctx := context.Background()
 	s := NewMockStore()
 
-	lock1, err := AcquireRepoLock(ctx, s, "prune")
+	lock1, _, err := AcquireRepoLock(ctx, s, "prune")
 	if err != nil {
 		t.Fatalf("first acquire: %v", err)
 	}
 	defer lock1.Release()
 
-	_, err = AcquireRepoLock(ctx, s, "prune")
+	_, _, err = AcquireRepoLock(ctx, s, "prune")
 	if err == nil {
 		t.Fatal("second acquire should fail while first lock is held")
 	}
@@ -69,7 +69,7 @@ func TestAcquireRepoLock_ExpiredLockIsOverridden(t *testing.T) {
 	data, _ := json.Marshal(expired)
 	_ = s.Put(ctx, exclusiveLockKey, data)
 
-	lock, err := AcquireRepoLock(ctx, s, "prune")
+	lock, _, err := AcquireRepoLock(ctx, s, "prune")
 	if err != nil {
 		t.Fatalf("should override expired lock: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestAcquireRepoLock_MalformedExpiresAtTreatedAsLocked(t *testing.T) {
 	data, _ := json.Marshal(bad)
 	_ = s.Put(ctx, exclusiveLockKey, data)
 
-	_, err := AcquireRepoLock(ctx, s, "backup")
+	_, _, err := AcquireRepoLock(ctx, s, "backup")
 	if err == nil {
 		t.Fatal("malformed ExpiresAt should be treated as locked")
 	}
@@ -102,7 +102,7 @@ func TestRelease_DeletesOwnLock(t *testing.T) {
 	ctx := context.Background()
 	s := NewMockStore()
 
-	lock, err := AcquireRepoLock(ctx, s, "prune")
+	lock, _, err := AcquireRepoLock(ctx, s, "prune")
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestRelease_DoesNotDeleteOtherLock(t *testing.T) {
 	ctx := context.Background()
 	s := NewMockStore()
 
-	lock, err := AcquireRepoLock(ctx, s, "prune")
+	lock, _, err := AcquireRepoLock(ctx, s, "prune")
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestCheckRepoLock_ActiveLock(t *testing.T) {
 	ctx := context.Background()
 	s := NewMockStore()
 
-	lock, err := AcquireRepoLock(ctx, s, "prune")
+	lock, _, err := AcquireRepoLock(ctx, s, "prune")
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestLockRefresh(t *testing.T) {
 	ctx := context.Background()
 	s := NewMockStore()
 
-	lock, err := AcquireRepoLock(ctx, s, "prune")
+	lock, _, err := AcquireRepoLock(ctx, s, "prune")
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
@@ -266,7 +266,7 @@ func TestRefresh_StopsWhenOwnershipLost(t *testing.T) {
 	ctx := context.Background()
 	s := NewMockStore()
 
-	lock, err := AcquireRepoLock(ctx, s, "prune")
+	lock, _, err := AcquireRepoLock(ctx, s, "prune")
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
@@ -307,6 +307,46 @@ func TestRefresh_StopsWhenOwnershipLost(t *testing.T) {
 	lock.wg.Wait()
 }
 
+func TestRefresh_CancelsOperationWhenOwnershipLost(t *testing.T) {
+	origTTL, origRate := lockTTL, refreshRate
+	lockTTL = 2 * time.Second
+	refreshRate = 200 * time.Millisecond
+	defer func() { lockTTL, refreshRate = origTTL, origRate }()
+
+	ctx := context.Background()
+	s := NewMockStore()
+
+	lock, opCtx, err := AcquireRepoLock(ctx, s, "prune")
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer lock.Release()
+
+	if opCtx.Err() != nil {
+		t.Fatalf("operation context should be live right after acquire: %v", opCtx.Err())
+	}
+
+	// Let one refresh cycle complete, then hand the lock to another holder.
+	time.Sleep(refreshRate + 100*time.Millisecond)
+
+	other := RepoLock{
+		Operation:  "backup",
+		Holder:     "other-host (pid 99)",
+		AcquiredAt: time.Now().Format(time.RFC3339Nano),
+		ExpiresAt:  time.Now().Add(lockTTL).Format(time.RFC3339Nano),
+	}
+	otherData, _ := json.Marshal(other)
+	_ = s.Put(ctx, exclusiveLockKey, otherData)
+
+	// The refresh goroutine must notice the lost lock and cancel the operation
+	// context so the in-flight operation aborts.
+	select {
+	case <-opCtx.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("operation context was not cancelled after losing the lock")
+	}
+}
+
 func TestPruneDryRun_NoLock(t *testing.T) {
 	ctx := context.Background()
 	s := NewMockStore()
@@ -345,7 +385,7 @@ func TestAcquireSharedLock_Success(t *testing.T) {
 	ctx := context.Background()
 	s := NewMockStore()
 
-	lock, err := AcquireSharedLock(ctx, s, "backup")
+	lock, _, err := AcquireSharedLock(ctx, s, "backup")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -377,7 +417,7 @@ func TestAcquireSharedLock_UsesFilesystemSafeKey(t *testing.T) {
 	ctx := context.Background()
 	s := NewMockStore()
 
-	lock, err := AcquireSharedLock(ctx, s, "backup")
+	lock, _, err := AcquireSharedLock(ctx, s, "backup")
 	if err != nil {
 		t.Fatalf("acquire shared lock: %v", err)
 	}
@@ -400,7 +440,7 @@ func TestAcquireSharedLock_ConcurrentSharedLocks(t *testing.T) {
 	ctx := context.Background()
 	s := NewMockStore()
 
-	lock1, err := AcquireSharedLock(ctx, s, "backup1")
+	lock1, _, err := AcquireSharedLock(ctx, s, "backup1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -409,7 +449,7 @@ func TestAcquireSharedLock_ConcurrentSharedLocks(t *testing.T) {
 	// Wait briefly to ensure AcquiredAt timestamp differs
 	time.Sleep(1 * time.Millisecond)
 
-	lock2, err := AcquireSharedLock(ctx, s, "backup2")
+	lock2, _, err := AcquireSharedLock(ctx, s, "backup2")
 	if err != nil {
 		t.Fatalf("second shared lock should succeed: %v", err)
 	}
@@ -425,13 +465,13 @@ func TestAcquireSharedLock_ConflictWithExclusive(t *testing.T) {
 	ctx := context.Background()
 	s := NewMockStore()
 
-	lockExcl, err := AcquireRepoLock(ctx, s, "prune")
+	lockExcl, _, err := AcquireRepoLock(ctx, s, "prune")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	defer lockExcl.Release()
 
-	_, err = AcquireSharedLock(ctx, s, "backup")
+	_, _, err = AcquireSharedLock(ctx, s, "backup")
 	if err == nil {
 		t.Fatal("shared lock should fail if exclusive lock exists")
 	}
@@ -444,13 +484,13 @@ func TestAcquireExclusiveLock_ConflictWithShared(t *testing.T) {
 	ctx := context.Background()
 	s := NewMockStore()
 
-	lockShared, err := AcquireSharedLock(ctx, s, "backup")
+	lockShared, _, err := AcquireSharedLock(ctx, s, "backup")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	defer lockShared.Release()
 
-	_, err = AcquireRepoLock(ctx, s, "prune")
+	_, _, err = AcquireRepoLock(ctx, s, "prune")
 	if err == nil {
 		t.Fatal("exclusive lock should fail if shared lock exists")
 	}

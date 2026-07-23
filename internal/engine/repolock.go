@@ -42,6 +42,12 @@ func (ref *RepoLock) ownsLock(current *RepoLock) bool {
 // operation completes. A background goroutine refreshes the lock every
 // refreshRate so that the TTL stays short (fast recovery on crash) while
 // supporting arbitrarily long operations.
+//
+// cancel cancels the operation context returned alongside the handle. It is
+// called by Release on normal completion, and by the refresh goroutine the
+// moment it can no longer prove ownership of the lock — so an operation that
+// has lost its lock (TTL expired after a sleep, or another machine took over)
+// is aborted rather than left writing into a repository someone else now owns.
 type LockHandle struct {
 	store  store.ObjectStore
 	key    string
@@ -70,13 +76,17 @@ func (h *LockHandle) Release() {
 // AcquireRepoLock creates an exclusive lock for operation. If another
 // non-expired lock exists (exclusive or shared), the call returns an error.
 //
+// The returned context is derived from ctx and is cancelled if the lock is
+// ever lost while held, so the caller must run the operation under it rather
+// than under the original ctx.
+//
 // To mitigate TOCTOU races on stores without conditional writes, the lock is
 // written and then immediately re-read to verify this process still owns it.
-func AcquireRepoLock(ctx context.Context, s store.ObjectStore, operation string) (*LockHandle, error) {
+func AcquireRepoLock(ctx context.Context, s store.ObjectStore, operation string) (*LockHandle, context.Context, error) {
 	if existing, err := readLockByKey(ctx, s, exclusiveLockKey); err == nil {
 		expires, parseErr := time.Parse(time.RFC3339Nano, existing.ExpiresAt)
 		if parseErr != nil || time.Now().Before(expires) {
-			return nil, fmt.Errorf(
+			return nil, nil, fmt.Errorf(
 				"repository is locked by %s (operation: %s, acquired: %s, expires: %s)",
 				existing.Holder, existing.Operation, existing.AcquiredAt, existing.ExpiresAt,
 			)
@@ -85,7 +95,7 @@ func AcquireRepoLock(ctx context.Context, s store.ObjectStore, operation string)
 
 	// Check if any shared locks are active.
 	if err := checkSharedLocks(ctx, s); err != nil {
-		return nil, fmt.Errorf("cannot acquire exclusive lock: %w", err)
+		return nil, nil, fmt.Errorf("cannot acquire exclusive lock: %w", err)
 	}
 
 	holder := lockHolder()
@@ -97,38 +107,55 @@ func AcquireRepoLock(ctx context.Context, s store.ObjectStore, operation string)
 		ExpiresAt:  now.Add(lockTTL).Format(time.RFC3339Nano),
 	}
 	if err := writeLockByKey(ctx, s, exclusiveLockKey, lock); err != nil {
-		return nil, fmt.Errorf("acquire repo lock: %w", err)
+		return nil, nil, fmt.Errorf("acquire repo lock: %w", err)
 	}
 
 	// Re-read to verify ownership (TOCTOU mitigation).
 	current, err := readLockByKey(ctx, s, exclusiveLockKey)
 	if err != nil {
-		return nil, fmt.Errorf("verify repo lock: %w", err)
+		return nil, nil, fmt.Errorf("verify repo lock: %w", err)
 	}
 	if !lock.ownsLock(current) {
-		return nil, fmt.Errorf(
+		return nil, nil, fmt.Errorf(
 			"repository is locked by %s (operation: %s) — lost lock race",
 			current.Holder, current.Operation,
 		)
 	}
 
-	refreshCtx, cancel := context.WithCancel(ctx)
+	// Re-check shared locks after writing ours, mirroring the exclusive re-read
+	// AcquireSharedLock performs. Without this, a shared lock written between
+	// our initial checkSharedLocks and our write would go unseen and both the
+	// exclusive operation and the shared one would proceed concurrently.
+	if err := checkSharedLocks(ctx, s); err != nil {
+		// Roll back only if we still own the exclusive lock, so a concurrent
+		// exclusive acquirer that overwrote our key is not deleted from under it.
+		if owner, readErr := readLockByKey(ctx, s, exclusiveLockKey); readErr == nil && lock.ownsLock(owner) {
+			_ = s.Delete(ctx, exclusiveLockKey)
+		}
+		return nil, nil, fmt.Errorf("cannot acquire exclusive lock: %w", err)
+	}
+
+	opCtx, cancel := context.WithCancel(ctx)
 	h := &LockHandle{store: s, key: exclusiveLockKey, lock: lock, cancel: cancel}
 	h.wg.Add(1)
-	go h.refreshLoop(refreshCtx)
+	go h.refreshLoop(opCtx)
 
-	return h, nil
+	return h, opCtx, nil
 }
 
 // AcquireSharedLock creates a shared lock for an operation (like backup or restore).
 // If an exclusive lock exists, the call returns an error.
 // Multiple shared locks can exist simultaneously.
-func AcquireSharedLock(ctx context.Context, s store.ObjectStore, operation string) (*LockHandle, error) {
+//
+// The returned context is derived from ctx and is cancelled if the lock is
+// ever lost while held, so the caller must run the operation under it rather
+// than under the original ctx.
+func AcquireSharedLock(ctx context.Context, s store.ObjectStore, operation string) (*LockHandle, context.Context, error) {
 	// 1. Check if an exclusive lock exists
 	if existing, err := readLockByKey(ctx, s, exclusiveLockKey); err == nil {
 		expires, parseErr := time.Parse(time.RFC3339Nano, existing.ExpiresAt)
 		if parseErr != nil || time.Now().Before(expires) {
-			return nil, fmt.Errorf(
+			return nil, nil, fmt.Errorf(
 				"repository is exclusively locked by %s (operation: %s)",
 				existing.Holder, existing.Operation,
 			)
@@ -140,7 +167,7 @@ func AcquireSharedLock(ctx context.Context, s store.ObjectStore, operation strin
 	now := time.Now()
 	sharedLockKey, err := newSharedLockKey()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	lock := RepoLock{
@@ -151,7 +178,7 @@ func AcquireSharedLock(ctx context.Context, s store.ObjectStore, operation strin
 		IsShared:   true,
 	}
 	if err := writeLockByKey(ctx, s, sharedLockKey, lock); err != nil {
-		return nil, fmt.Errorf("acquire shared lock: %w", err)
+		return nil, nil, fmt.Errorf("acquire shared lock: %w", err)
 	}
 
 	// 3. Re-read exclusive lock to catch race with prune creating an exclusive lock at the same time
@@ -161,19 +188,19 @@ func AcquireSharedLock(ctx context.Context, s store.ObjectStore, operation strin
 			// Found an exclusive lock that was created during our shared lock creation
 			// Rollback our shared lock
 			_ = s.Delete(ctx, sharedLockKey)
-			return nil, fmt.Errorf(
+			return nil, nil, fmt.Errorf(
 				"repository was exclusively locked by %s while acquiring shared lock",
 				existing.Holder,
 			)
 		}
 	}
 
-	refreshCtx, cancel := context.WithCancel(ctx)
+	opCtx, cancel := context.WithCancel(ctx)
 	h := &LockHandle{store: s, key: sharedLockKey, lock: lock, cancel: cancel}
 	h.wg.Add(1)
-	go h.refreshLoop(refreshCtx)
+	go h.refreshLoop(opCtx)
 
-	return h, nil
+	return h, opCtx, nil
 }
 
 func newSharedLockKey() (string, error) {
@@ -201,17 +228,24 @@ func (h *LockHandle) refreshLoop(ctx context.Context) {
 			if err != nil {
 				consecutiveFailures++
 				if consecutiveFailures >= maxRefreshFailures {
+					// Cannot confirm we still hold the lock; the TTL will lapse
+					// and another process may take over. Abort the operation.
+					h.cancel()
 					return
 				}
 				continue
 			}
 			if !h.lock.ownsLock(current) {
+				// Another holder owns the lock now. Abort the operation before
+				// it writes into a repository we no longer control.
+				h.cancel()
 				return
 			}
 			h.lock.ExpiresAt = time.Now().Add(lockTTL).Format(time.RFC3339Nano)
 			if err := writeLockByKey(ctx, h.store, h.key, h.lock); err != nil {
 				consecutiveFailures++
 				if consecutiveFailures >= maxRefreshFailures {
+					h.cancel()
 					return
 				}
 				continue

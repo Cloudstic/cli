@@ -242,8 +242,21 @@ func (s *SFTPStore) Flush(ctx context.Context) error {
 }
 
 func (s *SFTPStore) List(_ context.Context, prefix string) ([]string, error) {
+	startPath := s.basePath
+	if prefix != "" {
+		candidate := path.Join(s.basePath, prefix)
+		if info, err := s.client.Stat(candidate); err == nil && info.IsDir() {
+			startPath = candidate
+		} else {
+			dir := path.Dir(candidate)
+			if _, err := s.client.Stat(dir); err == nil {
+				startPath = dir
+			}
+		}
+	}
+
 	var keys []string
-	walker := s.client.Walk(s.basePath)
+	walker := s.client.Walk(startPath)
 	for walker.Step() {
 		if err := walker.Err(); err != nil {
 			return nil, err

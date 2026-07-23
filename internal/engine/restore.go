@@ -12,7 +12,10 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
@@ -515,10 +518,8 @@ func (rm *RestoreManager) writeFileContent(ctx context.Context, w io.Writer, met
 		out = io.MultiWriter(w, hasher)
 	}
 
-	for _, chunkRef := range content.Chunks {
-		if err := rm.writeChunk(ctx, out, chunkRef); err != nil {
-			return err
-		}
+	if err := rm.writeChunks(ctx, out, content.Chunks); err != nil {
+		return err
 	}
 	if len(content.DataInlineB64) > 0 {
 		if _, err := out.Write(content.DataInlineB64); err != nil {
@@ -656,15 +657,31 @@ func (rm *RestoreManager) collectMetadata(ctx context.Context, root string) (map
 
 	phase := rm.reporter.StartPhase("Loading metadata", int64(len(refs)), false)
 
+	// Fetch concurrently (mirroring fetchSnapshots' pattern): each ref is a
+	// small, independent JSON object with no ordering requirement among
+	// them, unlike a file's content chunks, so results can land in the map
+	// as soon as they arrive rather than needing to be sequenced.
 	byID := make(map[string]core.FileMeta, len(refs))
+	var mu sync.Mutex
+
+	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(store.GetConcurrencyHint(rm.store, 10))
 	for _, ref := range refs {
-		fm, err := rm.loadMeta(ctx, ref)
-		if err != nil {
-			phase.Error()
-			return nil, err
-		}
-		byID[fm.FileID] = *fm
-		phase.Increment(1)
+		g.Go(func() error {
+			fm, err := rm.loadMeta(gCtx, ref)
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			byID[fm.FileID] = *fm
+			mu.Unlock()
+			phase.Increment(1)
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		phase.Error()
+		return nil, err
 	}
 	phase.Done()
 	return byID, nil
@@ -738,4 +755,55 @@ func (rm *RestoreManager) writeChunk(ctx context.Context, w io.Writer, ref strin
 	}
 	_, err = w.Write(data)
 	return err
+}
+
+// writeChunks fetches a file's content chunks and writes them to w in order.
+// The store's Get is the bottleneck for a large file, so chunks are fetched
+// in bounded batches sized to the store's concurrency hint (mirroring
+// Chunker.ProcessStream's worker pool on the backup side) rather than one
+// blocking Get at a time. Batching — instead of firing every chunk at once —
+// keeps at most one batch's worth of chunk data in memory, which matters
+// because chunks (unlike the file metadata collectMetadata fetches) can be up
+// to 8MB each. Chunks still land on w in their original order regardless of
+// which fetch in a batch finishes first, since the reconstructed stream must
+// be byte-identical to what was chunked at backup time.
+func (rm *RestoreManager) writeChunks(ctx context.Context, w io.Writer, refs []string) error {
+	if len(refs) <= 1 {
+		for _, ref := range refs {
+			if err := rm.writeChunk(ctx, w, ref); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	batchSize := min(store.GetConcurrencyHint(rm.store, 10), len(refs))
+
+	for start := 0; start < len(refs); start += batchSize {
+		end := min(start+batchSize, len(refs))
+		batch := refs[start:end]
+
+		data := make([][]byte, len(batch))
+		g, gCtx := errgroup.WithContext(ctx)
+		for i, ref := range batch {
+			g.Go(func() error {
+				d, err := rm.store.Get(gCtx, ref)
+				if err != nil {
+					return fmt.Errorf("fetch chunk %s: %w", ref, err)
+				}
+				data[i] = d
+				return nil
+			})
+		}
+		if err := g.Wait(); err != nil {
+			return err
+		}
+
+		for _, d := range data {
+			if _, err := w.Write(d); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

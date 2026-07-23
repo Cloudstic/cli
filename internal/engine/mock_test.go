@@ -120,6 +120,43 @@ func (s *errorOnGetStore) Get(ctx context.Context, key string) ([]byte, error) {
 	return s.ObjectStore.Get(ctx, key)
 }
 
+// concurrencyTrackingStore wraps a store.ObjectStore and records the peak
+// number of Get calls that were ever in flight at once, with a small sleep to
+// make overlap observable even against an in-memory backend. Tests use this
+// to confirm a code path actually fetches concurrently rather than one
+// blocking Get at a time.
+type concurrencyTrackingStore struct {
+	store.ObjectStore
+	mu      sync.Mutex
+	current int
+	peak    int
+}
+
+func (s *concurrencyTrackingStore) Get(ctx context.Context, key string) ([]byte, error) {
+	s.mu.Lock()
+	s.current++
+	if s.current > s.peak {
+		s.peak = s.current
+	}
+	s.mu.Unlock()
+
+	time.Sleep(10 * time.Millisecond)
+
+	data, err := s.ObjectStore.Get(ctx, key)
+
+	s.mu.Lock()
+	s.current--
+	s.mu.Unlock()
+
+	return data, err
+}
+
+func (s *concurrencyTrackingStore) peakConcurrency() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.peak
+}
+
 // MockSource implements source.Source
 type MockSource struct {
 	Files map[string]MockFile

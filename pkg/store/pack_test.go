@@ -204,3 +204,53 @@ func TestPackStore_RepackNoFragment(t *testing.T) {
 		t.Fatalf("Expected packfile to remain, got %d", len(packs))
 	}
 }
+
+// TestPackStore_Exists covers all three paths Exists can take: a key still
+// sitting in the unflushed buffer, a key already recorded in the flushed
+// catalog, and a key PackStore never packed at all (falling back to inner).
+func TestPackStore_Exists(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	localStore, err := NewLocalStore(tmpDir)
+	if err != nil {
+		t.Fatalf("Failed to create local store: %v", err)
+	}
+	packStore, err := NewPackStore(localStore)
+	if err != nil {
+		t.Fatalf("Failed to init pack store: %v", err)
+	}
+
+	buffered := "filemeta/buffered"
+	if err := packStore.Put(ctx, buffered, []byte("not flushed yet")); err != nil {
+		t.Fatalf("Put buffered: %v", err)
+	}
+	if ok, err := packStore.Exists(ctx, buffered); err != nil || !ok {
+		t.Errorf("Exists(buffered) = %v, %v, want true, nil", ok, err)
+	}
+
+	flushed := "filemeta/flushed"
+	if err := packStore.Put(ctx, flushed, []byte("this one gets flushed")); err != nil {
+		t.Fatalf("Put flushed: %v", err)
+	}
+	if err := packStore.Flush(ctx); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	if ok, err := packStore.Exists(ctx, flushed); err != nil || !ok {
+		t.Errorf("Exists(flushed) = %v, %v, want true, nil", ok, err)
+	}
+
+	// index/latest is never packed (mutable, unpacked keys bypass PackStore's
+	// buffer entirely), so this path only succeeds by falling back to inner.
+	unpacked := "index/latest"
+	if err := localStore.Put(ctx, unpacked, []byte("direct to inner")); err != nil {
+		t.Fatalf("Put unpacked directly on inner: %v", err)
+	}
+	if ok, err := packStore.Exists(ctx, unpacked); err != nil || !ok {
+		t.Errorf("Exists(unpacked) = %v, %v, want true, nil (fallback to inner)", ok, err)
+	}
+
+	if ok, err := packStore.Exists(ctx, "filemeta/never-written"); err != nil || ok {
+		t.Errorf("Exists(never-written) = %v, %v, want false, nil", ok, err)
+	}
+}

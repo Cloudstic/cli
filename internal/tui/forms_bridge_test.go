@@ -6,15 +6,18 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/cloudstic/cli/internal/engine"
+	"github.com/cloudstic/cli/internal/tui/forms"
 )
 
 // stubFormsBackend implements FormsBackend for model-level tests.
 type stubFormsBackend struct {
-	stores     []string
-	cfg        *engine.ProfilesConfig
-	saved      bool
-	deleted    string
-	reloadHits int
+	stores      []string
+	cfg         *engine.ProfilesConfig
+	saved       bool
+	deleted     string
+	reloadHits  int
+	savedStore  string
+	storeExists map[string]bool
 }
 
 func (b *stubFormsBackend) StoreOptions() []string                 { return b.stores }
@@ -52,6 +55,25 @@ func (b *stubFormsBackend) Reload() (*engine.ProfilesConfig, error) {
 	return b.cfg, nil
 }
 
+// StoreBackend methods.
+func (b *stubFormsBackend) StoreDetailLabel(string) string { return "Path" }
+func (b *stubFormsBackend) StoreExample(string) string     { return "" }
+func (b *stubFormsBackend) ComposeStore(t, v string) (string, error) {
+	if v == "" {
+		return "", nil
+	}
+	return t + ":" + v, nil
+}
+func (b *stubFormsBackend) ValidateStoreName(string) error { return nil }
+func (b *stubFormsBackend) StoreExists(name string) bool   { return b.storeExists[name] }
+func (b *stubFormsBackend) ValidateSecretRef(string) error { return nil }
+func (b *stubFormsBackend) SaveStore(name string, _ map[string]string, _ bool) error {
+	b.savedStore = name
+	b.stores = append(b.stores, name)
+	return nil
+}
+func (b *stubFormsBackend) InitialStoreValues(string) map[string]string { return nil }
+
 func formsTestDashboard() Dashboard {
 	return Dashboard{
 		SelectedProfile: "alpha",
@@ -71,7 +93,7 @@ func TestModel_OpenCreateProfileForm(t *testing.T) {
 
 	next, _ := m.Update(keyPress("n"))
 	m = next.(Model)
-	if m.form == nil {
+	if m.activeForm() == nil {
 		t.Fatalf("pressing n should open the create form")
 	}
 	if !strings.Contains(m.View(), "Create Profile") {
@@ -105,7 +127,7 @@ func TestModel_CreateProfileSavesAndReloads(t *testing.T) {
 	if !backend.saved {
 		t.Fatalf("SaveProfile was not called")
 	}
-	if m.form != nil {
+	if m.activeForm() != nil {
 		t.Fatalf("form should close after a successful save")
 	}
 	if cmd == nil {
@@ -168,8 +190,69 @@ func TestModel_FormKeysNoOpWithoutBackend(t *testing.T) {
 	m := NewModel(formsTestDashboard())
 	next, cmd := m.Update(keyPress("n"))
 	m = next.(Model)
-	if m.form != nil || cmd != nil {
+	if m.activeForm() != nil || cmd != nil {
 		t.Fatalf("form keys must be a no-op without a forms backend")
+	}
+}
+
+func TestModel_NestedCreateStoreFromProfileForm(t *testing.T) {
+	backend := &stubFormsBackend{stores: []string{"s1"}, cfg: &engine.ProfilesConfig{}}
+	m := NewModel(formsTestDashboard()).WithForms(backend)
+
+	// Open the create-profile form.
+	next, _ := m.Update(keyPress("n"))
+	m = next.(Model)
+	if len(m.formStack) != 1 {
+		t.Fatalf("form stack depth=%d want 1", len(m.formStack))
+	}
+
+	// Navigate to the store field and select the create sentinel, then Enter.
+	form := m.activeForm()
+	for form.FocusedKey() != "store" {
+		next, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+		m = next.(Model)
+		form = m.activeForm()
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft}) // wrap to "+ Create store"
+	m = next.(Model)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+
+	// A nested store form should now be on top of the stack.
+	if len(m.formStack) != 2 {
+		t.Fatalf("nested store form not pushed; depth=%d\n%s", len(m.formStack), m.View())
+	}
+	if !strings.Contains(m.View(), "Create Store") {
+		t.Fatalf("view should show the nested store form\n%s", m.View())
+	}
+
+	// Fill the store form: name + path, then submit.
+	for _, r := range "newstore" {
+		next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = next.(Model)
+	}
+	store := m.activeForm()
+	for store.FocusedKey() != forms.FieldStoreValue {
+		next, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+		m = next.(Model)
+		store = m.activeForm()
+	}
+	for _, r := range "/srv" {
+		next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = next.(Model)
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+
+	if backend.savedStore != "newstore" {
+		t.Fatalf("store not saved; savedStore=%q", backend.savedStore)
+	}
+	// Back to the profile form, with the new store selected.
+	if len(m.formStack) != 1 {
+		t.Fatalf("should return to the profile form; depth=%d", len(m.formStack))
+	}
+	if got := m.activeForm().Value("store"); got != "newstore" {
+		t.Fatalf("profile store field=%q want newstore selected after nested create", got)
 	}
 }
 

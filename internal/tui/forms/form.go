@@ -135,6 +135,12 @@ type Form struct {
 	// Submit validates and persists the form. It returns the result value on
 	// success, or a *FieldError / plain error on failure. It is required.
 	Submit func(f *Form) (string, error)
+	// Interrupt, if set, is consulted for every key before normal handling. It
+	// may return a navigation Intent to yield to the host (e.g. open a nested
+	// form) without editing or completing the form.
+	Interrupt func(f *Form, key tea.KeyMsg) (Intent, bool)
+
+	pendingIntent Intent
 
 	theme formTheme
 }
@@ -279,11 +285,39 @@ func (f *Form) clearError() {
 	f.errMsg = ""
 }
 
+// Intent is a navigation request a form yields to its host instead of
+// completing — for example, opening a nested form. Name identifies the action;
+// Value carries a parameter (e.g. the store to edit, or the secret field key).
+type Intent struct {
+	Name  string
+	Value string
+}
+
+// TakeIntent returns and clears any pending intent set by the Interrupt hook.
+// The host calls it after Update to decide whether to open a nested form.
+func (f *Form) TakeIntent() (Intent, bool) {
+	if f.pendingIntent.Name == "" {
+		return Intent{}, false
+	}
+	intent := f.pendingIntent
+	f.pendingIntent = Intent{}
+	return intent, true
+}
+
 // Update processes one message while the form is open.
 func (f *Form) Update(msg tea.Msg) (*Form, tea.Cmd) {
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return f, f.updateFocusedInput(msg)
+	}
+
+	// The Interrupt hook may intercept a key to yield a navigation intent
+	// (e.g. "open the store form") without completing or editing the form.
+	if f.Interrupt != nil {
+		if intent, ok := f.Interrupt(f, key); ok {
+			f.pendingIntent = intent
+			return f, nil
+		}
 	}
 
 	switch key.Type {

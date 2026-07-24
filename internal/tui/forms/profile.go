@@ -1,6 +1,21 @@
 package forms
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+// CreateStoreOption is the sentinel store-field option that opens the nested
+// store-create form (#232).
+const CreateStoreOption = "+ Create store"
+
+// Intent names yielded by the profile form's store field.
+const (
+	IntentCreateStore = "create_store"
+	IntentEditStore   = "edit_store"
+)
 
 // ProfileBackend is the domain boundary for the profile form. The cmd package
 // implements it by reusing the existing source-URI, options, validation, and
@@ -49,7 +64,7 @@ func NewProfileForm(backend ProfileBackend, existingName, existingSource, existi
 	if existingSource != "" {
 		sourceType, sourceValue = backend.SourceParts(existingSource)
 	}
-	stores := backend.StoreOptions()
+	stores := storeFieldOptions(backend.StoreOptions())
 
 	fields := []Field{
 		newTextField("name", "Name", existingName, true),
@@ -71,9 +86,32 @@ func NewProfileForm(backend ProfileBackend, existingName, existingSource, existi
 	pf := &profileFormState{backend: backend, editing: editing, originalName: existingName}
 	f.OnChange = pf.onChange
 	f.Submit = pf.submit
+	f.Interrupt = pf.interrupt
 	pf.refreshDerived(f)
 	f.focusFirst()
 	return f
+}
+
+// storeFieldOptions appends the create-store sentinel to the available stores.
+func storeFieldOptions(stores []string) []string {
+	return append(append([]string{}, stores...), CreateStoreOption)
+}
+
+// interrupt lets the store field open the nested store form: Enter on the
+// "+ Create store" option, or "e" on a real store to edit it (#232).
+func (p *profileFormState) interrupt(f *Form, key tea.KeyMsg) (Intent, bool) {
+	if f.FocusedKey() != "store" {
+		return Intent{}, false
+	}
+	value := f.Value("store")
+	switch {
+	case key.Type == tea.KeyEnter && value == CreateStoreOption:
+		return Intent{Name: IntentCreateStore}, true
+	case key.Type == tea.KeyRunes && strings.EqualFold(string(key.Runes), "e") &&
+		value != "" && value != CreateStoreOption:
+		return Intent{Name: IntentEditStore, Value: value}, true
+	}
+	return Intent{}, false
 }
 
 type profileFormState struct {
@@ -86,6 +124,20 @@ func (p *profileFormState) onChange(f *Form, changedKey string) {
 	switch changedKey {
 	case "source_type", "source_value":
 		p.refreshDerived(f)
+	case "store":
+		f.SetHelp("store", storeFieldHelp(f.Value("store")))
+	}
+}
+
+// storeFieldHelp returns the contextual hint for the store selector.
+func storeFieldHelp(value string) string {
+	switch {
+	case value == CreateStoreOption:
+		return "Press Enter to create a store."
+	case value != "":
+		return "Press e to edit the selected store."
+	default:
+		return ""
 	}
 }
 
@@ -98,6 +150,8 @@ func (p *profileFormState) refreshDerived(f *Form) {
 	} else {
 		f.SetHelp("source_value", "")
 	}
+
+	f.SetHelp("store", storeFieldHelp(f.Value("store")))
 
 	provider := p.backend.ProviderForSourceType(sourceType)
 	if provider == "" {
@@ -146,6 +200,9 @@ func (p *profileFormState) submit(f *Form) (string, error) {
 	storeRef := f.TrimmedValue("store")
 	if storeRef == "" {
 		return "", NewFieldError("store", "store reference is required")
+	}
+	if storeRef == CreateStoreOption {
+		return "", NewFieldError("store", "create a store before saving the profile")
 	}
 
 	authRef := f.TrimmedValue("auth")

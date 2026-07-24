@@ -9,7 +9,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/cloudstic/cli/internal/engine"
-	"github.com/cloudstic/cli/internal/tui/forms"
 )
 
 // Model is the root Bubble Tea model for the interactive dashboard. This is
@@ -41,11 +40,12 @@ type Model struct {
 	cancel   context.CancelFunc
 	activity ActivityPanel
 
-	// Profile management state (issue #340). forms is the domain backend;
-	// form and confirm are the active overlay, at most one at a time.
-	forms   FormsBackend
-	form    *forms.Form
-	confirm *confirmState
+	// Profile/store management state (issues #340, #350). forms is the domain
+	// backend; formStack is the (possibly nested) form overlay — a profile form
+	// can push a store form (#232) — and confirm is the delete overlay.
+	forms     FormsBackend
+	formStack []formFrame
+	confirm   *confirmState
 
 	// reload, when non-nil, is run when the user presses "r". It returns a
 	// DashboardLoadedMsg or DashboardLoadError. The read-only launcher can
@@ -128,8 +128,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case configReloadedMsg:
 		return m.handleConfigReloaded(msg)
 	case tea.KeyMsg:
-		if m.form != nil {
-			return m.updateForm(msg)
+		if m.activeForm() != nil {
+			return m.updateForms(msg)
 		}
 		if m.confirm != nil {
 			return m.updateConfirm(msg)
@@ -137,8 +137,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	default:
 		// Route other messages (e.g. textinput cursor blink) to an open form.
-		if m.form != nil {
-			return m.updateForm(msg)
+		if m.activeForm() != nil {
+			return m.updateForms(msg)
 		}
 	}
 	return m, nil
@@ -236,8 +236,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) View() string {
 	width := m.viewWidth()
-	if m.form != nil {
-		return strings.Join([]string{m.renderTitle(), m.form.View(), m.renderFooter()}, "\n")
+	if form := m.activeForm(); form != nil {
+		return strings.Join([]string{m.renderTitle(), form.View(), m.renderFooter()}, "\n")
 	}
 	if m.confirm != nil {
 		return strings.Join([]string{m.renderTitle(), m.renderConfirm(), m.renderFooter()}, "\n")
@@ -531,7 +531,7 @@ func (m Model) renderHistory(profile ProfileCard) []string {
 }
 
 func (m Model) renderFooter() string {
-	if m.form != nil || m.confirm != nil {
+	if m.activeForm() != nil || m.confirm != nil {
 		// The overlay renders its own key hints.
 		return ""
 	}

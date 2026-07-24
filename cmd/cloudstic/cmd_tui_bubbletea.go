@@ -38,7 +38,8 @@ func runBubbleTeaTUI(r *runner, ctx context.Context, profilesFile string) int {
 	skeleton := tui.BuildDashboard(cfg, nil)
 	model := tui.NewModel(skeleton).
 		WithConfig(cfg, bubbleStoreProber{r: r}).
-		WithRunner(bubbleActionRunner{r: r, profilesFile: profilesFile})
+		WithRunner(bubbleActionRunner{r: r, profilesFile: profilesFile}).
+		WithForms(newBubbleFormsBackend(r, profilesFile, cfg))
 
 	stdin := r.stdin
 	if stdin == nil {

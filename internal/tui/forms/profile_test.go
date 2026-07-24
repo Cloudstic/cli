@@ -165,6 +165,40 @@ func TestProfileForm_GdriveRequiresAuth(t *testing.T) {
 	}
 }
 
+func TestProfileForm_StoreFieldOffersCreateOption(t *testing.T) {
+	b := newStubBackend()
+	f := NewProfileForm(b, "", "", "", "", false)
+	f = focusKey(f, "store")
+	// The create sentinel is the last option; a single left-cycle wraps to it.
+	f, _ = f.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	if f.Value("store") != CreateStoreOption {
+		t.Fatalf("store selector should reach %q, got %q", CreateStoreOption, f.Value("store"))
+	}
+	// Enter on the create sentinel yields a create-store intent, not a submit.
+	f, _ = f.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	intent, ok := f.TakeIntent()
+	if !ok || intent.Name != IntentCreateStore {
+		t.Fatalf("expected create_store intent, got %+v ok=%v", intent, ok)
+	}
+	if f.Done() {
+		t.Fatalf("form must not complete when yielding a create intent")
+	}
+}
+
+func TestProfileForm_EditStoreIntent(t *testing.T) {
+	b := newStubBackend()
+	f := NewProfileForm(b, "", "", "local-store", "", false)
+	f = focusKey(f, "store")
+	if f.Value("store") != "local-store" {
+		t.Fatalf("store=%q want local-store", f.Value("store"))
+	}
+	f, _ = f.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
+	intent, ok := f.TakeIntent()
+	if !ok || intent.Name != IntentEditStore || intent.Value != "local-store" {
+		t.Fatalf("expected edit_store intent for local-store, got %+v ok=%v", intent, ok)
+	}
+}
+
 func TestProfileForm_SaveErrorSurfaces(t *testing.T) {
 	b := newStubBackend()
 	b.saveErr = errors.New("disk full")

@@ -6,16 +6,48 @@ import (
 	"github.com/cloudstic/cli/internal/tui/forms"
 )
 
-// FormsBackend is the domain boundary the model uses for profile management.
-// It extends the profile form's own backend with the delete and config-reload
-// operations the model orchestrates around a form. The cmd package implements
-// it by reusing the existing source/options/validation/save helpers.
+// FormsBackend is the domain boundary the model uses for profile and store
+// management. It combines the profile and store form backends with the delete,
+// config-reload, and edit-seed operations the model orchestrates around a form.
+// The cmd package implements it by reusing the existing source/store/options/
+// validation/save helpers.
 type FormsBackend interface {
 	forms.ProfileBackend
+	forms.StoreBackend
+	// InitialStoreValues seeds an edit-store form with an existing store's
+	// field values.
+	InitialStoreValues(name string) map[string]string
 	// DeleteProfile removes a profile from the profiles file.
 	DeleteProfile(name string) error
 	// Reload re-reads the profiles config after a mutation.
 	Reload() (*engine.ProfilesConfig, error)
+}
+
+// formFrame is one level of the (possibly nested) form overlay. intent records
+// why the frame was pushed, so its result can be applied to the parent frame.
+type formFrame struct {
+	form   *forms.Form
+	intent forms.Intent
+}
+
+func (m Model) activeForm() *forms.Form {
+	if len(m.formStack) == 0 {
+		return nil
+	}
+	return m.formStack[len(m.formStack)-1].form
+}
+
+func (m Model) pushForm(form *forms.Form, intent forms.Intent) Model {
+	m.formStack = append(m.formStack, formFrame{form: form, intent: intent})
+	return m
+}
+
+func (m Model) popForm() Model {
+	if len(m.formStack) == 0 {
+		return m
+	}
+	m.formStack = m.formStack[:len(m.formStack)-1]
+	return m
 }
 
 // WithForms enables the profile create/edit/delete flows (issue #340). Without
@@ -74,8 +106,9 @@ func (m Model) openCreateProfile() (Model, tea.Cmd) {
 	if m.forms == nil {
 		return m, nil
 	}
-	m.form = forms.NewProfileForm(m.forms, "", "", "", "", false)
-	return m, m.form.Init()
+	form := forms.NewProfileForm(m.forms, "", "", "", "", false)
+	m = m.pushForm(form, forms.Intent{})
+	return m, form.Init()
 }
 
 // openEditProfile opens the edit form for the selected profile.
@@ -87,8 +120,9 @@ func (m Model) openEditProfile() (Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	m.form = forms.NewProfileForm(m.forms, profile.Name, profile.Source, profile.StoreRef, profile.AuthRef, true)
-	return m, m.form.Init()
+	form := forms.NewProfileForm(m.forms, profile.Name, profile.Source, profile.StoreRef, profile.AuthRef, true)
+	m = m.pushForm(form, forms.Intent{})
+	return m, form.Init()
 }
 
 // openDeleteProfile opens a delete confirmation for the selected profile.
@@ -108,22 +142,81 @@ func (m Model) openDeleteProfile() (Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
-	form, cmd := m.form.Update(msg)
-	m.form = form
+func (m Model) updateForms(msg tea.Msg) (tea.Model, tea.Cmd) {
+	top := len(m.formStack) - 1
+	form, cmd := m.formStack[top].form.Update(msg)
+	m.formStack[top].form = form
+
+	// A navigation intent opens a nested form instead of completing.
+	if intent, ok := form.TakeIntent(); ok {
+		return m.openNestedForm(intent)
+	}
 	if !form.Done() {
 		return m, cmd
 	}
+	return m.completeTopForm()
+}
 
-	canceled := form.Canceled()
-	result := form.Result()
-	m.form = nil
+// openNestedForm pushes the form requested by a parent form's intent.
+func (m Model) openNestedForm(intent forms.Intent) (tea.Model, tea.Cmd) {
+	switch intent.Name {
+	case forms.IntentCreateStore:
+		form := forms.NewStoreForm(m.forms, "", nil, false)
+		m = m.pushForm(form, intent)
+		return m, form.Init()
+	case forms.IntentEditStore:
+		form := forms.NewStoreForm(m.forms, intent.Value, m.forms.InitialStoreValues(intent.Value), true)
+		m = m.pushForm(form, intent)
+		return m, form.Init()
+	}
+	return m, nil
+}
+
+// completeTopForm pops the finished top form and either applies its result to
+// the parent frame (nested) or commits the change (root).
+func (m Model) completeTopForm() (tea.Model, tea.Cmd) {
+	top := m.formStack[len(m.formStack)-1]
+	canceled := top.form.Canceled()
+	result := top.form.Result()
+	m = m.popForm()
+
+	// Nested form: hand its result back to the parent form.
+	if len(m.formStack) > 0 {
+		if !canceled && result != "" {
+			m = m.applyNestedResult(top.intent, result)
+		}
+		return m, nil
+	}
+
+	// Root form (profile create/edit): commit.
 	if canceled {
 		m.activity = managementActivity(ActivityStatusIdle, "Profile form", "canceled")
 		return m, nil
 	}
 	m.activity = managementActivity(ActivityStatusSuccess, "Save profile", "saved \""+result+"\"")
 	return m, m.reloadConfigCmd(result)
+}
+
+// applyNestedResult injects a completed nested form's result into the parent
+// form. A saved store refreshes the profile form's store selector and selects
+// the new/edited store.
+func (m Model) applyNestedResult(intent forms.Intent, result string) Model {
+	parent := m.activeForm()
+	if parent == nil {
+		return m
+	}
+	switch intent.Name {
+	case forms.IntentCreateStore, forms.IntentEditStore:
+		parent.SetOptions("store", storeSelectorOptions(m.forms.StoreOptions()))
+		parent.SetValue("store", result)
+	}
+	return m
+}
+
+// storeSelectorOptions mirrors the profile form's store options (existing
+// stores plus the create sentinel).
+func storeSelectorOptions(stores []string) []string {
+	return append(append([]string{}, stores...), forms.CreateStoreOption)
 }
 
 func (m Model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

@@ -8,6 +8,11 @@ import (
 // ObjectStore is the interface for content-addressable object storage.
 // Keys are slash-separated paths like "chunk/<hash>" or "snapshot/<hash>".
 type ObjectStore interface {
+	// Put must not retain data beyond the call: read or copy it synchronously
+	// before returning. Callers (chunking in particular) pool and reuse their
+	// write buffers the instant Put returns, so an implementation that keeps
+	// the slice — instead of the bytes — would see it mutated out from under
+	// a previously "stored" value.
 	Put(ctx context.Context, key string, data []byte) error
 	Get(ctx context.Context, key string) ([]byte, error)
 	Exists(ctx context.Context, key string) (bool, error)

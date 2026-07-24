@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/cloudstic/cli/internal/engine"
+	"github.com/cloudstic/cli/internal/tui/forms"
 )
 
 // Model is the root Bubble Tea model for the interactive dashboard. This is
@@ -38,6 +39,12 @@ type Model struct {
 	running  bool
 	cancel   context.CancelFunc
 	activity ActivityPanel
+
+	// Profile management state (issue #340). forms is the domain backend;
+	// form and confirm are the active overlay, at most one at a time.
+	forms   FormsBackend
+	form    *forms.Form
+	confirm *confirmState
 
 	// reload, when non-nil, is run when the user presses "r". It returns a
 	// DashboardLoadedMsg or DashboardLoadError. The read-only launcher can
@@ -117,8 +124,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case actionUpdateMsg:
 		return m.handleActionUpdate(msg)
+	case configReloadedMsg:
+		return m.handleConfigReloaded(msg)
 	case tea.KeyMsg:
+		if m.form != nil {
+			return m.updateForm(msg)
+		}
+		if m.confirm != nil {
+			return m.updateConfirm(msg)
+		}
 		return m.handleKey(msg)
+	default:
+		// Route other messages (e.g. textinput cursor blink) to an open form.
+		if m.form != nil {
+			return m.updateForm(msg)
+		}
 	}
 	return m, nil
 }
@@ -201,6 +221,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "b", "c":
 		return m.startAction(msg.String())
+	case "n":
+		return m.openCreateProfile()
+	case "e":
+		return m.openEditProfile()
+	case "d":
+		return m.openDeleteProfile()
 	case "r":
 		return m, m.reload
 	}
@@ -208,6 +234,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
+	if m.form != nil {
+		return strings.Join([]string{m.renderHeader(), m.form.View(), m.renderFooter()}, "\n")
+	}
+	if m.confirm != nil {
+		return strings.Join([]string{m.renderHeader(), m.renderConfirm(), m.renderFooter()}, "\n")
+	}
 	header := m.renderHeader()
 	body := lipgloss.JoinHorizontal(lipgloss.Top, m.renderProfileList(), m.renderDetail())
 	sections := []string{header, body}
@@ -216,6 +248,18 @@ func (m Model) View() string {
 	}
 	sections = append(sections, m.renderFooter())
 	return strings.Join(sections, "\n")
+}
+
+func (m Model) renderConfirm() string {
+	c := m.confirm
+	lines := []string{
+		m.theme.title.Render(c.title),
+		"",
+		c.message,
+		"",
+		m.theme.subtle.Render("Enter/y delete · Esc/n cancel"),
+	}
+	return m.theme.box.Render(strings.Join(lines, "\n"))
 }
 
 func (m Model) renderActivity() string {
@@ -359,15 +403,31 @@ func (m Model) renderHistory(profile ProfileCard) []string {
 
 func (m Model) renderFooter() string {
 	var hints string
-	if m.running {
+	switch {
+	case m.form != nil, m.confirm != nil:
+		// The overlay renders its own key hints.
+		return ""
+	case m.running:
 		hints = "x cancel · running…"
-	} else {
-		hints = m.actionHints() + "↑/↓ select · s/h view · r refresh · q quit"
+	default:
+		hints = m.actionHints() + m.formHints() + "↑/↓ select · s/h view · r refresh · q quit"
 	}
 	if m.loadErr != "" {
 		return m.theme.stateError.Render("error: "+m.loadErr) + "\n" + m.theme.footer.Render(hints)
 	}
 	return m.theme.footer.Render(hints)
+}
+
+// formHints advertises the profile-management keys when the forms backend is
+// wired in.
+func (m Model) formHints() string {
+	if m.forms == nil {
+		return ""
+	}
+	if _, ok := m.currentProfile(); ok {
+		return "n new · e edit · d delete · "
+	}
+	return "n new · "
 }
 
 // actionHints lists the enabled action keys for the selected profile so the

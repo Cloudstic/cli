@@ -64,7 +64,10 @@ func buildBinary(t *testing.T) string {
 			return
 		}
 		bin := filepath.Join(dir, "cloudstic")
-		cmd := exec.Command("go", "build", "-buildvcs=false", "-cover", "-o", bin, "../cmd/cloudstic")
+		// -tags crashinject links in the CLOUDSTIC_TEST_CRASH_AFTER_PUTS knob
+		// (see cmd/cloudstic/crashinject.go), which a plain production build
+		// never includes.
+		cmd := exec.Command("go", "build", "-buildvcs=false", "-cover", "-tags", "crashinject", "-o", bin, "../cmd/cloudstic")
 		cmd.Env = append(os.Environ(), "GOCACHE="+filepath.Join(dir, "gocache"))
 		if out, err := cmd.CombinedOutput(); err != nil {
 			buildErr = fmt.Errorf("build failed: %w\n%s", err, out)

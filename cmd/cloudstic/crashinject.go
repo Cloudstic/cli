@@ -1,3 +1,5 @@
+//go:build crashinject
+
 package main
 
 import (
@@ -21,10 +23,15 @@ const exitCrashInjected = 137
 // after the Nth successful backend Put, when CLOUDSTIC_TEST_CRASH_AFTER_PUTS
 // is set. It is a no-op otherwise.
 //
-// This is a test-only knob (see AGENTS.md's CLOUDSTIC_TEST_* convention),
-// compiled into every build but inert unless that variable is set. It exists
-// so e2e crash-consistency tests can kill the real binary at a precise,
-// reproducible point in a backup rather than racing an external signal.
+// This is a test-only knob (see AGENTS.md's CLOUDSTIC_TEST_* convention).
+// Unlike the rest of that convention it needs to run inside the real
+// compiled binary, not just a _test.go file, so it lives behind the
+// "crashinject" build tag instead: a plain `go build ./cmd/cloudstic` (what
+// AGENTS.md documents, and what ships) never links this code in at all, so
+// there is nothing here for a stray environment variable to trigger in
+// production. Only the e2e build (see e2e/harness_test.go's buildBinary)
+// passes -tags crashinject. See crashinject_stub.go for the default build's
+// no-op.
 func withCrashInjection(s store.ObjectStore) (store.ObjectStore, error) {
 	raw := os.Getenv("CLOUDSTIC_TEST_CRASH_AFTER_PUTS")
 	if raw == "" {

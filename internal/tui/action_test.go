@@ -64,7 +64,7 @@ func TestModel_StartAction_RunsAndCompletes(t *testing.T) {
 	if m.activity.Status != ActivityStatusSuccess {
 		t.Fatalf("activity status=%q want success", m.activity.Status)
 	}
-	if !strings.Contains(m.View(), "done") {
+	if !strings.Contains(m.View(), "success") {
 		t.Fatalf("view missing completion state\n%s", m.View())
 	}
 }

@@ -47,7 +47,7 @@ func TestNewModel_SelectsDashboardProfile(t *testing.T) {
 func TestModel_View_RendersProfilesAndCounts(t *testing.T) {
 	m := NewModel(testDashboard())
 	view := m.View()
-	for _, want := range []string{"alpha", "zeta", "2 profiles", "1 stores", "local:/tmp/alpha"} {
+	for _, want := range []string{"alpha", "zeta", "Profiles 2", "Stores 1", "local:/tmp/alpha"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q\n%s", want, view)
 		}

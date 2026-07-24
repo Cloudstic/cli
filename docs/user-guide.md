@@ -1862,6 +1862,7 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 | `CLOUDSTIC_KMS_REGION` | `-kms-region` | AWS KMS region |
 | `CLOUDSTIC_KMS_ENDPOINT` | `-kms-endpoint` | Custom AWS KMS endpoint URL |
 | `CLOUDSTIC_PROFILES_FILE` | `-profiles-file` | Path to profiles YAML file |
+| `CLOUDSTIC_TUI_BUBBLETEA` | `-bubbletea` | Use the experimental Bubble Tea TUI renderer (RFC 0012 Phase 2) |
 | `CLOUDSTIC_CONFIG_DIR` | — | Override config directory path |
 | `GOOGLE_APPLICATION_CREDENTIALS` | `-google-credentials` | Path to your own Google OAuth credentials file (optional, overrides built-in) |
 | `GOOGLE_CREDENTIALS_JSON` | `-google-credentials-json` | Inline Google credentials JSON (OAuth client or service account) |

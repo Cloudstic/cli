@@ -8,6 +8,9 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
+
+	"golang.org/x/sync/singleflight"
 )
 
 type ErrorKind string
@@ -113,17 +116,59 @@ type WritableBackend interface {
 }
 
 // Resolver routes secret references by scheme.
+//
+// Resolutions from interactive native stores (macOS Keychain, Windows
+// Credential Manager, Linux Secret Service) are cached in-process and
+// deduplicated with singleflight. This matters for unsigned/dev builds, where
+// the OS cannot persist an "always allow" ACL keyed to the binary's code
+// signature and so re-prompts on every keychain access: without the cache, the
+// concurrent store probes and per-action re-probes would each pop a separate
+// password dialog. With it, a given reference prompts at most once per process.
 type Resolver struct {
 	backends map[string]Backend
+
+	mu    sync.Mutex
+	cache map[string]string
+	group singleflight.Group
 }
 
 // NewResolver creates a resolver from scheme backends.
 func NewResolver(backends map[string]Backend) *Resolver {
-	r := &Resolver{backends: map[string]Backend{}}
+	r := &Resolver{backends: map[string]Backend{}, cache: map[string]string{}}
 	for scheme, b := range backends {
 		r.backends[strings.ToLower(scheme)] = b
 	}
 	return r
+}
+
+// cachedScheme reports whether a scheme's resolutions should be cached. Only
+// the interactive native stores are cached; env/file/config-token resolution is
+// cheap, silent, and may legitimately change within a process.
+func cachedScheme(scheme string) bool {
+	switch scheme {
+	case "keychain", "wincred", "secret-service":
+		return true
+	}
+	return false
+}
+
+func (r *Resolver) cacheGet(key string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	v, ok := r.cache[key]
+	return v, ok
+}
+
+func (r *Resolver) cacheSet(key, value string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cache[key] = value
+}
+
+func (r *Resolver) cacheInvalidate(key string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.cache, key)
 }
 
 // NewDefaultResolver builds the standard resolver with built-in env, file,
@@ -145,7 +190,39 @@ func (r *Resolver) Resolve(ctx context.Context, raw string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if cachedScheme(parsed.Scheme) {
+		return r.resolveCached(ctx, parsed, backend)
+	}
+	return resolveBackend(ctx, parsed, backend)
+}
 
+// resolveCached serves a cacheable resolution from the in-process cache, or
+// performs exactly one backend call for concurrent callers via singleflight and
+// caches the successful result. Errors are never cached, so a denied or failed
+// prompt can be retried.
+func (r *Resolver) resolveCached(ctx context.Context, parsed Ref, backend Backend) (string, error) {
+	key := parsed.Raw
+	if v, ok := r.cacheGet(key); ok {
+		return v, nil
+	}
+	v, err, _ := r.group.Do(key, func() (any, error) {
+		if v, ok := r.cacheGet(key); ok {
+			return v, nil
+		}
+		value, err := resolveBackend(ctx, parsed, backend)
+		if err != nil {
+			return "", err
+		}
+		r.cacheSet(key, value)
+		return value, nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return v.(string), nil
+}
+
+func resolveBackend(ctx context.Context, parsed Ref, backend Backend) (string, error) {
 	value, err := backend.Resolve(ctx, parsed)
 	if err != nil {
 		var refErr *Error
@@ -199,6 +276,9 @@ func (r *Resolver) SaveBlob(ctx context.Context, raw string, data []byte) error 
 		}
 		return errorf(KindBackendUnavailable, parsed.Raw, err.Error(), err)
 	}
+	if cachedScheme(parsed.Scheme) {
+		r.cacheSet(parsed.Raw, string(data))
+	}
 	return nil
 }
 
@@ -221,6 +301,7 @@ func (r *Resolver) DeleteBlob(ctx context.Context, raw string) error {
 		}
 		return errorf(KindBackendUnavailable, parsed.Raw, err.Error(), err)
 	}
+	r.cacheInvalidate(parsed.Raw)
 	return nil
 }
 
@@ -255,6 +336,9 @@ func (r *Resolver) Store(ctx context.Context, raw, value string) error {
 			return err
 		}
 		return errorf(KindBackendUnavailable, parsed.Raw, err.Error(), err)
+	}
+	if cachedScheme(parsed.Scheme) {
+		r.cacheSet(parsed.Raw, value)
 	}
 	return nil
 }

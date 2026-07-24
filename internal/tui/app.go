@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -234,145 +235,273 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
+	width := m.viewWidth()
 	if m.form != nil {
-		return strings.Join([]string{m.renderHeader(), m.form.View(), m.renderFooter()}, "\n")
+		return strings.Join([]string{m.renderTitle(), m.form.View(), m.renderFooter()}, "\n")
 	}
 	if m.confirm != nil {
-		return strings.Join([]string{m.renderHeader(), m.renderConfirm(), m.renderFooter()}, "\n")
+		return strings.Join([]string{m.renderTitle(), m.renderConfirm(), m.renderFooter()}, "\n")
 	}
-	header := m.renderHeader()
-	body := lipgloss.JoinHorizontal(lipgloss.Top, m.renderProfileList(), m.renderDetail())
-	sections := []string{header, body}
-	if activity := m.renderActivity(); activity != "" {
-		sections = append(sections, activity)
+	sections := []string{
+		m.renderTitle(),
+		m.renderOverview(width),
+		m.renderPanes(width),
+		m.renderActivitySection(width),
+		m.renderFooter(),
 	}
-	sections = append(sections, m.renderFooter())
 	return strings.Join(sections, "\n")
+}
+
+func (m Model) viewWidth() int {
+	if m.width > 0 {
+		return m.width
+	}
+	return 92
+}
+
+// fullContentWidth is the panel content width for a full-width panel at the
+// given terminal width (border + padding cost 4 columns).
+func (m Model) fullContentWidth(width int) int {
+	if w := width - 4; w >= 24 {
+		return w
+	}
+	return 24
+}
+
+// panel renders a titled, bordered box at a fixed content width.
+func (m Model) panel(title, body string, contentWidth int) string {
+	style := m.theme.panel
+	if contentWidth > 0 {
+		style = style.Width(contentWidth)
+	}
+	return style.Render(m.theme.panelTitle.Render(title) + "\n\n" + body)
+}
+
+// panelH is panel with a fixed content height, used to equalize the two
+// side-by-side panes so their borders align.
+func (m Model) panelH(title, body string, contentWidth, contentHeight int) string {
+	return m.theme.panel.Width(contentWidth).Height(contentHeight).
+		Render(m.theme.panelTitle.Render(title) + "\n\n" + body)
+}
+
+func (m Model) renderTitle() string {
+	return m.theme.title.Render("Cloudstic") + "  " +
+		m.theme.subtitle.Render("Operator dashboard for profiles, stores, and auth.")
 }
 
 func (m Model) renderConfirm() string {
 	c := m.confirm
-	lines := []string{
-		m.theme.title.Render(c.title),
-		"",
-		c.message,
-		"",
-		m.theme.subtle.Render("Enter/y delete · Esc/n cancel"),
-	}
-	return m.theme.box.Render(strings.Join(lines, "\n"))
+	body := c.message + "\n\n" + m.theme.subtle.Render("Enter/y delete · Esc/n cancel")
+	return m.panel(c.title, body, 0)
 }
 
-func (m Model) renderActivity() string {
-	a := m.activity
-	if a.Status == ActivityStatusIdle && a.Action == "" {
-		return ""
-	}
-	label := a.Action
-	if label == "" {
-		label = string(a.ActionKind)
-	}
-	var head string
-	switch a.Status {
-	case ActivityStatusRunning:
-		head = m.theme.stateWarning.Render("● running") + "  " + label
-	case ActivityStatusSuccess:
-		head = m.theme.stateReady.Render("✓ done") + "  " + label
-	case ActivityStatusError:
-		head = m.theme.stateError.Render("✗ failed") + "  " + label
-	default:
-		head = label
-	}
-	lines := []string{head}
-	if a.Phase != "" {
-		lines = append(lines, m.theme.subtle.Render(a.Phase))
-	}
-	if bar := progressBarLine(a, 30); bar != "" {
-		lines = append(lines, bar)
-	}
-	if a.Summary != "" {
-		lines = append(lines, m.theme.subtle.Render(a.Summary))
-	}
-	return m.theme.box.Render(strings.Join(lines, "\n"))
+func (m Model) renderOverview(width int) string {
+	stats := strings.Join([]string{
+		m.theme.accent.Render("Profiles") + " " + strconv.Itoa(m.dashboard.ProfileCount),
+		m.theme.accent.Render("Stores") + " " + strconv.Itoa(m.dashboard.StoreCount),
+		m.theme.accent.Render("Auth") + " " + strconv.Itoa(m.dashboard.AuthCount),
+	}, "    ")
+	return m.panel("Overview", stats, m.fullContentWidth(width))
 }
 
-func (m Model) renderHeader() string {
-	title := m.theme.title.Render("cloudstic")
-	counts := m.theme.subtle.Render(fmt.Sprintf(
-		"%d profiles · %d stores · %d auth",
-		m.dashboard.ProfileCount, m.dashboard.StoreCount, m.dashboard.AuthCount,
-	))
-	return title + "  " + counts
+// renderPanes lays out the Profiles and Selection panels side by side, or
+// stacked vertically on narrow terminals (responsive, per RFC 0012 Style).
+func (m Model) renderPanes(width int) string {
+	profiles := m.renderProfileListBody()
+	selection := m.renderSelectionBody()
+	if width < 80 {
+		fw := m.fullContentWidth(width)
+		return m.panel("Profiles", profiles, fw) + "\n" + m.panel("Selection", selection, fw)
+	}
+	leftW, rightW := m.paneWidths(width)
+	h := max(
+		lipgloss.Height(m.theme.panelTitle.Render("Profiles")+"\n\n"+profiles),
+		lipgloss.Height(m.theme.panelTitle.Render("Selection")+"\n\n"+selection),
+	)
+	left := m.panelH("Profiles", profiles, leftW, h)
+	right := m.panelH("Selection", selection, rightW, h)
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", right)
 }
 
-func (m Model) renderProfileList() string {
+func (m Model) paneWidths(width int) (int, int) {
+	inner := max(width-10, 40) // two panels (+4 each) plus a 2-col gap
+	left := max(inner/3, 18)
+	right := inner - left
+	if right < 32 {
+		right = 32
+		left = max(inner-right, 16)
+	}
+	return left, right
+}
+
+func (m Model) renderProfileListBody() string {
 	if len(m.dashboard.Profiles) == 0 {
-		return m.theme.box.Render(m.theme.subtle.Render("No profiles configured"))
+		return m.theme.subtle.Render("No profiles configured.")
 	}
+	nameWidth, badgeWidth := profileListWidths(m.dashboard.Profiles)
 	lines := make([]string, 0, len(m.dashboard.Profiles))
 	for i, profile := range m.dashboard.Profiles {
-		marker := "  "
-		name := profile.Name
-		if i == m.selected {
-			marker = m.theme.selected.Render("> ")
-			name = m.theme.selected.Render(name)
-		}
-		state := m.theme.stateStyle(profile.Status).Render(plainProfileStateLabel(profile))
-		lines = append(lines, fmt.Sprintf("%s%s [%s]", marker, name, state))
+		lines = append(lines, m.profileRow(profile, i == m.selected, nameWidth, badgeWidth))
 	}
-	return m.theme.box.Render(strings.Join(lines, "\n"))
+	return strings.Join(lines, "\n")
 }
 
-func (m Model) renderDetail() string {
+func (m Model) profileRow(profile ProfileCard, selected bool, nameWidth, badgeWidth int) string {
+	marker := "  "
+	name := padRight(profile.Name, nameWidth)
+	if selected {
+		marker = m.theme.marker.Render("› ")
+		name = m.theme.selected.Render(name)
+	}
+	return marker + name + "  " + m.renderBadge(profile, badgeWidth)
+}
+
+func (m Model) renderBadge(profile ProfileCard, width int) string {
+	inner := padRight(plainProfileStateLabel(profile), width-2)
+	return "[" + m.theme.stateStyle(profile.Status).Render(inner) + "]"
+}
+
+func (m Model) renderSelectionBody() string {
 	profile, ok := m.currentProfile()
 	if !ok {
-		return m.theme.box.Render(m.theme.subtle.Render("Select a profile"))
+		return m.theme.subtle.Render("No profile selected.")
 	}
-	tabs := m.renderTabs()
-	var body []string
-	switch m.view {
-	case ProfileViewHistory:
-		body = m.renderHistory(profile)
-	default:
-		body = m.renderSummary(profile)
+	lines := []string{
+		m.theme.selected.Render(profile.Name),
+		m.renderTabs(),
+		"",
 	}
-	content := append([]string{tabs, ""}, body...)
-	return m.theme.box.Render(strings.Join(content, "\n"))
+	if m.view == ProfileViewHistory {
+		lines = append(lines, m.renderHistory(profile)...)
+	} else {
+		lines = append(lines, m.renderSummary(profile)...)
+	}
+	lines = append(lines, m.renderActionButtons(profile)...)
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) renderTabs() string {
-	summary := "[s] Summary"
-	history := "[h] History"
-	switch m.view {
-	case ProfileViewHistory:
-		history = m.theme.tabActive.Render(history)
-		summary = m.theme.tabInactive.Render(summary)
-	default:
-		summary = m.theme.tabActive.Render(summary)
-		history = m.theme.tabInactive.Render(history)
+	summary, history := "Summary (s)", "History (h)"
+	if m.view == ProfileViewHistory {
+		return m.theme.tabIdle.Render(summary) + "   " + m.theme.tabActive.Render(history)
 	}
-	return summary + "  " + history
+	return m.theme.tabActive.Render(summary) + "   " + m.theme.tabIdle.Render(history)
 }
 
 func (m Model) renderSummary(profile ProfileCard) []string {
 	rows := [][2]string{
+		{"State", plainProfileStateLabel(profile)},
 		{"Source", profile.Source},
-		{"Store", profile.StoreRef},
+		{"Store", dashIfEmpty(profile.StoreRef)},
 	}
 	if profile.AuthRef != "" {
 		rows = append(rows, [2]string{"Auth", profile.AuthRef})
 	}
 	rows = append(rows, [2]string{"Health", m.styledHealth(profile)})
 	if last := lastBackupLabel(profile); last != "" {
-		rows = append(rows, [2]string{"Last backup", last})
+		rows = append(rows, [2]string{"Backup", last})
 	}
 	if profile.LastRef != "" {
-		rows = append(rows, [2]string{"Last ref", trimSnapshotRef(profile.LastRef)})
+		rows = append(rows, [2]string{"Ref", trimSnapshotRef(profile.LastRef)})
+	}
+	if check := profileCheckSummary(m.activity, profile); check != "" {
+		rows = append(rows, [2]string{"Check", check})
+	}
+	if note := profileStatusSummary(profile); note != "" {
+		rows = append(rows, [2]string{"Status", note})
 	}
 	lines := make([]string, 0, len(rows))
 	for _, row := range rows {
-		lines = append(lines, m.theme.label.Render(fmt.Sprintf("%-12s", row[0]))+" "+row[1])
+		lines = append(lines, m.detailRow(row[0], row[1]))
 	}
 	return lines
+}
+
+func (m Model) detailRow(label, value string) string {
+	return m.theme.label.Render(padRight(label, 8)) + "  " + value
+}
+
+func (m Model) renderActionButtons(profile ProfileCard) []string {
+	buttons := selectedProfileActionButtons(profile)
+	if len(buttons) == 0 {
+		return nil
+	}
+	lines := []string{""}
+	for _, b := range buttons {
+		label := b.Label
+		if !b.Enabled {
+			label = m.theme.subtle.Render(label)
+		}
+		lines = append(lines, "  "+m.theme.key.Render("["+b.Key+"]")+" "+label)
+		if !b.Enabled && b.Reason != "" {
+			lines = append(lines, m.theme.subtle.Render("      "+b.Reason))
+		}
+	}
+	return lines
+}
+
+func (m Model) renderActivitySection(width int) string {
+	return m.panel("Activity", m.activityBody(), m.fullContentWidth(width))
+}
+
+func (m Model) activityBody() string {
+	a := m.activity
+	if a.Status == ActivityStatusIdle && a.Action == "" && len(a.Lines) == 0 {
+		return m.theme.subtle.Render("No recent activity.")
+	}
+	var lines []string
+	if status := m.activityStatusLabel(a.Status); status != "" {
+		lines = append(lines, m.detailRow("Status", status))
+	}
+	if a.Action != "" {
+		lines = append(lines, m.detailRow("Action", a.Action))
+	}
+	if a.Phase != "" {
+		lines = append(lines, m.detailRow("Phase", a.Phase))
+	}
+	if bar := progressBarLine(a, 28); bar != "" {
+		lines = append(lines, m.detailRow("Progress", bar))
+	}
+	if a.Summary != "" {
+		lines = append(lines, m.detailRow("Result", a.Summary))
+	}
+	if a.UpdatedAt != "" {
+		lines = append(lines, m.detailRow("Updated", a.UpdatedAt))
+	}
+	if len(a.Lines) > 0 {
+		if len(lines) > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, a.Lines...)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) activityStatusLabel(status ActivityStatus) string {
+	switch status {
+	case ActivityStatusRunning:
+		return m.theme.stateWarning.Render("running")
+	case ActivityStatusSuccess:
+		return m.theme.stateReady.Render("success")
+	case ActivityStatusError:
+		return m.theme.stateError.Render("error")
+	default:
+		return ""
+	}
+}
+
+func padRight(s string, width int) string {
+	if w := lipgloss.Width(s); w < width {
+		return s + strings.Repeat(" ", width-w)
+	}
+	return s
+}
+
+func dashIfEmpty(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
 }
 
 func (m Model) styledHealth(profile ProfileCard) string {
@@ -402,62 +531,57 @@ func (m Model) renderHistory(profile ProfileCard) []string {
 }
 
 func (m Model) renderFooter() string {
-	var hints string
-	switch {
-	case m.form != nil, m.confirm != nil:
+	if m.form != nil || m.confirm != nil {
 		// The overlay renders its own key hints.
 		return ""
-	case m.running:
-		hints = "x cancel · running…"
-	default:
-		hints = m.actionHints() + m.formHints() + "↑/↓ select · s/h view · r refresh · q quit"
 	}
+	if m.running {
+		return m.hint("x", "cancel") + m.theme.subtle.Render("   ·   ") + m.theme.stateWarning.Render("running…")
+	}
+	line := strings.Join(m.footerHints(), m.theme.subtle.Render("  ·  "))
 	if m.loadErr != "" {
-		return m.theme.stateError.Render("error: "+m.loadErr) + "\n" + m.theme.footer.Render(hints)
+		return m.theme.stateError.Render("error: "+m.loadErr) + "\n" + line
 	}
-	return m.theme.footer.Render(hints)
+	return line
 }
 
-// formHints advertises the profile-management keys when the forms backend is
-// wired in.
-func (m Model) formHints() string {
-	if m.forms == nil {
-		return ""
-	}
-	if _, ok := m.currentProfile(); ok {
-		return "n new · e edit · d delete · "
-	}
-	return "n new · "
-}
-
-// actionHints lists the enabled action keys for the selected profile so the
-// footer advertises only actions that will actually run.
-func (m Model) actionHints() string {
-	if m.runner == nil {
-		return ""
-	}
-	profile, ok := m.currentProfile()
-	if !ok {
-		return ""
-	}
+// footerHints builds the context-aware key-hint bar: only actions and
+// management keys that will actually do something for the current selection.
+func (m Model) footerHints() []string {
 	var parts []string
-	for _, action := range profile.Actions {
-		if !action.Enabled {
-			continue
-		}
-		switch action.Kind {
-		case ActionKindInit:
-			parts = append(parts, "b init")
-		case ActionKindBackup:
-			parts = append(parts, "b backup")
-		case ActionKindCheck:
-			parts = append(parts, "c check")
+	profile, hasProfile := m.currentProfile()
+	if m.runner != nil && hasProfile {
+		for _, action := range profile.Actions {
+			if !action.Enabled {
+				continue
+			}
+			switch action.Kind {
+			case ActionKindInit:
+				parts = append(parts, m.hint("b", "init"))
+			case ActionKindBackup:
+				parts = append(parts, m.hint("b", "backup"))
+			case ActionKindCheck:
+				parts = append(parts, m.hint("c", "check"))
+			}
 		}
 	}
-	if len(parts) == 0 {
-		return ""
+	if m.forms != nil {
+		parts = append(parts, m.hint("n", "new"))
+		if hasProfile {
+			parts = append(parts, m.hint("e", "edit"), m.hint("d", "delete"))
+		}
 	}
-	return strings.Join(parts, " · ") + " · "
+	parts = append(parts,
+		m.hint("↑↓", "select"),
+		m.hint("s/h", "view"),
+		m.hint("r", "refresh"),
+		m.hint("q", "quit"),
+	)
+	return parts
+}
+
+func (m Model) hint(key, label string) string {
+	return m.theme.footerKey.Render(key) + m.theme.footer.Render(" "+label)
 }
 
 func (m Model) currentProfile() (ProfileCard, bool) {

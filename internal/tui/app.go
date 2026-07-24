@@ -47,6 +47,12 @@ type Model struct {
 	formStack []formFrame
 	confirm   *confirmState
 
+	// regions holds the clickable rows recorded during the last render, so
+	// mouse clicks map to profiles/actions without re-deriving the layout
+	// (issue: legacy mouse support). It is a pointer so the value-receiver
+	// View can populate it.
+	regions *clickRegions
+
 	// reload, when non-nil, is run when the user presses "r". It returns a
 	// DashboardLoadedMsg or DashboardLoadError. The read-only launcher can
 	// leave it nil for a static snapshot.
@@ -60,6 +66,7 @@ func NewModel(d Dashboard) Model {
 		view:      ProfileViewSummary,
 		theme:     newTheme(),
 		probes:    map[string]StoreProbe{},
+		regions:   newClickRegions(),
 	}
 	m.selected = indexOfSelected(d)
 	return m
@@ -127,6 +134,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleActionUpdate(msg)
 	case configReloadedMsg:
 		return m.handleConfigReloaded(msg)
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
 	case tea.KeyMsg:
 		if m.activeForm() != nil {
 			return m.updateForms(msg)
@@ -236,16 +245,21 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) View() string {
 	width := m.viewWidth()
+	// Overlays cover the dashboard, so any recorded click targets are stale.
+	m.regions.reset()
 	if form := m.activeForm(); form != nil {
 		return strings.Join([]string{m.renderTitle(), form.View(), m.renderFooter()}, "\n")
 	}
 	if m.confirm != nil {
 		return strings.Join([]string{m.renderTitle(), m.renderConfirm(), m.renderFooter()}, "\n")
 	}
+	title := m.renderTitle()
+	overview := m.renderOverview(width)
+	yPanes := lipgloss.Height(title) + lipgloss.Height(overview)
 	sections := []string{
-		m.renderTitle(),
-		m.renderOverview(width),
-		m.renderPanes(width),
+		title,
+		overview,
+		m.renderPanes(width, yPanes),
 		m.renderActivitySection(width),
 		m.renderFooter(),
 	}
@@ -304,15 +318,30 @@ func (m Model) renderOverview(width int) string {
 	return m.panel("Overview", stats, m.fullContentWidth(width))
 }
 
+// panelBodyOffset is the number of rows between a panel's top edge and its
+// first body line: top border + title + blank line.
+const panelBodyOffset = 3
+
 // renderPanes lays out the Profiles and Selection panels side by side, or
-// stacked vertically on narrow terminals (responsive, per RFC 0012 Style).
-func (m Model) renderPanes(width int) string {
+// stacked vertically on narrow terminals (responsive, per RFC 0012 Style). It
+// records click regions relative to yTop so mouse clicks map to profile rows
+// and action buttons.
+func (m Model) renderPanes(width, yTop int) string {
 	profiles := m.renderProfileListBody()
-	selection := m.renderSelectionBody()
+	selectionBody, actionRows := m.selectionLines()
+	selection := strings.Join(selectionBody, "\n")
+
 	if width < 80 {
 		fw := m.fullContentWidth(width)
-		return m.panel("Profiles", profiles, fw) + "\n" + m.panel("Selection", selection, fw)
+		left := m.panel("Profiles", profiles, fw)
+		right := m.panel("Selection", selection, fw)
+		total := fw + 4
+		m.recordProfileRegions(yTop, 0, total)
+		selectionTop := yTop + lipgloss.Height(left)
+		m.recordActionRegions(actionRows, selectionTop, 0, total)
+		return left + "\n" + right
 	}
+
 	leftW, rightW := m.paneWidths(width)
 	h := max(
 		lipgloss.Height(m.theme.panelTitle.Render("Profiles")+"\n\n"+profiles),
@@ -320,7 +349,33 @@ func (m Model) renderPanes(width int) string {
 	)
 	left := m.panelH("Profiles", profiles, leftW, h)
 	right := m.panelH("Selection", selection, rightW, h)
+
+	leftTotal := leftW + 4
+	rightX := leftTotal + 2 // 2-col gap between panels
+	m.recordProfileRegions(yTop, 0, leftTotal)
+	m.recordActionRegions(actionRows, yTop, rightX, rightX+rightW+4)
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", right)
+}
+
+// recordProfileRegions maps each profile row's absolute Y to its index, for
+// clicks landing within [x0, x1).
+func (m Model) recordProfileRegions(yTop, x0, x1 int) {
+	if len(m.dashboard.Profiles) == 0 {
+		return
+	}
+	for i := range m.dashboard.Profiles {
+		m.regions.profileRows[yTop+panelBodyOffset+i] = i
+	}
+	m.regions.profilesX0, m.regions.profilesX1 = x0, x1
+}
+
+// recordActionRegions maps each action-button row's absolute Y to its key, for
+// clicks landing within [x0, x1).
+func (m Model) recordActionRegions(actionRows map[int]string, yTop, x0, x1 int) {
+	for bodyIdx, key := range actionRows {
+		m.regions.actionRows[yTop+panelBodyOffset+bodyIdx] = key
+	}
+	m.regions.selectionX0, m.regions.selectionX1 = x0, x1
 }
 
 func (m Model) paneWidths(width int) (int, int) {
@@ -361,10 +416,13 @@ func (m Model) renderBadge(profile ProfileCard, width int) string {
 	return "[" + m.theme.stateStyle(profile.Status).Render(inner) + "]"
 }
 
-func (m Model) renderSelectionBody() string {
+// selectionLines builds the Selection panel body and, alongside it, a map from
+// body line index to the action key on that line, so mouse hit-testing does not
+// re-derive the layout.
+func (m Model) selectionLines() ([]string, map[int]string) {
 	profile, ok := m.currentProfile()
 	if !ok {
-		return m.theme.subtle.Render("No profile selected.")
+		return []string{m.theme.subtle.Render("No profile selected.")}, nil
 	}
 	lines := []string{
 		m.theme.selected.Render(profile.Name),
@@ -376,8 +434,25 @@ func (m Model) renderSelectionBody() string {
 	} else {
 		lines = append(lines, m.renderSummary(profile)...)
 	}
-	lines = append(lines, m.renderActionButtons(profile)...)
-	return strings.Join(lines, "\n")
+
+	actionRows := map[int]string{}
+	buttons := selectedProfileActionButtons(profile)
+	if len(buttons) > 0 {
+		lines = append(lines, "")
+		for _, b := range buttons {
+			label := b.Label
+			if !b.Enabled {
+				label = m.theme.subtle.Render(label)
+			} else {
+				actionRows[len(lines)] = b.Key
+			}
+			lines = append(lines, "  "+m.theme.key.Render("["+b.Key+"]")+" "+label)
+			if !b.Enabled && b.Reason != "" {
+				lines = append(lines, m.theme.subtle.Render("      "+b.Reason))
+			}
+		}
+	}
+	return lines, actionRows
 }
 
 func (m Model) renderTabs() string {
@@ -419,25 +494,6 @@ func (m Model) renderSummary(profile ProfileCard) []string {
 
 func (m Model) detailRow(label, value string) string {
 	return m.theme.label.Render(padRight(label, 8)) + "  " + value
-}
-
-func (m Model) renderActionButtons(profile ProfileCard) []string {
-	buttons := selectedProfileActionButtons(profile)
-	if len(buttons) == 0 {
-		return nil
-	}
-	lines := []string{""}
-	for _, b := range buttons {
-		label := b.Label
-		if !b.Enabled {
-			label = m.theme.subtle.Render(label)
-		}
-		lines = append(lines, "  "+m.theme.key.Render("["+b.Key+"]")+" "+label)
-		if !b.Enabled && b.Reason != "" {
-			lines = append(lines, m.theme.subtle.Render("      "+b.Reason))
-		}
-	}
-	return lines
 }
 
 func (m Model) renderActivitySection(width int) string {

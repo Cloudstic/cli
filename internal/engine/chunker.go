@@ -27,6 +27,21 @@ const (
 	cdcMaxSize = 8 * 1024 * 1024 // 8 MiB
 )
 
+// chunkBufPool pools the up-to-8MiB copies ProcessStream makes of each
+// chunk before handing it to a storage worker. Without pooling, the 32-slot
+// job channel plus per-worker in-flight chunks can pin on the order of
+// hundreds of MB per file being chunked concurrently, all freshly allocated
+// and GC'd per chunk. Every store.Put in the chain below (compression,
+// encryption, packing, the backend) consumes its data argument synchronously
+// before returning — none retain the slice past the call — so it is safe to
+// return a buffer to the pool the moment storeChunk completes.
+var chunkBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, cdcMaxSize)
+		return &b
+	},
+}
+
 // Chunker splits a byte stream into content-defined chunks, deduplicates
 // them, and persists the resulting Content object.
 type Chunker struct {
@@ -58,8 +73,9 @@ func (c *Chunker) ProcessStream(ctx context.Context, r io.Reader, onProgress fun
 	hasher := sha256.New()
 
 	type chunkJob struct {
-		index int
-		data  []byte
+		index  int
+		data   []byte
+		bufPtr *[]byte // underlying pooled buffer backing data; returned to chunkBufPool once storeChunk completes
 	}
 	type chunkResult struct {
 		index int
@@ -80,6 +96,7 @@ func (c *Chunker) ProcessStream(ctx context.Context, r io.Reader, onProgress fun
 		g.Go(func() error {
 			for job := range jobs {
 				ref, err := c.storeChunk(gCtx, job.data)
+				chunkBufPool.Put(job.bufPtr)
 				if err != nil {
 					return err
 				}
@@ -114,14 +131,18 @@ func (c *Chunker) ProcessStream(ctx context.Context, r io.Reader, onProgress fun
 				onProgress(n)
 			}
 
-			// Copy data so it is safe to process asynchronously
-			dataCopy := make([]byte, len(chunk.Data))
+			// Copy data so it is safe to process asynchronously, from a pooled
+			// buffer so repeated up-to-8MiB allocations don't pile up as GC
+			// churn while many chunks are in flight.
+			bufPtr := chunkBufPool.Get().(*[]byte)
+			dataCopy := (*bufPtr)[:len(chunk.Data)]
 			copy(dataCopy, chunk.Data)
 
 			select {
-			case jobs <- chunkJob{index: totalChunks, data: dataCopy}:
+			case jobs <- chunkJob{index: totalChunks, data: dataCopy, bufPtr: bufPtr}:
 				totalChunks++
 			case <-gCtx.Done():
+				chunkBufPool.Put(bufPtr)
 				return gCtx.Err()
 			}
 		}

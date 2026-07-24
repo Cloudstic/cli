@@ -29,8 +29,14 @@ func NewMockStore() *MockStore {
 }
 
 func (s *MockStore) Put(_ context.Context, key string, data []byte) error {
+	// Every real ObjectStore backend consumes data synchronously and never
+	// retains the slice past the call — callers are free to reuse or pool
+	// their buffer the instant Put returns. Aliasing data here instead of
+	// copying it would make MockStore the one implementation that breaks
+	// that contract, silently corrupting previously "stored" entries the
+	// moment a caller's buffer gets reused.
 	s.mu.Lock()
-	s.Data[key] = data
+	s.Data[key] = append([]byte(nil), data...)
 	s.mu.Unlock()
 	return nil
 }

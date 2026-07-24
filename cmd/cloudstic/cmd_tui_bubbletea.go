@@ -49,6 +49,7 @@ func runBubbleTeaTUI(r *runner, ctx context.Context, profilesFile string) int {
 		tea.WithInput(stdin),
 		tea.WithOutput(r.out),
 		tea.WithAltScreen(),
+		tea.WithMouseCellMotion(),
 	}
 	if err := tuiRunBubbleTea(ctx, model, opts...); err != nil {
 		return r.fail("TUI exited with error: %v", err)

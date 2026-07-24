@@ -14,6 +14,7 @@ import (
 type FormsBackend interface {
 	forms.ProfileBackend
 	forms.StoreBackend
+	forms.SecretBackend
 	// InitialStoreValues seeds an edit-store form with an existing store's
 	// field values.
 	InitialStoreValues(name string) map[string]string
@@ -168,8 +169,27 @@ func (m Model) openNestedForm(intent forms.Intent) (tea.Model, tea.Cmd) {
 		form := forms.NewStoreForm(m.forms, intent.Value, m.forms.InitialStoreValues(intent.Value), true)
 		m = m.pushForm(form, intent)
 		return m, form.Init()
+	case forms.IntentEditSecret:
+		return m.openSecretForm(intent)
 	}
 	return m, nil
+}
+
+// openSecretForm pushes the guided secret-ref form for a store secret field.
+func (m Model) openSecretForm(intent forms.Intent) (tea.Model, tea.Cmd) {
+	parent := m.activeForm() // the store form
+	if parent == nil {
+		return m, nil
+	}
+	spec, ok := forms.StoreSecretFieldSpec(intent.Value)
+	if !ok {
+		return m, nil
+	}
+	storeName := parent.TrimmedValue(forms.FieldStoreName)
+	existingRef := parent.TrimmedValue(intent.Value)
+	form := forms.NewSecretForm(m.forms, spec, storeName, existingRef)
+	m = m.pushForm(form, intent)
+	return m, form.Init()
 }
 
 // completeTopForm pops the finished top form and either applies its result to
@@ -209,6 +229,9 @@ func (m Model) applyNestedResult(intent forms.Intent, result string) Model {
 	case forms.IntentCreateStore, forms.IntentEditStore:
 		parent.SetOptions("store", storeSelectorOptions(m.forms.StoreOptions()))
 		parent.SetValue("store", result)
+	case forms.IntentEditSecret:
+		// intent.Value is the store form's secret field key.
+		parent.SetValue(intent.Value, result)
 	}
 	return m
 }

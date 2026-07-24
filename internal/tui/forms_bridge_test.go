@@ -15,9 +15,10 @@ type stubFormsBackend struct {
 	cfg         *engine.ProfilesConfig
 	saved       bool
 	deleted     string
-	reloadHits  int
-	savedStore  string
-	storeExists map[string]bool
+	reloadHits   int
+	savedStore   string
+	storeExists  map[string]bool
+	storedSecret string
 }
 
 func (b *stubFormsBackend) StoreOptions() []string                 { return b.stores }
@@ -73,6 +74,24 @@ func (b *stubFormsBackend) SaveStore(name string, _ map[string]string, _ bool) e
 	return nil
 }
 func (b *stubFormsBackend) InitialStoreValues(string) map[string]string { return nil }
+
+// SecretBackend methods.
+func (b *stubFormsBackend) StorageOptions() []string { return []string{"env", "keychain"} }
+func (b *stubFormsBackend) DefaultRef(scheme, storeName, account string) string {
+	return scheme + "://" + storeName + "/" + account
+}
+func (b *stubFormsBackend) ParseRef(ref string) (string, string, bool) {
+	scheme, rest, ok := strings.Cut(ref, "://")
+	if !ok {
+		return "", "", false
+	}
+	if scheme == "env" {
+		return "env", rest, true
+	}
+	return scheme, "", true
+}
+func (b *stubFormsBackend) ValidateRef(string) error         { return nil }
+func (b *stubFormsBackend) StoreSecret(ref, value string) error { b.storedSecret = ref; return nil }
 
 func formsTestDashboard() Dashboard {
 	return Dashboard{
@@ -183,6 +202,64 @@ func TestModel_DeleteProfileCancel(t *testing.T) {
 	}
 	if backend.deleted != "" {
 		t.Fatalf("no deletion should occur on cancel, got %q", backend.deleted)
+	}
+}
+
+func TestModel_NestedEditSecretFromStoreForm(t *testing.T) {
+	backend := &stubFormsBackend{stores: []string{"s1"}, cfg: &engine.ProfilesConfig{}}
+	m := NewModel(formsTestDashboard()).WithForms(backend)
+
+	// Open profile form, jump to store field, open a nested create-store form.
+	next, _ := m.Update(keyPress("n"))
+	m = next.(Model)
+	form := m.activeForm()
+	for form.FocusedKey() != "store" {
+		next, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+		m = next.(Model)
+		form = m.activeForm()
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft}) // "+ Create store"
+	m = next.(Model)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if len(m.formStack) != 2 {
+		t.Fatalf("store form not opened; depth=%d", len(m.formStack))
+	}
+
+	// In the store form, set encryption to password and focus the password ref.
+	store := m.activeForm()
+	for store.FocusedKey() != forms.FieldEncryptionMode {
+		next, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+		m = next.(Model)
+		store = m.activeForm()
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight}) // none -> password
+	m = next.(Model)
+	store = m.activeForm()
+	for store.FocusedKey() != forms.FieldPasswordSecret {
+		next, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+		m = next.(Model)
+		store = m.activeForm()
+	}
+
+	// Ctrl+E opens the nested secret form.
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlE})
+	m = next.(Model)
+	if len(m.formStack) != 3 {
+		t.Fatalf("secret form not opened; depth=%d\n%s", len(m.formStack), m.View())
+	}
+	if !strings.Contains(m.View(), "Configure Secret") {
+		t.Fatalf("view should show the secret form\n%s", m.View())
+	}
+
+	// Accept the default env reference (Enter).
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if len(m.formStack) != 2 {
+		t.Fatalf("should return to the store form; depth=%d", len(m.formStack))
+	}
+	if got := m.activeForm().Value(forms.FieldPasswordSecret); got != "env://CLOUDSTIC_PASSWORD" {
+		t.Fatalf("password secret field=%q want env://CLOUDSTIC_PASSWORD", got)
 	}
 }
 

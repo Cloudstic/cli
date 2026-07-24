@@ -3,7 +3,30 @@ package forms
 import (
 	"fmt"
 	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
+
+// IntentEditSecret is yielded when the user configures a store secret field
+// (Ctrl+E), opening the nested secret-ref form.
+const IntentEditSecret = "edit_secret"
+
+// storeSecretFieldSpecs maps each secret store field to the secret it holds, so
+// the secret-ref form can suggest sensible env-var and account defaults.
+var storeSecretFieldSpecs = map[string]SecretFieldInfo{
+	FieldS3AccessKey:    {Label: "S3 access key", DefaultEnvName: "AWS_ACCESS_KEY_ID", DefaultAccount: "s3-access-key"},
+	FieldS3SecretKey:    {Label: "S3 secret key", DefaultEnvName: "AWS_SECRET_ACCESS_KEY", DefaultAccount: "s3-secret-key"},
+	FieldSFTPPassword:   {Label: "SFTP password", DefaultEnvName: "CLOUDSTIC_STORE_SFTP_PASSWORD", DefaultAccount: "store-sftp-password"},
+	FieldSFTPKey:        {Label: "SFTP key path", DefaultEnvName: "CLOUDSTIC_STORE_SFTP_KEY", DefaultAccount: "store-sftp-key"},
+	FieldPasswordSecret: {Label: "repository password", DefaultEnvName: "CLOUDSTIC_PASSWORD", DefaultAccount: "password"},
+	FieldPlatformSecret: {Label: "platform key", DefaultEnvName: "CLOUDSTIC_ENCRYPTION_KEY", DefaultAccount: "encryption-key"},
+}
+
+// StoreSecretFieldSpec returns the secret spec for a store field key.
+func StoreSecretFieldSpec(fieldKey string) (SecretFieldInfo, bool) {
+	spec, ok := storeSecretFieldSpecs[fieldKey]
+	return spec, ok
+}
 
 // Store form field keys. They are shared with the cmd-side StoreBackend adapter
 // (which assembles a ProfileStore from the collected values), so both sides
@@ -124,9 +147,23 @@ func NewStoreForm(backend StoreBackend, existingName string, initial map[string]
 	sf := &storeFormState{backend: backend, editing: editing, originalName: existingName}
 	f.OnChange = sf.onChange
 	f.Submit = sf.submit
+	f.Interrupt = sf.interrupt
 	sf.refresh(f)
 	f.focusFirst()
 	return f
+}
+
+// interrupt opens the nested secret-ref form when Ctrl+E is pressed on a
+// visible secret field.
+func (s *storeFormState) interrupt(f *Form, key tea.KeyMsg) (Intent, bool) {
+	if key.Type != tea.KeyCtrlE {
+		return Intent{}, false
+	}
+	fieldKey := f.FocusedKey()
+	if _, ok := storeSecretFieldSpecs[fieldKey]; ok && !f.field(fieldKey).Disabled {
+		return Intent{Name: IntentEditSecret, Value: fieldKey}, true
+	}
+	return Intent{}, false
 }
 
 type storeFormState struct {
@@ -159,6 +196,9 @@ func (s *storeFormState) refresh(f *Form) {
 	for _, key := range storeSFTPFields {
 		f.SetDisabled(key, !enableSFTP)
 		f.SetRequired(key, false)
+	}
+	for key := range storeSecretFieldSpecs {
+		f.SetHelp(key, "Ctrl+E to store the secret and save a reference.")
 	}
 
 	for _, key := range storeEncFields {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"testing"
+
+	"github.com/cloudstic/cli/pkg/store/storetest"
 )
 
 func TestQuotaStore_UnderBudget(t *testing.T) {
@@ -85,7 +87,7 @@ func TestQuotaStore_PutErrorDoesNotCount(t *testing.T) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	defer cancel(nil)
 
-	failing := &failingStore{err: fmt.Errorf("disk full")}
+	failing := &storetest.FaultStore{ObjectStore: newMemStore(), FailPut: storetest.AlwaysFail(fmt.Errorf("disk full"))}
 	qs := NewQuotaStore(failing, 10, cancel)
 
 	if err := qs.Put(ctx, "chunk/aaa", make([]byte, 50)); err == nil {
@@ -95,10 +97,3 @@ func TestQuotaStore_PutErrorDoesNotCount(t *testing.T) {
 		t.Fatal("failed Put should not count toward quota")
 	}
 }
-
-type failingStore struct {
-	memStore
-	err error
-}
-
-func (f *failingStore) Put(_ context.Context, _ string, _ []byte) error { return f.err }

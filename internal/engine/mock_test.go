@@ -13,6 +13,7 @@ import (
 	"github.com/cloudstic/cli/internal/hamt"
 	"github.com/cloudstic/cli/pkg/source"
 	"github.com/cloudstic/cli/pkg/store"
+	"github.com/cloudstic/cli/pkg/store/storetest"
 )
 
 // MockStore implements store.ObjectStore. It is safe for concurrent use.
@@ -94,30 +95,13 @@ func (s *MockStore) Flush(_ context.Context) error {
 	return nil
 }
 
-// errorOnGetStore wraps a store.ObjectStore and forces Get to return a fixed
-// error for a chosen set of keys, simulating a real backend failure (network,
-// permission, ...) as distinct from the key simply not existing. Tests use
-// this to verify that such an error is propagated rather than silently
-// treated as "not found".
-type errorOnGetStore struct {
-	store.ObjectStore
-	errKeys map[string]bool
-	err     error
-}
-
-func newErrorOnGetStore(inner store.ObjectStore, err error, keys ...string) *errorOnGetStore {
-	m := make(map[string]bool, len(keys))
-	for _, k := range keys {
-		m[k] = true
-	}
-	return &errorOnGetStore{ObjectStore: inner, errKeys: m, err: err}
-}
-
-func (s *errorOnGetStore) Get(ctx context.Context, key string) ([]byte, error) {
-	if s.errKeys[key] {
-		return nil, s.err
-	}
-	return s.ObjectStore.Get(ctx, key)
+// newErrorOnGetStore wraps a store.ObjectStore and forces Get to return a
+// fixed error for a chosen set of keys, simulating a real backend failure
+// (network, permission, ...) as distinct from the key simply not existing.
+// Tests use this to verify that such an error is propagated rather than
+// silently treated as "not found".
+func newErrorOnGetStore(inner store.ObjectStore, err error, keys ...string) *storetest.FaultStore {
+	return &storetest.FaultStore{ObjectStore: inner, FailGet: storetest.FailKeys(err, keys...)}
 }
 
 // concurrencyTrackingStore wraps a store.ObjectStore and records the peak

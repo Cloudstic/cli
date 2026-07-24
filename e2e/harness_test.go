@@ -3,6 +3,7 @@ package e2e
 import (
 	"archive/zip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -402,6 +403,41 @@ func (r *repo) Backup(extraArgs ...string) *commandResult {
 	args = append(args, r.authArgs...)
 	args = append(args, extraArgs...)
 	return r.run(args...)
+}
+
+// BackupWithEnv runs backup with additional environment variables, without
+// failing the test on a non-zero exit — used by tests that expect the
+// process to exit abnormally, such as simulated crashes.
+func (r *repo) BackupWithEnv(extraEnv []string, extraArgs ...string) (out string, exitCode int) {
+	r.h.t.Helper()
+	args := append([]string{"backup"}, r.h.sourceArgs...)
+	args = append(args, r.authArgs...)
+	args = append(args, extraArgs...)
+	cmd := exec.Command(r.h.bin, args...)
+	cmd.Env = append(cleanEnv(), extraEnv...)
+	outBytes, err := cmd.CombinedOutput()
+	out = string(outBytes)
+	if err == nil {
+		return out, 0
+	}
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
+		return out, exitErr.ExitCode()
+	}
+	r.h.t.Fatalf("backup command failed to start: %v\n%s", err, out)
+	return out, -1
+}
+
+// BackupPutCount runs `backup -debug -quiet` and returns the number of
+// physical store Put calls it made, read off DebugStore's "PUT" log lines.
+// Tests use this to find the last possible crash point in a backup without
+// hardcoding an assumption about how many objects a given change produces.
+func (r *repo) BackupPutCount(extraArgs ...string) int {
+	r.h.t.Helper()
+	args := append([]string{"backup", "-debug", "-quiet"}, r.h.sourceArgs...)
+	args = append(args, r.authArgs...)
+	args = append(args, extraArgs...)
+	out := run(r.h.t, r.h.bin, args...)
+	return strings.Count(out, "PUT   ")
 }
 
 func (r *repo) List(extraArgs ...string) *listResult {

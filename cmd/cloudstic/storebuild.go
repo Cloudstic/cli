@@ -75,7 +75,7 @@ func newObjectStore(ctx context.Context, cfg storeConfig) (store.ObjectStore, er
 	if err != nil {
 		return nil, err
 	}
-	return inner, nil
+	return withCrashInjection(inner)
 }
 
 func sftpStoreOpts(cfg sftpConfig, uri *storeURIParts) []store.SFTPStoreOption {

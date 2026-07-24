@@ -26,12 +26,15 @@ func runTUI(r *runner, ctx context.Context, args *tuiArgs) int {
 		return r.fail("cloudstic tui requires an interactive terminal")
 	}
 
+	if args.bubbletea {
+		// The Bubble Tea renderer builds its own skeleton and probes stores
+		// concurrently, so it skips the serial pre-probe below.
+		return runBubbleTeaTUI(r, ctx, args.profilesFile)
+	}
+
 	dashboard, err := tuiBuildDashboard(ctx, args.profilesFile)
 	if err != nil {
 		return r.fail("Failed to build TUI dashboard: %v", err)
-	}
-	if args.bubbletea {
-		return runBubbleTeaTUI(r, ctx, dashboard)
 	}
 	return newTUISession(r, args.profilesFile, dashboard).run(ctx)
 }

@@ -140,6 +140,13 @@ func (s *TUIService) SaveStore(profilesFile, name string, store cloudstic.Profil
 	return nil
 }
 
+// LoadDashboardConfig loads and normalizes the profiles config for the TUI.
+// The Bubble Tea renderer builds a probe-less dashboard skeleton from it and
+// then probes stores concurrently, rather than probing serially up front.
+func (s *TUIService) LoadDashboardConfig(profilesFile string) (*cloudstic.ProfilesConfig, error) {
+	return s.loadConfig(profilesFile)
+}
+
 func (s *TUIService) loadConfig(profilesFile string) (*cloudstic.ProfilesConfig, error) {
 	load := s.loadProfiles
 	if load == nil {

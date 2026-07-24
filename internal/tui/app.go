@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/cloudstic/cli/internal/engine"
 )
 
 // Model is the root Bubble Tea model for the interactive dashboard. This is
@@ -22,6 +24,21 @@ type Model struct {
 	theme     theme
 	loadErr   string
 
+	// Concurrent-probe state (issue #339). When cfg and prober are set, the
+	// model probes every store concurrently on Init and rebuilds the
+	// dashboard from probes as they arrive, so the first paint shows
+	// "checking…" instead of blocking.
+	cfg    *engine.ProfilesConfig
+	prober StoreProber
+	probes map[string]StoreProbe
+
+	// Async action state (issue #339). runner executes profile actions off
+	// the event loop; cancel stops the running one.
+	runner   ActionRunner
+	running  bool
+	cancel   context.CancelFunc
+	activity ActivityPanel
+
 	// reload, when non-nil, is run when the user presses "r". It returns a
 	// DashboardLoadedMsg or DashboardLoadError. The read-only launcher can
 	// leave it nil for a static snapshot.
@@ -34,8 +51,25 @@ func NewModel(d Dashboard) Model {
 		dashboard: d,
 		view:      ProfileViewSummary,
 		theme:     newTheme(),
+		probes:    map[string]StoreProbe{},
 	}
 	m.selected = indexOfSelected(d)
+	return m
+}
+
+// WithConfig attaches the profiles config and a store prober, enabling
+// concurrent probing on Init. The seeded dashboard should be a probe-less
+// skeleton (BuildDashboard(cfg, nil)) so the first frame renders immediately.
+func (m Model) WithConfig(cfg *engine.ProfilesConfig, prober StoreProber) Model {
+	m.cfg = cfg
+	m.prober = prober
+	return m
+}
+
+// WithRunner attaches the async action runner used by the backup/check/init
+// keys.
+func (m Model) WithRunner(runner ActionRunner) Model {
+	m.runner = runner
 	return m
 }
 
@@ -54,7 +88,11 @@ func indexOfSelected(d Dashboard) int {
 	return 0
 }
 
-func (m Model) Init() tea.Cmd { return nil }
+// Init kicks off concurrent store probing when the model is configured with a
+// prober; otherwise it renders the seeded dashboard as-is.
+func (m Model) Init() tea.Cmd {
+	return m.probeAllCmd()
+}
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -74,10 +112,50 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loadErr = msg.Err.Error()
 		}
 		return m, nil
+	case probeResultMsg:
+		m.applyProbe(msg.name, msg.probe)
+		return m, nil
+	case actionUpdateMsg:
+		return m.handleActionUpdate(msg)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
 	return m, nil
+}
+
+// applyProbe records a store probe result and rebuilds the derived dashboard
+// from the accumulated probes, preserving the current selection.
+func (m *Model) applyProbe(name string, probe StoreProbe) {
+	if m.probes == nil {
+		m.probes = map[string]StoreProbe{}
+	}
+	m.probes[name] = probe
+	if m.cfg == nil {
+		return
+	}
+	selected := m.selectedName()
+	m.dashboard = BuildDashboard(m.cfg, m.probes)
+	m.dashboard.SelectedProfile = selected
+	m.selected = indexOfSelected(m.dashboard)
+}
+
+func (m Model) selectedName() string {
+	if p, ok := m.currentProfile(); ok {
+		return p.Name
+	}
+	return m.dashboard.SelectedProfile
+}
+
+func (m Model) handleActionUpdate(msg actionUpdateMsg) (tea.Model, tea.Cmd) {
+	m.activity = msg.update.Panel
+	if !msg.update.Done {
+		return m, waitForAction(msg.ch)
+	}
+	m.running = false
+	m.cancel = nil
+	// Refresh the store backing the profile we just acted on so state
+	// changes (e.g. a freshly initialized repository) show up.
+	return m, m.probeSelectedStoreCmd()
 }
 
 func clampSelection(n int) int {
@@ -90,7 +168,14 @@ func clampSelection(n int) int {
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c", "esc":
+		// Cancel a running action before leaving so we don't orphan it.
+		m.cancelAction()
 		return m, tea.Quit
+	case "x":
+		if m.running {
+			m.cancelAction()
+		}
+		return m, nil
 	case "up", "k":
 		if m.selected > 0 {
 			m.selected--
@@ -114,6 +199,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.view = ProfileViewSummary
 		}
 		return m, nil
+	case "b", "c":
+		return m.startAction(msg.String())
 	case "r":
 		return m, m.reload
 	}
@@ -123,8 +210,45 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) View() string {
 	header := m.renderHeader()
 	body := lipgloss.JoinHorizontal(lipgloss.Top, m.renderProfileList(), m.renderDetail())
-	footer := m.renderFooter()
-	return strings.Join([]string{header, body, footer}, "\n")
+	sections := []string{header, body}
+	if activity := m.renderActivity(); activity != "" {
+		sections = append(sections, activity)
+	}
+	sections = append(sections, m.renderFooter())
+	return strings.Join(sections, "\n")
+}
+
+func (m Model) renderActivity() string {
+	a := m.activity
+	if a.Status == ActivityStatusIdle && a.Action == "" {
+		return ""
+	}
+	label := a.Action
+	if label == "" {
+		label = string(a.ActionKind)
+	}
+	var head string
+	switch a.Status {
+	case ActivityStatusRunning:
+		head = m.theme.stateWarning.Render("● running") + "  " + label
+	case ActivityStatusSuccess:
+		head = m.theme.stateReady.Render("✓ done") + "  " + label
+	case ActivityStatusError:
+		head = m.theme.stateError.Render("✗ failed") + "  " + label
+	default:
+		head = label
+	}
+	lines := []string{head}
+	if a.Phase != "" {
+		lines = append(lines, m.theme.subtle.Render(a.Phase))
+	}
+	if bar := progressBarLine(a, 30); bar != "" {
+		lines = append(lines, bar)
+	}
+	if a.Summary != "" {
+		lines = append(lines, m.theme.subtle.Render(a.Summary))
+	}
+	return m.theme.box.Render(strings.Join(lines, "\n"))
 }
 
 func (m Model) renderHeader() string {
@@ -234,11 +358,46 @@ func (m Model) renderHistory(profile ProfileCard) []string {
 }
 
 func (m Model) renderFooter() string {
-	hints := "↑/↓ select · s/h view · r refresh · q quit"
+	var hints string
+	if m.running {
+		hints = "x cancel · running…"
+	} else {
+		hints = m.actionHints() + "↑/↓ select · s/h view · r refresh · q quit"
+	}
 	if m.loadErr != "" {
 		return m.theme.stateError.Render("error: "+m.loadErr) + "\n" + m.theme.footer.Render(hints)
 	}
 	return m.theme.footer.Render(hints)
+}
+
+// actionHints lists the enabled action keys for the selected profile so the
+// footer advertises only actions that will actually run.
+func (m Model) actionHints() string {
+	if m.runner == nil {
+		return ""
+	}
+	profile, ok := m.currentProfile()
+	if !ok {
+		return ""
+	}
+	var parts []string
+	for _, action := range profile.Actions {
+		if !action.Enabled {
+			continue
+		}
+		switch action.Kind {
+		case ActionKindInit:
+			parts = append(parts, "b init")
+		case ActionKindBackup:
+			parts = append(parts, "b backup")
+		case ActionKindCheck:
+			parts = append(parts, "c check")
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, " · ") + " · "
 }
 
 func (m Model) currentProfile() (ProfileCard, bool) {

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -16,11 +15,7 @@ import (
 const defaultProfilesFilename = "profiles.yaml"
 
 func defaultProfilesPath() (string, error) {
-	configDir, err := paths.ConfigDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve config dir: %w", err)
-	}
-	return filepath.Join(configDir, defaultProfilesFilename), nil
+	return paths.ProfilesPath(defaultProfilesFilename, true)
 }
 
 type profileShowArgs struct {

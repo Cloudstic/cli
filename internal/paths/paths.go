@@ -28,6 +28,35 @@ func ConfigDir() (string, error) {
 	return ensureDir(filepath.Join(base, appName))
 }
 
+// ProfilesPath resolves the path to a profiles file named filename inside the
+// config directory. Resolution follows ConfigDir's CLOUDSTIC_CONFIG_DIR then
+// os.UserConfigDir() precedence; CLOUDSTIC_PROFILES_FILE is deliberately not
+// consulted here, since callers that expose this as a flag default apply it
+// themselves via their own env-bound flag (so a live env value is never
+// baked into what -h displays).
+//
+// If create is true, the config directory is created as ConfigDir does. If
+// false, no filesystem access occurs — for callers that need a default value
+// before deciding whether the directory should exist (e.g. a dry-run preview
+// that must not create configuration as a side effect of being asked what it
+// would do).
+func ProfilesPath(filename string, create bool) (string, error) {
+	if create {
+		dir, err := ConfigDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(dir, filename), nil
+	}
+	if dir := os.Getenv("CLOUDSTIC_CONFIG_DIR"); dir != "" {
+		return filepath.Join(dir, filename), nil
+	}
+	if dir, err := os.UserConfigDir(); err == nil {
+		return filepath.Join(dir, appName, filename), nil
+	}
+	return filename, nil
+}
+
 // TokenPath returns the full path for a token file stored inside the config
 // directory (e.g. "google_token.json" → "~/.config/cloudstic/google_token.json").
 func TokenPath(filename string) (string, error) {

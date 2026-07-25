@@ -4,10 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
-	"os"
 	"slices"
 	"strings"
 	"time"
@@ -205,17 +203,11 @@ func ensureDefaultAuthRefForCloudBackup(a *backupArgs) error {
 		authRef := defaultAuthRef
 		a.authRef = authRef
 
-		cfg, loadErr := cloudstic.LoadProfilesFile(a.profilesFile)
+		cfg, loadErr := loadProfilesOrInit(a.profilesFile)
 		if loadErr != nil {
-			if errors.Is(loadErr, os.ErrNotExist) {
-				cfg = &cloudstic.ProfilesConfig{Version: 1}
-			} else {
-				return fmt.Errorf("load profiles for default auth: %w", loadErr)
-			}
+			return fmt.Errorf("load profiles for default auth: %w", loadErr)
 		}
-		if cfg.Auth == nil {
-			cfg.Auth = map[string]cloudstic.ProfileAuth{}
-		}
+		ensureProfilesMaps(cfg)
 
 		tokenPath := getToken()
 		if tokenPath == "" {
@@ -309,6 +301,14 @@ func runBackupWithProfiles(r *runner, ctx context.Context, base *backupArgs) int
 	return 0
 }
 
+// mergeProfileBackupArgs folds profile p's fields into a copy of base,
+// wherever the corresponding flag was not passed explicitly. It is the
+// backup-specific counterpart to config.go's applyProfileStore: that function
+// covers a profile's store, folded in later via g.profile when
+// resolveClientConfig runs; this one covers everything else a backup profile
+// can carry (source, tags, excludes, native-source credentials, auth). Both
+// apply the same "explicit flag beats profile value" precedence, just against
+// different field shapes.
 func mergeProfileBackupArgs(base *backupArgs, profileName string, p cloudstic.BackupProfile, cfg *cloudstic.ProfilesConfig) (*backupArgs, error) {
 	g := cloneGlobalFlags(base.globalFlags)
 	a := *base
@@ -368,10 +368,11 @@ func mergeProfileBackupArgs(base *backupArgs, profileName string, p cloudstic.Ba
 	// The store itself is not folded in here. Naming the profile is enough:
 	// resolveClientConfig looks it up when the client is opened, so the store
 	// definition is applied in exactly one place and parsed flags stay intact.
-	if p.Store != "" {
-		if _, ok := cfg.Stores[p.Store]; !ok {
-			return nil, fmt.Errorf("profile %q references unknown store %q", profileName, p.Store)
-		}
+	// lookupProfileStore (config.go) is the same check loadProfileStore
+	// performs at that point; it's repeated here only to fail fast, before
+	// spending effort on a backup that would fail at store-open time anyway.
+	if _, err := lookupProfileStore(cfg, profileName, p); err != nil {
+		return nil, err
 	}
 	g.profile = profileName
 

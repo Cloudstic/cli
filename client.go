@@ -550,6 +550,18 @@ func SaveProfilesFile(path string, cfg *ProfilesConfig) error {
 	return engine.SaveProfilesFile(path, cfg)
 }
 
+// LoadProfilesFileOrEmpty loads profiles from path, treating a missing file
+// as an empty, version-1 config rather than an error.
+func LoadProfilesFileOrEmpty(path string) (*ProfilesConfig, error) {
+	return engine.LoadProfilesFileOrEmpty(path)
+}
+
+// EnsureProfilesMaps guarantees cfg's map fields are non-nil, so callers can
+// write into them unconditionally.
+func EnsureProfilesMaps(cfg *ProfilesConfig) {
+	engine.EnsureProfilesMaps(cfg)
+}
+
 // ---------------------------------------------------------------------------
 // Restore
 // ---------------------------------------------------------------------------

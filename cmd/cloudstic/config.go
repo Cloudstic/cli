@@ -173,12 +173,22 @@ func loadProfileStore(g *globalFlags) (*cloudstic.ProfileStore, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown profile %q", g.profile)
 	}
+	return lookupProfileStore(cfg, g.profile, p)
+}
+
+// lookupProfileStore returns profileName's referenced store, or nil if the
+// profile names no store. Shared by loadProfileStore above, which resolves it
+// fully to fold into a running command's config, and cmd_backup.go's
+// mergeProfileBackupArgs, which only needs the existence check: the store
+// itself is deliberately applied later, when resolveClientConfig runs for the
+// backup that's actually about to happen (see mergeProfileBackupArgs).
+func lookupProfileStore(cfg *cloudstic.ProfilesConfig, profileName string, p cloudstic.BackupProfile) (*cloudstic.ProfileStore, error) {
 	if p.Store == "" {
 		return nil, nil
 	}
 	s, ok := cfg.Stores[p.Store]
 	if !ok {
-		return nil, fmt.Errorf("profile %q references unknown store %q", g.profile, p.Store)
+		return nil, fmt.Errorf("profile %q references unknown store %q", profileName, p.Store)
 	}
 	return &s, nil
 }
@@ -187,6 +197,12 @@ func loadProfileStore(g *globalFlags) (*cloudstic.ProfileStore, error) {
 // alone, for callers that address a store by name rather than through parsed
 // flags (store verify, store init, the TUI). Nothing was passed on the command
 // line, so every value comes from the profile.
+//
+// Not to be confused with tuiClientConfig (cmd_tui_activity.go), a thin
+// quiet-mode wrapper around this same function, or with
+// applyExistingStoreDefaults (store_builder_helpers.go), which prefills
+// `store new`'s flags from an existing store entry for editing — an unrelated
+// concept despite the similar name.
 func clientConfigFromProfileStore(s cloudstic.ProfileStore) (clientConfig, error) {
 	cfg := clientConfig{packfile: true}
 	cfg.store.s3.region = defaultS3Region
@@ -201,6 +217,15 @@ func clientConfigFromProfileStore(s cloudstic.ProfileStore) (clientConfig, error
 // values win over the profile. Secret references are resolved here, so a
 // missing secret surfaces as an error at resolution time rather than as an
 // empty credential at connect time.
+//
+// This only covers store fields. Backup-specific profile fields that aren't
+// part of a store — source, tags, excludes, native-source credentials, auth —
+// go through cmd_backup.go's mergeProfileBackupArgs instead, applying the
+// same "explicit flag beats profile value" precedence via its own
+// flagProvided checks. The two aren't merged into one mechanism because their
+// field types differ enough (bools, string slices, multi-field auth
+// resolution vs. plain strings here) that forcing a shared table would
+// obscure more than it clarifies.
 func applyProfileStore(cfg *clientConfig, s cloudstic.ProfileStore, provided func(string) bool) error {
 	if !provided("store") && s.URI != "" {
 		cfg.store.uri = s.URI

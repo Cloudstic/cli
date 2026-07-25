@@ -2,9 +2,7 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"os"
 
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/engine"
@@ -161,26 +159,11 @@ func (s *TUIService) loadConfig(profilesFile string) (*cloudstic.ProfilesConfig,
 }
 
 func loadProfilesConfig(path string) (*cloudstic.ProfilesConfig, error) {
-	cfg, err := cloudstic.LoadProfilesFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return &cloudstic.ProfilesConfig{Version: 1}, nil
-		}
-		return nil, err
-	}
-	return cfg, nil
+	return cloudstic.LoadProfilesFileOrEmpty(path)
 }
 
 func ensureProfilesMaps(cfg *cloudstic.ProfilesConfig) {
-	if cfg.Stores == nil {
-		cfg.Stores = map[string]cloudstic.ProfileStore{}
-	}
-	if cfg.Profiles == nil {
-		cfg.Profiles = map[string]cloudstic.BackupProfile{}
-	}
-	if cfg.Auth == nil {
-		cfg.Auth = map[string]cloudstic.ProfileAuth{}
-	}
+	cloudstic.EnsureProfilesMaps(cfg)
 }
 
 func profileNeedsInit(profile tui.ProfileCard) bool {

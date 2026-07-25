@@ -627,7 +627,7 @@ func (rm *RestoreManager) resolveSnapshot(ctx context.Context, ref string) (*cor
 		ref = "snapshot/" + ref
 	}
 
-	data, err := rm.store.Get(ctx, ref)
+	data, err := getVerified(ctx, rm.store, ref)
 	if err != nil {
 		return nil, "", fmt.Errorf("load snapshot %s: %w", ref, err)
 	}
@@ -685,7 +685,7 @@ func (rm *RestoreManager) collectMetadata(ctx context.Context, root string) (map
 }
 
 func (rm *RestoreManager) loadMeta(ctx context.Context, ref string) (*core.FileMeta, error) {
-	data, err := rm.store.Get(ctx, ref)
+	data, err := getVerified(ctx, rm.store, ref)
 	if err != nil {
 		return nil, err
 	}

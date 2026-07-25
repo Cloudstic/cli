@@ -247,6 +247,18 @@ func fetchSnapshots(s store.ObjectStore, keys []string) (map[string]core.Snapsho
 				mu.Unlock()
 				return
 			}
+			// A snapshot key is the SHA-256 of the snapshot bytes, so this
+			// catches a substituted or rotted snapshot before its summary is
+			// written into the catalog — where it would then be trusted by
+			// every later read without the object being fetched again.
+			if err := core.VerifyRef(k, data); err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				mu.Unlock()
+				return
+			}
 			var snap core.Snapshot
 			if err := json.Unmarshal(data, &snap); err != nil {
 				mu.Lock()

@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -22,8 +24,14 @@ type checkConfig struct {
 	snapshotRef string
 }
 
-// WithReadData enables full byte-level verification: re-hash all chunk data
-// and verify content manifests match their referenced chunks.
+// WithReadData enables full byte-level verification: re-hash every chunk
+// against its key, and reconstruct each file from its content manifest to
+// confirm it still hashes to what its filemeta records.
+//
+// Without it, check verifies that every referenced object is readable and that
+// the self-addressed ones (snapshot, node, filemeta) are the bytes their keys
+// name. That is enough to detect a broken or substituted tree, but not enough
+// to detect corruption inside the file data itself.
 func WithReadData() CheckOption {
 	return func(cfg *checkConfig) { cfg.readData = true }
 }
@@ -149,6 +157,12 @@ func (cm *CheckManager) checkSnapshot(ctx context.Context, ref string, result *C
 		return nil // continue checking other snapshots
 	}
 	cm.verified[ref] = true
+	if err := core.VerifyRef(ref, data); err != nil {
+		result.Errors = append(result.Errors, CheckError{
+			Key: ref, Type: "corrupt", Message: err.Error(),
+		})
+		return nil
+	}
 	result.ObjectsVerified++
 	if cfg.verbose {
 		phase.Log(fmt.Sprintf("OK: %s", ref))
@@ -190,7 +204,7 @@ func (cm *CheckManager) verifyObject(ctx context.Context, key string, result *Ch
 		return nil
 	}
 
-	_, err := cm.store.Get(ctx, key)
+	data, err := cm.store.Get(ctx, key)
 	if err != nil {
 		result.Errors = append(result.Errors, CheckError{
 			Key: key, Type: "missing", Message: fmt.Sprintf("object not found or unreadable: %v", err),
@@ -200,6 +214,17 @@ func (cm *CheckManager) verifyObject(ctx context.Context, key string, result *Ch
 	}
 
 	cm.verified[key] = true
+	// A node key is the SHA-256 of its bytes. The HAMT walk that produced this
+	// ref checks that too, but reporting it here names the offending object as
+	// a finding rather than aborting the walk with an opaque error.
+	if core.IsSelfAddressed(key) {
+		if err := core.VerifyRef(key, data); err != nil {
+			result.Errors = append(result.Errors, CheckError{
+				Key: key, Type: "corrupt", Message: err.Error(),
+			})
+			return nil
+		}
+	}
 	result.ObjectsVerified++
 	if cfg.verbose {
 		phase.Log(fmt.Sprintf("OK: %s", key))
@@ -222,6 +247,12 @@ func (cm *CheckManager) checkFileMeta(ctx context.Context, ref string, result *C
 		return nil
 	}
 	cm.verified[ref] = true
+	if err := core.VerifyRef(ref, data); err != nil {
+		result.Errors = append(result.Errors, CheckError{
+			Key: ref, Type: "corrupt", Message: err.Error(),
+		})
+		return nil
+	}
 	result.ObjectsVerified++
 	if cfg.verbose {
 		phase.Log(fmt.Sprintf("OK: %s", ref))
@@ -244,11 +275,36 @@ func (cm *CheckManager) checkFileMeta(ctx context.Context, ref string, result *C
 		contentKey = meta.ContentHash
 	}
 
-	return cm.checkContent(ctx, "content/"+contentKey, result, cfg, phase)
+	// A content object is named by an HMAC of the file's content hash, not of
+	// its own bytes, so it cannot be checked against its key the way a filemeta
+	// can. What can be checked, for free, is that the filemeta's two content
+	// fields agree — a filemeta redirected at some other file's content is
+	// otherwise invisible until a restore fails the hash check.
+	if len(cm.hmacKey) > 0 && meta.ContentRef != "" {
+		if want := crypto.ComputeHMAC(cm.hmacKey, []byte(meta.ContentHash)); want != meta.ContentRef {
+			result.Errors = append(result.Errors, CheckError{
+				Key:  ref,
+				Type: "corrupt",
+				Message: fmt.Sprintf("content_ref %s does not derive from content_hash %s",
+					meta.ContentRef, meta.ContentHash),
+			})
+			return nil
+		}
+	}
+
+	return cm.checkContent(ctx, "content/"+contentKey, &meta, result, cfg, phase)
 }
 
 // checkContent verifies a content object and its referenced chunks.
-func (cm *CheckManager) checkContent(ctx context.Context, ref string, result *CheckResult, cfg *checkConfig, phase ui.Phase) error {
+//
+// meta is the filemeta that pointed here. It carries the only value that can
+// prove a manifest is intact: the SHA-256 of the whole file. Neither the
+// content object's key nor its bytes encode the order of the chunk list, so a
+// store that reorders, drops, or substitutes entries produces a manifest that
+// is individually valid at every chunk and reconstructs the wrong file. Only
+// re-running the concatenation catches that, which is why it belongs to
+// -read-data rather than the cheap pass.
+func (cm *CheckManager) checkContent(ctx context.Context, ref string, meta *core.FileMeta, result *CheckResult, cfg *checkConfig, phase ui.Phase) error {
 	if cm.verified[ref] {
 		return nil
 	}
@@ -280,7 +336,69 @@ func (cm *CheckManager) checkContent(ctx context.Context, ref string, result *Ch
 			return err
 		}
 	}
+
+	if cfg.readData {
+		cm.checkManifest(ctx, ref, &content, meta, result, phase)
+	}
 	return nil
+}
+
+// checkManifest reconstructs the file this content object describes and compares
+// it with the hash the filemeta recorded, covering both storage layouts: the
+// inline bytes of a small file and the ordered chunk list of a large one.
+//
+// Inline content costs nothing extra — the bytes are already in hand. The
+// chunked path re-reads the chunks, which for a repository with heavy
+// cross-file deduplication means reading a shared chunk once per file that
+// references it rather than once overall. That is the price of checking the
+// one claim nothing else checks, and -read-data is the mode whose whole purpose
+// is to pay for certainty.
+func (cm *CheckManager) checkManifest(
+	ctx context.Context,
+	ref string,
+	content *core.Content,
+	meta *core.FileMeta,
+	result *CheckResult,
+	phase ui.Phase,
+) {
+	if meta == nil || meta.ContentHash == "" {
+		return
+	}
+
+	hasher := sha256.New()
+	if len(content.DataInlineB64) > 0 {
+		_, _ = hasher.Write(content.DataInlineB64)
+	}
+	for _, chunkRef := range content.Chunks {
+		data, err := cm.store.Get(ctx, chunkRef)
+		if err != nil {
+			// The chunk pass above already recorded this as missing; adding a
+			// second finding for the same object would only inflate the count.
+			return
+		}
+		_, _ = hasher.Write(data)
+	}
+
+	got := hex.EncodeToString(hasher.Sum(nil))
+	if got != meta.ContentHash {
+		result.Errors = append(result.Errors, CheckError{
+			Key:  ref,
+			Type: "corrupt",
+			Message: fmt.Sprintf("reconstructed content hashes to %s, filemeta records %s",
+				got, meta.ContentHash),
+		})
+		phase.Log(fmt.Sprintf("CORRUPT: %s", ref))
+		return
+	}
+
+	if content.Size != 0 && content.Size != meta.Size {
+		result.Errors = append(result.Errors, CheckError{
+			Key:  ref,
+			Type: "corrupt",
+			Message: fmt.Sprintf("content records size %d, filemeta records %d",
+				content.Size, meta.Size),
+		})
+	}
 }
 
 // checkChunk verifies a chunk object. With --read-data, it also verifies the

@@ -110,13 +110,12 @@ func (ns *NodeStore) putAll(ctx context.Context, batch map[string][]byte) error 
 // ls, diff, prune, check — detects a corrupted or substituted node, not just
 // `check -read-data`. It also closes the recursion hole: a node cannot claim a
 // child that hashes to one of its own ancestors without failing this check.
+//
+// The check itself lives in core alongside the same check for filemeta and
+// snapshot objects, so the three links of the Merkle chain cannot drift apart.
 func verifyNodeRef(ref string, data []byte) error {
-	want, ok := strings.CutPrefix(ref, nodePrefix)
-	if !ok {
+	if !strings.HasPrefix(ref, nodePrefix) {
 		return fmt.Errorf("node ref %q is missing the %q prefix", ref, nodePrefix)
 	}
-	if got := core.ComputeHash(data); got != want {
-		return fmt.Errorf("node %s failed its integrity check: %d bytes hashing to %s", ref, len(data), got)
-	}
-	return nil
+	return core.VerifyRef(ref, data)
 }

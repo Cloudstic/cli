@@ -175,11 +175,44 @@ func (s *PackStore) Put(ctx context.Context, key string, data []byte) error {
 	// 5. Upload outside the lock so we don't block concurrent operations
 	if packRef != "" {
 		if err := s.ObjectStore.Put(ctx, packRef, packData); err != nil {
+			s.discardPack(packRef)
 			return fmt.Errorf("flush pack %s: %w", packRef, err)
 		}
 	}
 
 	return nil
+}
+
+// discardPack forgets every catalog entry pointing at packRef, for a pack whose
+// upload failed.
+//
+// prepareFlushLocked moves entries into the catalog before the pack exists,
+// which is what lets the upload happen outside the lock. If that upload then
+// fails, leaving the entries behind is worse than losing them: the catalog
+// asserts the objects are stored, so Exists reports true, the next backup
+// deduplicates against them and does not re-upload, and a later flush makes the
+// claim durable in a shard. The snapshot that results references objects no
+// reader can fetch — a backup that reports success and cannot be restored.
+//
+// Forgetting them instead costs only the re-upload the caller was going to have
+// to do anyway, and the pack bytes themselves are content-addressed, so a retry
+// that does succeed writes the identical object.
+func (s *PackStore) discardPack(packRef string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for key, entry := range s.catalog {
+		if entry.PackRef == packRef {
+			delete(s.catalog, key)
+		}
+	}
+	for key, entry := range s.pendingShard {
+		if entry.PackRef == packRef {
+			delete(s.pendingShard, key)
+		}
+	}
+	s.packCache.Remove(packRef)
+	debugf("pack: discarded catalog entries for unwritten pack %s", packRef)
 }
 
 // packablePrefixes are the content-addressed namespaces safe to bundle into a
@@ -414,13 +447,17 @@ func (s *PackStore) Flush(ctx context.Context) error {
 
 	if packRef != "" {
 		if err := s.ObjectStore.Put(ctx, packRef, packData); err != nil {
-			// The entries are still ours to write; put them back so a retry
-			// does not lose them.
+			// Restore the entries that belong to packs already written, and
+			// drop the ones that belong to this pack — it does not exist, so a
+			// shard naming it would point every one of its objects at nothing.
 			s.mu.Lock()
 			for k, v := range pending {
-				s.pendingShard[k] = v
+				if v.PackRef != packRef {
+					s.pendingShard[k] = v
+				}
 			}
 			s.mu.Unlock()
+			s.discardPack(packRef)
 			return fmt.Errorf("flush pack %s: %w", packRef, err)
 		}
 	}

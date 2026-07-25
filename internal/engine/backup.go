@@ -430,7 +430,7 @@ func (bm *BackupManager) loadMeta(ctx context.Context, ref string) (*core.FileMe
 		return &fm, nil
 	}
 
-	data, err := bm.store.Get(ctx, ref)
+	data, err := getVerified(ctx, bm.store, ref)
 	if err != nil {
 		return nil, err
 	}

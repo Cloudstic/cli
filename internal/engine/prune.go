@@ -331,7 +331,7 @@ func (pm *PruneManager) sweep(ctx context.Context, reachable map[string]bool, cf
 }
 
 func (pm *PruneManager) loadSnapshot(ctx context.Context, ref string) (*core.Snapshot, error) {
-	data, err := pm.store.Get(ctx, ref)
+	data, err := getVerified(ctx, pm.store, ref)
 	if err != nil {
 		return nil, fmt.Errorf("get snapshot %s: %w", ref, err)
 	}
@@ -346,7 +346,7 @@ func (pm *PruneManager) loadMeta(ctx context.Context, ref string) (*core.FileMet
 	if fm, ok := pm.metaCache[ref]; ok {
 		return &fm, nil
 	}
-	data, err := pm.store.Get(ctx, ref)
+	data, err := getVerified(ctx, pm.store, ref)
 	if err != nil {
 		return nil, fmt.Errorf("get filemeta %s: %w", ref, err)
 	}
@@ -354,5 +354,6 @@ func (pm *PruneManager) loadMeta(ctx context.Context, ref string) (*core.FileMet
 	if err := json.Unmarshal(data, &fm); err != nil {
 		return nil, err
 	}
+	pm.metaCache[ref] = fm
 	return &fm, nil
 }

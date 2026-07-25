@@ -115,7 +115,7 @@ func (lm *LsSnapshotManager) resolveSnapshot(ctx context.Context, id string) (*c
 		ref = "snapshot/" + ref
 	}
 
-	data, err := lm.store.Get(ctx, ref)
+	data, err := getVerified(ctx, lm.store, ref)
 	if err != nil {
 		return nil, "", fmt.Errorf("load snapshot %s: %w", ref, err)
 	}
@@ -147,7 +147,7 @@ func (lm *LsSnapshotManager) loadMeta(ctx context.Context, ref string) (*core.Fi
 	if fm, ok := lm.metaCache[ref]; ok {
 		return &fm, nil
 	}
-	data, err := lm.store.Get(ctx, ref)
+	data, err := getVerified(ctx, lm.store, ref)
 	if err != nil {
 		return nil, err
 	}

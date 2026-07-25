@@ -23,17 +23,23 @@ func buildTestRepo(t *testing.T, mockStore *MockStore) (snapRef, rootRef, metaRe
 	chunkRef = "chunk/" + chunkHash
 	_ = mockStore.Put(ctx, chunkRef, chunkData)
 
-	// Content
-	content := core.Content{Chunks: []string{chunkRef}}
-	contentHash, contentData, _ := core.ComputeJSONHash(&content)
-	contentRef = "content/" + contentHash
+	// Content. A content object's key is the hash of the *file* the manifest
+	// reconstructs, not of the manifest's own bytes — that is what lets the
+	// same content be found again by a later backup that has only the file.
+	// Building it any other way produces a repository the engine cannot
+	// create, and one that hides every check keyed on that relationship.
+	fileHash := chunkHash
+	content := core.Content{Chunks: []string{chunkRef}, Size: int64(len(chunkData))}
+	contentData, _ := json.Marshal(&content)
+	contentRef = "content/" + fileHash
 	_ = mockStore.Put(ctx, contentRef, contentData)
 
 	// FileMeta
 	meta := core.FileMeta{
 		Name:        "test.txt",
 		Type:        core.FileTypeFile,
-		ContentHash: contentHash,
+		ContentHash: fileHash,
+		Size:        int64(len(chunkData)),
 		FileID:      "file1",
 	}
 	metaHash, metaData, _ := core.ComputeJSONHash(&meta)
@@ -206,15 +212,22 @@ func TestCheckManager_CorruptChunk_ReadData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Check failed: %v", err)
 	}
-	if len(result.Errors) != 1 {
-		t.Fatalf("Expected 1 error, got %d: %v", len(result.Errors), result.Errors)
+	// A corrupt chunk is reported twice, and both reports are wanted: the chunk
+	// no longer hashes to its key, and the file it belongs to no longer
+	// reconstructs. The second is what an operator needs to know which *file*
+	// is unrecoverable, which the chunk key alone does not say.
+	assertCorrupt(t, result, chunkRef)
+}
+
+// assertCorrupt fails unless result carries a "corrupt" finding for key.
+func assertCorrupt(t *testing.T, result *CheckResult, key string) {
+	t.Helper()
+	for _, e := range result.Errors {
+		if e.Key == key && e.Type == "corrupt" {
+			return
+		}
 	}
-	if result.Errors[0].Key != chunkRef {
-		t.Errorf("Expected error for %s, got %s", chunkRef, result.Errors[0].Key)
-	}
-	if result.Errors[0].Type != "corrupt" {
-		t.Errorf("Expected error type 'corrupt', got %q", result.Errors[0].Type)
-	}
+	t.Fatalf("Expected a corrupt finding for %s, got: %v", key, result.Errors)
 }
 
 func TestCheckManager_CorruptChunk_WithoutReadData(t *testing.T) {
@@ -378,13 +391,5 @@ func TestCheckManager_CorruptChunk_HMACReadData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Check failed: %v", err)
 	}
-	if len(result.Errors) != 1 {
-		t.Fatalf("Expected 1 error for corrupt chunk, got %d: %v", len(result.Errors), result.Errors)
-	}
-	if result.Errors[0].Key != chunkRef {
-		t.Errorf("Expected error for %s, got %s", chunkRef, result.Errors[0].Key)
-	}
-	if result.Errors[0].Type != "corrupt" {
-		t.Errorf("Expected error type 'corrupt', got %q", result.Errors[0].Type)
-	}
+	assertCorrupt(t, result, chunkRef)
 }

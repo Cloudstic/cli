@@ -153,7 +153,7 @@ func (dm *DiffManager) resolveSnapshot(ctx context.Context, id string) (string, 
 }
 
 func (dm *DiffManager) loadSnapshot(ctx context.Context, ref string) (*core.Snapshot, error) {
-	data, err := dm.store.Get(ctx, ref)
+	data, err := getVerified(ctx, dm.store, ref)
 	if err != nil {
 		return nil, fmt.Errorf("load snapshot %s: %w", ref, err)
 	}
@@ -229,7 +229,7 @@ func (dm *DiffManager) loadMeta(ctx context.Context, ref string) (*core.FileMeta
 	if fm, ok := dm.metaCache[ref]; ok {
 		return &fm, nil
 	}
-	data, err := dm.store.Get(ctx, ref)
+	data, err := getVerified(ctx, dm.store, ref)
 	if err != nil {
 		return nil, err
 	}

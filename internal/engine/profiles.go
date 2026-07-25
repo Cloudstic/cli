@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -187,6 +188,37 @@ func LoadProfilesFile(path string) (*ProfilesConfig, error) {
 		return nil, fmt.Errorf("validate profiles file %q: %w", path, err)
 	}
 	return norm, nil
+}
+
+// LoadProfilesFileOrEmpty loads profiles from path, treating a missing file
+// as an empty, version-1 config rather than an error. Callers that only read
+// or manage profiles (list, setup, the TUI) want this; callers running a
+// command against a named profile want LoadProfilesFile's hard error, since a
+// silently-empty config there would misreport "unknown profile" instead of
+// "no profiles file".
+func LoadProfilesFileOrEmpty(path string) (*ProfilesConfig, error) {
+	cfg, err := LoadProfilesFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return &ProfilesConfig{Version: 1}, nil
+		}
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// EnsureProfilesMaps guarantees cfg's map fields are non-nil, so callers can
+// write into them unconditionally.
+func EnsureProfilesMaps(cfg *ProfilesConfig) {
+	if cfg.Stores == nil {
+		cfg.Stores = map[string]ProfileStore{}
+	}
+	if cfg.Profiles == nil {
+		cfg.Profiles = map[string]BackupProfile{}
+	}
+	if cfg.Auth == nil {
+		cfg.Auth = map[string]ProfileAuth{}
+	}
 }
 
 // SaveProfilesFile writes a profiles YAML file atomically.

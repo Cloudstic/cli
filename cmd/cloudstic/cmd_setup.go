@@ -4,28 +4,22 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/engine"
+	"github.com/cloudstic/cli/internal/paths"
 	"github.com/jedib0t/go-pretty/v6/table"
 )
 
 var planWorkstationSetup = cloudstic.PlanWorkstationSetup
 
 func defaultProfilesPathNoCreate() string {
-	if path := os.Getenv("CLOUDSTIC_PROFILES_FILE"); path != "" {
-		return path
+	path, err := paths.ProfilesPath(defaultProfilesFilename, false)
+	if err != nil {
+		return defaultProfilesFilename
 	}
-	if dir := os.Getenv("CLOUDSTIC_CONFIG_DIR"); dir != "" {
-		return filepath.Join(dir, defaultProfilesFilename)
-	}
-	if dir, err := os.UserConfigDir(); err == nil {
-		return filepath.Join(dir, "cloudstic", defaultProfilesFilename)
-	}
-	return defaultProfilesFilename
+	return path
 }
 
 type setupWorkstationArgs struct {

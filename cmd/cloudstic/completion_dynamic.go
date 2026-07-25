@@ -2,16 +2,14 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"os"
 
 	cloudstic "github.com/cloudstic/cli"
 )
 
-var completionLoadProfilesFile = cloudstic.LoadProfilesFile
+var completionLoadProfilesFile = cloudstic.LoadProfilesFileOrEmpty
 
 type completionQueryArgs struct{ values []string }
 
@@ -73,9 +71,6 @@ func completionAuthNames(args []string) ([]string, error) {
 func completionLoadProfilesConfig(path string) (*cloudstic.ProfilesConfig, error) {
 	cfg, err := completionLoadProfilesFile(path)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return &cloudstic.ProfilesConfig{Version: 1}, nil
-		}
 		return nil, err
 	}
 	ensureProfilesMaps(cfg)

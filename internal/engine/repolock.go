@@ -83,14 +83,8 @@ func (h *LockHandle) Release() {
 // To mitigate TOCTOU races on stores without conditional writes, the lock is
 // written and then immediately re-read to verify this process still owns it.
 func AcquireRepoLock(ctx context.Context, s store.ObjectStore, operation string) (*LockHandle, context.Context, error) {
-	if existing, err := readLockByKey(ctx, s, exclusiveLockKey); err == nil {
-		expires, parseErr := time.Parse(time.RFC3339Nano, existing.ExpiresAt)
-		if parseErr != nil || time.Now().Before(expires) {
-			return nil, nil, fmt.Errorf(
-				"repository is locked by %s (operation: %s, acquired: %s, expires: %s)",
-				existing.Holder, existing.Operation, existing.AcquiredAt, existing.ExpiresAt,
-			)
-		}
+	if err := checkExclusiveLock(ctx, s); err != nil {
+		return nil, nil, err
 	}
 
 	// Check if any shared locks are active.
@@ -152,14 +146,8 @@ func AcquireRepoLock(ctx context.Context, s store.ObjectStore, operation string)
 // than under the original ctx.
 func AcquireSharedLock(ctx context.Context, s store.ObjectStore, operation string) (*LockHandle, context.Context, error) {
 	// 1. Check if an exclusive lock exists
-	if existing, err := readLockByKey(ctx, s, exclusiveLockKey); err == nil {
-		expires, parseErr := time.Parse(time.RFC3339Nano, existing.ExpiresAt)
-		if parseErr != nil || time.Now().Before(expires) {
-			return nil, nil, fmt.Errorf(
-				"repository is exclusively locked by %s (operation: %s)",
-				existing.Holder, existing.Operation,
-			)
-		}
+	if err := checkExclusiveLock(ctx, s); err != nil {
+		return nil, nil, err
 	}
 
 	// 2. Write our shared lock
@@ -182,17 +170,10 @@ func AcquireSharedLock(ctx context.Context, s store.ObjectStore, operation strin
 	}
 
 	// 3. Re-read exclusive lock to catch race with prune creating an exclusive lock at the same time
-	if existing, err := readLockByKey(ctx, s, exclusiveLockKey); err == nil {
-		expires, parseErr := time.Parse(time.RFC3339Nano, existing.ExpiresAt)
-		if parseErr != nil || time.Now().Before(expires) {
-			// Found an exclusive lock that was created during our shared lock creation
-			// Rollback our shared lock
-			_ = s.Delete(ctx, sharedLockKey)
-			return nil, nil, fmt.Errorf(
-				"repository was exclusively locked by %s while acquiring shared lock",
-				existing.Holder,
-			)
-		}
+	if err := checkExclusiveLock(ctx, s); err != nil {
+		// An exclusive lock appeared while we were writing ours. Roll back.
+		_ = s.Delete(ctx, sharedLockKey)
+		return nil, nil, fmt.Errorf("while acquiring shared lock: %w", err)
 	}
 
 	opCtx, cancel := context.WithCancel(ctx)
@@ -259,26 +240,48 @@ func (h *LockHandle) refreshLoop(ctx context.Context) {
 // another operation (either exclusive or shared). Callers that only need to detect conflicts
 // use this instead of acquiring their own lock.
 func CheckRepoLock(ctx context.Context, s store.ObjectStore) error {
+	if err := checkExclusiveLock(ctx, s); err != nil {
+		return err
+	}
+	return checkSharedLocks(ctx, s)
+}
+
+// checkExclusiveLock returns nil only when it can show no live exclusive lock
+// exists, and an error in every other case — including the cases where it
+// cannot tell.
+//
+// The distinction is the whole point. A lock read can fail three ways that look
+// alike from the call site and are not alike at all: the object is absent (safe
+// to proceed), the object is present but could not be fetched (a live lock we
+// must respect), or the store itself is unreachable (we know nothing). Treating
+// the last two as "no lock" is what lets a prune start while a backup is
+// running and delete the objects that backup is still writing — a transient
+// network error becoming data loss.
+//
+// An unparseable expiry is treated the same way, as still locked. A lock we
+// cannot read the clock off is a lock, and the TTL will retire it soon enough
+// if the holder really is gone.
+func checkExclusiveLock(ctx context.Context, s store.ObjectStore) error {
 	existing, err := readLockByKey(ctx, s, exclusiveLockKey)
-	if err == nil {
-		expires, parseErr := time.Parse(time.RFC3339Nano, existing.ExpiresAt)
-		if parseErr != nil || time.Now().Before(expires) {
-			return fmt.Errorf(
-				"repository is exclusively locked by %s (operation: %s) — try again later",
-				existing.Holder, existing.Operation,
-			)
-		}
-	} else {
+	if err != nil {
 		exists, existsErr := s.Exists(ctx, exclusiveLockKey)
 		if existsErr != nil {
-			return fmt.Errorf("check repo lock: %w", existsErr)
+			return fmt.Errorf("cannot determine whether the repository is locked: %w", existsErr)
 		}
 		if exists {
-			return fmt.Errorf("failed to read existing repo lock: %w", err)
+			return fmt.Errorf("repository holds an unreadable exclusive lock: %w", err)
 		}
+		return nil
 	}
 
-	return checkSharedLocks(ctx, s)
+	expires, parseErr := time.Parse(time.RFC3339Nano, existing.ExpiresAt)
+	if parseErr != nil || time.Now().Before(expires) {
+		return fmt.Errorf(
+			"repository is exclusively locked by %s (operation: %s, acquired: %s, expires: %s)",
+			existing.Holder, existing.Operation, existing.AcquiredAt, existing.ExpiresAt,
+		)
+	}
+	return nil
 }
 
 // BreakRepoLock forcibly removes the repository lock (exclusive and shared)
@@ -316,7 +319,17 @@ func checkSharedLocks(ctx context.Context, s store.ObjectStore) error {
 	for _, key := range keys {
 		sharedLock, err := readLockByKey(ctx, s, key)
 		if err != nil {
-			// Ignore read errors for individual shared locks, could be concurrent delete
+			// The key was listed a moment ago, so "gone now" is the likely
+			// explanation and is safe to skip. "Still there but unreadable" is
+			// not: it is a live shared lock, and stepping over it lets an
+			// exclusive operation run against a repository someone is reading.
+			exists, existsErr := s.Exists(ctx, key)
+			if existsErr != nil {
+				return fmt.Errorf("cannot determine whether shared lock %s is live: %w", key, existsErr)
+			}
+			if exists {
+				return fmt.Errorf("repository holds an unreadable shared lock %s: %w", key, err)
+			}
 			continue
 		}
 		expires, parseErr := time.Parse(time.RFC3339Nano, sharedLock.ExpiresAt)

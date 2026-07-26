@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
@@ -86,18 +87,40 @@ type RestoreWriter interface {
 	Close() error
 }
 
+// concurrentRestoreWriter is the optional opt-in a RestoreWriter uses to
+// declare that WriteFile is safe to call from several goroutines at once.
+// Without it runWithWriter restores files one at a time.
+//
+// It is an opt-in rather than the default because it is not universally
+// achievable: a zip archive is a single sequential stream with one open entry
+// at a time, so zipRestoreWriter deliberately does not implement it. A
+// directory tree has no such constraint — distinct files are distinct fds —
+// so fsRestoreWriter does.
+type concurrentRestoreWriter interface {
+	SupportsConcurrentWrites() bool
+}
+
+// restoreMemoryBudget caps the total bytes of chunk data that have been
+// fetched but not yet written, across every file being restored at once.
+// Restore fans out on two axes now — several files in flight, several chunks
+// per file — so neither axis can be the memory bound on its own; this is.
+// It mirrors the equivalent cap on the backup side (see backup_upload.go).
+const restoreMemoryBudget = 128 * 1024 * 1024
+
 // RestoreManager recreates a snapshot's file tree using a RestoreWriter output format.
 type RestoreManager struct {
-	store    store.ObjectStore
-	tree     *hamt.Tree
-	reporter ui.Reporter
+	store     store.ObjectStore
+	tree      *hamt.Tree
+	reporter  ui.Reporter
+	memBudget *semaphore.Weighted
 }
 
 func NewRestoreManager(s store.ObjectStore, reporter ui.Reporter) *RestoreManager {
 	return &RestoreManager{
-		store:    s,
-		tree:     hamt.NewTree(s),
-		reporter: reporter,
+		store:     s,
+		tree:      hamt.NewTree(s),
+		reporter:  reporter,
+		memBudget: semaphore.NewWeighted(restoreMemoryBudget),
 	}
 }
 
@@ -125,26 +148,83 @@ func (rm *RestoreManager) Run(ctx context.Context, writer RestoreWriter, snapsho
 	return rm.runWithWriter(ctx, plan, writer)
 }
 
+// runWithWriter walks the topologically sorted entries, creating directories
+// and writing file contents.
+//
+// Directories are handled inline and in order: plan.sorted lists a parent
+// before its children, so creating them on this goroutine is what guarantees
+// a file's directory exists by the time the file is dispatched.
+//
+// File contents are the expensive part — each one is at least a content-object
+// fetch, and for a large file a whole sequence of chunk fetches. Restoring
+// them one after another means exactly one request is ever outstanding, so on
+// a high-latency backend the wall time collapses to (file count x round trip)
+// no matter how much bandwidth or store concurrency is available. They are
+// therefore dispatched to a bounded worker pool whenever the writer says it
+// can take concurrent writes; the pool degenerates to sequential execution for
+// writers that cannot (zip).
 func (rm *RestoreManager) runWithWriter(ctx context.Context, plan restorePlan, writer RestoreWriter) (*RestoreResult, error) {
 	result := &RestoreResult{SnapshotRef: plan.snapshotRef, Root: plan.root}
 	phase := rm.reporter.StartPhase("Restoring", int64(len(plan.sorted)), false)
+
+	// Counters are touched from the file workers as well as this goroutine.
+	var mu sync.Mutex
+	bump := func(field *int) {
+		mu.Lock()
+		*field++
+		mu.Unlock()
+	}
+
 	if setter, ok := writer.(restoreWarningSetter); ok {
 		setter.SetWarningFunc(func(msg string) {
-			result.Warnings++
+			bump(&result.Warnings)
 			phase.Log("Warning: " + msg)
 		})
 	}
+
+	cw, ok := writer.(concurrentRestoreWriter)
+	concurrent := ok && cw.SupportsConcurrentWrites()
+
+	g, gCtx := errgroup.WithContext(ctx)
+	if concurrent {
+		g.SetLimit(restoreFileConcurrency(rm.store))
+	}
+
+	// A failure to write one file is reported and counted, not fatal — the
+	// rest of the snapshot is still worth recovering. Only a context
+	// cancellation stops the walk, which is why the worker returns nil here
+	// and errgroup carries just gCtx's error.
+	restoreFile := func(meta core.FileMeta, rel string) func() error {
+		return func() error {
+			err := writer.WriteFile(rel, meta, func(out io.Writer) error {
+				return rm.writeFileContent(gCtx, out, meta, !plan.cfg.noVerify)
+			})
+			defer phase.Increment(1)
+			switch {
+			case err == errRestoreSkipped:
+				return nil
+			case err != nil:
+				phase.Log(fmt.Sprintf("Failed: %s: %v", rel, err))
+				bump(&result.Errors)
+				return nil
+			}
+			if plan.cfg.verbose {
+				phase.Log(fmt.Sprintf("File: %s (%d bytes)", rel, meta.Size))
+			}
+			bump(&result.FilesWritten)
+			return nil
+		}
+	}
+
 	for _, meta := range plan.sorted {
 		rel := buildRestorePath(meta, plan.byID)
 
 		if meta.Type == core.FileTypeFolder {
 			if err := writer.MkdirAll(rel, meta); err != nil {
-				if err == errRestoreSkipped {
-					phase.Increment(1)
-					continue
+				if err != errRestoreSkipped {
+					phase.Log(fmt.Sprintf("Failed: %s: %v", rel, err))
+					result.Errors++
 				}
-				phase.Log(fmt.Sprintf("Failed: %s: %v", rel, err))
-				result.Errors++
 				phase.Increment(1)
 				continue
 			}
@@ -161,24 +241,20 @@ func (rm *RestoreManager) runWithWriter(ctx context.Context, plan restorePlan, w
 			continue
 		}
 
-		if err := writer.WriteFile(rel, meta, func(out io.Writer) error {
-			return rm.writeFileContent(ctx, out, meta, !plan.cfg.noVerify)
-		}); err != nil {
-			if err == errRestoreSkipped {
-				phase.Increment(1)
-				continue
-			}
-			phase.Log(fmt.Sprintf("Failed: %s: %v", rel, err))
-			result.Errors++
-			phase.Increment(1)
+		// A sequential writer runs inline, not through the pool. Even a pool of
+		// one would let a file write overlap the MkdirAll of a later entry on
+		// this goroutine, and for a zip that means a directory header written
+		// into the middle of an open file entry.
+		if !concurrent {
+			_ = restoreFile(meta, rel)()
 			continue
 		}
+		g.Go(restoreFile(meta, rel))
+	}
 
-		if plan.cfg.verbose {
-			phase.Log(fmt.Sprintf("File: %s (%d bytes)", rel, meta.Size))
-		}
-		result.FilesWritten++
-		phase.Increment(1)
+	if err := g.Wait(); err != nil {
+		phase.Error()
+		return nil, err
 	}
 
 	phase.Done()
@@ -187,6 +263,19 @@ func (rm *RestoreManager) runWithWriter(ctx context.Context, plan restorePlan, w
 	}
 	result.BytesWritten = writer.BytesWritten()
 	return result, nil
+}
+
+// restoreFileConcurrency picks how many files to reconstruct at once.
+//
+// It is deliberately far below the store's own concurrency hint (128 for S3):
+// each file in flight opens its own chunk window underneath it, so the two
+// levels multiply. Memory is bounded by restoreMemoryBudget regardless, but
+// dividing the budget across too many files would starve each one's window
+// and lose the pipelining this exists to enable. A modest fan-out is enough
+// to hide per-file round trips, which is the actual bottleneck for the many
+// small-to-medium files that dominate a real snapshot.
+func restoreFileConcurrency(s store.ObjectStore) int {
+	return min(store.GetConcurrencyHint(s, 8), 16)
 }
 
 func (rm *RestoreManager) prepareRestore(ctx context.Context, snapshotRef string, opts ...RestoreOption) (restorePlan, error) {
@@ -274,7 +363,14 @@ func (w *zipRestoreWriter) Close() error {
 }
 
 type fsRestoreWriter struct {
-	root         string
+	root string
+
+	// mu guards every field below it. WriteFile runs concurrently (see
+	// SupportsConcurrentWrites), so the counters, the warn-dedup set, and the
+	// deferred-metadata lists are all shared mutable state. The lock is only
+	// ever held around bookkeeping — never across the content write itself,
+	// which is the whole point of restoring files in parallel.
+	mu           sync.Mutex
 	bytes        int64
 	warn         func(string)
 	warned       map[string]struct{}
@@ -297,21 +393,34 @@ func NewFSRestoreWriter(root string) (RestoreWriter, error) {
 	return &fsRestoreWriter{root: root, warned: map[string]struct{}{}}, nil
 }
 
+// SupportsConcurrentWrites implements concurrentRestoreWriter. Two WriteFile
+// calls for distinct paths touch disjoint files; the shared bookkeeping they
+// do touch is guarded by w.mu.
+func (w *fsRestoreWriter) SupportsConcurrentWrites() bool { return true }
+
 func (w *fsRestoreWriter) SetWarningFunc(fn func(string)) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.warn = fn
 }
 
 func (w *fsRestoreWriter) warnf(format string, args ...interface{}) {
-	if w.warn != nil {
-		w.warn(fmt.Sprintf(format, args...))
+	w.mu.Lock()
+	fn := w.warn
+	w.mu.Unlock()
+	if fn != nil {
+		fn(fmt.Sprintf(format, args...))
 	}
 }
 
 func (w *fsRestoreWriter) warnOncef(key, format string, args ...interface{}) {
+	w.mu.Lock()
 	if _, ok := w.warned[key]; ok {
+		w.mu.Unlock()
 		return
 	}
 	w.warned[key] = struct{}{}
+	w.mu.Unlock()
 	w.warnf(format, args...)
 }
 
@@ -340,10 +449,12 @@ func (w *fsRestoreWriter) MkdirAll(relPath string, meta core.FileMeta) error {
 	if err := os.MkdirAll(fullPath, 0o755); err != nil {
 		return err
 	}
+	w.mu.Lock()
 	w.deferredDirs = append(w.deferredDirs, deferredRestoreEntry{path: fullPath, meta: meta})
 	if meta.Flags != 0 {
 		w.deferredFlag = append(w.deferredFlag, deferredRestoreEntry{path: fullPath, meta: meta})
 	}
+	w.mu.Unlock()
 	return nil
 }
 
@@ -389,18 +500,31 @@ func (w *fsRestoreWriter) WriteFile(relPath string, meta core.FileMeta, writeCon
 		return closeErr
 	}
 
+	w.mu.Lock()
 	w.bytes += cw.count
+	w.mu.Unlock()
+
 	if err := applyRestoreFileMetadata(fullPath, meta, w.warnDedupf); err != nil {
 		return err
 	}
 	if meta.Flags != 0 {
+		w.mu.Lock()
 		w.deferredFlag = append(w.deferredFlag, deferredRestoreEntry{path: fullPath, meta: meta})
+		w.mu.Unlock()
 	}
 	return nil
 }
 
-func (w *fsRestoreWriter) BytesWritten() int64 { return w.bytes }
+func (w *fsRestoreWriter) BytesWritten() int64 {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.bytes
+}
 
+// Close runs after every WriteFile has returned, so it needs no lock of its
+// own — but it must stay that way: the deferred lists are ordered, and
+// applying directory metadata is what makes parent mtimes survive the writes
+// underneath them.
 func (w *fsRestoreWriter) Close() error {
 	for i := len(w.deferredDirs) - 1; i >= 0; i-- {
 		entry := w.deferredDirs[i]
@@ -515,7 +639,7 @@ func (rm *RestoreManager) writeFileContent(ctx context.Context, w io.Writer, met
 		out = io.MultiWriter(w, hasher)
 	}
 
-	if err := rm.writeChunks(ctx, out, content.Chunks); err != nil {
+	if err := rm.writeChunks(ctx, out, content.Chunks, avgChunkSize(content)); err != nil {
 		return err
 	}
 	if len(content.DataInlineB64) > 0 {
@@ -742,6 +866,16 @@ func (rm *RestoreManager) loadContent(ctx context.Context, hash string) (*core.C
 	return &c, nil
 }
 
+// avgChunkSize estimates a Content's per-chunk payload so writeChunks can
+// charge the memory budget without having to fetch a chunk to find out how
+// big one is.
+func avgChunkSize(c *core.Content) int64 {
+	if c == nil || len(c.Chunks) == 0 || c.Size <= 0 {
+		return 0
+	}
+	return c.Size / int64(len(c.Chunks))
+}
+
 func (rm *RestoreManager) writeChunk(ctx context.Context, w io.Writer, ref string) error {
 	data, err := rm.store.Get(ctx, ref)
 	if err != nil {
@@ -752,16 +886,25 @@ func (rm *RestoreManager) writeChunk(ctx context.Context, w io.Writer, ref strin
 }
 
 // writeChunks fetches a file's content chunks and writes them to w in order.
-// The store's Get is the bottleneck for a large file, so chunks are fetched
-// in bounded batches sized to the store's concurrency hint (mirroring
-// Chunker.ProcessStream's worker pool on the backup side) rather than one
-// blocking Get at a time. Batching — instead of firing every chunk at once —
-// keeps at most one batch's worth of chunk data in memory, which matters
-// because chunks (unlike the file metadata collectMetadata fetches) can be up
-// to 8MB each. Chunks still land on w in their original order regardless of
-// which fetch in a batch finishes first, since the reconstructed stream must
-// be byte-identical to what was chunked at backup time.
-func (rm *RestoreManager) writeChunks(ctx context.Context, w io.Writer, refs []string) error {
+//
+// The store's Get is the bottleneck for a large file, so fetches run
+// concurrently. They run as a *sliding window* rather than as discrete
+// batches: a fixed number of fetches stay in flight at all times, and each
+// chunk is written the moment the chunk before it has been written. A batched
+// version — fetch N, wait for all N, write all N — leaves the network
+// completely idle for the whole write phase of every batch and stalls the
+// entire batch behind its single slowest Get, which on a high-latency backend
+// such as S3 roughly halves throughput.
+//
+// Chunks still land on w in their original order regardless of which fetch
+// finishes first, since the reconstructed stream must be byte-identical to
+// what was chunked at backup time.
+//
+// avgChunkSize is the caller's estimate of the per-chunk payload, used to
+// charge the shared memory budget (see RestoreManager.memBudget). Fetches
+// block once the budget is exhausted, which is what bounds resident memory
+// now that the window is no longer a hard chunk count.
+func (rm *RestoreManager) writeChunks(ctx context.Context, w io.Writer, refs []string, avgChunkSize int64) error {
 	if len(refs) <= 1 {
 		for _, ref := range refs {
 			if err := rm.writeChunk(ctx, w, ref); err != nil {
@@ -771,33 +914,112 @@ func (rm *RestoreManager) writeChunks(ctx context.Context, w io.Writer, refs []s
 		return nil
 	}
 
-	batchSize := min(store.GetConcurrencyHint(rm.store, 10), len(refs))
+	window := min(store.GetConcurrencyHint(rm.store, 10), len(refs))
+	weight := chunkWeight(avgChunkSize)
 
-	for start := 0; start < len(refs); start += batchSize {
-		end := min(start+batchSize, len(refs))
-		batch := refs[start:end]
+	type slot struct {
+		data  []byte
+		err   error
+		ready chan struct{}
+	}
+	slots := make([]slot, window)
+	for i := range slots {
+		slots[i] = slot{ready: make(chan struct{})}
+	}
 
-		data := make([][]byte, len(batch))
-		g, gCtx := errgroup.WithContext(ctx)
-		for i, ref := range batch {
-			g.Go(func() error {
-				d, err := rm.store.Get(gCtx, ref)
-				if err != nil {
-					return fmt.Errorf("fetch chunk %s: %w", ref, err)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// fetch runs refs[i] into the slot it will be consumed from. The slot is
+	// reused every `window` chunks, so it is re-armed by the consumer before
+	// the next fetch targeting it is started — never concurrently with it.
+	fetch := func(i int) {
+		s := &slots[i%window]
+		if err := rm.memBudget.Acquire(ctx, weight); err != nil {
+			s.err = err
+			close(s.ready)
+			return
+		}
+		d, err := rm.store.Get(ctx, refs[i])
+		if err != nil {
+			rm.memBudget.Release(weight)
+			s.err = fmt.Errorf("fetch chunk %s: %w", refs[i], err)
+			close(s.ready)
+			return
+		}
+		s.data = d
+		close(s.ready)
+	}
+
+	var wg sync.WaitGroup
+	start := func(i int) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fetch(i)
+		}()
+	}
+
+	for i := 0; i < window; i++ {
+		start(i)
+	}
+
+	// Draining every outstanding fetch before returning keeps the memory
+	// budget balanced on the error path: an abandoned fetch that later
+	// completes would otherwise hold its reservation forever.
+	drain := func() {
+		cancel()
+		wg.Wait()
+		for i := range slots {
+			select {
+			case <-slots[i].ready:
+				if slots[i].err == nil && slots[i].data != nil {
+					rm.memBudget.Release(weight)
 				}
-				data[i] = d
-				return nil
-			})
-		}
-		if err := g.Wait(); err != nil {
-			return err
-		}
-
-		for _, d := range data {
-			if _, err := w.Write(d); err != nil {
-				return err
+			default:
 			}
 		}
 	}
+
+	for i := 0; i < len(refs); i++ {
+		s := &slots[i%window]
+		<-s.ready
+		if s.err != nil {
+			err := s.err
+			s.data, s.err = nil, nil // claimed; drain must not double-release
+			drain()
+			return err
+		}
+
+		data := s.data
+		_, werr := w.Write(data)
+		s.data = nil
+		rm.memBudget.Release(weight)
+		if werr != nil {
+			drain()
+			return werr
+		}
+
+		// Re-arm this slot and pull the next chunk that will land in it.
+		if next := i + window; next < len(refs) {
+			s.ready = make(chan struct{})
+			start(next)
+		}
+	}
+
+	wg.Wait()
 	return nil
+}
+
+// chunkWeight turns a per-chunk size estimate into the amount charged against
+// the restore memory budget. The estimate comes from a Content object's own
+// size and chunk count, so it is close for the common case; the clamp keeps a
+// bogus or missing estimate from either serialising the window (too large) or
+// letting it grow without bound (too small).
+func chunkWeight(avgChunkSize int64) int64 {
+	const minWeight = 64 * 1024
+	if avgChunkSize <= 0 {
+		return cdcMaxSize
+	}
+	return max(minWeight, min(avgChunkSize, cdcMaxSize))
 }

@@ -40,16 +40,26 @@ Dataset: ~1.05 GB (500MB random, 500MB compressible zeros, 50 x 1MB docs, 100 x 
 
 ## Local File System
 
+Measured on an Apple M3 Max / 36 GB / macOS 26.5, all four tools in one run.
+
 _Format: time / peak RAM / +repo written_
 
 | Metric | Cloudstic | Restic | Borg | Duplicacy |
 | :--- | :--- | :--- | :--- | :--- |
-| **Initial Backup** | 0.61s / 259 MB / +551 MB | 1.80s / 314 MB / +550 MB | 1.69s / 139 MB / +555 MB | 3.44s / 284 MB / +553 MB |
-| **Incremental (No Changes)** | 0.05s / 96 MB / +4 KB | 0.77s / 72 MB / +12 KB | 0.67s / 72 MB / +16 KB | 0.04s / 44 MB / +4 KB |
-| **Incremental (1 File Changed)** | 0.05s / 96 MB / +8 KB | 0.78s / 78 MB / +36 KB | 0.67s / 72 MB / +24 KB | 0.24s / 79 MB / +36 KB |
-| **Add 200MB New Data** | 0.14s / 152 MB / +200 MB | 1.07s / 283 MB / +200 MB | 0.57s / 136 MB / +200 MB | 0.93s / 195 MB / +201 MB |
-| **Deduplicated Backup** | 0.60s / 235 MB / +88 KB | 1.57s / 104 MB / +36 KB | 1.24s / 81 MB / +56 KB | 3.31s / 130 MB / +1.8 MB |
-| **Final Repository Size** | 752 MB | 750 MB | 755 MB | 755 MB |
+| **Initial Backup** | 0.81s / 489 MB / +551 MB | 1.95s / 272 MB / +550 MB | 1.88s / 134 MB / +564 MB | 3.65s / 310 MB / +553 MB |
+| **Incremental (No Changes)** | 0.18s / 95 MB / +8 KB | 0.77s / 72 MB / +12 KB | 0.73s / 72 MB / +16 KB | 0.06s / 45 MB / +4 KB |
+| **Incremental (1 File Changed)** | 0.18s / 95 MB / +12 KB | 0.77s / 77 MB / +36 KB | 0.76s / 73 MB / +36 KB | 0.25s / 80 MB / +36 KB |
+| **Add 200MB New Data** | 0.30s / 308 MB / +200 MB | 1.06s / 327 MB / +200 MB | 0.61s / 147 MB / +200 MB | 0.98s / 242 MB / +201 MB |
+| **Deduplicated Backup** | 0.79s / 411 MB / +120 KB | 1.64s / 100 MB / +36 KB | 1.39s / 81 MB / +56 KB | 3.51s / 124 MB / +7.4 MB |
+| **Full Restore** | 0.69s / 326 MB | 1.44s / 181 MB | — | — |
+| **Full Restore (-no-verify)** | 0.40s / 378 MB | — | — | — |
+| **Final Repository Size** | 752 MB | 750 MB | 764 MB | 761 MB |
+
+Restore is measured against the final, deduplicated repository state, into a
+fresh empty directory each time. Cloudstic verifies every restored file's
+content hash by default, as Restic does; the `-no-verify` row isolates what
+that check costs. Borg and Duplicacy have no restore row because the harness
+does not drive their extract/restore commands yet.
 
 ## AWS S3 (us-east-1)
 
@@ -63,6 +73,11 @@ _Format: time / peak RAM / +repo written_
 | **Add 200MB New Data** | 8.98s / 409 MB / +200 MB | 7.45s / 458 MB / +200 MB |
 | **Deduplicated Backup** | 5.14s / 360 MB / +84 KB | 3.36s / 104 MB / +25 KB |
 | **Final Repository Size** | 750.4 MB | 750.3 MB |
+
+> **Stale:** this table predates the restore rows above and predates the
+> pipelined restore path, so it has no restore numbers and its backup numbers
+> are from an earlier build. Re-run `./scripts/benchmark/run.sh local s3 all`
+> against real S3 to refresh it.
 
 > **Note on architecture differences:** Cloudstic defaults to a hybrid `MicroPackStore` approach. It intelligently bundles small metadata objects (filemeta, nodes) into up to tightly-packed 8MB chunks to minimize S3 `PUT` requests, while passing all large files through as native encrypted objects. This yields the best of both worlds: lightning-fast S3 API performance comparable to packfile-based tools, while preserving native S3 lifecycle rules and fine-grained partial downloads for large media files.
 

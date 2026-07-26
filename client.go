@@ -3,6 +3,7 @@ package cloudstic
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sync/atomic"
@@ -181,16 +182,17 @@ func AddRecoveryKey(ctx context.Context, rawStore store.ObjectStore, kc keychain
 // Returns (nil, nil) if the repository has not been initialized yet.
 // Returns an error if the store is unreachable (e.g. invalid credentials).
 func LoadRepoConfig(ctx context.Context, rawStore store.ObjectStore) (*RepoConfig, error) {
-	exists, err := rawStore.Exists(ctx, "config")
-	if err != nil {
-		return nil, fmt.Errorf("check repo config: %w", err)
-	}
-	if !exists {
-		return nil, nil // repository not initialized
-	}
-
+	// A single Get, not Exists-then-Get. Get already distinguishes the two
+	// outcomes this function has to tell apart — every backend wraps
+	// store.ErrNotFound for a missing key and returns anything else verbatim —
+	// so the probe was a second round trip that answered a question the Get
+	// answers on its own. This runs on the open path of every command, where
+	// on a high-latency backend each avoided round trip is directly visible.
 	data, err := rawStore.Get(ctx, "config")
 	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, nil // repository not initialized
+		}
 		return nil, fmt.Errorf("read repo config: %w", err)
 	}
 	if data == nil {
@@ -309,7 +311,11 @@ type Client struct {
 	// single source of truth for format-dependent write policy. The compression
 	// layer's frame gate reads it, and raiseRepoFormat is its only writer, so
 	// framing cannot disagree with the format a mutation has stamped.
-	repoFormat     atomic.Int64
+	repoFormat atomic.Int64
+	// openCfg is the config NewClient read, held so the first raiseRepoFormat
+	// of this client does not immediately re-read it. It is consumed on first
+	// use (swapped for the noRepoConfig sentinel) and never consulted again.
+	openCfg        atomic.Pointer[RepoConfig]
 	storedMeter    *store.MeteredStore
 	encryptionKey  []byte
 	hmacKey        []byte
@@ -395,6 +401,7 @@ func NewClient(ctx context.Context, base store.ObjectStore, opts ...ClientOption
 	// first framed write.
 	if cfg != nil {
 		c.repoFormat.Store(int64(cfg.Version))
+		c.openCfg.Store(cfg)
 	}
 	c.store = store.NewCompressedStore(inner, store.WithFrameGate(c.framingEnabled))
 	c.storedMeter = storedMeter
@@ -461,6 +468,11 @@ var (
 	WithWorkstationStoreRef = engine.WithWorkstationStoreRef
 )
 
+// noRepoConfig marks Client.openCfg as spent. A plain nil cannot: nil is also
+// what the field holds for an uninitialized repository, and those two states
+// have to stay distinguishable.
+var noRepoConfig RepoConfig
+
 // raiseRepoFormat stamps the on-disk format and updates the in-process view in
 // lockstep, so format-dependent write policy — framing — follows immediately.
 // It is the only writer of c.repoFormat.
@@ -474,6 +486,25 @@ func (c *Client) raiseRepoFormat(ctx context.Context) error {
 	if c.base == nil {
 		return nil
 	}
+
+	// The first raise can answer from the config NewClient just read, instead
+	// of fetching "config" a second time within the same command — two round
+	// trips to read one small immutable object, back to back, which is
+	// plainly visible on a high-latency backend.
+	//
+	// Only the first. The cached copy is consumed here and every later raise
+	// re-reads, because "already current" then stops being a safe assumption:
+	// a long-lived client outlives the moment it was opened, and the on-disk
+	// version is what other machines act on. Skipping the write on a stale
+	// in-process belief would leave a repository unstamped after a real
+	// mutation — see TestDryRunsDoNotStampTheFormat.
+	if cfg := c.openCfg.Swap(&noRepoConfig); cfg != nil && cfg != &noRepoConfig {
+		if cfg.Version >= core.RepoFormatVersion {
+			c.repoFormat.Store(int64(core.RepoFormatVersion))
+			return nil
+		}
+	}
+
 	if err := UpgradeRepoFormat(ctx, c.base, core.RepoFormatVersion); err != nil {
 		return err
 	}

@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -107,25 +108,9 @@ func TestEncryptedStore_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestEncryptedStore_LegacyPlaintext(t *testing.T) {
-	ctx := context.Background()
-	inner := newMemStore()
-	key := testKey(t)
-
-	legacy := []byte(`{"root":"old_unencrypted"}`)
-	inner.data["snapshot/old"] = legacy
-
-	store := NewEncryptedStore(inner, key)
-	got, err := store.Get(ctx, "snapshot/old")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(got, legacy) {
-		t.Fatal("legacy plaintext should be returned as-is")
-	}
-}
-
-func TestEncryptedStore_LegacyGzip(t *testing.T) {
+// A gzip-framed legacy object looks nothing like a ciphertext (no version
+// byte), so it is refused the same as any other plaintext content.
+func TestEncryptedStore_RefusesLegacyGzip(t *testing.T) {
 	ctx := context.Background()
 	inner := newMemStore()
 	key := testKey(t)
@@ -134,12 +119,91 @@ func TestEncryptedStore_LegacyGzip(t *testing.T) {
 	inner.data["chunk/abc"] = gzipData
 
 	store := NewEncryptedStore(inner, key)
-	got, err := store.Get(ctx, "chunk/abc")
-	if err != nil {
+	if _, err := store.Get(ctx, "chunk/abc"); !errors.Is(err, ErrPlaintextObject) {
+		t.Fatalf("error = %v, want ErrPlaintextObject", err)
+	}
+}
+
+// Anyone who can write to the backing store can put plaintext under any key
+// outside "keys/" and "config". A client holding the correct encryption key
+// must not read it back as repository content: that is a forged object,
+// accepted without the key and without touching config or the key slots.
+func TestEncryptedStore_RefusesPlaintextContent(t *testing.T) {
+	ctx := context.Background()
+
+	for _, key := range []string{
+		"chunk/forged",
+		"content/forged",
+		"filemeta/forged",
+		"node/forged",
+		"snapshot/forged",
+		"index/packs",
+		"index/latest",
+	} {
+		t.Run(key, func(t *testing.T) {
+			inner := newMemStore()
+			forged := []byte(`{"root":"node/attacker"}`)
+			inner.data[key] = forged
+
+			store := NewEncryptedStore(inner, testKey(t))
+			got, err := store.Get(ctx, key)
+			if err == nil {
+				t.Fatalf("Get(%q) returned %q, want an error", key, got)
+			}
+			if !errors.Is(err, ErrPlaintextObject) {
+				t.Fatalf("Get(%q) error = %v, want ErrPlaintextObject", key, err)
+			}
+			if got != nil {
+				t.Errorf("Get(%q) returned %d bytes alongside the error", key, len(got))
+			}
+		})
+	}
+}
+
+// Refusal is scoped to two keys that are plaintext by design: key slots,
+// which must be readable before any key exists, and "config", the repository
+// marker read before a key is resolved. Both are exempt regardless of prefix
+// matching or the shape of their data.
+func TestEncryptedStore_RefusalIsScopedToKeysAndConfig(t *testing.T) {
+	ctx := context.Background()
+	inner := newMemStore()
+
+	plain := map[string][]byte{
+		"keys/platform-default": []byte(`{"slot_type":"platform"}`),
+		"config":                []byte(`{"version":2,"encrypted":true}`),
+	}
+	for key, data := range plain {
+		inner.data[key] = data
+	}
+
+	store := NewEncryptedStore(inner, testKey(t))
+	for key, want := range plain {
+		got, err := store.Get(ctx, key)
+		if err != nil {
+			t.Errorf("Get(%q): %v", key, err)
+			continue
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("Get(%q) = %q, want %q", key, got, want)
+		}
+	}
+}
+
+// A truncated ciphertext is shorter than the AEAD overhead, so it fails the
+// header check the same way plaintext does. It must not slip through as data.
+func TestEncryptedStore_RefusesTruncatedCiphertext(t *testing.T) {
+	ctx := context.Background()
+	inner := newMemStore()
+	key := testKey(t)
+	store := NewEncryptedStore(inner, key)
+
+	if err := store.Put(ctx, "chunk/abc", []byte("real content")); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(got, gzipData) {
-		t.Fatal("legacy gzip data should be returned as-is")
+	inner.data["chunk/abc"] = inner.data["chunk/abc"][:crypto.Overhead-1]
+
+	if _, err := store.Get(ctx, "chunk/abc"); !errors.Is(err, ErrPlaintextObject) {
+		t.Fatalf("error = %v, want ErrPlaintextObject", err)
 	}
 }
 

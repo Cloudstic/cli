@@ -14,6 +14,17 @@ engine does not need to be aware of it.
   encrypted with a unique key.
 - **Key loss prevention (SaaS)**: the platform always holds a recovery path via
   the platform key slot.
+- **Write-access forgery**: an attacker with write access to the backing store
+  (a leaked S3/B2 credential, a hostile SFTP host, a compromised bucket policy)
+  cannot substitute content a client holding the encryption key will accept.
+  Every object must be a ciphertext produced with that key or it is refused,
+  except `keys/<slot>` and `config`, which are plaintext by design — see
+  "Ciphertext Format" below and issue #362. This is one piece of a larger
+  authentication effort tracked in issue #361; still out of scope are an
+  unkeyed metadata object namespace (`filemeta/`/`node/`/`snapshot/` keys are
+  plain SHA-256, so an attacker who also has the plaintext structure being
+  forged can compute a valid key for it), an unauthenticated `config`, and
+  snapshot rollback via `index/latest` replay.
 
 ### What is not confidential
 
@@ -59,11 +70,22 @@ version (1 byte) || nonce (12 bytes) || ciphertext || GCM tag (16 bytes)
 - Overhead: 29 bytes per object (negligible for chunks at 512 KB–8 MB,
   small for metadata objects)
 
-On read, if the first byte is not a recognised version, the data is returned
-as-is (plaintext). This allows gradual migration from unencrypted to encrypted
-storage. Existing unencrypted data is safe because it starts with either gzip
-magic bytes (`0x1f 0x8b`) or JSON (`0x7b`), neither of which collides with
-valid version bytes.
+On read, if the first byte is not a recognised version, `EncryptedStore.Get`
+refuses the object instead of returning it, with two exceptions: objects under
+`keys/` (key slots, never encrypted in either direction — the master key
+cannot be resolved without reading them first) and `config` (the repository
+marker, always written directly through the raw store, so this layer only
+ever sees a plaintext copy of it via `cloudstic cat config`). Everywhere else
+— `chunk/`, `content/`, `filemeta/`, `node/`, `snapshot/`, the index
+namespace, anything else — a non-ciphertext object is refused.
+
+The passthrough this replaced — legacy plaintext returned as-is unconditionally,
+documented as a gradual-migration affordance — was the entry point for a
+forgery: anyone with write access to the backing store, such as a leaked
+credential or a compromised bucket policy, could plant an object under any of
+those prefixes, and a client holding the *correct* encryption key would read
+it as genuine repository content, no key and no tampering with `config` or
+`keys/` required. See "Threat Model" above and issue #362.
 
 ## Key Hierarchy
 

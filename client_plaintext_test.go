@@ -129,6 +129,29 @@ func TestClient_RestoreRefusesSubstitutedChunk(t *testing.T) {
 	}
 }
 
+// "config" is the other key that is plaintext by design: it carries the
+// version gate that has to be readable before any key is resolved.
+// Client.Cat is the one path that reaches it through the encrypted store at
+// all — LoadRepoConfig always reads the raw store directly — so this is what
+// exercises the exemption.
+func TestClient_CatConfigStaysReadableUnderTheGate(t *testing.T) {
+	ctx := context.Background()
+	_, base := newPlaintextTestRepo(t)
+
+	client := newPlaintextTestClient(t, base)
+	got, err := client.Cat(ctx, "config")
+	if err != nil {
+		t.Fatalf("config must stay readable: %v", err)
+	}
+	want, err := base.Get(ctx, "config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got[0].Data) != string(want) {
+		t.Errorf("got %q, want %q", got[0].Data, want)
+	}
+}
+
 // Key slots are plaintext by design — they hold the wrapped master key needed
 // before any key exists — and refusing them would make an encrypted repository
 // impossible to open.

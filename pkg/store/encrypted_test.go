@@ -124,10 +124,10 @@ func TestEncryptedStore_RefusesLegacyGzip(t *testing.T) {
 	}
 }
 
-// Anyone who can write to the backing store can put plaintext under a
-// content-addressed key. A client holding the correct encryption key must not
-// read it back as repository content: that is a forged object, accepted without
-// the key and without touching config or the key slots.
+// Anyone who can write to the backing store can put plaintext under any key
+// outside "keys/" and "config". A client holding the correct encryption key
+// must not read it back as repository content: that is a forged object,
+// accepted without the key and without touching config or the key slots.
 func TestEncryptedStore_RefusesPlaintextContent(t *testing.T) {
 	ctx := context.Background()
 
@@ -137,6 +137,8 @@ func TestEncryptedStore_RefusesPlaintextContent(t *testing.T) {
 		"filemeta/forged",
 		"node/forged",
 		"snapshot/forged",
+		"index/packs",
+		"index/latest",
 	} {
 		t.Run(key, func(t *testing.T) {
 			inner := newMemStore()
@@ -158,18 +160,17 @@ func TestEncryptedStore_RefusesPlaintextContent(t *testing.T) {
 	}
 }
 
-// Refusal covers content, not the whole keyspace. Key slots are deliberately
-// plaintext, "config" is the plaintext repository marker, and the pack index
-// under "index/" is written below this layer — refusing those would break
-// reading a repository rather than protect it.
-func TestEncryptedStore_RefusalIsScopedToContent(t *testing.T) {
+// Refusal is scoped to two keys that are plaintext by design: key slots,
+// which must be readable before any key exists, and "config", the repository
+// marker read before a key is resolved. Both are exempt regardless of prefix
+// matching or the shape of their data.
+func TestEncryptedStore_RefusalIsScopedToKeysAndConfig(t *testing.T) {
 	ctx := context.Background()
 	inner := newMemStore()
 
 	plain := map[string][]byte{
 		"keys/platform-default": []byte(`{"slot_type":"platform"}`),
 		"config":                []byte(`{"version":2,"encrypted":true}`),
-		"index/packs":           []byte(`{"entries":{}}`),
 	}
 	for key, data := range plain {
 		inner.data[key] = data

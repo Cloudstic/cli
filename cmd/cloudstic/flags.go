@@ -29,6 +29,7 @@ type globalFlags struct {
 	recoveryKey                       string
 	kmsKeyARN, kmsRegion, kmsEndpoint string
 	disablePackfile                   bool
+	allowLegacyPlaintext              bool
 	prompt, noPrompt                  bool
 	verbose, quiet, debug             bool
 	json                              bool
@@ -126,6 +127,10 @@ func encryptionFlagSpecs(g *globalFlags) []flagSpec {
 			withEnv("CLOUDSTIC_KMS_ENDPOINT"), withPlaceholder("<url>"),
 			withShortUsage("Custom AWS KMS endpoint")),
 		boolFlag(&g.prompt, "prompt", false, "Prompt for password interactively (use alongside --encryption-key or --kms-key-arn to add a password layer)", withShortUsage("Prompt for password interactively")),
+		boolFlag(&g.allowLegacyPlaintext, "allow-legacy-plaintext", false,
+			"Read unencrypted objects in an encrypted repository (recovery only; accepts data not written with its key)",
+			withEnv("CLOUDSTIC_ALLOW_LEGACY_PLAINTEXT"),
+			withShortUsage("Read unencrypted objects (recovery only)")),
 	}
 }
 

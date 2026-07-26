@@ -145,7 +145,7 @@ const (
 	// is the dangerous state, so a repository touched by a build that can seal
 	// says so, and older builds are told to catch up rather than left writing
 	// alongside it.
-	RepoFormatVersion = 2
+	RepoFormatVersion = 3
 
 	// MaxSupportedRepoFormat is the highest version this build can read. A
 	// repository above it is refused rather than misread.
@@ -156,8 +156,29 @@ const (
 	// would also read the pre-shard monolithic catalog as complete when it is
 	// merely stale, which is the same failure by a different route.
 	//
-	// Both changes ship in the same release, so one version covers them.
-	MaxSupportedRepoFormat = 2
+	// Both of those changes ship in the same release, so one version covers
+	// them.
+	//
+	// 3 adds the ciphertext-only rule below.
+	MaxSupportedRepoFormat = 3
+
+	// CiphertextOnlyFormat is the lowest recorded format at which an encrypted
+	// repository guarantees that every object under a content-addressed prefix
+	// is a ciphertext, so one that is not is refused rather than returned
+	// (see pkg/store/encrypted.go).
+	//
+	// The guarantee is what the version records, and it is why this raises the
+	// gate even though the *encoding* is unchanged: nothing an earlier build
+	// writes here is different, but an earlier build reading a repository at
+	// this format still honours the plaintext fallback, so attacker-written
+	// plaintext is accepted as repository content. That is a misread of a
+	// repository whose format says it cannot contain plaintext, and the
+	// contract's answer to a misread is to refuse the repository up front.
+	//
+	// Below this format the fallback stays: repositories that were converted
+	// from unencrypted ones hold real plaintext objects, and backward
+	// compatibility is permanent.
+	CiphertextOnlyFormat = 3
 
 	// FramedCompressionFormat is the lowest recorded format at which the
 	// compression layer may write framed objects (see pkg/store/compressed.go).

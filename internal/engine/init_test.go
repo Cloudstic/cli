@@ -489,3 +489,120 @@ func TestInitManager_AdoptAddsNewSlots(t *testing.T) {
 		t.Errorf("failed to open with platform key: %v", err)
 	}
 }
+
+// Converting an unencrypted repository to encrypted in place never encrypts
+// the data already there: it leaves genuine plaintext objects under
+// content-addressed prefixes and only relabels config.encrypted. At
+// core.CiphertextOnlyFormat those objects would be refused as forgeries the
+// moment a later write stamped the current format, so adoption must refuse
+// this conversion rather than produce a repository doomed to fail that way.
+func TestInitManager_AdoptRefusesEncryptingPopulatedRepo(t *testing.T) {
+	s := NewMockStore()
+	ctx := context.Background()
+
+	cfg := core.RepoConfig{Version: core.RepoFormatVersion, Created: "2026-01-01T00:00:00Z", Encrypted: false}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Put(ctx, "config", data); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Put(ctx, "snapshot/existing", []byte(`{"root":"node/abc"}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewInitManager(s)
+	_, err = mgr.Run(ctx,
+		WithInitCredentials(keychain.Chain{keychain.WithPassword("newpw")}),
+		WithInitAdoptSlots(),
+	)
+	if err == nil {
+		t.Fatal("expected adoption to refuse encrypting a populated unencrypted repository")
+	}
+
+	// And the repository must be left exactly as it was: still unencrypted,
+	// nothing rewritten.
+	got, err := s.Get(ctx, "config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var after core.RepoConfig
+	if err := json.Unmarshal(got, &after); err != nil {
+		t.Fatal(err)
+	}
+	if after.Encrypted {
+		t.Error("config should remain unencrypted after the refusal")
+	}
+}
+
+// An empty unencrypted repository has nothing to strand, so adopting slots to
+// turn on encryption before the first backup must still be allowed.
+func TestInitManager_AdoptAllowsEncryptingEmptyRepo(t *testing.T) {
+	s := NewMockStore()
+	ctx := context.Background()
+
+	cfg := core.RepoConfig{Version: core.RepoFormatVersion, Created: "2026-01-01T00:00:00Z", Encrypted: false}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Put(ctx, "config", data); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewInitManager(s)
+	result, err := mgr.Run(ctx,
+		WithInitCredentials(keychain.Chain{keychain.WithPassword("newpw")}),
+		WithInitAdoptSlots(),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Encrypted {
+		t.Error("expected the repository to become encrypted")
+	}
+}
+
+// Adopting slots on an already-encrypted repository is the normal case this
+// guard must not disturb — it only fires on an unencrypted-to-encrypted
+// transition.
+func TestInitManager_AdoptEncryptedRepoUnaffectedByGuard(t *testing.T) {
+	s := NewMockStore()
+	ctx := context.Background()
+
+	masterKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	slot, err := keychain.CreatePasswordSlot(masterKey, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := keychain.WriteKeySlot(ctx, s, slot); err != nil {
+		t.Fatal(err)
+	}
+	cfg := core.RepoConfig{Version: core.RepoFormatVersion, Created: "2026-01-01T00:00:00Z", Encrypted: true}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Put(ctx, "config", data); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Put(ctx, "snapshot/existing", []byte(`{"root":"node/abc"}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewInitManager(s)
+	result, err := mgr.Run(ctx,
+		WithInitCredentials(keychain.Chain{keychain.WithPassword("p1")}),
+		WithInitAdoptSlots(),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.AdoptedSlots {
+		t.Error("expected AdoptedSlots to be true")
+	}
+}

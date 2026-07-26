@@ -98,6 +98,9 @@ func (m *InitManager) Run(ctx context.Context, opts ...InitOption) (*InitResult,
 					existing.Version, core.MaxSupportedRepoFormat,
 				)
 			}
+			if err := m.checkEncryptionInPlace(ctx, existing, cfg); err != nil {
+				return nil, err
+			}
 		}
 	case err == nil, errors.Is(err, store.ErrNotFound):
 		// Not yet initialized. (Some ObjectStore test doubles return (nil,
@@ -133,6 +136,57 @@ func (m *InitManager) Run(ctx context.Context, opts ...InitOption) (*InitResult,
 	}
 
 	return result, nil
+}
+
+// checkEncryptionInPlace refuses to turn an existing unencrypted repository
+// that already holds data into an encrypted one.
+//
+// Adoption used to allow it, and what it produced was a repository recording
+// `encrypted: true` whose existing objects were all plaintext — readable only
+// because the encryption layer returned anything that was not a ciphertext
+// as-is. That fallback is exactly the hole an attacker with write access to the
+// backing store walks through, and from core.CiphertextOnlyFormat a repository
+// no longer has it: the objects this conversion leaves behind would be refused
+// as forgeries the moment the next write stamped the current format.
+//
+// Converting in place also never encrypted anything already stored, so refusing
+// costs no confidentiality. Backing the data up into a repository that was
+// created encrypted does, and that is what the message points at.
+func (m *InitManager) checkEncryptionInPlace(ctx context.Context, existing core.RepoConfig, cfg initConfig) error {
+	if existing.Encrypted || cfg.noEncryption || len(cfg.chain) == 0 {
+		return nil
+	}
+	populated, err := m.holdsObjects(ctx)
+	if err != nil {
+		return err
+	}
+	if !populated {
+		// Nothing stored yet, so nothing to strand: an empty repository created
+		// with -no-encryption can still change its mind.
+		return nil
+	}
+	return fmt.Errorf(
+		"cannot encrypt this repository in place: it already holds unencrypted backups, which "+
+			"enabling encryption would neither encrypt nor keep readable at repository format %d. "+
+			"Initialize a new encrypted repository and back up into it instead",
+		core.CiphertextOnlyFormat,
+	)
+}
+
+// holdsObjects reports whether the repository stores backup data, as opposed to
+// only a config marker and key slots. Snapshots may be bundled into packfiles,
+// so both namespaces count.
+func (m *InitManager) holdsObjects(ctx context.Context) (bool, error) {
+	for _, prefix := range []string{"snapshot/", "packs/"} {
+		keys, err := m.store.List(ctx, prefix)
+		if err != nil {
+			return false, fmt.Errorf("inspect repository contents: %w", err)
+		}
+		if len(keys) > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // setupEncryption creates new key slots or adopts existing ones. Returns true

@@ -69,6 +69,10 @@ type unlockConfig struct {
 	kms           kmsConfig
 	prompt        bool
 	noPrompt      bool
+	// legacyPlaintext keeps reading objects an encrypted repository holds in
+	// plaintext, where its recorded format says it has none. See
+	// cloudstic.WithLegacyPlaintext.
+	legacyPlaintext bool
 }
 
 // clientConfig is the resolved configuration for opening a repository client.
@@ -115,8 +119,9 @@ func clientConfigFromFlags(g *globalFlags) clientConfig {
 				region:   g.kmsRegion,
 				endpoint: g.kmsEndpoint,
 			},
-			prompt:   g.prompt,
-			noPrompt: g.noPrompt,
+			prompt:          g.prompt,
+			noPrompt:        g.noPrompt,
+			legacyPlaintext: g.allowLegacyPlaintext,
 		},
 		packfile: !g.disablePackfile,
 		quiet:    g.quiet,

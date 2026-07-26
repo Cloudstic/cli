@@ -34,6 +34,7 @@ func openClient(ctx context.Context, cfg clientConfig, reporterOverride cloudsti
 		cloudstic.WithKeychain(kc),
 		cloudstic.WithReporter(reporter),
 		cloudstic.WithPackfile(cfg.packfile),
+		cloudstic.WithLegacyPlaintext(cfg.unlock.legacyPlaintext),
 	)
 }
 

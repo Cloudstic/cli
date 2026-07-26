@@ -1778,6 +1778,33 @@ cloudstic list -recovery-key "word1 word2 word3 ... word24"
 cloudstic restore -recovery-key "word1 word2 ... word24"
 ```
 
+### Ciphertext-only repositories
+
+In a repository at format 3 or later, every object under `chunk/`, `content/`,
+`filemeta/`, `node/`, or `snapshot/` must be a ciphertext produced with the
+repository's own encryption key. An object that is not is refused with an
+error rather than returned — this closes off a class of attack where someone
+with write access to the backing store (a leaked credential, a compromised
+bucket policy) plants data that a client holding the correct key would
+otherwise read as genuine repository content.
+
+Repositories converted from an unencrypted one by `init -adopt-slots` before
+this check existed may hold genuine plaintext objects from before the
+conversion. If a write has since raised such a repository to format 3, its
+pre-conversion objects would otherwise be refused. Set
+`-allow-legacy-plaintext` (or `CLOUDSTIC_ALLOW_LEGACY_PLAINTEXT=1`) to read
+them:
+
+```bash
+cloudstic restore -allow-legacy-plaintext -password "..." <snapshot-id>
+```
+
+Use it only to recover that data, not as a standing setting — it disables the
+check for the whole repository. `init -adopt-slots` itself now refuses to
+convert an unencrypted repository that already holds backups to encrypted in
+place, since that conversion never encrypts the existing data and leaves it
+exactly as exposed as before.
+
 ### Adding a recovery key later
 
 ```bash
@@ -1861,6 +1888,7 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 | `CLOUDSTIC_KMS_KEY_ARN` | `-kms-key-arn` | AWS KMS key ARN for kms-platform slots |
 | `CLOUDSTIC_KMS_REGION` | `-kms-region` | AWS KMS region |
 | `CLOUDSTIC_KMS_ENDPOINT` | `-kms-endpoint` | Custom AWS KMS endpoint URL |
+| `CLOUDSTIC_ALLOW_LEGACY_PLAINTEXT` | `-allow-legacy-plaintext` | Read unencrypted objects in an encrypted repository (recovery only) |
 | `CLOUDSTIC_PROFILES_FILE` | `-profiles-file` | Path to profiles YAML file |
 | `CLOUDSTIC_TUI_BUBBLETEA` | `-bubbletea` | Use the experimental Bubble Tea TUI renderer (RFC 0012 Phase 2) |
 | `CLOUDSTIC_CONFIG_DIR` | — | Override config directory path |

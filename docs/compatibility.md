@@ -309,6 +309,31 @@ repository format version 2 is newer than this build supports (up to 1):
 upgrade cloudstic to work with this repository
 ```
 
+### v1.16.0 against a repository at the ciphertext-only format
+
+Refused cleanly, on `list`, `check`, and `restore` alike — the same message as
+v1.15.0 meeting format 2, one version later:
+
+```text
+repository format version 3 is newer than this build supports (up to 2):
+upgrade cloudstic to work with this repository
+```
+
+Verified by initializing and backing up into a fresh repository with the
+current build (recorded format 3), then running each command against it with
+the released v1.16.0 binary.
+
+This is the case the version gate exists for even though the *bytes* on disk
+are unchanged: nothing about object encoding differs at format 3, only that
+`EncryptedStore.Get` now refuses a non-ciphertext object under a
+content-addressed prefix instead of returning it. A build that does not know
+that rule exists would happily reintroduce it — reading attacker-planted
+plaintext as genuine content — which is exactly the vulnerability the rule
+closes. Refusing the repository outright, rather than letting an old build
+open it and silently regress the protection, is the same choice the framing
+gate made for a different reason: "a newer build has written here" is real
+signal that the fleet has diverged and the older machine needs to catch up.
+
 ### v1.15.0 against a compression frame
 
 It never meets one. This was verified rather than assumed, because the frame is
@@ -382,6 +407,7 @@ listing shows the neutral identity.
 |---------|------------------------|
 | `v1.14.0` | Plaintext `index/packs`, footerless packfiles, and `index/latest` stored inside a packfile. Predates RFC 0018 footers and pack index sealing. |
 | `v1.15.0` | Format 1 with self-describing packfile footers, and the fixes that make an unreadable index fail loudly rather than read as empty. The last release that does **not** produce a sealed pack index. |
+| `v1.16.0` | Format 2 with a sealed, sharded pack index. The last release before the ciphertext-only rule (format 3, issue #362): its `EncryptedStore.Get` returns any object that fails to decrypt as plaintext, unconditionally. |
 
 ## What is not covered
 

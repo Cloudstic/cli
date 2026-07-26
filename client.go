@@ -298,6 +298,25 @@ func WithPackfile(enable bool) ClientOption {
 	return func(c *Client) { c.enablePackfile = enable }
 }
 
+// WithLegacyPlaintext keeps reading unencrypted objects under content-addressed
+// prefixes in a repository whose recorded format is at or above
+// core.CiphertextOnlyFormat, where they would otherwise be refused.
+//
+// Repositories below that format read them anyway — the fallback is how a
+// repository converted from an unencrypted one stays readable, and backward
+// compatibility is permanent. This option exists for the one case the format
+// cannot express: such a repository was converted by an earlier release and has
+// since been stamped at the current format by a write, stranding the objects it
+// held before the conversion.
+//
+// It disables the check that a content object came from this repository's
+// encryption key, so anyone who can write to the backing store can have their
+// bytes returned as repository content. Turn it on to recover pre-conversion
+// data, not as a standing setting.
+func WithLegacyPlaintext(allow bool) ClientOption {
+	return func(c *Client) { c.legacyPlaintext = allow }
+}
+
 // Client is the high-level interface for using Cloudstic as a library.
 type Client struct {
 	store store.ObjectStore
@@ -315,7 +334,11 @@ type Client struct {
 	hmacKey        []byte
 	keychain       keychain.Chain
 	enablePackfile bool
-	reporter       ui.Reporter
+	// legacyPlaintext overrides the format-derived ciphertext-only policy, for
+	// a repository holding plaintext objects its recorded format says it cannot.
+	// See WithLegacyPlaintext.
+	legacyPlaintext bool
+	reporter        ui.Reporter
 }
 
 func NewClient(ctx context.Context, base store.ObjectStore, opts ...ClientOption) (*Client, error) {
@@ -384,7 +407,12 @@ func NewClient(ctx context.Context, base store.ObjectStore, opts ...ClientOption
 	storedMeter := store.NewMeteredStore(inner)
 	inner = storedMeter
 	if len(c.encryptionKey) > 0 {
-		inner = store.NewEncryptedStore(storedMeter, c.encryptionKey)
+		// The encryption layer's plaintext policy is decided here, from the
+		// format on disk, and passed in. A store cannot work out on its own
+		// whether unauthenticated bytes are legacy data or someone else's
+		// writes; the repository format is what distinguishes them.
+		inner = store.NewEncryptedStore(storedMeter, c.encryptionKey,
+			store.WithLegacyPlaintext(c.legacyPlaintextAllowed(cfg)))
 	}
 
 	// Seed the in-process format from disk, then let the compression layer read
@@ -399,6 +427,26 @@ func NewClient(ctx context.Context, base store.ObjectStore, opts ...ClientOption
 	c.store = store.NewCompressedStore(inner, store.WithFrameGate(c.framingEnabled))
 	c.storedMeter = storedMeter
 	return c, nil
+}
+
+// legacyPlaintextAllowed reports whether the encryption layer may return an
+// object under a content-addressed prefix that is not a ciphertext.
+//
+// Only a repository recording a format below core.CiphertextOnlyFormat may:
+// one converted from an unencrypted repository holds genuine plaintext
+// objects, and those must stay readable forever. At or above that format the
+// repository guarantees there are none, so plaintext is someone else's writing
+// and is refused — unless the caller has explicitly asked for the fallback
+// (WithLegacyPlaintext).
+//
+// A repository with no config at all gets the strict policy. It has no recorded
+// format to earn the fallback with, and a caller reaching one with an explicit
+// key is writing a new repository, not reading a legacy one.
+func (c *Client) legacyPlaintextAllowed(cfg *RepoConfig) bool {
+	if c.legacyPlaintext {
+		return true
+	}
+	return cfg != nil && cfg.Version < core.CiphertextOnlyFormat
 }
 
 // framingEnabled reports whether writes should be framed at the repository's

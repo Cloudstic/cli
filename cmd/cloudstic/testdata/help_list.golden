@@ -31,6 +31,7 @@ GLOBAL OPTIONS (also settable via environment variables)
     -kms-region <region>           AWS KMS region (defaults to us-east-1)  [env: CLOUDSTIC_KMS_REGION]
     -kms-endpoint <url>            Custom AWS KMS endpoint URL  [env: CLOUDSTIC_KMS_ENDPOINT]
     -prompt                        Prompt for password interactively (use alongside --encryption-key or --kms-key-arn to add a password layer)
+    -allow-legacy-plaintext        Read unencrypted objects in an encrypted repository (recovery only; accepts data not written with its key)  [env: CLOUDSTIC_ALLOW_LEGACY_PLAINTEXT]
     -verbose                       Log detailed file-level operations
     -quiet                         Suppress progress bars (keeps final summary)
     -json                          Write command result as JSON to stdout

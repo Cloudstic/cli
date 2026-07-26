@@ -98,6 +98,7 @@ cleanup() {
     rm -rf "$DATA_TEMPLATE"
     rm -rf "$DATA_DIR"
     rm -rf "$REPO_DIR"
+    rm -rf "$RESTORE_DIR"
     
     if [ "$STORE" == "s3" ]; then
         echo "Cleaning up S3 benchmark prefixes..."
@@ -221,6 +222,16 @@ format_size_kb() {
 # Set BENCH_REPO_DIR (local) or BENCH_S3_PREFIX (s3://bucket/prefix/) to enable repo size tracking.
 BENCH_REPO_DIR=""
 BENCH_S3_PREFIX=""
+
+# Scratch directory for restore targets. Restore is measured on a fresh, empty
+# directory every time, and the result is discarded before the next step so a
+# partially-restored tree can never make a later step look faster.
+RESTORE_DIR=$(mktemp -d -t benchmark-restore-XXXXXX)
+
+fresh_restore_target() {
+    rm -rf "${RESTORE_DIR:?}"/*
+    echo "$RESTORE_DIR/out"
+}
 
 get_repo_size_kb() {
     if [ -n "$BENCH_REPO_DIR" ] && [ -d "$BENCH_REPO_DIR" ]; then
@@ -356,7 +367,19 @@ benchmark_cloudstic() {
         cp "$DATA_DIR/zero.dat" "$DATA_DIR/zero_copy.dat"
         run_bench "Deduplicated Backup" $CLOUDSTIC_BIN backup $store_flags $source_flags -quiet $DEBUG_FLAG
     fi
-    
+
+    # Restore is the other half of a backup tool and behaves nothing like
+    # backup: it is read-dominated and, on a remote store, bound by how many
+    # fetches can be kept in flight rather than by bandwidth. Measuring only
+    # backup hides a whole class of regression.
+    run_bench "Full Restore" $CLOUDSTIC_BIN restore $store_flags \
+        -output "$(fresh_restore_target)" -format dir -quiet $DEBUG_FLAG
+    # Same restore with the per-file content-hash check off, which isolates
+    # what verification costs from what fetching and writing cost.
+    run_bench "Full Restore (-no-verify)" $CLOUDSTIC_BIN restore $store_flags \
+        -output "$(fresh_restore_target)" -format dir -no-verify -quiet $DEBUG_FLAG
+    rm -rf "${RESTORE_DIR:?}"/*
+
     print_repo_size
     echo ""
 }
@@ -423,7 +446,11 @@ benchmark_restic() {
         cp "$DATA_DIR/zero.dat" "$DATA_DIR/zero_copy.dat"
         run_bench "Deduplicated Backup" restic backup -r "$repo_arg" "$src"
     fi
-    
+
+    run_bench "Full Restore" restic restore latest -r "$repo_arg" \
+        --target "$(fresh_restore_target)"
+    rm -rf "${RESTORE_DIR:?}"/*
+
     print_repo_size
     echo ""
 }

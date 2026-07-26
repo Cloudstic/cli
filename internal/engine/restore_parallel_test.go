@@ -35,7 +35,7 @@ func TestRestoreManager_WriteChunks_PreservesOrder(t *testing.T) {
 	}
 
 	var got bytes.Buffer
-	if err := rm.writeChunks(ctx, &got, refs); err != nil {
+	if err := rm.writeChunks(ctx, &got, refs, 100); err != nil {
 		t.Fatalf("writeChunks: %v", err)
 	}
 	if !bytes.Equal(got.Bytes(), want.Bytes()) {
@@ -62,7 +62,7 @@ func TestRestoreManager_WriteChunks_FetchesConcurrently(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := rm.writeChunks(ctx, &buf, refs); err != nil {
+	if err := rm.writeChunks(ctx, &buf, refs, 1); err != nil {
 		t.Fatalf("writeChunks: %v", err)
 	}
 

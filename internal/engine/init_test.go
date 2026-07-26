@@ -492,10 +492,10 @@ func TestInitManager_AdoptAddsNewSlots(t *testing.T) {
 
 // Converting an unencrypted repository to encrypted in place never encrypts
 // the data already there: it leaves genuine plaintext objects under
-// content-addressed prefixes and only relabels config.encrypted. At
-// core.CiphertextOnlyFormat those objects would be refused as forgeries the
-// moment a later write stamped the current format, so adoption must refuse
-// this conversion rather than produce a repository doomed to fail that way.
+// content-addressed prefixes and only relabels config.encrypted. Those objects
+// would then be indistinguishable from a forgery to a client holding the
+// repository's key, so adoption must refuse this conversion rather than
+// produce a repository that reads that way.
 func TestInitManager_AdoptRefusesEncryptingPopulatedRepo(t *testing.T) {
 	s := NewMockStore()
 	ctx := context.Background()

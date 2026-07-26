@@ -8,16 +8,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/pkg/source"
 	"github.com/cloudstic/cli/pkg/store"
 )
 
-// An encrypted repository at core.CiphertextOnlyFormat contains no plaintext
-// under a content-addressed prefix, so anything that is not a ciphertext there
-// was written by somebody other than a holder of the key. These tests cover the
-// gate that refuses it, and the fallback that keeps older repositories — which
-// may hold real plaintext objects — readable.
+// An encrypted repository contains no plaintext under a content-addressed
+// prefix, so anything that is not a ciphertext there was written by somebody
+// other than a holder of the key. These tests cover the gate that refuses it.
 
 // forgedObject is what an attacker with write access to the backing store can
 // produce without the encryption key: valid-looking repository content.
@@ -89,13 +86,8 @@ func TestClient_RefusesPlaintextContentObject(t *testing.T) {
 	if !errors.Is(err, store.ErrPlaintextObject) {
 		t.Fatalf("error = %v, want store.ErrPlaintextObject", err)
 	}
-	// The message has to tell the user what to do about it, since the two
-	// causes — tampering and a repository converted from an unencrypted one —
-	// call for opposite responses.
-	for _, want := range []string{"snapshot/forged", "CLOUDSTIC_ALLOW_LEGACY_PLAINTEXT"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error should mention %q, got: %v", want, err)
-		}
+	if !strings.Contains(err.Error(), "snapshot/forged") {
+		t.Errorf("error should mention the offending key, got: %v", err)
 	}
 }
 
@@ -134,49 +126,6 @@ func TestClient_RestoreRefusesSubstitutedChunk(t *testing.T) {
 	restored, readErr := os.ReadFile(filepath.Join(outDir, "doc.txt"))
 	if readErr == nil && strings.Contains(string(restored), "attacker-supplied") {
 		t.Errorf("restored file contains the forged content: %q", restored)
-	}
-}
-
-// Backward compatibility is permanent. A repository recording a format below
-// the gate may hold genuine plaintext objects — one converted from an
-// unencrypted repository by an earlier release does — and must still read them.
-func TestClient_ReadsPlaintextBelowCiphertextOnlyFormat(t *testing.T) {
-	ctx := context.Background()
-	_, base := newPlaintextTestRepo(t)
-
-	if err := base.Put(ctx, "snapshot/legacy", forgedObject); err != nil {
-		t.Fatal(err)
-	}
-	rewindConfigVersion(t, base, core.CiphertextOnlyFormat-1)
-
-	client := newPlaintextTestClient(t, base)
-	got, err := client.Cat(ctx, "snapshot/legacy")
-	if err != nil {
-		t.Fatalf("a repository below format %d must still read plaintext objects: %v",
-			core.CiphertextOnlyFormat, err)
-	}
-	if string(got[0].Data) != string(forgedObject) {
-		t.Errorf("got %q, want %q", got[0].Data, forgedObject)
-	}
-}
-
-// The escape valve for the case the format cannot express: a converted
-// repository that a later write has already stamped at the current format.
-func TestClient_LegacyPlaintextOptionRestoresTheFallback(t *testing.T) {
-	ctx := context.Background()
-	_, base := newPlaintextTestRepo(t)
-
-	if err := base.Put(ctx, "snapshot/legacy", forgedObject); err != nil {
-		t.Fatal(err)
-	}
-
-	client := newPlaintextTestClient(t, base, WithLegacyPlaintext(true))
-	got, err := client.Cat(ctx, "snapshot/legacy")
-	if err != nil {
-		t.Fatalf("WithLegacyPlaintext should restore the fallback: %v", err)
-	}
-	if string(got[0].Data) != string(forgedObject) {
-		t.Errorf("got %q, want %q", got[0].Data, forgedObject)
 	}
 }
 

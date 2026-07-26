@@ -108,25 +108,9 @@ func TestEncryptedStore_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestEncryptedStore_LegacyPlaintext(t *testing.T) {
-	ctx := context.Background()
-	inner := newMemStore()
-	key := testKey(t)
-
-	legacy := []byte(`{"root":"old_unencrypted"}`)
-	inner.data["snapshot/old"] = legacy
-
-	store := NewEncryptedStore(inner, key, WithLegacyPlaintext(true))
-	got, err := store.Get(ctx, "snapshot/old")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(got, legacy) {
-		t.Fatal("legacy plaintext should be returned as-is")
-	}
-}
-
-func TestEncryptedStore_LegacyGzip(t *testing.T) {
+// A gzip-framed legacy object looks nothing like a ciphertext (no version
+// byte), so it is refused the same as any other plaintext content.
+func TestEncryptedStore_RefusesLegacyGzip(t *testing.T) {
 	ctx := context.Background()
 	inner := newMemStore()
 	key := testKey(t)
@@ -134,13 +118,9 @@ func TestEncryptedStore_LegacyGzip(t *testing.T) {
 	gzipData := []byte{0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00}
 	inner.data["chunk/abc"] = gzipData
 
-	store := NewEncryptedStore(inner, key, WithLegacyPlaintext(true))
-	got, err := store.Get(ctx, "chunk/abc")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(got, gzipData) {
-		t.Fatal("legacy gzip data should be returned as-is")
+	store := NewEncryptedStore(inner, key)
+	if _, err := store.Get(ctx, "chunk/abc"); !errors.Is(err, ErrPlaintextObject) {
+		t.Fatalf("error = %v, want ErrPlaintextObject", err)
 	}
 }
 
@@ -188,7 +168,7 @@ func TestEncryptedStore_RefusalIsScopedToContent(t *testing.T) {
 
 	plain := map[string][]byte{
 		"keys/platform-default": []byte(`{"slot_type":"platform"}`),
-		"config":                []byte(`{"version":3,"encrypted":true}`),
+		"config":                []byte(`{"version":2,"encrypted":true}`),
 		"index/packs":           []byte(`{"entries":{}}`),
 	}
 	for key, data := range plain {

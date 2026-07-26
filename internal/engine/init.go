@@ -143,15 +143,15 @@ func (m *InitManager) Run(ctx context.Context, opts ...InitOption) (*InitResult,
 //
 // Adoption used to allow it, and what it produced was a repository recording
 // `encrypted: true` whose existing objects were all plaintext — readable only
-// because the encryption layer returned anything that was not a ciphertext
-// as-is. That fallback is exactly the hole an attacker with write access to the
-// backing store walks through, and from core.CiphertextOnlyFormat a repository
-// no longer has it: the objects this conversion leaves behind would be refused
-// as forgeries the moment the next write stamped the current format.
+// because EncryptedStore returned anything that was not a ciphertext as-is.
+// That fallback is exactly the hole an attacker with write access to the
+// backing store walks through: a client holding the correct key would accept
+// those objects, and any forged object indistinguishable from them, as
+// genuine repository content.
 //
-// Converting in place also never encrypted anything already stored, so refusing
-// costs no confidentiality. Backing the data up into a repository that was
-// created encrypted does, and that is what the message points at.
+// Converting in place also never encrypted anything already stored, so
+// refusing costs no confidentiality. Backing the data up into a repository
+// that was created encrypted does, and that is what the message points at.
 func (m *InitManager) checkEncryptionInPlace(ctx context.Context, existing core.RepoConfig, cfg initConfig) error {
 	if existing.Encrypted || cfg.noEncryption || len(cfg.chain) == 0 {
 		return nil
@@ -166,10 +166,9 @@ func (m *InitManager) checkEncryptionInPlace(ctx context.Context, existing core.
 		return nil
 	}
 	return fmt.Errorf(
-		"cannot encrypt this repository in place: it already holds unencrypted backups, which "+
-			"enabling encryption would neither encrypt nor keep readable at repository format %d. "+
+		"cannot encrypt this repository in place: it already holds unencrypted backups, which " +
+			"enabling encryption would neither encrypt nor keep readable as repository content. " +
 			"Initialize a new encrypted repository and back up into it instead",
-		core.CiphertextOnlyFormat,
 	)
 }
 

@@ -14,18 +14,17 @@ engine does not need to be aware of it.
   encrypted with a unique key.
 - **Key loss prevention (SaaS)**: the platform always holds a recovery path via
   the platform key slot.
-- **Write-access forgery**: at `core.CiphertextOnlyFormat` and above, an
-  attacker with write access to the backing store (a leaked S3/B2 credential, a
-  hostile SFTP host, a compromised bucket policy) cannot substitute content a
-  client holding the encryption key will accept. Objects under `chunk/`,
-  `content/`, `filemeta/`, `node/`, and `snapshot/` must be ciphertexts
-  produced with that key or they are refused — see "Ciphertext Format" below
-  and issue #362. This is one piece of a larger authentication effort tracked
-  in issue #361; still out of scope as of this format are an unkeyed metadata
-  object namespace (`filemeta/`/`node/`/`snapshot/` keys are plain SHA-256, so
-  an attacker who also has the plaintext structure being forged can compute a
-  valid key for it), an unauthenticated `config`, and snapshot rollback via
-  `index/latest` replay.
+- **Write-access forgery**: an attacker with write access to the backing store
+  (a leaked S3/B2 credential, a hostile SFTP host, a compromised bucket policy)
+  cannot substitute content a client holding the encryption key will accept.
+  Objects under `chunk/`, `content/`, `filemeta/`, `node/`, and `snapshot/`
+  must be ciphertexts produced with that key or they are refused — see
+  "Ciphertext Format" below and issue #362. This is one piece of a larger
+  authentication effort tracked in issue #361; still out of scope are an
+  unkeyed metadata object namespace (`filemeta/`/`node/`/`snapshot/` keys are
+  plain SHA-256, so an attacker who also has the plaintext structure being
+  forged can compute a valid key for it), an unauthenticated `config`, and
+  snapshot rollback via `index/latest` replay.
 
 ### What is not confidential
 
@@ -71,23 +70,20 @@ version (1 byte) || nonce (12 bytes) || ciphertext || GCM tag (16 bytes)
 - Overhead: 29 bytes per object (negligible for chunks at 512 KB–8 MB,
   small for metadata objects)
 
-On read, if the first byte is not a recognised version, the data is returned
-as-is (plaintext) — but only in a repository recording a format below
-`core.CiphertextOnlyFormat`. This is what let gradual migration from
-unencrypted to encrypted storage work, and legacy plaintext (which starts with
-either gzip magic bytes `0x1f 0x8b` or JSON `0x7b`, neither of which collides
-with a valid version byte) still reads that way in a repository below the
-gate.
+On read, if the first byte is not a recognised version, `EncryptedStore.Get`
+refuses a non-ciphertext object under a content-addressed prefix (`chunk/`,
+`content/`, `filemeta/`, `node/`, `snapshot/`) instead of returning it. The
+passthrough this replaced — legacy plaintext returned as-is, documented as a
+gradual-migration affordance — was the entry point for a forgery: anyone with
+write access to the backing store, such as a leaked credential or a
+compromised bucket policy, could plant an object under one of those prefixes,
+and a client holding the *correct* encryption key would read it as genuine
+repository content, no key and no tampering with `config` or `keys/` required.
+See "Threat Model" above and issue #362.
 
-At or above `core.CiphertextOnlyFormat`, `EncryptedStore.Get` refuses a
-non-ciphertext object under a content-addressed prefix (`chunk/`, `content/`,
-`filemeta/`, `node/`, `snapshot/`) instead of returning it. The passthrough was
-also the entry point for a forgery: anyone with write access to the backing
-store — a leaked credential, a compromised bucket policy — could plant an
-object under one of those prefixes, and a client holding the *correct*
-encryption key would read it as genuine repository content, no key and no
-tampering with `config` or `keys/` required. See "Threat Model" below and
-issue #362.
+The `keys/` prefix keeps its own unconditional passthrough — key slots are
+deliberately plaintext, and the master key cannot be resolved without reading
+them first.
 
 ## Key Hierarchy
 

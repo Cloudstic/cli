@@ -18,3 +18,4 @@
 - [RFC 0016: Secure Auth Material Storage](0016-secure-auth-material-storage.md)
 - [RFC 0017: Snapshot Copy Between Repositories](0017-snapshot-copy-between-repositories.md)
 - [RFC 0018: Self-Describing Packfiles](0018-self-describing-packfiles.md)
+- [RFC 0019: Repository File Search](0019-repository-file-search.md)

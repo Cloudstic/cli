@@ -192,6 +192,18 @@ func sortFileVersions(versions []FileVersion) {
 		if versions[i].LastSeen != versions[j].LastSeen {
 			return versions[i].LastSeen > versions[j].LastSeen
 		}
+		// LastSeen is an ISO8601 timestamp truncated to the second, so two
+		// snapshots taken within the same second — routine in a fast backup
+		// loop or a test — compare equal here. Snapshots[0].Seq (the version's
+		// newest holding snapshot; sortedSnapshotRefs already put it first) is
+		// a monotonic counter with no such resolution limit, and is what
+		// actually decides which version is newer in that case. Falling
+		// through to Mtime below without this would let two versions edited
+		// in the same second get ordered by their content hash instead —
+		// deterministic, but unrelated to recency.
+		if si, sj := lastSnapshotSeq(versions[i]), lastSnapshotSeq(versions[j]); si != sj {
+			return si > sj
+		}
 		if versions[i].Mtime != versions[j].Mtime {
 			return versions[i].Mtime > versions[j].Mtime
 		}
@@ -200,4 +212,13 @@ func sortFileVersions(versions []FileVersion) {
 		}
 		return versions[i].Ref < versions[j].Ref
 	})
+}
+
+// lastSnapshotSeq returns the sequence number of the newest snapshot holding
+// v, or 0 if v is (unexpectedly) held by none.
+func lastSnapshotSeq(v FileVersion) int {
+	if len(v.Snapshots) == 0 {
+		return 0
+	}
+	return v.Snapshots[0].Seq
 }

@@ -250,6 +250,40 @@ func TestFind_EditedFileYieldsOrderedVersions(t *testing.T) {
 	}
 }
 
+// TestFind_EditedFileWithinSameSecondStaysOrderedBySeq guards against a real
+// regression: three snapshots taken within the same wall-clock second (routine
+// for a fast backup loop, and reproduced by e2e/feature_find_test.go on a quick
+// CI runner) all carry an identical Created timestamp. If the edited file's
+// Mtime also ties — plausible at one-second resolution — sortFileVersions had
+// nothing left to fall back on but the filemeta ref's hash, which sorts newest
+// and oldest by coincidence rather than by recency. Snapshots[0].Seq (set by
+// sortedSnapshotRefs) doesn't have that resolution problem and must decide it
+// instead.
+func TestFind_EditedFileWithinSameSecondStaysOrderedBySeq(t *testing.T) {
+	r := newFindRepo(t)
+	src := localSource("./docs")
+	docs := folder("d1", "Documents")
+	vault := file("f1", "vault.kdbx", "d1").withMtime(1_700_000_000)
+
+	const sameSecond = "2026-01-01T00:00:00Z"
+	r.snapshot(sameSecond, src, docs, vault.withSize(100))
+	r.snapshot(sameSecond, src, docs, vault.withSize(100))
+	r.snapshot(sameSecond, src, docs, vault.withSize(200).withContent("v2"))
+
+	result := r.runFind(WithFindPattern("vault.kdbx"))
+
+	versions := result.Matches[0].Versions
+	if len(versions) != 2 {
+		t.Fatalf("want 2 versions, got %d: %s", len(versions), renderMatches(result.Matches))
+	}
+	if versions[0].Size != 200 {
+		t.Errorf("newest version size = %d, want 200 (the edit, from the 3rd snapshot)", versions[0].Size)
+	}
+	if got := len(versions[1].Snapshots); got != 2 {
+		t.Errorf("the unchanged version spans 2 snapshots, got %d", got)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Axis 3: several copies of the same content inside one snapshot
 // ---------------------------------------------------------------------------

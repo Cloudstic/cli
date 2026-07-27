@@ -40,6 +40,16 @@ func TestCLI_Feature_CompletionRuntime_BackupFlags(t *testing.T) {
 	})
 }
 
+func TestCLI_Feature_CompletionRuntime_GroupedSubcommandFlags(t *testing.T) {
+	runCompletionShellMatrix(t, completionScenario{
+		name:  "grouped_subcommand_flags",
+		words: []string{"cloudstic", "key", "passwd", "-"},
+		assert: func(t *testing.T, out string) {
+			assertCompletionContains(t, out, "-new-password")
+		},
+	})
+}
+
 func TestCLI_Feature_CompletionRuntime_ProfileValues(t *testing.T) {
 	runCompletionShellMatrix(t, completionScenario{
 		name:  "profile_values",
@@ -153,72 +163,73 @@ complete --do-complete `+shellQuote(line)+`
 `)
 }
 
+// runZsh drives a real interactive zsh through a pseudo-terminal and captures
+// what pressing TAB actually offers.
+//
+// Calling _cloudstic directly with stubbed _describe/_arguments would be
+// simpler, but it would only assert which specification strings the script
+// passes along, not that zsh's completion system does anything with them. That
+// blind spot hid a bug in which every subcommand offered nothing at all:
+// _arguments completes relative to the command word, and the script never
+// re-based $words on the subcommand before calling it.
 func (rt completionRuntime) runZsh(t *testing.T, words []string) string {
 	t.Helper()
-	scriptBody := `_cloudstic`
-	switch {
-	case len(words) >= 2 && words[1] == "":
-		scriptBody = `
-_describe() {
-    local arrname="${@: -1}"
-    eval "print -l -- \${${arrname}[@]}"
-}
-_arguments() { return 0 }
-_cloudstic
-`
-	case len(words) >= 3 && words[1] == "backup" && words[2] == "":
-		scriptBody = `
-_describe() { return 0 }
-_arguments() { print -l -- "$@" }
-_cloudstic
-`
-	case len(words) >= 3 && words[1] == "backup" && words[2] == "-":
-		scriptBody = `
-_describe() { return 0 }
-_arguments() { print -l -- "$@" }
-_cloudstic
-`
-	case len(words) >= 4 && words[1] == "backup" && words[2] == "-profile" && words[3] == "":
-		scriptBody = `
-PREFIX=""
-_cloudstic_query profile-names
-`
-	case len(words) >= 3 && words[1] == "-store" && words[2] == "":
-		scriptBody = `
-compadd() {
-    local arg
-    for arg in "$@"; do
-        case "$arg" in
-            -*) ;;
-            *) print -r -- "$arg" ;;
-        esac
-    done
-}
-_cloudstic_store_prefixes
-`
-	}
-	return runShell(t, "zsh", append(append([]string{}, rt.env...), zshHomeEnv(t)...), rt.pathPrelude("zsh")+`
+
+	home := t.TempDir()
+	rc := rt.pathPrelude("zsh") + `
+export CLOUDSTIC_PROFILES_FILE=` + shellQuote(envValue(rt.env, "CLOUDSTIC_PROFILES_FILE")) + `
 autoload -Uz compinit
-compinit -i -d "$HOME/.zcompdump"
-source <("`+rt.bin+`" completion zsh)
-words=(`+zshWords(words)+`)
-CURRENT=`+strconv.Itoa(len(words))+`
-`+scriptBody+`
+compinit -u -d ` + shellQuote(filepath.Join(home, ".zcompdump")) + `
+source <(` + shellQuote(rt.bin) + ` completion zsh)
+PS1=';;;'
+`
+	if err := os.WriteFile(filepath.Join(home, ".zshrc"), []byte(rc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two TABs: the first inserts any unambiguous common prefix, the second
+	// lists whatever candidates remain.
+	line := strings.Join(words, " ") + "\t\t"
+	return runShell(t, "zsh", rt.env, `
+emulate -L zsh
+zmodload zsh/zpty
+
+# Read until the pty has been quiet for a short while: completion runs
+# asynchronously inside the child shell, so there is no output marker to wait
+# for.
+drain() {
+    local chunk all=
+    local -i idle=0
+    while (( idle < 40 )); do
+        if zpty -rt comp chunk 2>/dev/null; then
+            all+=$chunk
+            idle=0
+        else
+            (( idle++ ))
+            sleep 0.05
+        fi
+    done
+    print -rn -- "$all"
+}
+
+zpty -b comp `+shellQuote("HOME="+home+" ZDOTDIR="+home+" zsh -i")+`
+sleep 2
+drain >/dev/null
+zpty -w -n comp `+shellQuote(line)+`
+sleep 1
+drain
+zpty -d comp
 `)
 }
 
-func zshHomeEnv(t *testing.T) []string {
-	t.Helper()
-	tmp := t.TempDir()
-	return []string{"HOME=" + tmp, "ZDOTDIR=" + tmp}
-}
-
-func zshWords(words []string) string {
-	var quoted []string
-	for _, word := range words {
-		quoted = append(quoted, shellQuote(word))
+// envValue returns the value of key in a KEY=VALUE environment slice.
+func envValue(env []string, key string) string {
+	for _, kv := range env {
+		if value, ok := strings.CutPrefix(kv, key+"="); ok {
+			return value
+		}
 	}
-	return strings.Join(quoted, " ")
+	return ""
 }
 
 func shellQuote(s string) string {

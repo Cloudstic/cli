@@ -123,7 +123,12 @@ func TestCompletionZsh(t *testing.T) {
 		"-store-ref[Existing store reference to attach to generated profiles]",
 		// Value completions (source type list still present)
 		"_cloudstic_source_prefixes",
-		"(bash zsh fish)",
+		"':shell:_cloudstic_shells'",
+		// Each subcommand arm re-bases $words before calling _arguments, which
+		// otherwise counts the subcommand name as an undeclared positional and
+		// offers nothing at all.
+		`words=("${(@)words[i,-1]}"); (( CURRENT -= i - 1 ))`,
+		`words=("${(@)words[gi,-1]}"); (( CURRENT -= gi - 1 ))`,
 	} {
 		if !strings.Contains(out, marker) {
 			t.Errorf("zsh completion missing expected marker: %q", marker)

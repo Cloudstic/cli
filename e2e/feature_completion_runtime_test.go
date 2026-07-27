@@ -179,7 +179,7 @@ func (rt completionRuntime) runZsh(t *testing.T, words []string) string {
 	rc := rt.pathPrelude("zsh") + `
 export CLOUDSTIC_PROFILES_FILE=` + shellQuote(envValue(rt.env, "CLOUDSTIC_PROFILES_FILE")) + `
 autoload -Uz compinit
-compinit -u -d ` + shellQuote(filepath.Join(home, ".zcompdump")) + `
+compinit -C -d ` + shellQuote(filepath.Join(home, ".zcompdump")) + `
 source <(` + shellQuote(rt.bin) + ` completion zsh)
 PS1=';;;'
 `
@@ -212,7 +212,10 @@ drain() {
     print -rn -- "$all"
 }
 
-zpty -b comp `+shellQuote("HOME="+home+" ZDOTDIR="+home+" zsh -i")+`
+# Disable global startup files so the host's /etc/zshrc cannot initialize
+# completion before our isolated test configuration. In particular, CI images
+# may run compinit interactively and abort while waiting for a security prompt.
+zpty -b comp `+shellQuote("HOME="+home+" ZDOTDIR="+home+" zsh -d -i")+`
 sleep 2
 drain >/dev/null
 zpty -w -n comp `+shellQuote(line)+`

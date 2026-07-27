@@ -360,11 +360,14 @@ func checkOrInitStore(r *runner, ctx context.Context, cfg *cloudstic.ProfilesCon
 	cfgData, err := raw.Get(ctx, "config")
 	if err == nil && cfgData != nil {
 		_, _ = fmt.Fprintln(r.out, "Store is already initialized and accessible.")
-		repoCfg, cfgErr := cloudstic.LoadRepoConfig(ctx, raw)
+		// InspectRepo, not LoadRepoConfig: an encrypted repository's marker is
+		// sealed, and this runs before any credentials have been verified —
+		// precisely to decide whether they need to be.
+		repoStatus, cfgErr := cloudstic.InspectRepo(ctx, raw)
 		if cfgErr != nil {
 			return fmt.Errorf("read repository config: %w", cfgErr)
 		}
-		if repoCfg != nil && repoCfg.Encrypted {
+		if repoStatus.Encrypted {
 			_, _ = fmt.Fprintln(r.out, "Repository is encrypted; verifying configured credentials...")
 			if err := verifyStoreEncryptionCredentials(ctx, resolved.unlock, raw); err != nil {
 				return fmt.Errorf("store is initialized, but configured encryption credentials are invalid: %w", err)

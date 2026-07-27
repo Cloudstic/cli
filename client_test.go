@@ -79,7 +79,7 @@ func (s *mockStore) Flush(_ context.Context) error {
 
 func TestLoadRepoConfig_Uninitialized(t *testing.T) {
 	ctx := context.Background()
-	cfg, err := LoadRepoConfig(ctx, newMockStore())
+	cfg, err := LoadRepoConfig(ctx, newMockStore(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestLoadRepoConfig_Unencrypted(t *testing.T) {
 	if _, err := InitRepo(ctx, s, WithInitNoEncryption()); err != nil {
 		t.Fatalf("InitRepo: %v", err)
 	}
-	cfg, err := LoadRepoConfig(ctx, s)
+	cfg, err := LoadRepoConfig(ctx, s, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -107,20 +107,32 @@ func TestLoadRepoConfig_Unencrypted(t *testing.T) {
 	}
 }
 
+// An encrypted repository's marker is sealed, so its contents are not readable
+// without the key — and the fact that it is encrypted still is, which is what
+// callers deciding whether to prompt for credentials rely on.
 func TestLoadRepoConfig_Encrypted(t *testing.T) {
 	ctx := context.Background()
 	s := newMockStore()
 	if _, err := InitRepo(ctx, s, WithInitCredentials(keychain.Chain{keychain.WithPassword("test-pass")})); err != nil {
 		t.Fatalf("InitRepo: %v", err)
 	}
-	cfg, err := LoadRepoConfig(ctx, s)
+
+	status, err := InspectRepo(ctx, s)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("InspectRepo: %v", err)
 	}
-	if cfg == nil {
-		t.Fatal("expected config, got nil")
-	} else if !cfg.Encrypted {
-		t.Error("expected encrypted config")
+	if !status.Initialized {
+		t.Error("expected an initialized repository")
+	}
+	if !status.Encrypted {
+		t.Error("expected an encrypted repository")
+	}
+	if !status.Sealed {
+		t.Error("expected the marker to be sealed")
+	}
+
+	if _, err := LoadRepoConfig(ctx, s, nil); err == nil {
+		t.Error("expected reading a sealed marker without the key to fail")
 	}
 }
 
@@ -128,7 +140,7 @@ func TestLoadRepoConfig_Malformed(t *testing.T) {
 	ctx := context.Background()
 	s := newMockStore()
 	_ = s.Put(ctx, "config", []byte("not json"))
-	_, err := LoadRepoConfig(ctx, s)
+	_, err := LoadRepoConfig(ctx, s, nil)
 	if err == nil {
 		t.Error("expected error for malformed config")
 	}

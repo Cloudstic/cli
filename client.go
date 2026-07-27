@@ -2,7 +2,6 @@ package cloudstic
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +10,7 @@ import (
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/engine"
 	"github.com/cloudstic/cli/internal/logger"
+	"github.com/cloudstic/cli/internal/repoconfig"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/crypto"
 	"github.com/cloudstic/cli/pkg/keychain"
@@ -66,7 +66,16 @@ func InitRepo(ctx context.Context, rawStore store.ObjectStore, opts ...InitOptio
 // because it writes content whose encoding an older build would misread and
 // which cannot be rewritten once stored. See core.FramedCompressionFormat and
 // docs/compatibility.md.
-func UpgradeRepoFormat(ctx context.Context, rawStore store.ObjectStore, to int) error {
+//
+// encryptionKey is required for an encrypted repository, whose marker is
+// sealed: the version lives inside the sealed blob, so raising it means
+// unsealing and resealing. Pass nil for an unencrypted repository.
+func UpgradeRepoFormat(
+	ctx context.Context,
+	rawStore store.ObjectStore,
+	to int,
+	encryptionKey []byte,
+) error {
 	if to > core.MaxSupportedRepoFormat {
 		return fmt.Errorf(
 			"refusing to stamp repository format %d: this build supports up to %d",
@@ -74,7 +83,7 @@ func UpgradeRepoFormat(ctx context.Context, rawStore store.ObjectStore, to int) 
 		)
 	}
 
-	cfg, err := LoadRepoConfig(ctx, rawStore)
+	cfg, err := LoadRepoConfig(ctx, rawStore, encryptionKey)
 	if err != nil {
 		return err
 	}
@@ -86,9 +95,21 @@ func UpgradeRepoFormat(ctx context.Context, rawStore store.ObjectStore, to int) 
 	}
 
 	cfg.Version = to
-	data, err := json.Marshal(cfg)
+	return putRepoConfig(ctx, rawStore, *cfg, encryptionKey)
+}
+
+// putRepoConfig encodes and stores the marker, sealing it for an encrypted
+// repository. Every write of the marker goes through here, so a repository
+// that was sealed cannot be left in plaintext by a path that forgot to seal.
+func putRepoConfig(
+	ctx context.Context,
+	rawStore store.ObjectStore,
+	cfg RepoConfig,
+	encryptionKey []byte,
+) error {
+	data, err := repoconfig.Encode(cfg, encryptionKey)
 	if err != nil {
-		return fmt.Errorf("marshal repo config: %w", err)
+		return err
 	}
 	if err := rawStore.Put(ctx, "config", data); err != nil {
 		return fmt.Errorf("write repo config: %w", err)
@@ -99,14 +120,17 @@ func UpgradeRepoFormat(ctx context.Context, rawStore store.ObjectStore, to int) 
 // requireEncryptedRepo loads the repository config and returns an error if
 // the repository has not been initialized or does not use encryption.
 func requireEncryptedRepo(ctx context.Context, rawStore store.ObjectStore) error {
-	cfg, err := LoadRepoConfig(ctx, rawStore)
+	// InspectRepo, not LoadRepoConfig: these callers are on their way to
+	// unlocking the repository, so they cannot need the key in order to ask
+	// whether one is required.
+	status, err := InspectRepo(ctx, rawStore)
 	if err != nil {
 		return fmt.Errorf("read repository config: %w", err)
 	}
-	if cfg == nil {
+	if !status.Initialized {
 		return fmt.Errorf("repository not initialized -- run 'cloudstic init' first")
 	}
-	if !cfg.Encrypted {
+	if !status.Encrypted {
 		return fmt.Errorf("repository is not encrypted")
 	}
 	return nil
@@ -178,16 +202,16 @@ func AddRecoveryKey(ctx context.Context, rawStore store.ObjectStore, kc keychain
 	return keychain.AddRecoverySlot(ctx, rawStore, masterKey, opts.Label, opts.Replace)
 }
 
-// LoadRepoConfig reads the repository marker from a raw (undecorated) store.
-// Returns (nil, nil) if the repository has not been initialized yet.
-// Returns an error if the store is unreachable (e.g. invalid credentials).
-func LoadRepoConfig(ctx context.Context, rawStore store.ObjectStore) (*RepoConfig, error) {
-	// A single Get, not Exists-then-Get. Get already distinguishes the two
-	// outcomes this function has to tell apart — every backend wraps
-	// store.ErrNotFound for a missing key and returns anything else verbatim —
-	// so the probe was a second round trip that answered a question the Get
-	// answers on its own. This runs on the open path of every command, where
-	// on a high-latency backend each avoided round trip is directly visible.
+// fetchRepoConfigBytes returns the raw marker, or (nil, nil) if the repository
+// has not been initialized yet.
+//
+// A single Get, not Exists-then-Get. Get already distinguishes the two outcomes
+// this has to tell apart — every backend wraps store.ErrNotFound for a missing
+// key and returns anything else verbatim — so the probe was a second round trip
+// that answered a question the Get answers on its own. This runs on the open
+// path of every command, where on a high-latency backend each avoided round
+// trip is directly visible.
+func fetchRepoConfigBytes(ctx context.Context, rawStore store.ObjectStore) ([]byte, error) {
 	data, err := rawStore.Get(ctx, "config")
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -195,30 +219,96 @@ func LoadRepoConfig(ctx context.Context, rawStore store.ObjectStore) (*RepoConfi
 		}
 		return nil, fmt.Errorf("read repo config: %w", err)
 	}
-	if data == nil {
-		return nil, nil
-	}
-	var cfg core.RepoConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parse repo config: %w", err)
-	}
+	return data, nil
+}
 
-	// Refuse a repository written by a newer build rather than operating on a
-	// format we only partly understand. Every path that opens a repository
-	// funnels through here, so this is the one gate that has to hold.
-	//
-	// A version we do not recognise means indexes or objects may be encoded in
-	// ways we would misread — and misreading an index as empty is how a prune
-	// deletes a live repository. Failing here is the safe outcome.
+// checkRepoFormatSupported refuses a repository written by a newer build rather
+// than operating on a format we only partly understand.
+//
+// A version we do not recognise means indexes or objects may be encoded in ways
+// we would misread — and misreading an index as empty is how a prune deletes a
+// live repository. Failing here is the safe outcome.
+//
+// Sealing moves this check after the key is resolved, because the version now
+// lives inside the sealed marker. A repository written by a newer build
+// therefore asks for credentials before it can report that its format is
+// unsupported; every path that decodes a marker still funnels through here.
+func checkRepoFormatSupported(cfg *RepoConfig) error {
 	if cfg.Version > core.MaxSupportedRepoFormat {
-		return nil, fmt.Errorf(
+		return fmt.Errorf(
 			"repository format version %d is newer than this build supports (up to %d): "+
 				"upgrade cloudstic to work with this repository",
 			cfg.Version, core.MaxSupportedRepoFormat,
 		)
 	}
+	return nil
+}
 
-	return &cfg, nil
+// RepoStatus is what can be determined about a repository without resolving its
+// encryption key.
+type RepoStatus struct {
+	// Initialized reports whether a config marker exists at all.
+	Initialized bool
+	// Encrypted reports whether the repository uses encryption. A sealed marker
+	// answers this on its own: only an encrypted repository has a key to seal
+	// with.
+	Encrypted bool
+	// Sealed reports whether the marker itself is sealed. An encrypted
+	// repository written before sealing existed is Encrypted but not Sealed.
+	Sealed bool
+}
+
+// InspectRepo reports what can be learned about a repository without its key.
+//
+// This exists for callers that only need to know whether a repository is
+// initialized or encrypted — deciding whether to prompt for credentials, for
+// instance — which sealing would otherwise make impossible to answer without
+// first doing the very unlock the caller is trying to decide about.
+func InspectRepo(ctx context.Context, rawStore store.ObjectStore) (RepoStatus, error) {
+	raw, err := fetchRepoConfigBytes(ctx, rawStore)
+	if err != nil {
+		return RepoStatus{}, err
+	}
+	if raw == nil {
+		return RepoStatus{}, nil
+	}
+	if repoconfig.IsSealed(raw) {
+		return RepoStatus{Initialized: true, Encrypted: true, Sealed: true}, nil
+	}
+	cfg, err := repoconfig.Decode(raw, nil)
+	if err != nil {
+		return RepoStatus{}, err
+	}
+	return RepoStatus{Initialized: true, Encrypted: cfg.Encrypted}, nil
+}
+
+// LoadRepoConfig reads the repository marker from a raw (undecorated) store.
+// Returns (nil, nil) if the repository has not been initialized yet.
+// Returns an error if the store is unreachable (e.g. invalid credentials).
+//
+// encryptionKey is required when the marker is sealed and ignored otherwise.
+// Callers that only need to know whether a repository is initialized or
+// encrypted should use InspectRepo, which needs no key.
+func LoadRepoConfig(
+	ctx context.Context,
+	rawStore store.ObjectStore,
+	encryptionKey []byte,
+) (*RepoConfig, error) {
+	raw, err := fetchRepoConfigBytes(ctx, rawStore)
+	if err != nil {
+		return nil, err
+	}
+	if raw == nil {
+		return nil, nil
+	}
+	cfg, err := repoconfig.Decode(raw, encryptionKey)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkRepoFormatSupported(cfg); err != nil {
+		return nil, err
+	}
+	return cfg, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -335,22 +425,14 @@ func NewClient(ctx context.Context, base store.ObjectStore, opts ...ClientOption
 	}
 
 	// Read the config before anything else touches the repository, whether or
-	// not a key was supplied. LoadRepoConfig carries the version gate, and
-	// gating only the key-resolution path would let a caller bypass it by
-	// passing WithEncryptionKey.
-	cfg, err := LoadRepoConfig(ctx, base)
+	// not a key was supplied. This carries the version gate, and gating only
+	// the key-resolution path would let a caller bypass it by passing
+	// WithEncryptionKey.
+	cfg, encKey, err := c.openRepoConfig(ctx, base)
 	if err != nil {
 		return nil, err
 	}
-
-	// Auto-detect encryption from the repo config if no explicit key is set.
-	if len(c.encryptionKey) == 0 {
-		encKey, err := c.resolveKeyFromConfig(ctx, base, cfg)
-		if err != nil {
-			return nil, err
-		}
-		c.encryptionKey = encKey
-	}
+	c.encryptionKey = encKey
 
 	// Derive HMAC dedup key from the encryption key.
 	// This avoids plumbing two keys through the entire stack while
@@ -418,13 +500,7 @@ func (c *Client) framingEnabled() bool {
 // the encryption key, for a repository the caller has already loaded the config
 // for. It takes cfg rather than re-reading it so that the version gate in
 // LoadRepoConfig runs exactly once per client, on every path.
-func (c *Client) resolveKeyFromConfig(ctx context.Context, base store.ObjectStore, cfg *RepoConfig) ([]byte, error) {
-	if cfg == nil {
-		return nil, fmt.Errorf("repository not initialized -- run 'cloudstic init' first")
-	}
-	if !cfg.Encrypted {
-		return nil, nil
-	}
+func (c *Client) resolveKeyFromSlots(ctx context.Context, base store.ObjectStore) ([]byte, error) {
 	slots, err := keychain.LoadKeySlots(ctx, base)
 	if err != nil {
 		return nil, fmt.Errorf("load key slots: %w", err)
@@ -434,6 +510,67 @@ func (c *Client) resolveKeyFromConfig(ctx context.Context, base store.ObjectStor
 		return nil, err
 	}
 	return keychain.DeriveEncryptionKey(masterKey)
+}
+
+// openRepoConfig reads the marker and resolves the encryption key in one step,
+// because neither can be done first in general: a sealed marker cannot be
+// decoded until the key is resolved, and whether a key is needed at all is
+// what the marker says.
+//
+// The marker's own form breaks the cycle. Sealed means encrypted, so the key
+// slots can be opened without consulting the config; plaintext means the
+// config is readable directly, and its "encrypted" field then decides.
+//
+// An explicitly supplied key (WithEncryptionKey) is used as-is and suppresses
+// slot resolution, but never the version gate.
+func (c *Client) openRepoConfig(
+	ctx context.Context,
+	base store.ObjectStore,
+) (*RepoConfig, []byte, error) {
+	raw, err := fetchRepoConfigBytes(ctx, base)
+	if err != nil {
+		return nil, nil, err
+	}
+	if raw == nil {
+		return nil, c.encryptionKey, nil // not initialized
+	}
+
+	key := c.encryptionKey
+	sealed := repoconfig.IsSealed(raw)
+	if sealed && len(key) == 0 {
+		if key, err = c.resolveKeyFromSlots(ctx, base); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	cfg, err := repoconfig.Decode(raw, key)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := checkRepoFormatSupported(cfg); err != nil {
+		return nil, nil, err
+	}
+
+	if !sealed {
+		// A plaintext marker claiming no encryption, on a repository that has
+		// key slots, is a contradiction: the slots exist only to unwrap a key
+		// this claims does not exist. Flipping that one field is otherwise the
+		// cheapest way to make a client read an encrypted repository as
+		// plaintext, so refuse it here — the check needs no key.
+		if !cfg.Encrypted && keychain.HasKeySlots(ctx, base) {
+			return nil, nil, fmt.Errorf(
+				"repository config says encryption is disabled but key slots exist: " +
+					"the config marker may have been modified; restore its original version",
+			)
+		}
+		if cfg.Encrypted && len(key) == 0 {
+			if key, err = c.resolveKeyFromSlots(ctx, base); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+
+	return cfg, key, nil
 }
 
 func (c *Client) Store() store.ObjectStore { return c.store }
@@ -505,7 +642,7 @@ func (c *Client) raiseRepoFormat(ctx context.Context) error {
 		}
 	}
 
-	if err := UpgradeRepoFormat(ctx, c.base, core.RepoFormatVersion); err != nil {
+	if err := UpgradeRepoFormat(ctx, c.base, core.RepoFormatVersion, c.encryptionKey); err != nil {
 		return err
 	}
 	c.repoFormat.Store(int64(core.RepoFormatVersion))

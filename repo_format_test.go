@@ -64,7 +64,7 @@ func TestLoadRepoConfig_RefusesNewerFormat(t *testing.T) {
 	s := newFormatTestStore(t)
 	writeConfigVersion(t, s, core.MaxSupportedRepoFormat+1)
 
-	cfg, err := LoadRepoConfig(ctx, s)
+	cfg, err := LoadRepoConfig(ctx, s, nil)
 	if err == nil {
 		t.Fatalf("expected a refusal, got config %+v", cfg)
 	}
@@ -85,7 +85,7 @@ func TestLoadRepoConfig_AcceptsSupportedFormats(t *testing.T) {
 		s := newFormatTestStore(t)
 		writeConfigVersion(t, s, version)
 
-		cfg, err := LoadRepoConfig(ctx, s)
+		cfg, err := LoadRepoConfig(ctx, s, nil)
 		if err != nil {
 			t.Errorf("format version %d should be readable: %v", version, err)
 			continue
@@ -106,7 +106,7 @@ func TestLoadRepoConfig_AcceptsMissingVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg, err := LoadRepoConfig(ctx, s)
+	cfg, err := LoadRepoConfig(ctx, s, nil)
 	if err != nil {
 		t.Fatalf("a config without a version must still load: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestInitStampsCurrentFormatVersion(t *testing.T) {
 		t.Fatalf("init: %v", err)
 	}
 
-	cfg, err := LoadRepoConfig(ctx, s)
+	cfg, err := LoadRepoConfig(ctx, s, nil)
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
@@ -154,11 +154,14 @@ func TestUpgradeRepoFormat_RaisesVersion(t *testing.T) {
 	s := newFormatTestStore(t)
 	writeConfigVersion(t, s, 1)
 
-	if err := UpgradeRepoFormat(ctx, s, core.MaxSupportedRepoFormat); err != nil {
+	// The fixture marker is an encrypted repository's, so raising its version
+	// reseals it — exercising the unseal/reseal path, not just the rewrite.
+	key := packfileTestKey()
+	if err := UpgradeRepoFormat(ctx, s, core.MaxSupportedRepoFormat, key); err != nil {
 		t.Fatalf("upgrade: %v", err)
 	}
 
-	cfg, err := LoadRepoConfig(ctx, s)
+	cfg, err := LoadRepoConfig(ctx, s, key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,11 +183,11 @@ func TestUpgradeRepoFormat_NeverLowersVersion(t *testing.T) {
 	s := newFormatTestStore(t)
 	writeConfigVersion(t, s, core.MaxSupportedRepoFormat)
 
-	if err := UpgradeRepoFormat(ctx, s, 1); err != nil {
+	if err := UpgradeRepoFormat(ctx, s, 1, nil); err != nil {
 		t.Fatalf("upgrade: %v", err)
 	}
 
-	cfg, err := LoadRepoConfig(ctx, s)
+	cfg, err := LoadRepoConfig(ctx, s, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,11 +203,11 @@ func TestUpgradeRepoFormat_RefusesUnsupportedTarget(t *testing.T) {
 	s := newFormatTestStore(t)
 	writeConfigVersion(t, s, 1)
 
-	if err := UpgradeRepoFormat(ctx, s, core.MaxSupportedRepoFormat+1); err == nil {
+	if err := UpgradeRepoFormat(ctx, s, core.MaxSupportedRepoFormat+1, nil); err == nil {
 		t.Fatal("expected a refusal to stamp an unsupported version")
 	}
 
-	cfg, err := LoadRepoConfig(ctx, s)
+	cfg, err := LoadRepoConfig(ctx, s, nil)
 	if err != nil {
 		t.Fatalf("repository should remain readable after a refused upgrade: %v", err)
 	}
@@ -257,7 +260,7 @@ func TestBackupThatSealsStampsTheFormat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before, err := LoadRepoConfig(ctx, base)
+	before, err := LoadRepoConfig(ctx, base, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +273,7 @@ func TestBackupThatSealsStampsTheFormat(t *testing.T) {
 		t.Fatalf("backup: %v", err)
 	}
 
-	after, err := LoadRepoConfig(ctx, base)
+	after, err := LoadRepoConfig(ctx, base, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +311,7 @@ func TestUnsealedRepositoryKeepsBaselineFormat(t *testing.T) {
 		t.Fatalf("backup: %v", err)
 	}
 
-	cfg, err := LoadRepoConfig(ctx, base)
+	cfg, err := LoadRepoConfig(ctx, base, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,7 +351,7 @@ func TestWritesStampTheFormatButReadsDoNot(t *testing.T) {
 	if _, err := client.List(ctx); err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	cfg, err := LoadRepoConfig(ctx, base)
+	cfg, err := LoadRepoConfig(ctx, base, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +363,7 @@ func TestWritesStampTheFormatButReadsDoNot(t *testing.T) {
 	if _, err := client.Backup(ctx, source.NewLocalSource(sourceDir)); err != nil {
 		t.Fatalf("backup: %v", err)
 	}
-	cfg, err = LoadRepoConfig(ctx, base)
+	cfg, err = LoadRepoConfig(ctx, base, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -421,7 +424,7 @@ func TestInitAdoptNeverLowersTheFormat(t *testing.T) {
 		t.Fatalf("adopt: %v", err)
 	}
 
-	cfg, err := LoadRepoConfig(ctx, s)
+	cfg, err := LoadRepoConfig(ctx, s, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -537,7 +540,7 @@ func TestForgetPolicyStampsTheFormat(t *testing.T) {
 
 func assertFormatVersion(t *testing.T, s store.ObjectStore, want int) {
 	t.Helper()
-	cfg, err := LoadRepoConfig(context.Background(), s)
+	cfg, err := LoadRepoConfig(context.Background(), s, nil)
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}

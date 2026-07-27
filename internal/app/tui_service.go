@@ -30,20 +30,6 @@ func NewTUIService(backend TUIBackend) *TUIService {
 	}
 }
 
-func (s *TUIService) BuildDashboard(ctx context.Context, profilesFile string) (tui.Dashboard, error) {
-	cfg, err := s.loadConfig(profilesFile)
-	if err != nil {
-		return tui.Dashboard{}, err
-	}
-	var load tui.SnapshotLoader
-	if s.backend != nil {
-		load = func(ctx context.Context, storeName string, storeCfg cloudstic.ProfileStore) ([]engine.SnapshotEntry, error) {
-			return s.backend.LoadStoreSnapshots(ctx, storeName, storeCfg)
-		}
-	}
-	return tui.BuildDashboardFromConfig(ctx, cfg, load), nil
-}
-
 func (s *TUIService) RunProfileAction(ctx context.Context, profilesFile string, profile tui.ProfileCard, reporter cloudstic.Reporter) error {
 	cfg, err := s.loadConfig(profilesFile)
 	if err != nil {

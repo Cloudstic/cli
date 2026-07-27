@@ -45,17 +45,20 @@ func (b stubTUIBackend) CheckProfile(ctx context.Context, profilesFile, profileN
 	return b.checkProfile(ctx, profilesFile, profileName, profileCfg, cfg, reporter)
 }
 
-func TestTUIServiceBuildDashboardInitializesMaps(t *testing.T) {
+func TestTUIServiceLoadDashboardConfigInitializesMaps(t *testing.T) {
 	svc := NewTUIService(nil)
 	svc.loadProfiles = func(string) (*cloudstic.ProfilesConfig, error) {
 		return &cloudstic.ProfilesConfig{Version: 1}, nil
 	}
 
-	got, err := svc.BuildDashboard(context.Background(), "profiles.yaml")
+	cfg, err := svc.LoadDashboardConfig("profiles.yaml")
 	if err != nil {
-		t.Fatalf("BuildDashboard: %v", err)
+		t.Fatalf("LoadDashboardConfig: %v", err)
 	}
-	if got.ProfileCount != 0 || got.StoreCount != 0 || got.AuthCount != 0 {
+	if cfg.Profiles == nil || cfg.Stores == nil || cfg.Auth == nil {
+		t.Fatalf("maps not initialized: %+v", cfg)
+	}
+	if got := tui.BuildDashboard(cfg, nil); got.ProfileCount != 0 || got.StoreCount != 0 || got.AuthCount != 0 {
 		t.Fatalf("unexpected dashboard: %+v", got)
 	}
 }

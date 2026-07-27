@@ -12,15 +12,15 @@ import (
 // existing store-URI and secret-ref helpers so the forms package stays free of
 // parsing and persistence concerns.
 
-func (b *bubbleFormsBackend) StoreDetailLabel(storeType string) string {
+func (b *tuiFormsBackend) StoreDetailLabel(storeType string) string {
 	return tuiStoreConfig{Type: storeType}.DetailLabel()
 }
 
-func (b *bubbleFormsBackend) StoreExample(storeType string) string {
+func (b *tuiFormsBackend) StoreExample(storeType string) string {
 	return tuiStoreConfig{Type: storeType}.ExampleText()
 }
 
-func (b *bubbleFormsBackend) ComposeStore(storeType, value string) (string, error) {
+func (b *tuiFormsBackend) ComposeStore(storeType, value string) (string, error) {
 	uri := tuiStoreConfig{Type: storeType, Value: value}.Compose()
 	if uri == "" {
 		return "", nil
@@ -31,11 +31,11 @@ func (b *bubbleFormsBackend) ComposeStore(storeType, value string) (string, erro
 	return uri, nil
 }
 
-func (b *bubbleFormsBackend) ValidateStoreName(name string) error {
+func (b *tuiFormsBackend) ValidateStoreName(name string) error {
 	return validateRefName("store", name)
 }
 
-func (b *bubbleFormsBackend) StoreExists(name string) bool {
+func (b *tuiFormsBackend) StoreExists(name string) bool {
 	if b.cfg == nil {
 		return false
 	}
@@ -43,7 +43,7 @@ func (b *bubbleFormsBackend) StoreExists(name string) bool {
 	return ok
 }
 
-func (b *bubbleFormsBackend) ValidateSecretRef(ref string) error {
+func (b *tuiFormsBackend) ValidateSecretRef(ref string) error {
 	if _, err := secretref.Parse(ref); err != nil {
 		return fmt.Errorf("invalid secret reference: %v", err)
 	}
@@ -51,7 +51,7 @@ func (b *bubbleFormsBackend) ValidateSecretRef(ref string) error {
 }
 
 // InitialStoreValues seeds an edit-store form from an existing store.
-func (b *bubbleFormsBackend) InitialStoreValues(name string) map[string]string {
+func (b *tuiFormsBackend) InitialStoreValues(name string) map[string]string {
 	if b.cfg == nil {
 		return nil
 	}
@@ -82,7 +82,7 @@ func (b *bubbleFormsBackend) InitialStoreValues(name string) map[string]string {
 // SaveStore assembles a ProfileStore from the form's collected values and
 // persists it. Connection and encryption fields irrelevant to the selected
 // type/mode are cleared, mirroring the legacy store form.
-func (b *bubbleFormsBackend) SaveStore(name string, values map[string]string, editing bool) error {
+func (b *tuiFormsBackend) SaveStore(name string, values map[string]string, editing bool) error {
 	store := cloudstic.ProfileStore{}
 	if editing && b.cfg != nil {
 		if existing, ok := b.cfg.Stores[name]; ok {
@@ -93,7 +93,7 @@ func (b *bubbleFormsBackend) SaveStore(name string, values map[string]string, ed
 	applyStoreConnectionValues(&store, values)
 	applyStoreEncryptionValues(&store, values)
 
-	if err := tuiServiceFactory(nil, b.profilesFile, nil).SaveStore(b.profilesFile, name, store); err != nil {
+	if err := tuiServiceFactory(nil, b.profilesFile).SaveStore(b.profilesFile, name, store); err != nil {
 		return err
 	}
 	// Refresh the cache so the profile form's store selector immediately sees

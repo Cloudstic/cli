@@ -54,7 +54,7 @@ Docker-based hermetic tests (MinIO store, SFTP source/store) are automatically s
 - `pkg/store/` — `ObjectStore` interface and all implementations. Also contains `Source` and `IncrementalSource` interfaces for backup data sources.
 - `pkg/crypto/` — AES-256-GCM encryption/decryption, HKDF key derivation, BIP39 mnemonic recovery keys.
 - `internal/app/` — Orchestration layer shared by the CLI and TUI. `TUIService` sits on top of a `TUIBackend` interface (satisfied by the real client, stubbable in tests) and owns profile listing, health checks, and backup actions.
-- `internal/tui/` — Interactive terminal dashboard built on Bubble Tea (`dashboard.go`, `shell.go`). The `cmd_tui*.go` files in `cmd/cloudstic/` only wire it to `internal/app`; the widget/state logic lives here.
+- `internal/tui/` — Interactive terminal dashboard built on Bubble Tea. `dashboard.go` derives the view-model from the profiles config and store probes, `app.go` is the root `Model` (view + key handling), `summary.go` holds the pure label/badge/button derivation it renders, `styles.go` is the lipgloss theme, and `forms/` holds the `bubbles/textinput` form components. Bubble Tea owns the terminal — there is no hand-rolled renderer, input decoder, or resize handling (RFC 0012 Phase 2, issue #341). The `cmd_tui*.go` files in `cmd/cloudstic/` only wire it to `internal/app`; the widget/state logic lives here.
 - `internal/ui/` — Non-interactive console progress reporting and terminal helpers (used by plain CLI commands, distinct from the `internal/tui` dashboard).
 - `internal/secretref/` — Resolves `scheme://path` secret references through pluggable, platform-specific backends (see Secret References below).
 - `pkg/keychain/` — OS keychain integration and encryption key-slot helpers.

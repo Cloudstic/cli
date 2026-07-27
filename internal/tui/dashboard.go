@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -16,9 +15,7 @@ type Dashboard struct {
 	StoreCount      int
 	AuthCount       int
 	SelectedProfile string
-	SelectedView    ProfileView
 	Activity        ActivityPanel
-	Modal           *Modal
 	Profiles        []ProfileCard
 }
 
@@ -28,44 +25,6 @@ const (
 	ProfileViewSummary ProfileView = "summary"
 	ProfileViewHistory ProfileView = "history"
 )
-
-type ModalKind string
-
-const (
-	ModalKindProfileForm ModalKind = "profile_form"
-	ModalKindConfirm     ModalKind = "confirm"
-)
-
-type ModalFieldKind string
-
-const (
-	ModalFieldText   ModalFieldKind = "text"
-	ModalFieldSelect ModalFieldKind = "select"
-)
-
-type Modal struct {
-	Kind        ModalKind
-	Title       string
-	Subtitle    string
-	Error       string
-	ErrorField  string
-	Hint        string
-	Message     []string
-	Fields      []ModalField
-	Selected    int
-	SubmitLabel string
-	CancelLabel string
-}
-
-type ModalField struct {
-	Key      string
-	Label    string
-	Kind     ModalFieldKind
-	Value    string
-	Options  []string
-	Required bool
-	Disabled bool
-}
 
 type ActivityStatus string
 
@@ -184,34 +143,9 @@ type StoreProbe struct {
 	Snapshots []engine.SnapshotEntry
 }
 
-type SnapshotLoader func(context.Context, string, engine.ProfileStore) ([]engine.SnapshotEntry, error)
-
-func BuildDashboardFromConfig(ctx context.Context, cfg *engine.ProfilesConfig, load SnapshotLoader) Dashboard {
-	if cfg == nil {
-		cfg = &engine.ProfilesConfig{}
-	}
-
-	probes := map[string]StoreProbe{}
-	if load != nil {
-		for name, storeCfg := range cfg.Stores {
-			snapshots, err := load(ctx, name, storeCfg)
-			if err != nil {
-				probes[name] = StoreProbe{
-					Status: "error",
-					Error:  err.Error(),
-				}
-				continue
-			}
-			probes[name] = StoreProbe{
-				Status:    "ok",
-				Snapshots: snapshots,
-			}
-		}
-	}
-
-	return BuildDashboard(cfg, probes)
-}
-
+// BuildDashboard derives the dashboard view-model from the profiles config and
+// whatever store probes have completed so far. A nil probes map yields the
+// skeleton the model renders on its first frame, before any probe returns.
 func BuildDashboard(cfg *engine.ProfilesConfig, probes map[string]StoreProbe) Dashboard {
 	if cfg == nil {
 		cfg = &engine.ProfilesConfig{}
@@ -230,7 +164,6 @@ func BuildDashboard(cfg *engine.ProfilesConfig, probes map[string]StoreProbe) Da
 		ProfileCount: len(cfg.Profiles),
 		StoreCount:   len(cfg.Stores),
 		AuthCount:    len(cfg.Auth),
-		SelectedView: ProfileViewSummary,
 		Profiles:     make([]ProfileCard, 0, len(cfg.Profiles)),
 	}
 	for _, name := range names {

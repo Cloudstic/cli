@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -12,114 +11,6 @@ import (
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/tui"
 )
-
-func renderTUIScreenWidth(w io.Writer, dashboard tui.Dashboard, width int) error {
-	if _, err := fmt.Fprint(w, "\x1b[2J\x1b[H"); err != nil {
-		return err
-	}
-	return tui.RenderDashboardWidth(newCRLFWriter(w), dashboard, width)
-}
-
-func runTUIActionIntoDashboard(ctx context.Context, r *runner, profilesFile string, dashboard tui.Dashboard) tui.Dashboard {
-	log := newTUIActionState(10)
-	screen := r.out
-	if profile, ok := selectedTUIProfile(dashboard); ok {
-		if profileNeedsInit(profile) {
-			log.Start("Initialize store", fmt.Sprintf("profile %s", profile.Name))
-			log.Printf("Initializing store for profile %s", profile.Name)
-		} else {
-			log.Start("Run backup", fmt.Sprintf("profile %s", profile.Name))
-			log.Printf("Running backup for profile %s", profile.Name)
-		}
-	}
-
-	stop := make(chan struct{})
-	done := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
-		defer close(done)
-		for {
-			select {
-			case <-stop:
-				return
-			case <-ticker.C:
-				live := dashboard
-				live.Activity = log.Snapshot()
-				_ = renderTUIScreenWidth(screen, live, tuiWidth(r))
-			}
-		}
-	}()
-
-	if err := runSelectedTUIAction(ctx, r, profilesFile, dashboard, log); err != nil {
-		log.Fail(err.Error())
-		log.Printf("Action failed: %v", err)
-	} else {
-		log.Succeed("completed successfully")
-		log.Printf("Action completed successfully")
-	}
-	close(stop)
-	<-done
-
-	dashboard.Activity = log.Snapshot()
-	return dashboard
-}
-
-func runTUICheckIntoDashboard(ctx context.Context, r *runner, profilesFile string, dashboard tui.Dashboard) tui.Dashboard {
-	log := newTUIActionState(10)
-	screen := r.out
-	if profile, ok := selectedTUIProfile(dashboard); ok {
-		log.Start("Run repository check", fmt.Sprintf("profile %s", profile.Name))
-		log.Printf("Running repository check for profile %s", profile.Name)
-	}
-
-	stop := make(chan struct{})
-	done := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
-		defer close(done)
-		for {
-			select {
-			case <-stop:
-				return
-			case <-ticker.C:
-				live := dashboard
-				live.Activity = log.Snapshot()
-				_ = renderTUIScreenWidth(screen, live, tuiWidth(r))
-			}
-		}
-	}()
-
-	if err := runSelectedTUICheck(ctx, r, profilesFile, dashboard, log); err != nil {
-		log.Fail(err.Error())
-		log.Printf("Check failed: %v", err)
-	} else {
-		log.Succeed("completed successfully")
-		log.Printf("Check completed successfully")
-	}
-	close(stop)
-	<-done
-
-	dashboard.Activity = log.Snapshot()
-	return dashboard
-}
-
-type crlfWriter struct {
-	w io.Writer
-}
-
-func newCRLFWriter(w io.Writer) io.Writer {
-	return crlfWriter{w: w}
-}
-
-func (w crlfWriter) Write(p []byte) (int, error) {
-	s := strings.ReplaceAll(string(p), "\n", "\r\n")
-	if _, err := io.WriteString(w.w, s); err != nil {
-		return 0, err
-	}
-	return len(p), nil
-}
 
 func captureTUIRunnerOutput(r *runner, log *tuiActionState) func() {
 	oldOut := r.out

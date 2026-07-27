@@ -3,13 +3,15 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func richDashboard() Dashboard {
 	return Dashboard{
 		ProfileCount: 2, StoreCount: 1, AuthCount: 1,
 		SelectedProfile: "docs",
-		SelectedView:    ProfileViewSummary,
 		Profiles: []ProfileCard{
 			{Name: "docs", Source: "local:/data", StoreRef: "b2", Enabled: true,
 				Status: ProfileStatusReady, StoreHealth: StoreHealthReady,
@@ -57,6 +59,31 @@ func TestView_WarningProfileShowsHealthNote(t *testing.T) {
 	view := m.View()
 	if !strings.Contains(view, "store unavailable") {
 		t.Fatalf("warning profile should surface health note\n%s", view)
+	}
+}
+
+// Resize arrives as a tea.WindowSizeMsg on every platform, which is what
+// replaced the SIGWINCH handler and its no-op Windows stub (issue #341).
+func TestView_WindowSizeMsgDrivesLayout(t *testing.T) {
+	m := NewModel(richDashboard())
+
+	wide, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	wideView := wide.View()
+	if wide.(Model).width != 120 {
+		t.Fatalf("width = %d want 120", wide.(Model).width)
+	}
+
+	narrow, _ := wide.(Model).Update(tea.WindowSizeMsg{Width: 68, Height: 40})
+	narrowView := narrow.View()
+	if narrow.(Model).width != 68 {
+		t.Fatalf("width = %d want 68", narrow.(Model).width)
+	}
+	if wideView == narrowView {
+		t.Fatalf("resize did not change the rendered layout\n%s", narrowView)
+	}
+	if lipgloss.Width(wideView) <= lipgloss.Width(narrowView) {
+		t.Fatalf("wide view (%d) should be wider than narrow view (%d)",
+			lipgloss.Width(wideView), lipgloss.Width(narrowView))
 	}
 }
 

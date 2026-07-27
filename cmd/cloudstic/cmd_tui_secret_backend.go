@@ -10,14 +10,14 @@ import (
 // Secret-ref form backend (tui/forms.SecretBackend), implemented over the
 // shared secretref resolver.
 
-func (b *bubbleFormsBackend) secretResolver() *secretref.Resolver {
+func (b *tuiFormsBackend) secretResolver() *secretref.Resolver {
 	if tuiSecretResolver != nil {
 		return tuiSecretResolver
 	}
 	return secretref.NewDefaultResolver()
 }
 
-func (b *bubbleFormsBackend) StorageOptions() []string {
+func (b *tuiFormsBackend) StorageOptions() []string {
 	options := []string{"env"}
 	for _, backend := range b.secretResolver().WritableBackends() {
 		options = append(options, backend.Scheme())
@@ -25,7 +25,7 @@ func (b *bubbleFormsBackend) StorageOptions() []string {
 	return options
 }
 
-func (b *bubbleFormsBackend) DefaultRef(scheme, storeName, account string) string {
+func (b *tuiFormsBackend) DefaultRef(scheme, storeName, account string) string {
 	for _, backend := range b.secretResolver().WritableBackends() {
 		if backend.Scheme() == scheme {
 			return backend.DefaultRef(storeName, account)
@@ -34,7 +34,7 @@ func (b *bubbleFormsBackend) DefaultRef(scheme, storeName, account string) strin
 	return ""
 }
 
-func (b *bubbleFormsBackend) ParseRef(ref string) (string, string, bool) {
+func (b *tuiFormsBackend) ParseRef(ref string) (string, string, bool) {
 	parsed, err := secretref.Parse(ref)
 	if err != nil {
 		return "", "", false
@@ -45,11 +45,11 @@ func (b *bubbleFormsBackend) ParseRef(ref string) (string, string, bool) {
 	return parsed.Scheme, "", true
 }
 
-func (b *bubbleFormsBackend) ValidateRef(ref string) error {
+func (b *tuiFormsBackend) ValidateRef(ref string) error {
 	_, err := secretref.Parse(ref)
 	return err
 }
 
-func (b *bubbleFormsBackend) StoreSecret(ref, value string) error {
+func (b *tuiFormsBackend) StoreSecret(ref, value string) error {
 	return b.secretResolver().Store(context.Background(), ref, value)
 }

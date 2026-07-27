@@ -611,11 +611,18 @@ The TUI is intended for interactive operator workflows. It shows:
 Current controls:
 
 - `↑` / `↓` or `j` / `k`: move selection
+- `s` / `h` or `Tab`: switch between the summary and history views
 - `b`: run `backup` for the selected profile, or `init` if its store is not initialized
 - `c`: run `check` for the selected profile's repository
-- `q`: quit
+- `x`: cancel the running action
+- `n` / `e` / `d`: create, edit, or delete a profile
+- `r`: refresh
+- `q` or `Esc`: quit
+
+Profile rows and the action buttons in the Selection panel are also clickable.
 
 `cloudstic tui` requires an interactive terminal. It is not intended for scripts or CI.
+Colors adapt to light and dark terminals and are disabled when `NO_COLOR` is set.
 
 ---
 
@@ -1862,7 +1869,6 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 | `CLOUDSTIC_KMS_REGION` | `-kms-region` | AWS KMS region |
 | `CLOUDSTIC_KMS_ENDPOINT` | `-kms-endpoint` | Custom AWS KMS endpoint URL |
 | `CLOUDSTIC_PROFILES_FILE` | `-profiles-file` | Path to profiles YAML file |
-| `CLOUDSTIC_TUI_BUBBLETEA` | `-bubbletea` | Use the experimental Bubble Tea TUI renderer (RFC 0012 Phase 2) |
 | `CLOUDSTIC_CONFIG_DIR` | — | Override config directory path |
 | `GOOGLE_APPLICATION_CREDENTIALS` | `-google-credentials` | Path to your own Google OAuth credentials file (optional, overrides built-in) |
 | `GOOGLE_CREDENTIALS_JSON` | `-google-credentials-json` | Inline Google credentials JSON (OAuth client or service account) |

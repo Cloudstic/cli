@@ -58,7 +58,7 @@ func LayoutDashboardWidth(d Dashboard, width int) DashboardLayout {
 	y := 1
 	y += 3 // title, subtitle, blank
 	y += len(boxLinesExact("Overview", []string{
-		fmt.Sprintf("%sProfiles%s %d   %sStores%s %d   %sAuth%s %d", ui.Cyan, ui.Reset, d.ProfileCount, ui.Cyan, ui.Reset, d.StoreCount, ui.Cyan, ui.Reset, d.AuthCount),
+		fmt.Sprintf("%s %d   %s %d   %s %d", ui.Style(ui.Cyan, "Profiles"), d.ProfileCount, ui.Style(ui.Cyan, "Stores"), d.StoreCount, ui.Style(ui.Cyan, "Auth"), d.AuthCount),
 	}, panelWidth(width)))
 
 	profilesWidth, detailWidth := splitPaneWidths(width)
@@ -95,15 +95,15 @@ func LayoutDashboardWidth(d Dashboard, width int) DashboardLayout {
 
 func dashboardLinesWidth(d Dashboard, width int) []string {
 	lines := []string{
-		fmt.Sprintf("%s%s%s", ui.Bold, "Cloudstic TUI", ui.Reset),
-		fmt.Sprintf("%sOperator dashboard for profiles, stores, and auth.%s", ui.Dim, ui.Reset),
+		ui.Style(ui.Bold, "Cloudstic TUI"),
+		ui.Style(ui.Dim, "Operator dashboard for profiles, stores, and auth."),
 		"",
 	}
 
 	stats := []string{
-		fmt.Sprintf("%sProfiles%s %d", ui.Cyan, ui.Reset, d.ProfileCount),
-		fmt.Sprintf("%sStores%s %d", ui.Cyan, ui.Reset, d.StoreCount),
-		fmt.Sprintf("%sAuth%s %d", ui.Cyan, ui.Reset, d.AuthCount),
+		fmt.Sprintf("%s %d", ui.Style(ui.Cyan, "Profiles"), d.ProfileCount),
+		fmt.Sprintf("%s %d", ui.Style(ui.Cyan, "Stores"), d.StoreCount),
+		fmt.Sprintf("%s %d", ui.Style(ui.Cyan, "Auth"), d.AuthCount),
 	}
 	lines = append(lines, boxLinesExact("Overview", []string{strings.Join(stats, "   ")}, panelWidth(width))...)
 
@@ -117,7 +117,7 @@ func dashboardLinesWidth(d Dashboard, width int) []string {
 	)...)
 
 	lines = append(lines, boxLinesExact("Activity", renderActivityPanel(d.Activity), panelWidth(width))...)
-	footer := fmt.Sprintf("%sUse ↑/↓ to select a profile. Press s/h to switch views, b to backup/init, c to check, n to create, e to edit, d to delete, q to quit.%s", ui.Dim, ui.Reset)
+	footer := ui.Style(ui.Dim, "Use ↑/↓ to select a profile. Press s/h to switch views, b to backup/init, c to check, n to create, e to edit, d to delete, q to quit.")
 	if width > 0 {
 		footer = truncateVisible(footer, width)
 	}
@@ -126,7 +126,7 @@ func dashboardLinesWidth(d Dashboard, width int) []string {
 }
 
 func boxLinesExact(title string, lines []string, width int) []string {
-	titleLine := fmt.Sprintf("%s%s%s", ui.Bold, title, ui.Reset)
+	titleLine := ui.Style(ui.Bold, title)
 	if width <= 0 {
 		width = visibleLen(titleLine)
 		for _, line := range lines {
@@ -172,7 +172,7 @@ func renderColumnLines(left, right []string) []string {
 
 func renderProfileList(d Dashboard) []string {
 	if len(d.Profiles) == 0 {
-		return []string{fmt.Sprintf("%sNo profiles configured.%s", ui.Dim, ui.Reset)}
+		return []string{ui.Style(ui.Dim, "No profiles configured.")}
 	}
 	nameWidth, badgeWidth := profileListWidths(d.Profiles)
 	lines := make([]string, 0, len(d.Profiles))
@@ -207,7 +207,7 @@ func renderActivityPanel(activity ActivityPanel) []string {
 	}
 	lines = append(lines, activity.Lines...)
 	if len(lines) == 0 {
-		return []string{fmt.Sprintf("%sNo recent activity.%s", ui.Dim, ui.Reset)}
+		return []string{ui.Style(ui.Dim, "No recent activity.")}
 	}
 	return lines
 }
@@ -215,10 +215,10 @@ func renderActivityPanel(activity ActivityPanel) []string {
 func renderSelectedProfile(d Dashboard) ([]string, map[int]string) {
 	profile, ok := selectedProfileCard(d)
 	if !ok {
-		return []string{fmt.Sprintf("%sNo profile selected.%s", ui.Dim, ui.Reset)}, nil
+		return []string{ui.Style(ui.Dim, "No profile selected.")}, nil
 	}
 	lines := []string{
-		fmt.Sprintf("%s%s%s", ui.Bold, profile.Name, ui.Reset),
+		ui.Style(ui.Bold, profile.Name),
 		renderProfileViewTabs(d.SelectedView),
 		"",
 	}
@@ -282,7 +282,7 @@ func renderModalOverlay(w io.Writer, modal Modal, screenWidth, screenHeight int)
 func modalLines(modal Modal, width int) []string {
 	lines := []string{}
 	if modal.Subtitle != "" {
-		lines = append(lines, fmt.Sprintf("%s%s%s", ui.Dim, modal.Subtitle, ui.Reset), "")
+		lines = append(lines, ui.Style(ui.Dim, modal.Subtitle), "")
 	}
 	labelWidth := modalLabelWidth(modal)
 	for i, field := range modal.Fields {
@@ -290,15 +290,15 @@ func modalLines(modal Modal, width int) []string {
 		hasError := modal.ErrorField == field.Key && modal.Error != ""
 		prefix := "  "
 		if selected {
-			prefix = fmt.Sprintf("%s› %s", ui.Cyan, ui.Reset)
+			prefix = ui.Style(ui.Cyan, "› ")
 		}
 		labelText := field.Label
 		if field.Required && !field.Disabled {
-			labelText += " " + ui.Yellow + "*" + ui.Reset
+			labelText += " " + ui.Style(ui.Yellow, "*")
 		}
-		label := fmt.Sprintf("%s%s%s", ui.Dim, labelText, ui.Reset)
+		label := ui.Style(ui.Dim, labelText)
 		if selected {
-			label = fmt.Sprintf("%s%s%s", ui.Cyan, labelText, ui.Reset)
+			label = ui.Style(ui.Cyan, labelText)
 		}
 		if hasError {
 			label = labelText
@@ -309,7 +309,7 @@ func modalLines(modal Modal, width int) []string {
 		}
 		lines = append(lines, fmt.Sprintf("%s%s%s  %s", prefix, label, strings.Repeat(" ", padding), modalFieldValue(field, selected)))
 		if hasError {
-			lines = append(lines, fmt.Sprintf("  %s%s%s", ui.Red, modal.Error, ui.Reset))
+			lines = append(lines, "  "+ui.Style(ui.Red, modal.Error))
 		}
 	}
 	if len(modal.Message) > 0 {
@@ -322,14 +322,14 @@ func modalLines(modal Modal, width int) []string {
 		if len(lines) > 0 {
 			lines = append(lines, "")
 		}
-		lines = append(lines, fmt.Sprintf("%s%s%s", ui.Red, modal.Error, ui.Reset))
+		lines = append(lines, ui.Style(ui.Red, modal.Error))
 	}
 	if modal.Hint != "" {
 		if len(lines) > 0 {
 			lines = append(lines, "")
 		}
-		lines = append(lines, fmt.Sprintf("%sFields marked * are required.%s", ui.Dim, ui.Reset))
-		lines = append(lines, fmt.Sprintf("%s%s%s", ui.Dim, modal.Hint, ui.Reset))
+		lines = append(lines, ui.Style(ui.Dim, "Fields marked * are required."))
+		lines = append(lines, ui.Style(ui.Dim, modal.Hint))
 	}
 	return boxLinesExact(modal.Title, lines, width)
 }
@@ -350,7 +350,7 @@ func modalLabelWidth(modal Modal) int {
 
 func modalFieldValue(field ModalField, selected bool) string {
 	if field.Disabled {
-		return fmt.Sprintf("%snot required%s", ui.Dim, ui.Reset)
+		return ui.Style(ui.Dim, "not required")
 	}
 	switch field.Kind {
 	case ModalFieldSelect:
@@ -359,17 +359,16 @@ func modalFieldValue(field ModalField, selected bool) string {
 			value = "none"
 		}
 		if selected {
-			return fmt.Sprintf("%s<%s>%s  %s←/→%s", ui.Cyan, value, ui.Reset, ui.Dim, ui.Reset)
+			return fmt.Sprintf("%s  %s", ui.Style(ui.Cyan, "<"+value+">"), ui.Style(ui.Dim, "←/→"))
 		}
 		return fmt.Sprintf("[%s]", value)
 	default:
 		value := field.Value
 		if value == "" {
-			value = fmt.Sprintf("%s<empty>%s", ui.Dim, ui.Reset)
+			value = ui.Style(ui.Dim, "<empty>")
 		}
 		if selected {
-			cursor := fmt.Sprintf("%s_%s", ui.Cyan, ui.Reset)
-			return fmt.Sprintf("%s%s%s", value, cursor, "")
+			return value + ui.Style(ui.Cyan, "_")
 		}
 		return value
 	}
@@ -405,13 +404,13 @@ func modalLayout(screenWidth int) (startX int, width int) {
 func profileHeaderLine(profile ProfileCard, selected bool, nameWidth, badgeWidth int) string {
 	prefix := "  "
 	if selected {
-		prefix = fmt.Sprintf("%s› %s", ui.Cyan, ui.Reset)
+		prefix = ui.Style(ui.Cyan, "› ")
 	}
 	namePadding := nameWidth - visibleLen(profile.Name)
 	if namePadding < 0 {
 		namePadding = 0
 	}
-	return fmt.Sprintf("%s%s%s%s%s  %s", prefix, ui.Bold, profile.Name, ui.Reset, strings.Repeat(" ", namePadding), profileStateBadge(profile, badgeWidth))
+	return fmt.Sprintf("%s%s%s  %s", prefix, ui.Style(ui.Bold, profile.Name), strings.Repeat(" ", namePadding), profileStateBadge(profile, badgeWidth))
 }
 
 func profileListWidths(profiles []ProfileCard) (nameWidth, badgeWidth int) {
@@ -681,16 +680,16 @@ func truncateVisible(s string, limit int) string {
 func profileStateLabel(profile ProfileCard) string {
 	switch profile.Status {
 	case ProfileStatusDisabled:
-		return fmt.Sprintf("%sdisabled%s", ui.Dim, ui.Reset)
+		return ui.Style(ui.Dim, "disabled")
 	case ProfileStatusWarning:
-		return fmt.Sprintf("%swarning%s", ui.Cyan, ui.Reset)
+		return ui.Style(ui.Cyan, "warning")
 	case ProfileStatusError:
 		return "error"
 	default:
 		if profile.Enabled {
-			return fmt.Sprintf("%senabled%s", ui.Green, ui.Reset)
+			return ui.Style(ui.Green, "enabled")
 		}
-		return fmt.Sprintf("%sdisabled%s", ui.Dim, ui.Reset)
+		return ui.Style(ui.Dim, "disabled")
 	}
 }
 
@@ -748,9 +747,9 @@ func renderProfileViewTabs(selected ProfileView) string {
 	history := "[h] History"
 	switch selected {
 	case ProfileViewSummary:
-		summary = fmt.Sprintf("%s[s] Summary%s", ui.Cyan, ui.Reset)
+		summary = ui.Style(ui.Cyan, "[s] Summary")
 	case ProfileViewHistory:
-		history = fmt.Sprintf("%s[h] History%s", ui.Cyan, ui.Reset)
+		history = ui.Style(ui.Cyan, "[h] History")
 	}
 	return fmt.Sprintf("  %s  %s", summary, history)
 }
@@ -758,11 +757,11 @@ func renderProfileViewTabs(selected ProfileView) string {
 func renderProfileHistory(profile ProfileCard) []string {
 	if len(profile.History) == 0 {
 		return []string{
-			fmt.Sprintf("%sNo snapshots found for this profile.%s", ui.Dim, ui.Reset),
+			ui.Style(ui.Dim, "No snapshots found for this profile."),
 		}
 	}
 	lines := []string{
-		fmt.Sprintf("%sRecent snapshots for this profile:%s", ui.Dim, ui.Reset),
+		ui.Style(ui.Dim, "Recent snapshots for this profile:"),
 	}
 	limit := len(profile.History)
 	if limit > 8 {
@@ -786,7 +785,7 @@ func appendProfileActionButtons(lines []string, profile ProfileCard) ([]string, 
 			}
 			lines = append(lines, renderActionButton(button))
 			if !button.Enabled && button.Reason != "" {
-				lines = append(lines, fmt.Sprintf("  %s%s%s", ui.Dim, button.Reason, ui.Reset))
+				lines = append(lines, "  "+ui.Style(ui.Dim, button.Reason))
 			}
 		}
 	}
@@ -847,10 +846,10 @@ func profileCheckSummary(activity ActivityPanel, profile ProfileCard) string {
 }
 
 func renderActionButton(button actionButton) string {
-	key := fmt.Sprintf("%s[%s]%s", ui.Cyan, button.Key, ui.Reset)
+	key := ui.Style(ui.Cyan, "["+button.Key+"]")
 	label := button.Label
 	if button.Enabled {
 		return fmt.Sprintf("  %s %s", key, label)
 	}
-	return fmt.Sprintf("  %s %s%s%s", key, ui.Dim, label, ui.Reset)
+	return fmt.Sprintf("  %s %s", key, ui.Style(ui.Dim, label))
 }

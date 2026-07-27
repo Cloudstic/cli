@@ -17,6 +17,11 @@ const (
 	Reset  = logger.ColorReset
 )
 
+// Style wraps text in the given color, resetting after it.
+func Style(color, text string) string {
+	return color + text + Reset
+}
+
 // TermWriter provides helpers for styled terminal output.
 type TermWriter struct{ W io.Writer }
 

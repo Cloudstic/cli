@@ -11,6 +11,7 @@ import (
 	"github.com/cloudstic/cli/internal/engine"
 	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/internal/repoconfig"
+	"github.com/cloudstic/cli/internal/secretref"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/crypto"
 	"github.com/cloudstic/cli/pkg/keychain"
@@ -707,6 +708,20 @@ func PlanWorkstationSetup(ctx context.Context, opts ...WorkstationSetupOption) (
 func ApplyWorkstationSetupPlan(cfg *ProfilesConfig, plan *WorkstationSetupPlan) (*WorkstationApplyResult, error) {
 	return engine.ApplyWorkstationSetupPlan(cfg, plan)
 }
+
+// SecretRefError reports a malformed scheme://path secret reference (e.g. in
+// one of a profile's *_secret fields). Use errors.As to inspect it and Kind
+// to branch on the failure mode.
+type SecretRefError = secretref.Error
+
+// SecretRefErrorKind categorizes a SecretRefError.
+type SecretRefErrorKind = secretref.ErrorKind
+
+const (
+	SecretRefInvalid            = secretref.KindInvalidRef
+	SecretRefNotFound           = secretref.KindNotFound
+	SecretRefBackendUnavailable = secretref.KindBackendUnavailable
+)
 
 // LoadProfilesFile parses a backup profiles YAML file.
 func LoadProfilesFile(path string) (*ProfilesConfig, error) {

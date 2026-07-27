@@ -1,6 +1,6 @@
 # RFC 0019: Repository File Search
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Date:** 2026-07-26
 - **Affects:** `cmd/cloudstic`, `client.go`, `internal/engine`, `internal/hamt`, `internal/core`, docs
 - **Related:** [RFC 0001](./0001-hamt-evolution.md), [RFC 0002](./0002-affinity-model.md), [RFC 0009](./0009-unified-source-identity.md), [RFC 0015](./0015-filemeta-path-normalization.md)
@@ -544,27 +544,65 @@ results while quietly costing fifty times more.
 Steps 3 and 4 in that order matter: shipping the optimization first would leave
 nothing to check it against.
 
-## Open questions
+## Resolved questions
 
-1. **Multi-parent paths, fully or flagged?** §4 proposes resolving all parents.
-   If `Parents[1:]` turns out to be unreliable in practice for Google Drive
-   snapshots, is the `multi_parent` flag an acceptable v1, or should `find` walk
-   the fallback in reverse and report nothing until it can report everything?
-2. **Should `-max-results` truncate or stream?** A callback-based
-   `WithFindHandler` would remove the cap, but streaming conflicts with grouping:
-   a `FileMatch` is only complete once every snapshot has been scanned. A
-   per-lineage flush is possible. Is 1000 accumulated matches enough that this
-   does not matter for v1?
-3. **Is `-since`/`-until` filtering snapshots or files?** Both readings are
-   defensible and the collision with `-newer`/`-older` (which filter by file
-   `Mtime`) is a genuine footgun. Proposal: `-since`/`-until` select snapshots,
-   `-newer`/`-older` select files, and the help text says so explicitly.
-4. **Should `find` report a version's *deletion*?** The delta scan already knows
-   the snapshot at which a ref left the tree. Surfacing "deleted after snapshot
-   N" would be useful for the recovery case and costs nothing extra — but
-   "deleted" and "modified" are the same diff event, so it can only be reported
-   when no successor version exists for the FileID.
-5. **Cross-source grouping.** Two machines backing up the same file to one
-   repository produce different FileIDs and therefore separate matches, even
-   though `-by-content` would unify them. Is that the correct default, or should
-   the table hint at the relationship?
+The open questions this RFC shipped with, and how implementation settled them.
+
+1. **Multi-parent paths, fully or flagged?** *Resolved: fully.*
+   `fileMetaPaths` (`internal/engine/filemeta_paths.go`) walks every parent
+   chain and returns one path per chain, in `Parents` order, so the existing
+   single-path `fileMetaPath` is exactly its first element and every current
+   caller is unaffected. The expansion is bounded — 50 levels of depth, 32
+   resolved paths — because a multi-parent chain multiplies rather than adds.
+   The `multi_parent` flag was not needed.
+
+2. **Should `-max-results` truncate or stream?** *Resolved: truncate, at 1000.*
+   The cap bounds *distinct files*, never versions, so a truncated result never
+   shows a file with part of its history missing. What implementation exposed is
+   that "which files survive" is inherently a sample: the delta scan and the
+   `-no-delta` walk encounter entries in different orders, so they can keep
+   different subsets. Each is deterministic on its own — the delta scan's final
+   flush is sorted precisely so a repeated query gives a repeated answer — and
+   `Truncated` is reported rather than left implicit. The equivalence test
+   compares match identity only for untruncated queries.
+
+3. **Is `-since`/`-until` filtering snapshots or files?** *Resolved as
+   proposed:* `-since`/`-until` select snapshots by creation time,
+   `-newer`/`-older` select files by `Mtime`. Help text and the user guide both
+   say so, and `TestBuildFindOpts_SnapshotAndFileTimeSelectorsStaySeparate` pins
+   it.
+
+4. **Should `find` report a version's *deletion*?** *Deferred.* Nothing in the
+   result model precludes it — the delta scan already closes a run at the
+   snapshot where a ref left the tree — but it is additive and no test needed
+   it, so v1 does not report it.
+
+5. **Cross-source grouping.** *Resolved: separate, as proposed.* Two machines
+   produce different FileIDs and stay separate matches; `-by-content` unifies
+   them on request, and the summary line names the grouping in force so the two
+   modes cannot be confused.
+
+Implementation also surfaced that §9's illustrative restore hint was not
+literally runnable: `<snapshot-28-ref>` stood in for the snapshot ref, and the
+actual shape matters. `restore` (like `ls` and `diff`) resolves its snapshot
+argument with a direct object-store `Get` by key, not a prefix search the way
+`find`'s own `-snapshot` selector does — so a truncated hash, the short form
+used for on-screen display, fails with "not found" the moment it is pasted.
+The hint must print the full hash. It prints the *bare* hash rather than a
+`snapshot/`-prefixed ref: `restore` accepts either — the prefix check is a
+no-op when already present — but the bare form is what every other place a
+snapshot ID is entered uses (`restore`, `ls`, `diff`, and `list`'s own
+SNAPSHOT HASH column), so it is the one worth being consistent with. This was
+caught by the e2e test that actually executes the printed hint
+(`TestCLI_Feature_FindLocatesDeletedFileAndPrintsAWorkingRestore`) rather than
+only asserting on its text.
+
+Implementation also surfaced a case §4 did not anticipate, worth recording
+because it looks like a bug until you see why it is not: **renaming an ancestor
+folder changes a file's path without changing the file's own metadata object.**
+Parents are FileIDs, not refs, so the descendant's `filemeta/` ref is untouched.
+A `FileVersion` is therefore keyed by (ref, paths) rather than by ref alone, and
+one ref can legitimately appear as two versions at different paths. The delta
+scan re-resolves active runs' paths whenever the folder index moves, which is
+what keeps a path query from crediting a file to snapshots where it was
+somewhere else.

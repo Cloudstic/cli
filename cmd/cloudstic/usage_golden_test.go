@@ -31,6 +31,7 @@ func TestCommandHelpGolden(t *testing.T) {
 		{"help_check", "check"},
 		{"help_list", "list"},
 		{"help_key", "key"},
+		{"help_find", "find"},
 	} {
 		t.Run(tc.golden, func(t *testing.T) {
 			c, ok := lookupCommand(tc.path)

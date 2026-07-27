@@ -21,6 +21,7 @@ Cloudstic is a content-addressable backup tool that creates encrypted, deduplica
   - [restore](#restore)
   - [list](#list)
   - [ls](#ls)
+  - [find](#find)
   - [diff](#diff)
   - [forget](#forget)
   - [prune](#prune)
@@ -901,6 +902,130 @@ cloudstic ls
 # List files in a specific snapshot
 cloudstic ls <snapshot-hash>
 ```
+
+---
+
+### find
+
+Locate a file across every snapshot in the repository, without knowing which
+snapshot holds it. Where every other read command takes a snapshot as input,
+`find` returns one as output — which is what makes it useful for the common
+case, recovering a file that is no longer in the latest snapshot.
+
+```bash
+# Every version of a file, wherever it is
+cloudstic find "vault.kdbx"
+
+# A path pattern; ** spans any number of directories
+cloudstic find "Documents/**/report.pdf"
+
+# Everything a file has ever been, across renames
+cloudstic find -id <file-id>
+```
+
+Searching **every** snapshot is the default. It is affordable because snapshots
+share structure: within a source lineage, `find` walks the oldest snapshot once
+and then diffs consecutive ones, so an unchanged directory costs a single
+pointer comparison rather than another full walk.
+
+#### Patterns
+
+A positional pattern is shorthand. Without a `/` it matches the file's
+**basename**; with a `/` it matches the full **path**, relative to the source
+root. That split is what keeps the common case cheap — a name is on the metadata
+object already, while a path has to be reconstructed from the parent chain.
+
+Glob syntax is the standard one per path segment (`*`, `?`, `[...]`), plus `**`
+for "zero or more path segments".
+
+#### Matching flags
+
+| Flag | Matches |
+|------|---------|
+| `-name <glob>` | basename, same as a `/`-free positional |
+| `-path <glob>` | full path |
+| `-regex <re>` | full path, RE2, unanchored |
+| `-i` | make the above case-insensitive |
+| `-id <file-id>` | source file ID — stable across renames and moves |
+| `-content-hash <sha256>` | files whose content has this hash |
+| `-ref filemeta/<hash>` | one exact metadata object |
+| `-type f\|d` | files only, or folders only |
+| `-size +10M`, `-size -1k`, `-size 4096` | at least, at most, exactly |
+| `-newer <time>`, `-older <time>` | file modification time |
+
+All flags given must match. There is no `or`: run two queries and combine them
+yourself.
+
+Times accept RFC3339 (`2026-01-31T09:00:00Z`), a plain date (`2026-01-31`), or a
+duration back from now (`7d`, `12h`).
+
+#### Choosing which snapshots to search
+
+| Flag | Effect |
+|------|--------|
+| `-snapshot <ref>` | search only this snapshot; repeatable, accepts `latest` |
+| `-source <uri>` | search only snapshots of this source |
+| `-tag <tag>` | search only snapshots carrying this tag; repeatable |
+| `-latest N` | search only the N newest selected snapshots |
+| `-since <time>`, `-until <time>` | search only snapshots created in this window |
+
+Note the split: `-since`/`-until` select **snapshots** by when they were
+created, while `-newer`/`-older` select **files** by their modification time.
+
+#### Reading the results
+
+```text
+$ cloudstic find "*.kdbx"
+
+Documents/vault.kdbx  (3 versions)
+  v1 filemeta/9f86d081  4.2 MiB  2026-07-21 09:14  7 snapshots 4e5d5487..410b18a2
+  v2 filemeta/2c624232  4.1 MiB  2026-06-30 18:02  13 snapshots 1b645389..7d793037
+  v3 filemeta/e3b0c442  3.9 MiB  2026-05-02 11:47  8 snapshots 5f9c3a11..a71e04bd
+
+1 file, 3 versions across 28 snapshots (searched 31 snapshots in 1.8s)
+
+Restore the newest version of Documents/vault.kdbx:
+  cloudstic restore -path Documents/vault.kdbx 410b18a2c9e35f1a8d6b3c07e42fa19d5c8b6e2d1a0f9c8b7a6e5d4c3b2a1908 -output ./restored
+```
+
+The printed command uses the full snapshot hash, not the short form shown in
+the table above it: `restore` resolves its snapshot argument by an exact
+lookup, not a prefix search, so a truncated hash fails with "not found" the
+moment it is pasted.
+
+A repository holds the same file many times over, and the result model collapses
+each kind of repetition differently:
+
+- **Backed up unchanged, night after night.** All those snapshots share one
+  metadata object, so this is *one* version credited with many snapshots — not
+  thirty rows saying the same thing.
+- **Edited over time.** Each edit is a new version, newest first, each with its
+  own snapshot range. "Which version do I want?" is the real question, and this
+  is the answer to it.
+- **Two files with identical content.** These stay separate matches, because
+  restoring one is not restoring the other. Use `-by-content` to regroup the
+  same matches by content hash when finding duplicates is the actual goal.
+- **One file in two places at once** (a Google Drive file in two folders, a hard
+  link). Every path is listed; none is silently picked.
+
+Because results group by file ID rather than by name, a renamed file is one
+match whose versions carry different names — a rename history, for free. Note
+that a *name* query still only matches the versions bearing that name; `-id` is
+the query for "everything about this file regardless of what it was called".
+
+#### Other flags
+
+- `-by-content` — group by content hash instead of by file.
+- `-max-results N` — stop accumulating after N files (default 1000). Scanning
+  continues to completion so the counters stay accurate.
+- `-json` — emit the full result. The schema is the same with or without
+  `-by-content`; only the grouping differs.
+- `-no-delta` — walk every snapshot in full instead of diffing consecutive ones.
+  Much slower, and there to check the fast path against a simple one.
+
+Finding nothing exits `0`, the same as `list` on an empty repository and the
+same as `find(1)`. Scripts tell the cases apart by reading `matches` from
+`-json`.
 
 ---
 

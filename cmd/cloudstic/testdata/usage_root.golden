@@ -24,6 +24,7 @@ COMMANDS
   restore            Restore files from a backup snapshot
   list               List all backup snapshots in the repository
   ls                 List files within a specific snapshot
+  find               Locate a file across every snapshot in the repository
   prune              Remove unused data chunks from the repository
   forget             Remove a specific snapshot from history
   diff               Compare two snapshots or a snapshot against latest

@@ -10,10 +10,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+
+	cloudstic "github.com/cloudstic/cli"
 )
 
 // TestMain sets up a shared GOCOVERDIR for coverage tracking.
@@ -111,6 +114,24 @@ func runExpectFail(t *testing.T, bin string, args ...string) string {
 		t.Fatalf("expected command %v to fail, but it succeeded:\n%s", args, out)
 	}
 	return string(out)
+}
+
+// runStdoutOnly runs bin and returns stdout alone, discarding stderr. Tests use
+// this to check that a command's -json output is not contaminated by anything
+// written to stderr — CombinedOutput, which every other helper here uses, would
+// interleave the two and hide exactly that bug.
+func runStdoutOnly(t *testing.T, bin string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command(bin, args...)
+	cmd.Env = cleanEnv()
+	var stdout strings.Builder
+	cmd.Stdout = &stdout
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("command %v failed: %v\nstderr:\n%s", args, err, stderr.String())
+	}
+	return stdout.String()
 }
 
 func runWithEnv(t *testing.T, bin string, extraEnv []string, args ...string) string {
@@ -325,6 +346,85 @@ type lsResult struct {
 	Entries     []string
 }
 
+type findResult struct {
+	*commandResult
+	Result cloudstic.FindResult
+}
+
+// MustMatchPath returns the match reported at path, failing if there is none.
+func (r *findResult) MustMatchPath(path string) cloudstic.FileMatch {
+	r.t.Helper()
+	for _, m := range r.Result.Matches {
+		if m.Path() == path {
+			return m
+		}
+	}
+	r.t.Fatalf("expected a match at %q, got %v\nraw output:\n%s", path, r.matchedPaths(), r.out)
+	return cloudstic.FileMatch{}
+}
+
+func (r *findResult) MustNotMatchPath(path string) *findResult {
+	r.t.Helper()
+	for _, m := range r.Result.Matches {
+		if m.Path() == path {
+			r.t.Fatalf("expected no match at %q, got %v", path, r.matchedPaths())
+		}
+	}
+	return r
+}
+
+func (r *findResult) MustMatchPaths(want ...string) *findResult {
+	r.t.Helper()
+	got := r.matchedPaths()
+	sort.Strings(got)
+	wantSorted := append([]string(nil), want...)
+	sort.Strings(wantSorted)
+	if strings.Join(got, ",") != strings.Join(wantSorted, ",") {
+		r.t.Fatalf("matched paths = %v, want %v\nraw output:\n%s", got, wantSorted, r.out)
+	}
+	return r
+}
+
+func (r *findResult) MustHaveVersions(path string, n int) *findResult {
+	r.t.Helper()
+	m := r.MustMatchPath(path)
+	if len(m.Versions) != n {
+		r.t.Fatalf("match %q has %d versions, want %d\nraw output:\n%s", path, len(m.Versions), n, r.out)
+	}
+	return r
+}
+
+// MustHaveVersionInSnapshots asserts that the version at index i of the match at
+// path appears in exactly n snapshots. Index 0 is the newest version.
+func (r *findResult) MustHaveVersionInSnapshots(path string, version, n int) *findResult {
+	r.t.Helper()
+	m := r.MustMatchPath(path)
+	if version >= len(m.Versions) {
+		r.t.Fatalf("match %q has %d versions, no v%d\nraw output:\n%s", path, len(m.Versions), version+1, r.out)
+	}
+	if got := len(m.Versions[version].Snapshots); got != n {
+		r.t.Fatalf("match %q v%d spans %d snapshots, want %d\nraw output:\n%s",
+			path, version+1, got, n, r.out)
+	}
+	return r
+}
+
+func (r *findResult) MustHaveSearchedSnapshots(n int) *findResult {
+	r.t.Helper()
+	if r.Result.SnapshotsSearched != n {
+		r.t.Fatalf("searched %d snapshots, want %d\nraw output:\n%s", r.Result.SnapshotsSearched, n, r.out)
+	}
+	return r
+}
+
+func (r *findResult) matchedPaths() []string {
+	paths := make([]string, 0, len(r.Result.Matches))
+	for _, m := range r.Result.Matches {
+		paths = append(paths, m.Path())
+	}
+	return paths
+}
+
 type forgetResult struct {
 	*commandResult
 	DryRun           bool
@@ -492,6 +592,42 @@ func (r *repo) Diff(left, right string, extraArgs ...string) *diffResult {
 	args = append(args, extraArgs...)
 	out := r.run(args...)
 	return parseDiffResult(r.h.t, out)
+}
+
+// Find runs `cloudstic find` and returns its rendered output.
+func (r *repo) Find(extraArgs ...string) *commandResult {
+	r.h.t.Helper()
+	args := append([]string{"find"}, r.authArgs...)
+	args = append(args, extraArgs...)
+	return r.run(args...)
+}
+
+// FindExpectFail runs a find that is expected to be rejected.
+func (r *repo) FindExpectFail(extraArgs ...string) *commandResult {
+	r.h.t.Helper()
+	args := append([]string{"find"}, r.authArgs...)
+	args = append(args, extraArgs...)
+	return r.h.RunExpectFail(args...)
+}
+
+// FindJSON runs `cloudstic find -json` and decodes the result, so assertions
+// can be made against the structure rather than against rendered text.
+func (r *repo) FindJSON(extraArgs ...string) *findResult {
+	r.h.t.Helper()
+	args := append([]string{"find", "-json"}, r.authArgs...)
+	args = append(args, extraArgs...)
+	// find can write a warning to stderr on the same run that succeeds and
+	// prints a JSON result to stdout (a -regex query with no cheap prefilter,
+	// for instance). run()'s CombinedOutput would interleave the two and
+	// corrupt the JSON, which is exactly the separation -json promises callers
+	// — so this reads stdout alone, the same way a real script consuming the
+	// output would.
+	stdout := runStdoutOnly(r.h.t, r.h.bin, args...)
+	out := newCommandResult(r.h.t, stdout)
+
+	fr := &findResult{commandResult: out}
+	out.MustUnmarshalJSON(&fr.Result)
+	return fr
 }
 
 func (r *repo) Ls(extraArgs ...string) *lsResult {

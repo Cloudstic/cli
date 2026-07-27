@@ -166,6 +166,12 @@ _cloudstic_source_prefixes() {
     compadd -Q -S '' -X 'source URI prefix' -- "${values[@]}"
 }
 
+_cloudstic_find_types() {
+    local -a values
+    values=('f:file' 'd:folder')
+    _describe -t types 'entry type' values
+}
+
 _cloudstic() {
     local -a commands
     commands=(

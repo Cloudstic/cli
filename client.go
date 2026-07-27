@@ -940,6 +940,11 @@ func (c *Client) ForgetPolicy(ctx context.Context, opts ...ForgetOption) (*Polic
 
 type RepoLock = engine.RepoLock
 
+// ErrRepoLocked means Backup, Restore, or Prune could not proceed because the
+// repository is held by another operation. Use errors.Is(err, ErrRepoLocked)
+// to detect the condition and prompt the caller toward BreakLock.
+var ErrRepoLocked = engine.ErrRepoLocked
+
 func (c *Client) BreakLock(ctx context.Context) ([]*RepoLock, error) {
 	return engine.BreakRepoLock(ctx, c.store)
 }

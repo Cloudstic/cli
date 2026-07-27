@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -60,6 +62,25 @@ func TestPrintInitResult_NoEncryption(t *testing.T) {
 	}
 	if !strings.Contains(got, "encrypted: false") {
 		t.Errorf("expected encrypted=false, got:\n%s", got)
+	}
+}
+
+func TestRunInit_JSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	var out strings.Builder
+	r := &runner{out: &out, errOut: &strings.Builder{}}
+
+	args := []string{"-store", "local:" + tmpDir, "-no-encryption", "-json"}
+	if code := initCommand().execute(r.withArgs(args), context.Background(), "init"); code != 0 {
+		t.Fatalf("runInit() exit = %d, want 0, stderr=%s", code, r.errOut.(*strings.Builder).String())
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out.String()), &got); err != nil {
+		t.Fatalf("json unmarshal: %v\noutput:\n%s", err, out.String())
+	}
+	if got["Encrypted"] != false {
+		t.Fatalf("expected Encrypted=false in JSON output, got: %v", got)
 	}
 }
 

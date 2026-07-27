@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -45,6 +46,53 @@ func TestRunForget_SingleSnapshot_WithPruneResult(t *testing.T) {
 	}
 	if !strings.Contains(got, "Prune complete.") {
 		t.Errorf("expected prune stats, got:\n%s", got)
+	}
+}
+
+func TestRunForget_SingleSnapshot_JSON(t *testing.T) {
+	args := []string{"-json", "abc123"}
+	var out strings.Builder
+	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
+		forgetResult: &cloudstic.ForgetResult{Prune: nil},
+	}}
+
+	if code := forgetCommand().execute(r.withArgs(args), context.Background(), "forget"); code != 0 {
+		t.Fatalf("runForget() exit = %d, want 0", code)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out.String()), &got); err != nil {
+		t.Fatalf("json unmarshal: %v\noutput:\n%s", err, out.String())
+	}
+	if got["snapshot_id"] != "abc123" {
+		t.Fatalf("expected snapshot_id=abc123 in JSON output, got: %v", got)
+	}
+}
+
+func TestRunForget_Policy_JSON(t *testing.T) {
+	args := []string{"-json", "--keep-last", "1"}
+	var out strings.Builder
+	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
+		policyResult: &cloudstic.PolicyResult{
+			Groups: []engine.PolicyGroupResult{
+				{
+					Key:    engine.GroupKey{Source: "local", Account: "user"},
+					Remove: []engine.SnapshotEntry{{Ref: "snapshot/old1", Snap: core.Snapshot{Seq: 1}}},
+				},
+			},
+		},
+	}}
+
+	if code := forgetCommand().execute(r.withArgs(args), context.Background(), "forget"); code != 0 {
+		t.Fatalf("runForget() exit = %d, want 0", code)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out.String()), &got); err != nil {
+		t.Fatalf("json unmarshal: %v\noutput:\n%s", err, out.String())
+	}
+	if _, ok := got["groups"]; !ok {
+		t.Fatalf("expected groups key in JSON output, got: %v", got)
 	}
 }
 

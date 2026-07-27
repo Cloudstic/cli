@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"strings"
 	"testing"
@@ -131,6 +132,31 @@ func TestBuildBackupOpts_IgnoreEmptySnapshot(t *testing.T) {
 	opts := buildBackupOpts(a, nil)
 	if len(opts) != 1 {
 		t.Fatalf("len(opts)=%d want 1", len(opts))
+	}
+}
+
+func TestRunBackup_JSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	var out strings.Builder
+	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
+		backupResult: &engine.RunResult{
+			SnapshotHash: "abc123",
+			SnapshotRef:  "snapshot/abc123",
+			FilesNew:     3,
+		},
+	}}
+
+	args := []string{"-source", "local:" + tmpDir, "-json"}
+	if code := backupCommand().execute(r.withArgs(args), context.Background(), "backup"); code != 0 {
+		t.Fatalf("runBackup() exit = %d, want 0", code)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out.String()), &got); err != nil {
+		t.Fatalf("json unmarshal: %v\noutput:\n%s", err, out.String())
+	}
+	if got["SnapshotHash"] != "abc123" {
+		t.Fatalf("expected SnapshotHash=abc123 in JSON output, got: %v", got)
 	}
 }
 

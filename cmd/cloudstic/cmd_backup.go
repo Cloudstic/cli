@@ -282,11 +282,13 @@ func runBackupWithProfiles(r *runner, ctx context.Context, base *backupArgs) int
 		p := cfg.Profiles[name]
 		effective, err := mergeProfileBackupArgs(base, name, p, cfg)
 		if err != nil {
-			_, _ = fmt.Fprintf(r.errOut, "[%s] profile merge failed: %v\n", name, err)
+			r.fail("[%s] profile merge failed: %v", name, err)
 			failures++
 			continue
 		}
-		_, _ = fmt.Fprintf(r.out, "\n== Running profile %s ==\n", name)
+		if !base.jsonEnabled() {
+			_, _ = fmt.Fprintf(r.out, "\n== Running profile %s ==\n", name)
+		}
 		r.client = nil // each profile may target a different store
 		if code := runSingleBackup(r, ctx, effective); code != 0 {
 			failures++

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -84,6 +86,30 @@ func TestPrintRestoreSummary_DryRun(t *testing.T) {
 	}
 	if strings.Contains(got, "Output:") {
 		t.Errorf("dry run should not show output path, got:\n%s", got)
+	}
+}
+
+func TestRunRestore_JSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	var out strings.Builder
+	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
+		restoreResult: &cloudstic.RestoreResult{
+			SnapshotRef:  "snapshot/abc123",
+			FilesWritten: 5,
+		},
+	}}
+
+	args := []string{"-format", "dir", "-output", tmpDir, "-json"}
+	if code := restoreCommand().execute(r.withArgs(args), context.Background(), "restore"); code != 0 {
+		t.Fatalf("runRestore() exit = %d, want 0", code)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out.String()), &got); err != nil {
+		t.Fatalf("json unmarshal: %v\noutput:\n%s", err, out.String())
+	}
+	if got["SnapshotRef"] != "snapshot/abc123" {
+		t.Fatalf("expected SnapshotRef in JSON output, got: %v", got)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -11,6 +12,13 @@ import (
 
 	"github.com/cloudstic/cli/pkg/store"
 )
+
+// ErrRepoLocked is wrapped into every error that means the repository is
+// currently held by another operation (exclusive or shared), as opposed to
+// an I/O failure that merely prevented telling whether it is locked. Callers
+// use errors.Is(err, ErrRepoLocked) to distinguish the two and point the user
+// at `break-lock` instead of a generic failure message.
+var ErrRepoLocked = errors.New("repository is locked")
 
 // The lock path must be distinct from the shared lock directory on local filesystems.
 // We use index/lock.exclusive for the exclusive lock and index/lock.shared/ for shared locks.
@@ -111,8 +119,8 @@ func AcquireRepoLock(ctx context.Context, s store.ObjectStore, operation string)
 	}
 	if !lock.ownsLock(current) {
 		return nil, nil, fmt.Errorf(
-			"repository is locked by %s (operation: %s) — lost lock race",
-			current.Holder, current.Operation,
+			"%w by %s (operation: %s) — lost lock race",
+			ErrRepoLocked, current.Holder, current.Operation,
 		)
 	}
 
@@ -269,7 +277,7 @@ func checkExclusiveLock(ctx context.Context, s store.ObjectStore) error {
 			return fmt.Errorf("cannot determine whether the repository is locked: %w", existsErr)
 		}
 		if exists {
-			return fmt.Errorf("repository holds an unreadable exclusive lock: %w", err)
+			return fmt.Errorf("%w: exclusive lock present but unreadable: %w", ErrRepoLocked, err)
 		}
 		return nil
 	}
@@ -277,8 +285,8 @@ func checkExclusiveLock(ctx context.Context, s store.ObjectStore) error {
 	expires, parseErr := time.Parse(time.RFC3339Nano, existing.ExpiresAt)
 	if parseErr != nil || time.Now().Before(expires) {
 		return fmt.Errorf(
-			"repository is exclusively locked by %s (operation: %s, acquired: %s, expires: %s)",
-			existing.Holder, existing.Operation, existing.AcquiredAt, existing.ExpiresAt,
+			"%w (exclusive) by %s (operation: %s, acquired: %s, expires: %s)",
+			ErrRepoLocked, existing.Holder, existing.Operation, existing.AcquiredAt, existing.ExpiresAt,
 		)
 	}
 	return nil
@@ -328,15 +336,15 @@ func checkSharedLocks(ctx context.Context, s store.ObjectStore) error {
 				return fmt.Errorf("cannot determine whether shared lock %s is live: %w", key, existsErr)
 			}
 			if exists {
-				return fmt.Errorf("repository holds an unreadable shared lock %s: %w", key, err)
+				return fmt.Errorf("%w: shared lock %s present but unreadable: %w", ErrRepoLocked, key, err)
 			}
 			continue
 		}
 		expires, parseErr := time.Parse(time.RFC3339Nano, sharedLock.ExpiresAt)
 		if parseErr != nil || time.Now().Before(expires) {
 			return fmt.Errorf(
-				"repository is locked (shared) by %s (operation: %s)",
-				sharedLock.Holder, sharedLock.Operation,
+				"%w (shared) by %s (operation: %s)",
+				ErrRepoLocked, sharedLock.Holder, sharedLock.Operation,
 			)
 		}
 	}

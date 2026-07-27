@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -56,6 +57,30 @@ func TestRunPrune_DryRun(t *testing.T) {
 	}
 	if !strings.Contains(got, "would delete") {
 		t.Errorf("expected 'would delete' in output, got:\n%s", got)
+	}
+}
+
+func TestRunPrune_JSON(t *testing.T) {
+	args := []string{"-json"}
+	var out strings.Builder
+	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
+		pruneResult: &cloudstic.PruneResult{
+			ObjectsScanned: 100,
+			ObjectsDeleted: 10,
+			BytesReclaimed: 2048,
+		},
+	}}
+
+	if code := pruneCommand().execute(r.withArgs(args), context.Background(), "prune"); code != 0 {
+		t.Fatalf("runPrune() exit = %d, want 0", code)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out.String()), &got); err != nil {
+		t.Fatalf("json unmarshal: %v\noutput:\n%s", err, out.String())
+	}
+	if got["ObjectsDeleted"] != float64(10) {
+		t.Fatalf("expected ObjectsDeleted=10 in JSON output, got: %v", got)
 	}
 }
 

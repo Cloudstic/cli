@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strings"
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
@@ -135,33 +134,11 @@ func (dm *DiffManager) loadRoot(ctx context.Context, id string) (root, ref strin
 }
 
 func (dm *DiffManager) resolveSnapshot(ctx context.Context, id string) (string, error) {
-	if id == "latest" || id == "" {
-		data, err := dm.store.Get(ctx, "index/latest")
-		if err != nil {
-			return "", fmt.Errorf("get latest index: %w", err)
-		}
-		var idx core.Index
-		if err := json.Unmarshal(data, &idx); err != nil {
-			return "", err
-		}
-		return idx.LatestSnapshot, nil
-	}
-	if !strings.HasPrefix(id, "snapshot/") {
-		return "snapshot/" + id, nil
-	}
-	return id, nil
+	return resolveSnapshotRef(ctx, dm.store, id)
 }
 
 func (dm *DiffManager) loadSnapshot(ctx context.Context, ref string) (*core.Snapshot, error) {
-	data, err := getVerified(ctx, dm.store, ref)
-	if err != nil {
-		return nil, fmt.Errorf("load snapshot %s: %w", ref, err)
-	}
-	var snap core.Snapshot
-	if err := json.Unmarshal(data, &snap); err != nil {
-		return nil, err
-	}
-	return &snap, nil
+	return loadSnapshotByRef(ctx, dm.store, ref)
 }
 
 // ---------------------------------------------------------------------------

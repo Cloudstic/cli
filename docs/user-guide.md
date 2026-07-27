@@ -861,7 +861,9 @@ cloudstic restore -dry-run
 | `-dry-run` | `false` | Show what would be restored without writing output |
 | `-no-verify` | `false` | Skip the content-hash check on each restored file (not recommended) |
 
-The snapshot ID is a positional argument (defaults to latest if omitted).
+The snapshot ID is a positional argument (defaults to latest if omitted). A
+full hash or any unambiguous hash prefix is accepted; Cloudstic rejects a prefix
+when more than one snapshot matches it.
 
 **Integrity verification.** Every restored file is hashed as it is written and
 compared against the content hash recorded when the snapshot was taken. If they
@@ -902,6 +904,9 @@ cloudstic ls
 # List files in a specific snapshot
 cloudstic ls <snapshot-hash>
 ```
+
+The hash may be shortened to any unambiguous prefix. Cloudstic reports an error
+instead of choosing a snapshot when the prefix is ambiguous.
 
 ---
 
@@ -985,13 +990,8 @@ Documents/vault.kdbx  (3 versions)
 1 file, 3 versions across 28 snapshots (searched 31 snapshots in 1.8s)
 
 Restore the newest version of Documents/vault.kdbx:
-  cloudstic restore -path Documents/vault.kdbx 410b18a2c9e35f1a8d6b3c07e42fa19d5c8b6e2d1a0f9c8b7a6e5d4c3b2a1908 -output ./restored
+  cloudstic restore -path Documents/vault.kdbx 410b18a2 -output ./restored
 ```
-
-The printed command uses the full snapshot hash, not the short form shown in
-the table above it: `restore` resolves its snapshot argument by an exact
-lookup, not a prefix search, so a truncated hash fails with "not found" the
-moment it is pasted.
 
 A repository holds the same file many times over, and the result model collapses
 each kind of repetition differently:
@@ -1040,6 +1040,9 @@ cloudstic diff <snapshot-hash-1> <snapshot-hash-2>
 # Compare a snapshot against the latest
 cloudstic diff <snapshot-hash> latest
 ```
+
+Each hash may be shortened to any unambiguous prefix. Cloudstic reports an error
+instead of choosing a snapshot when a prefix is ambiguous.
 
 Shows added, modified, and removed files between the two snapshots.
 

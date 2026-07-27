@@ -738,6 +738,11 @@ type RestoreOption = engine.RestoreOption
 type RestoreResult = engine.RestoreResult
 
 var (
+	// ErrSnapshotNotFound means no snapshot matched a requested reference.
+	ErrSnapshotNotFound = engine.ErrSnapshotNotFound
+	// ErrSnapshotRefAmbiguous means more than one snapshot matched a hash prefix.
+	ErrSnapshotRefAmbiguous = engine.ErrSnapshotRefAmbiguous
+
 	WithRestoreDryRun   = engine.WithRestoreDryRun
 	WithRestoreVerbose  = engine.WithRestoreVerbose
 	WithRestorePath     = engine.WithRestorePath
@@ -745,14 +750,16 @@ var (
 )
 
 // Restore writes the snapshot's file tree as a ZIP archive to w.
-// snapshotRef can be "", "latest", a bare hash, or "snapshot/<hash>".
+// snapshotRef can be "", "latest", a bare hash or unambiguous hash prefix, or
+// "snapshot/<hash-or-prefix>". An ambiguous prefix is rejected.
 func (c *Client) Restore(ctx context.Context, w io.Writer, snapshotRef string, opts ...RestoreOption) (*RestoreResult, error) {
 	mgr := engine.NewRestoreManager(c.store, c.reporter)
 	return mgr.Run(ctx, engine.NewZipRestoreWriter(w), snapshotRef, opts...)
 }
 
 // RestoreToDir writes the snapshot's file tree directly into outputDir.
-// snapshotRef can be "", "latest", a bare hash, or "snapshot/<hash>".
+// snapshotRef can be "", "latest", a bare hash or unambiguous hash prefix, or
+// "snapshot/<hash-or-prefix>". An ambiguous prefix is rejected.
 func (c *Client) RestoreToDir(ctx context.Context, outputDir, snapshotRef string, opts ...RestoreOption) (*RestoreResult, error) {
 	mgr := engine.NewRestoreManager(c.store, c.reporter)
 	writer, err := engine.NewFSRestoreWriter(outputDir)
@@ -785,6 +792,8 @@ type LsSnapshotResult = engine.LsSnapshotResult
 
 var WithLsVerbose = engine.WithLsVerbose
 
+// LsSnapshot lists a snapshot selected by latest, full hash, or unambiguous
+// hash prefix. An ambiguous prefix is rejected.
 func (c *Client) LsSnapshot(ctx context.Context, snapshotID string, opts ...LsSnapshotOption) (*LsSnapshotResult, error) {
 	mgr := engine.NewLsSnapshotManager(c.store)
 	return mgr.Run(ctx, snapshotID, opts...)
@@ -944,6 +953,8 @@ type DiffResult = engine.DiffResult
 
 var WithDiffVerbose = engine.WithDiffVerbose
 
+// Diff compares snapshots selected by latest, full hashes, or unambiguous hash
+// prefixes. An ambiguous prefix is rejected.
 func (c *Client) Diff(ctx context.Context, snap1, snap2 string, opts ...DiffOption) (*DiffResult, error) {
 	mgr := engine.NewDiffManager(c.store)
 	return mgr.Run(ctx, snap1, snap2, opts...)

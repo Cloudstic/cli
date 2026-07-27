@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -610,6 +611,9 @@ func TestFind_SnapshotSelectors(t *testing.T) {
 			WithFindPattern("notes.txt"), WithFindSnapshots("deadbeef"))
 		if err == nil {
 			t.Fatal("want an error for an unknown snapshot")
+		}
+		if !errors.Is(err, ErrSnapshotNotFound) {
+			t.Fatalf("error = %v, want errors.Is(err, ErrSnapshotNotFound)", err)
 		}
 	})
 }

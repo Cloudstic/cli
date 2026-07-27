@@ -204,17 +204,17 @@ func TestPrintFindResult_ByContentGolden(t *testing.T) {
 			Type:        core.FileTypeFile,
 			Versions: []cloudstic.FileVersion{
 				{
-					Ref: "filemeta/2c624232cdd221771294dfbb310aca000a0df6ac8b66b696d90ef06fdefb64a3",
+					Ref:  "filemeta/2c624232cdd221771294dfbb310aca000a0df6ac8b66b696d90ef06fdefb64a3",
 					Name: "report.pdf", FileID: "f1", Size: 4 << 20, Mtime: 1_769_000_000,
 					Paths:     []string{"Documents/report.pdf"},
-					Snapshots: []cloudstic.SnapshotRef{{Ref: "snapshot/410b18a2", Seq: 4, Created: "2026-07-21T09:14:00Z"}},
+					Snapshots: []cloudstic.SnapshotRef{{Ref: "snapshot/410b18a2c9e35f1a8d6b3c07e42fa19d5c8b6e2d1a0f9c8b7a6e5d4c3b2a1908", Seq: 4, Created: "2026-07-21T09:14:00Z"}},
 					LastSeen:  "2026-07-21T09:14:00Z",
 				},
 				{
-					Ref: "filemeta/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+					Ref:  "filemeta/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 					Name: "report.pdf", FileID: "f2", Size: 4 << 20, Mtime: 1_769_000_000,
 					Paths:     []string{"Backup/report.pdf"},
-					Snapshots: []cloudstic.SnapshotRef{{Ref: "snapshot/410b18a2", Seq: 4, Created: "2026-07-21T09:14:00Z"}},
+					Snapshots: []cloudstic.SnapshotRef{{Ref: "snapshot/410b18a2c9e35f1a8d6b3c07e42fa19d5c8b6e2d1a0f9c8b7a6e5d4c3b2a1908", Seq: 4, Created: "2026-07-21T09:14:00Z"}},
 					LastSeen:  "2026-07-21T09:14:00Z",
 				},
 			},
@@ -262,7 +262,7 @@ func sampleFindMatch() cloudstic.FileMatch {
 				FileID: "f1", Name: "vault.kdbx", Size: 4_404_019, Mtime: 1_784_970_840,
 				Paths: []string{"Documents/vault.kdbx"},
 				Snapshots: []cloudstic.SnapshotRef{
-					{Ref: "snapshot/410b18a2", Seq: 28, Created: "2026-07-21T09:14:00Z"},
+					{Ref: "snapshot/410b18a2c9e35f1a8d6b3c07e42fa19d5c8b6e2d1a0f9c8b7a6e5d4c3b2a1908", Seq: 28, Created: "2026-07-21T09:14:00Z"},
 					{Ref: "snapshot/4e5d5487", Seq: 22, Created: "2026-07-14T09:14:00Z"},
 				},
 				FirstSeen: "2026-07-14T09:14:00Z", LastSeen: "2026-07-21T09:14:00Z",

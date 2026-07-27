@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strings"
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
@@ -100,30 +99,16 @@ func (lm *LsSnapshotManager) Run(ctx context.Context, snapshotID string, opts ..
 // ---------------------------------------------------------------------------
 
 func (lm *LsSnapshotManager) resolveSnapshot(ctx context.Context, id string) (*core.Snapshot, string, error) {
-	ref := id
-	if ref == "latest" || ref == "" {
-		data, err := lm.store.Get(ctx, "index/latest")
-		if err != nil {
-			return nil, "", fmt.Errorf("get latest index: %w", err)
-		}
-		var idx core.Index
-		if err := json.Unmarshal(data, &idx); err != nil {
-			return nil, "", fmt.Errorf("parse index: %w", err)
-		}
-		ref = idx.LatestSnapshot
-	} else if !strings.HasPrefix(ref, "snapshot/") {
-		ref = "snapshot/" + ref
+	ref, err := resolveSnapshotRef(ctx, lm.store, id)
+	if err != nil {
+		return nil, "", err
 	}
 
-	data, err := getVerified(ctx, lm.store, ref)
+	snap, err := loadSnapshotByRef(ctx, lm.store, ref)
 	if err != nil {
-		return nil, "", fmt.Errorf("load snapshot %s: %w", ref, err)
+		return nil, "", err
 	}
-	var snap core.Snapshot
-	if err := json.Unmarshal(data, &snap); err != nil {
-		return nil, "", fmt.Errorf("parse snapshot: %w", err)
-	}
-	return &snap, ref, nil
+	return snap, ref, nil
 }
 
 // ---------------------------------------------------------------------------

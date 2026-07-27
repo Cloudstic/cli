@@ -2,10 +2,12 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +19,13 @@ import (
 var snapLog = logger.New("snapshots", logger.ColorCyan)
 
 const snapshotCatalogKey = "index/snapshots"
+
+var (
+	// ErrSnapshotNotFound means no snapshot matched a requested reference.
+	ErrSnapshotNotFound = errors.New("snapshot not found")
+	// ErrSnapshotRefAmbiguous means more than one snapshot matched a hash prefix.
+	ErrSnapshotRefAmbiguous = errors.New("snapshot reference is ambiguous")
+)
 
 // ---------------------------------------------------------------------------
 // Snapshot catalog (index/snapshots)
@@ -285,6 +294,71 @@ func fetchSnapshots(s store.ObjectStore, keys []string) (map[string]core.Snapsho
 // index/latest helpers
 // ---------------------------------------------------------------------------
 
+// resolveSnapshotRef resolves latest, a full snapshot ref, a bare hash, or an
+// unambiguous hash prefix to a fully-qualified snapshot ref.
+func resolveSnapshotRef(ctx context.Context, s store.ObjectStore, selector string) (string, error) {
+	if selector == "" || selector == "latest" {
+		ref, _, err := resolveLatestContext(ctx, s)
+		if err != nil {
+			return "", err
+		}
+		if ref == "" {
+			return "", snapshotNotFoundError("latest")
+		}
+		return ref, nil
+	}
+
+	refPrefix := selector
+	if !strings.HasPrefix(refPrefix, "snapshot/") {
+		refPrefix = "snapshot/" + refPrefix
+	}
+	if len(refPrefix) == len("snapshot/")+sha256.Size*2 {
+		return refPrefix, nil
+	}
+
+	matches, err := s.List(ctx, refPrefix)
+	if err != nil {
+		return "", fmt.Errorf("list snapshots matching %q: %w", selector, err)
+	}
+	for _, ref := range matches {
+		if ref == refPrefix {
+			return ref, nil
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		return "", snapshotNotFoundError(selector)
+	case 1:
+		return matches[0], nil
+	default:
+		return "", snapshotRefAmbiguousError(selector, len(matches))
+	}
+}
+
+func snapshotNotFoundError(selector string) error {
+	return fmt.Errorf("%w: %q", ErrSnapshotNotFound, selector)
+}
+
+func snapshotRefAmbiguousError(selector string, matches int) error {
+	return fmt.Errorf("%w: %q matches %d snapshots", ErrSnapshotRefAmbiguous, selector, matches)
+}
+
+func loadSnapshotByRef(ctx context.Context, s store.ObjectStore, ref string) (*core.Snapshot, error) {
+	data, err := getVerified(ctx, s, ref)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, snapshotNotFoundError(strings.TrimPrefix(ref, "snapshot/"))
+		}
+		return nil, fmt.Errorf("load snapshot %s: %w", ref, err)
+	}
+	var snap core.Snapshot
+	if err := json.Unmarshal(data, &snap); err != nil {
+		return nil, fmt.Errorf("parse snapshot %s: %w", ref, err)
+	}
+	return &snap, nil
+}
+
 // resolveLatest reads index/latest and returns the snapshot ref it points to.
 // Returns ("", 0, nil) on a fresh repository (no index/latest yet). Any other
 // read or decode failure is returned as an error rather than treated as a
@@ -292,7 +366,11 @@ func fetchSnapshots(s store.ObjectStore, keys []string) (map[string]core.Snapsho
 // exist", and confusing the two would silently reset the sequence number and
 // downgrade the next backup from incremental to a full rescan.
 func resolveLatest(s store.ObjectStore) (ref string, seq int, err error) {
-	data, err := s.Get(context.Background(), "index/latest")
+	return resolveLatestContext(context.Background(), s)
+}
+
+func resolveLatestContext(ctx context.Context, s store.ObjectStore) (ref string, seq int, err error) {
+	data, err := s.Get(ctx, "index/latest")
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return "", 0, nil

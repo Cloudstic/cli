@@ -1,0 +1,11 @@
+{
+  "release": "v1.16.0",
+  "password": "fixture-password",
+  "snapshot": "8984865b88c3d3130047f187e79d46d3b61ee2abca4b212dbd8a4b613996653f",
+  "files": {
+    "doc.txt": "legacy document contents\n",
+    "sub/nested.txt": "nested legacy content\n"
+  },
+  "sealed_index": true,
+  "notes": "Repository format 2 with framed objects and a sharded, sealed pack index. The last release whose encrypted config marker is plaintext rather than sealed."
+}

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/internal/repoconfig"
 	"github.com/cloudstic/cli/pkg/crypto"
 	"github.com/cloudstic/cli/pkg/keychain"
 )
@@ -172,7 +173,7 @@ func TestInitManager_WriteRepoConfig_PropagatesReadError(t *testing.T) {
 	s := newErrorOnGetStore(NewMockStore(), backendErr, configKey)
 	mgr := NewInitManager(s)
 
-	err := mgr.writeRepoConfig(context.Background(), false)
+	err := mgr.writeRepoConfig(context.Background(), false, nil)
 	if err == nil {
 		t.Fatal("expected writeRepoConfig to fail when the existing config cannot be read")
 	}
@@ -314,12 +315,10 @@ func TestInitManager_EncryptedWithKMS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config not written: %v", err)
 	}
-	var cfg core.RepoConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		t.Fatalf("invalid config JSON: %v", err)
-	}
-	if !cfg.Encrypted {
-		t.Error("config should be encrypted")
+	// The marker of an encrypted repository is sealed, so "encrypted" is no
+	// longer a field to read but a property of the bytes themselves.
+	if !repoconfig.IsSealed(data) {
+		t.Error("config should be sealed for an encrypted repository")
 	}
 }
 

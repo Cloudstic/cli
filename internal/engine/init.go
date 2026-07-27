@@ -9,6 +9,7 @@ import (
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/logger"
+	"github.com/cloudstic/cli/internal/repoconfig"
 	"github.com/cloudstic/cli/pkg/crypto"
 	"github.com/cloudstic/cli/pkg/keychain"
 	"github.com/cloudstic/cli/pkg/store"
@@ -89,14 +90,16 @@ func (m *InitManager) Run(ctx context.Context, opts ...InitOption) (*InitResult,
 		// read would rewrite its marker to a version this build understands
 		// while leaving data it does not — turning a repository that fails
 		// safely into one that is silently misread.
+		//
+		// A sealed marker cannot be decoded here — the key is not resolved
+		// until setupEncryption below — so its gate runs there instead, once
+		// the key exists. checkEncryptionInPlace needs no such deferral: a
+		// sealed marker means an already-encrypted repository, which is the
+		// case that check returns on immediately.
 		var existing core.RepoConfig
 		if err := json.Unmarshal(cfgData, &existing); err == nil {
-			if existing.Version > core.MaxSupportedRepoFormat {
-				return nil, fmt.Errorf(
-					"cannot adopt repository: format version %d is newer than this build supports (up to %d): "+
-						"upgrade cloudstic to work with this repository",
-					existing.Version, core.MaxSupportedRepoFormat,
-				)
+			if err := checkAdoptedRepoFormat(existing.Version); err != nil {
+				return nil, err
 			}
 			if err := m.checkEncryptionInPlace(ctx, existing, cfg); err != nil {
 				return nil, err
@@ -114,13 +117,27 @@ func (m *InitManager) Run(ctx context.Context, opts ...InitOption) (*InitResult,
 	hasCreds := len(cfg.chain) > 0
 	encrypted := hasCreds && !cfg.noEncryption
 	result := &InitResult{Encrypted: encrypted}
+	var encryptionKey []byte
 
 	if encrypted {
-		adopted, err := m.setupEncryption(ctx, cfg)
+		adopted, key, err := m.setupEncryption(ctx, cfg)
 		if err != nil {
 			return nil, err
 		}
 		result.AdoptedSlots = adopted
+		encryptionKey = key
+
+		// The deferred half of the adopt-time version gate, for a marker that
+		// was sealed and so could not be read before the key existed.
+		if len(cfgData) > 0 && repoconfig.IsSealed(cfgData) {
+			existing, err := repoconfig.Decode(cfgData, encryptionKey)
+			if err != nil {
+				return nil, err
+			}
+			if err := checkAdoptedRepoFormat(existing.Version); err != nil {
+				return nil, err
+			}
+		}
 
 		if cfg.recovery {
 			mnemonic, err := m.addRecoverySlot(ctx, cfg)
@@ -131,11 +148,27 @@ func (m *InitManager) Run(ctx context.Context, opts ...InitOption) (*InitResult,
 		}
 	}
 
-	if err := m.writeRepoConfig(ctx, encrypted); err != nil {
+	if err := m.writeRepoConfig(ctx, encrypted, encryptionKey); err != nil {
 		return nil, err
 	}
 
 	return result, nil
+}
+
+// checkAdoptedRepoFormat applies the version gate to a repository being
+// adopted. Adoption rewrites the marker, so a repository whose format this
+// build cannot read would be restamped to a version this build understands
+// while leaving data it does not — turning a repository that fails safely into
+// one that is silently misread.
+func checkAdoptedRepoFormat(version int) error {
+	if version > core.MaxSupportedRepoFormat {
+		return fmt.Errorf(
+			"cannot adopt repository: format version %d is newer than this build supports (up to %d): "+
+				"upgrade cloudstic to work with this repository",
+			version, core.MaxSupportedRepoFormat,
+		)
+	}
+	return nil
 }
 
 // checkEncryptionInPlace refuses to turn an existing unencrypted repository
@@ -188,12 +221,16 @@ func (m *InitManager) holdsObjects(ctx context.Context) (bool, error) {
 	return false, nil
 }
 
-// setupEncryption creates new key slots or adopts existing ones. Returns true
-// if existing slots were adopted.
-func (m *InitManager) setupEncryption(ctx context.Context, cfg initConfig) (adopted bool, err error) {
+// setupEncryption creates new key slots or adopts existing ones. It reports
+// whether existing slots were adopted, and returns the repository encryption
+// key, which the caller needs to seal the config marker it then writes.
+func (m *InitManager) setupEncryption(
+	ctx context.Context,
+	cfg initConfig,
+) (adopted bool, encryptionKey []byte, err error) {
 	slots, err := keychain.LoadKeySlots(ctx, m.store)
 	if err != nil {
-		return false, fmt.Errorf("load key slots: %w", err)
+		return false, nil, fmt.Errorf("load key slots: %w", err)
 	}
 
 	var masterKey []byte
@@ -201,7 +238,7 @@ func (m *InitManager) setupEncryption(ctx context.Context, cfg initConfig) (adop
 		// Use existing master key.
 		mk, err := cfg.chain.Resolve(ctx, slots)
 		if err != nil {
-			return false, fmt.Errorf("found existing key slots but cannot open them: %w", err)
+			return false, nil, fmt.Errorf("found existing key slots but cannot open them: %w", err)
 		}
 		masterKey = mk
 		adopted = true
@@ -209,24 +246,29 @@ func (m *InitManager) setupEncryption(ctx context.Context, cfg initConfig) (adop
 		// Generate new master key.
 		mk, err := crypto.GenerateKey()
 		if err != nil {
-			return false, fmt.Errorf("generate master key for init: %w", err)
+			return false, nil, fmt.Errorf("generate master key for init: %w", err)
 		}
 		masterKey = mk
+	}
+
+	encryptionKey, err = keychain.DeriveEncryptionKey(masterKey)
+	if err != nil {
+		return false, nil, fmt.Errorf("derive encryption key: %w", err)
 	}
 
 	// Always wrap and write slots in the provided chain.
 	// This ensures that new credentials provided during 'adopt' get their own slots.
 	newSlots, err := cfg.chain.WrapAll(ctx, masterKey)
 	if err != nil {
-		return false, fmt.Errorf("wrap master key: %w", err)
+		return false, nil, fmt.Errorf("wrap master key: %w", err)
 	}
 	for _, slot := range newSlots {
 		if err := keychain.WriteKeySlot(ctx, m.store, slot); err != nil {
-			return false, fmt.Errorf("write key slot: %w", err)
+			return false, nil, fmt.Errorf("write key slot: %w", err)
 		}
 	}
 
-	return adopted, nil
+	return adopted, encryptionKey, nil
 }
 
 // addRecoverySlot extracts the master key and creates a recovery slot.
@@ -248,7 +290,10 @@ func (m *InitManager) addRecoverySlot(ctx context.Context, cfg initConfig) (stri
 	return mnemonic, nil
 }
 
-func (m *InitManager) writeRepoConfig(ctx context.Context, encrypted bool) error {
+// writeRepoConfig writes the repository marker, sealing it with encryptionKey
+// when the repository is encrypted. encryptionKey must be non-empty in that
+// case; it is ignored otherwise.
+func (m *InitManager) writeRepoConfig(ctx context.Context, encrypted bool, encryptionKey []byte) error {
 	// The recorded format is a floor and must never move down. Adopting an
 	// existing repository rewrites this marker, and stamping a lower version
 	// than the repository has already reached would advertise it as readable by
@@ -259,8 +304,11 @@ func (m *InitManager) writeRepoConfig(ctx context.Context, encrypted bool) error
 	existingData, err := m.store.Get(ctx, configKey)
 	switch {
 	case err == nil:
-		var existing core.RepoConfig
-		if err := json.Unmarshal(existingData, &existing); err == nil && existing.Version > version {
+		// Decode rather than unmarshal, so a sealed marker's version is read
+		// too. A marker that cannot be opened leaves the floor where it is,
+		// which is the same conservative outcome as an unparseable one.
+		if existing, derr := repoconfig.Decode(existingData, encryptionKey); derr == nil &&
+			existing.Version > version {
 			version = existing.Version
 		}
 	case !errors.Is(err, store.ErrNotFound):
@@ -272,9 +320,9 @@ func (m *InitManager) writeRepoConfig(ctx context.Context, encrypted bool) error
 		Created:   time.Now().UTC().Format(time.RFC3339),
 		Encrypted: encrypted,
 	}
-	data, err := json.Marshal(cfg)
+	data, err := repoconfig.Encode(cfg, encryptionKey)
 	if err != nil {
-		return fmt.Errorf("marshal repo config: %w", err)
+		return err
 	}
 	return m.store.Put(ctx, configKey, data)
 }

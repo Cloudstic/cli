@@ -309,6 +309,34 @@ repository format version 2 is newer than this build supports (up to 1):
 upgrade cloudstic to work with this repository
 ```
 
+### v1.16.0 against a sealed repository config
+
+Refused cleanly, and — importantly — refused *before* doing anything. v1.16.0
+parses the marker as JSON, and a sealed marker is ciphertext, so every command
+stops at the same point with the same error:
+
+```text
+Failed to init store: parse repo config: invalid character '\x01'
+looking for beginning of value
+```
+
+Verified by building the released v1.16.0 binary from its tag and running it
+against a repository this build had initialized and backed up into. `list`,
+`check`, `ls`, and `prune` each exit 1; `prune` in particular gets nowhere near
+the object store, and the repository is byte-for-byte intact afterwards. That
+is the outcome the forward-compatibility rule asks for: an older build must fail
+safely, never misread, and never delete on a partial read.
+
+Note what this costs. The recorded version now lives *inside* the sealed marker,
+so an older build can no longer read it in order to say "format version N is
+newer than this build supports". It reports a parse failure instead. The refusal
+is equally safe but less actionable, and no version bump can improve it — an
+older build cannot read the number that would tell it to upgrade. That is why
+sealing does **not** raise `RepoFormatVersion`: the bump would be invisible to
+exactly the builds it is meant to warn, while locking unencrypted repositories
+(whose marker stays plaintext and readable) out of older builds for a feature
+they do not use.
+
 ### v1.15.0 against a compression frame
 
 It never meets one. This was verified rather than assumed, because the frame is
@@ -382,6 +410,7 @@ listing shows the neutral identity.
 |---------|------------------------|
 | `v1.14.0` | Plaintext `index/packs`, footerless packfiles, and `index/latest` stored inside a packfile. Predates RFC 0018 footers and pack index sealing. |
 | `v1.15.0` | Format 1 with self-describing packfile footers, and the fixes that make an unreadable index fail loudly rather than read as empty. The last release that does **not** produce a sealed pack index. |
+| `v1.16.0` | Format 2 with framed objects and a sharded, sealed pack index. The last release whose encrypted `config` marker is plaintext rather than sealed. |
 
 ## What is not covered
 

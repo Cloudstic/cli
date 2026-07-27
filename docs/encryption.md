@@ -23,8 +23,10 @@ engine does not need to be aware of it.
   authentication effort tracked in issue #361; still out of scope are an
   unkeyed metadata object namespace (`filemeta/`/`node/`/`snapshot/` keys are
   plain SHA-256, so an attacker who also has the plaintext structure being
-  forged can compute a valid key for it), an unauthenticated `config`, and
-  snapshot rollback via `index/latest` replay.
+  forged can compute a valid key for it) and snapshot rollback via
+  `index/latest` replay. The repository marker is no longer among them: an
+  encrypted repository's `config` is sealed with the repository key (issue
+  #365), so its contents can be neither read nor edited without that key.
 
 ### What is not confidential
 
@@ -33,7 +35,7 @@ the bucket can always see:
 
 | Object | Why |
 |--------|-----|
-| `config` | Repository marker, read before any key is available |
+| `config` | Only on an **unencrypted** repository, or one written before sealing existed. An encrypted repository's marker is sealed; that it *is* sealed remains observable, which is what lets a client know to ask for credentials |
 | `keys/<slot>` | Key slots; each is independently wrapped |
 | `index/lock*` | Lock coordination |
 | Object *sizes* and the total object count | Inherent to flat object storage |
@@ -74,8 +76,9 @@ On read, if the first byte is not a recognised version, `EncryptedStore.Get`
 refuses the object instead of returning it, with two exceptions: objects under
 `keys/` (key slots, never encrypted in either direction — the master key
 cannot be resolved without reading them first) and `config` (the repository
-marker, always written directly through the raw store, so this layer only
-ever sees a plaintext copy of it via `cloudstic cat config`). Everywhere else
+marker, always written directly through the raw store, which seals it
+separately, so this layer only ever sees it via `cloudstic cat config`).
+Everywhere else
 — `chunk/`, `content/`, `filemeta/`, `node/`, `snapshot/`, the index
 namespace, anything else — a non-ciphertext object is refused.
 
@@ -86,6 +89,44 @@ credential or a compromised bucket policy, could plant an object under any of
 those prefixes, and a client holding the *correct* encryption key would read
 it as genuine repository content, no key and no tampering with `config` or
 `keys/` required. See "Threat Model" above and issue #362.
+
+## The repository marker
+
+An encrypted repository's `config` is sealed with the repository encryption key.
+An unencrypted repository has no key to seal with, so its marker stays
+plaintext — as does that of any repository written before sealing existed, which
+must stay readable forever.
+
+Sealing rather than authenticating is deliberate. AES-GCM covers every byte it
+seals, so a field added to `RepoConfig` later is protected the moment it is
+added. A MAC over selected fields would instead need a list of what is
+authenticated, kept in sync by hand, and a field omitted from that list is a
+field an attacker can edit undetected.
+
+The marker's own form is what breaks the bootstrap cycle. A sealed marker cannot
+be decoded until the key is resolved, and whether a key is needed at all is what
+the marker would say — but *sealed implies encrypted*, so the key slots can be
+opened without consulting it. Callers that only need to know whether a
+repository is initialized or encrypted use `InspectRepo`, which answers from the
+marker's form alone and needs no key.
+
+The cost is that the recorded format version now lives inside the sealed blob,
+so it can only be read after unlocking. A repository written by a newer build
+therefore asks for credentials before it can report that its format is
+unsupported. Restic makes the same trade.
+
+### What sealing does not close
+
+An attacker who replaces a sealed marker with a plaintext one is
+indistinguishable from a legacy repository, because plaintext markers must stay
+readable forever. Sealing is no better than a MAC on this point — stripping
+either leaves the same ambiguity.
+
+What catches it in practice is that key slots survive: a plaintext marker
+claiming `"encrypted": false` while `keys/` is populated is a contradiction, and
+is refused before any key resolution is attempted. The check needs no key.
+Closing the case fully requires client-side memory that this repository was
+sealed before, which is issue #366.
 
 ## Key Hierarchy
 

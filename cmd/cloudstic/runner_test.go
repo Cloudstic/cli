@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/cloudstic/cli/internal/engine"
 )
 
 func TestRunnerFailInterrupted(t *testing.T) {
@@ -20,6 +22,21 @@ func TestRunnerFailInterrupted(t *testing.T) {
 	}
 	if got, want := errOut.String(), "Interrupted.\n"; got != want {
 		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+}
+
+func TestRunnerFailRepoLocked(t *testing.T) {
+	var errOut bytes.Buffer
+	r := newRunner(nil)
+	r.errOut = &errOut
+
+	err := fmt.Errorf("acquire shared lock: %w", engine.ErrRepoLocked)
+	code := r.fail("Backup failed: %v", err)
+	if code != exitFailure {
+		t.Fatalf("fail() exit code = %d, want %d", code, exitFailure)
+	}
+	if got := errOut.String(); !strings.Contains(got, "break-lock") {
+		t.Fatalf("stderr = %q, want a break-lock hint", got)
 	}
 }
 

@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -475,8 +476,11 @@ func TestAcquireSharedLock_ConflictWithExclusive(t *testing.T) {
 	if err == nil {
 		t.Fatal("shared lock should fail if exclusive lock exists")
 	}
-	if !strings.Contains(err.Error(), "exclusively locked") {
-		t.Errorf("error should mention exclusively locked, got: %v", err)
+	if !errors.Is(err, ErrRepoLocked) {
+		t.Errorf("error should wrap ErrRepoLocked, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "(exclusive)") {
+		t.Errorf("error should mention the exclusive lock, got: %v", err)
 	}
 }
 

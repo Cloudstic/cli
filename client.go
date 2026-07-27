@@ -11,6 +11,7 @@ import (
 	"github.com/cloudstic/cli/internal/engine"
 	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/internal/repoconfig"
+	"github.com/cloudstic/cli/internal/secretref"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/crypto"
 	"github.com/cloudstic/cli/pkg/keychain"
@@ -708,6 +709,20 @@ func ApplyWorkstationSetupPlan(cfg *ProfilesConfig, plan *WorkstationSetupPlan) 
 	return engine.ApplyWorkstationSetupPlan(cfg, plan)
 }
 
+// SecretRefError reports a malformed scheme://path secret reference (e.g. in
+// one of a profile's *_secret fields). Use errors.As to inspect it and Kind
+// to branch on the failure mode.
+type SecretRefError = secretref.Error
+
+// SecretRefErrorKind categorizes a SecretRefError.
+type SecretRefErrorKind = secretref.ErrorKind
+
+const (
+	SecretRefInvalid            = secretref.KindInvalidRef
+	SecretRefNotFound           = secretref.KindNotFound
+	SecretRefBackendUnavailable = secretref.KindBackendUnavailable
+)
+
 // LoadProfilesFile parses a backup profiles YAML file.
 func LoadProfilesFile(path string) (*ProfilesConfig, error) {
 	return engine.LoadProfilesFile(path)
@@ -939,6 +954,11 @@ func (c *Client) ForgetPolicy(ctx context.Context, opts ...ForgetOption) (*Polic
 // ---------------------------------------------------------------------------
 
 type RepoLock = engine.RepoLock
+
+// ErrRepoLocked means Backup, Restore, or Prune could not proceed because the
+// repository is held by another operation. Use errors.Is(err, ErrRepoLocked)
+// to detect the condition and prompt the caller toward BreakLock.
+var ErrRepoLocked = engine.ErrRepoLocked
 
 func (c *Client) BreakLock(ctx context.Context) ([]*RepoLock, error) {
 	return engine.BreakRepoLock(ctx, c.store)

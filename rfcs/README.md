@@ -20,3 +20,4 @@
 - [RFC 0018: Self-Describing Packfiles](0018-self-describing-packfiles.md)
 - [RFC 0019: Repository File Search](0019-repository-file-search.md)
 - [RFC 0020: WORM Mode Backup](0020-worm-mode-backup.md)
+- [RFC 0021: Restore Destinations and Formats](0021-restore-destinations-and-formats.md)

@@ -218,9 +218,6 @@ _cloudstic() {
 
     case "$cmd" in
 @@ZSH_CMD_FLAGS@@
-        completion)
-            _arguments ':shell:(bash zsh fish)'
-            ;;
 @@ZSH_GROUPS@@
     esac
 }

@@ -166,12 +166,25 @@ func bashGroupArm(g command) string {
 	return b.String()
 }
 
+// zshRebaseWords re-bases zsh's $words and $CURRENT on the subcommand found at
+// index variable idx, so that _arguments sees the subcommand as the command
+// word. Without it, _arguments counts the subcommand name — and any global flag
+// typed before it — as positional arguments the command never declared, decides
+// every argument is already supplied, and offers nothing at all.
+//
+// It has to be emitted inline in each arm rather than factored into a shell
+// helper: zsh binds the completion special parameters per function scope, so a
+// helper's assignments do not reach the _arguments call in the caller.
+func zshRebaseWords(indent, idx string) string {
+	return fmt.Sprintf("%swords=(\"${(@)words[%s,-1]}\"); (( CURRENT -= %s - 1 ))\n", indent, idx, idx)
+}
+
 // zshCommandFlagCases renders one `_arguments` arm per command. Each flag
 // contributes its description, value placeholder, and completion function.
 func zshCommandFlagCases() string {
 	var b strings.Builder
 	for _, c := range generatedFlagCommands() {
-		fmt.Fprintf(&b, "        %s)\n            _arguments $global_flags", c.name)
+		fmt.Fprintf(&b, "        %s)\n%s            _arguments $global_flags", c.name, zshRebaseWords("            ", "i"))
 		for _, s := range ownSpecsOf(c) {
 			fmt.Fprintf(&b, " \\\n                '%s'", zshFlagEntry(s))
 		}
@@ -363,7 +376,8 @@ func zshGroupBlocks() string {
 			g.name, g.name, g.name)
 		fmt.Fprintf(&b, "            case \"$%s_sub\" in\n", g.name)
 		for _, child := range g.visibleChildren() {
-			fmt.Fprintf(&b, "                %s)\n                    _arguments $global_flags", child.name)
+			fmt.Fprintf(&b, "                %s)\n%s                    _arguments $global_flags",
+				child.name, zshRebaseWords("                    ", "gi"))
 			for _, s := range ownSpecsOf(child) {
 				fmt.Fprintf(&b, " \\\n                        '%s'", zshFlagEntry(s))
 			}
@@ -372,7 +386,9 @@ func zshGroupBlocks() string {
 			}
 			b.WriteString("\n                    ;;\n")
 		}
-		b.WriteString("                *)\n                    _arguments $global_flags\n                    ;;\n            esac\n            ;;\n")
+		b.WriteString("                *)\n")
+		b.WriteString(zshRebaseWords("                    ", "gi"))
+		b.WriteString("                    _arguments $global_flags\n                    ;;\n            esac\n            ;;\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

@@ -990,12 +990,8 @@ Documents/vault.kdbx  (3 versions)
 1 file, 3 versions across 28 snapshots (searched 31 snapshots in 1.8s)
 
 Restore the newest version of Documents/vault.kdbx:
-  cloudstic restore -path Documents/vault.kdbx 410b18a2c9e35f1a8d6b3c07e42fa19d5c8b6e2d1a0f9c8b7a6e5d4c3b2a1908 -output ./restored
+  cloudstic restore -path Documents/vault.kdbx 410b18a2 -output ./restored
 ```
-
-The printed command uses the full snapshot hash so it stays unambiguous even if
-the repository later gains another snapshot with the same short prefix. A
-currently unique prefix can also be passed to `restore`.
 
 A repository holds the same file many times over, and the result model collapses
 each kind of repetition differently:

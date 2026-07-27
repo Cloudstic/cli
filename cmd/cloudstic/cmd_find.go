@@ -328,14 +328,10 @@ func printFindRestoreHint(out io.Writer, result *cloudstic.FindResult) {
 	// screen, a bare "the newest version" reads as the newest of all of them,
 	// which is not what the first match necessarily is.
 	//
-	// The command must be runnable as printed — a hint that needs editing before
-	// it works is worse than no hint. Use the full hash so the command remains
-	// unambiguous even if a later snapshot collides with today's short display
-	// prefix. The bare form matches every other place a snapshot ID is entered;
-	// restore accepts "snapshot/<hash>" too. `-output` has no short form, and an
-	// output path without a .zip suffix restores to a directory.
+	// Reuse the short hash already shown in the result rows. Restore resolves an
+	// unambiguous prefix and rejects a collision instead of choosing a snapshot.
 	_, _ = fmt.Fprintf(out, "\nRestore the newest version of %s:\n  cloudstic restore -path %s %s -output ./restored\n",
-		m.Path(), m.Path(), strings.TrimPrefix(snap.Ref, "snapshot/"))
+		m.Path(), m.Path(), shortSnapshotRef(snap.Ref))
 }
 
 // plural renders a count with its noun, adding a trailing "s" for anything but

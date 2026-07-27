@@ -329,15 +329,10 @@ func printFindRestoreHint(out io.Writer, result *cloudstic.FindResult) {
 	// which is not what the first match necessarily is.
 	//
 	// The command must be runnable as printed — a hint that needs editing before
-	// it works is worse than no hint. That rules out the short display form of
-	// the snapshot hash: restore resolves its snapshot argument with a direct
-	// Get by key, not a prefix search the way find's own -snapshot selector
-	// does, so a truncated hash here would fail with "not found" the moment
-	// anyone pasted it. The full hash is printed bare, matching every other
-	// place a snapshot ID is entered on the command line (restore, ls, diff,
-	// list's own SNAPSHOT HASH column) — restore accepts "snapshot/<hash>" too,
-	// but the bare form is the one used everywhere else, so it is the one that
-	// is unambiguously safe to paste. `-output` has no short form, and an
+	// it works is worse than no hint. Use the full hash so the command remains
+	// unambiguous even if a later snapshot collides with today's short display
+	// prefix. The bare form matches every other place a snapshot ID is entered;
+	// restore accepts "snapshot/<hash>" too. `-output` has no short form, and an
 	// output path without a .zip suffix restores to a directory.
 	_, _ = fmt.Fprintf(out, "\nRestore the newest version of %s:\n  cloudstic restore -path %s %s -output ./restored\n",
 		m.Path(), m.Path(), strings.TrimPrefix(snap.Ref, "snapshot/"))

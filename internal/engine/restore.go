@@ -737,29 +737,16 @@ func filterByPath(sorted []core.FileMeta, byID map[string]core.FileMeta, pathFil
 // ---------------------------------------------------------------------------
 
 func (rm *RestoreManager) resolveSnapshot(ctx context.Context, ref string) (*core.Snapshot, string, error) {
-	if ref == "" || ref == "latest" {
-		data, err := rm.store.Get(ctx, "index/latest")
-		if err != nil {
-			return nil, "", fmt.Errorf("cannot find latest index: %w", err)
-		}
-		var idx core.Index
-		if err := json.Unmarshal(data, &idx); err != nil {
-			return nil, "", err
-		}
-		ref = idx.LatestSnapshot
-	} else if !strings.HasPrefix(ref, "snapshot/") {
-		ref = "snapshot/" + ref
-	}
-
-	data, err := getVerified(ctx, rm.store, ref)
+	ref, err := resolveSnapshotRef(ctx, rm.store, ref)
 	if err != nil {
-		return nil, "", fmt.Errorf("load snapshot %s: %w", ref, err)
-	}
-	var snap core.Snapshot
-	if err := json.Unmarshal(data, &snap); err != nil {
 		return nil, "", err
 	}
-	return &snap, ref, nil
+
+	snap, err := loadSnapshotByRef(ctx, rm.store, ref)
+	if err != nil {
+		return nil, "", err
+	}
+	return snap, ref, nil
 }
 
 // ---------------------------------------------------------------------------

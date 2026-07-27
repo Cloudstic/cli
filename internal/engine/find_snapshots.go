@@ -171,7 +171,7 @@ func resolveOneFindSnapshot(
 		if entry, ok := byRef[ref]; ok {
 			return entry, nil
 		}
-		return SnapshotEntry{}, fmt.Errorf("no snapshots in repository")
+		return SnapshotEntry{}, snapshotNotFoundError(selector)
 	}
 
 	ref := selector
@@ -192,8 +192,8 @@ func resolveOneFindSnapshot(
 	case 1:
 		return matches[0], nil
 	case 0:
-		return SnapshotEntry{}, fmt.Errorf("snapshot %q not found", selector)
+		return SnapshotEntry{}, snapshotNotFoundError(selector)
 	default:
-		return SnapshotEntry{}, fmt.Errorf("snapshot %q is ambiguous: %d snapshots share that prefix", selector, len(matches))
+		return SnapshotEntry{}, snapshotRefAmbiguousError(selector, len(matches))
 	}
 }

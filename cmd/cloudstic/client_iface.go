@@ -16,6 +16,7 @@ type cloudsticClient interface {
 	RestoreToDir(ctx context.Context, outputDir, snapshotRef string, opts ...cloudstic.RestoreOption) (*cloudstic.RestoreResult, error)
 	List(ctx context.Context, opts ...cloudstic.ListOption) (*cloudstic.ListResult, error)
 	LsSnapshot(ctx context.Context, snapshotID string, opts ...cloudstic.LsSnapshotOption) (*cloudstic.LsSnapshotResult, error)
+	Find(ctx context.Context, opts ...cloudstic.FindOption) (*cloudstic.FindResult, error)
 	Prune(ctx context.Context, opts ...cloudstic.PruneOption) (*cloudstic.PruneResult, error)
 	Forget(ctx context.Context, snapshotID string, opts ...cloudstic.ForgetOption) (*cloudstic.ForgetResult, error)
 	ForgetPolicy(ctx context.Context, opts ...cloudstic.ForgetOption) (*cloudstic.PolicyResult, error)

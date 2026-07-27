@@ -23,6 +23,9 @@ type stubClient struct {
 	listErr         error
 	lsResult        *cloudstic.LsSnapshotResult
 	lsErr           error
+	findResult      *cloudstic.FindResult
+	findErr         error
+	findOpts        []cloudstic.FindOption
 	pruneResult     *cloudstic.PruneResult
 	pruneErr        error
 	forgetResult    *cloudstic.ForgetResult
@@ -65,6 +68,11 @@ func (s *stubClient) List(_ context.Context, _ ...cloudstic.ListOption) (*clouds
 
 func (s *stubClient) LsSnapshot(_ context.Context, _ string, _ ...cloudstic.LsSnapshotOption) (*cloudstic.LsSnapshotResult, error) {
 	return s.lsResult, s.lsErr
+}
+
+func (s *stubClient) Find(_ context.Context, opts ...cloudstic.FindOption) (*cloudstic.FindResult, error) {
+	s.findOpts = opts
+	return s.findResult, s.findErr
 }
 
 func (s *stubClient) Prune(_ context.Context, _ ...cloudstic.PruneOption) (*cloudstic.PruneResult, error) {

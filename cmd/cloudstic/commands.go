@@ -22,6 +22,7 @@ func commandRegistry() []command {
 		restoreCommand(),
 		listCommand(),
 		lsCommand(),
+		findCommand(),
 		pruneCommand(),
 		forgetCommand(),
 		diffCommand(),

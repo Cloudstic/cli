@@ -1,0 +1,9 @@
+
+Documents/vault.kdbx  (2 versions)
+  v1 filemeta/9f86d081  4.2 MiB  2026-07-25 09:14  2 snapshots 4e5d5487..410b18a2
+  v2 filemeta/2c624232  4.1 MiB  2026-06-30 18:02  2 snapshots 1b645389..7d793037
+
+1 file, 2 versions across 4 snapshots (searched 31 snapshots in 1.8s)
+
+Restore the newest version of Documents/vault.kdbx:
+  cloudstic restore -path Documents/vault.kdbx 410b18a2 -output ./restored

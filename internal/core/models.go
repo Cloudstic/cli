@@ -29,11 +29,14 @@ type Content struct {
 // FileMeta represents immutable file metadata
 // Object key: filemeta/<sha256>
 type FileMeta struct {
-	Version     int                    `json:"version"`
-	FileID      string                 `json:"fileId"` // Google Drive file ID (HAMT key)
-	Name        string                 `json:"name"`
-	Type        FileType               `json:"type"`    // "file" or "folder"
-	Parents     []string               `json:"parents"` // List of "filemeta/<sha256>" refs (NOT raw IDs)
+	Version int      `json:"version"`
+	FileID  string   `json:"fileId"` // Google Drive file ID (HAMT key)
+	Name    string   `json:"name"`
+	Type    FileType `json:"type"` // "file" or "folder"
+	// Parents holds raw source FileIDs — the same values used as HAMT keys —
+	// not "filemeta/<sha256>" refs. Resolving one therefore means a lookup by
+	// key, not a Get. See internal/engine/backup_scan.go and restore.go.
+	Parents     []string               `json:"parents"`
 	Paths       []string               `json:"paths,omitempty"`
 	ContentHash string                 `json:"content_hash"`          // SHA256 of the file content
 	ContentRef  string                 `json:"content_ref,omitempty"` // HMAC(dedupKey, ContentHash) for secure backend lookup

@@ -791,6 +791,67 @@ func (c *Client) LsSnapshot(ctx context.Context, snapshotID string, opts ...LsSn
 }
 
 // ---------------------------------------------------------------------------
+// Find
+// ---------------------------------------------------------------------------
+
+type FindOption = engine.FindOption
+type FindQuery = engine.FindQuery
+type FindResult = engine.FindResult
+type FileMatch = engine.FileMatch
+type FileVersion = engine.FileVersion
+type SnapshotRef = engine.SnapshotRef
+type SizeCompare = engine.SizeCompare
+type SizeOp = engine.SizeOp
+
+const (
+	SizeAtLeast = engine.SizeAtLeast
+	SizeAtMost  = engine.SizeAtMost
+	SizeExactly = engine.SizeExactly
+)
+
+var (
+	WithFindPattern        = engine.WithFindPattern
+	WithFindName           = engine.WithFindName
+	WithFindPath           = engine.WithFindPath
+	WithFindRegex          = engine.WithFindRegex
+	WithFindIgnoreCase     = engine.WithFindIgnoreCase
+	WithFindFileID         = engine.WithFindFileID
+	WithFindContentHash    = engine.WithFindContentHash
+	WithFindRef            = engine.WithFindRef
+	WithFindType           = engine.WithFindType
+	WithFindSize           = engine.WithFindSize
+	WithFindNewer          = engine.WithFindNewer
+	WithFindOlder          = engine.WithFindOlder
+	WithFindSnapshots      = engine.WithFindSnapshots
+	WithFindSource         = engine.WithFindSource
+	WithFindTags           = engine.WithFindTags
+	WithFindLatest         = engine.WithFindLatest
+	WithFindSince          = engine.WithFindSince
+	WithFindUntil          = engine.WithFindUntil
+	WithFindGroupByContent = engine.WithFindGroupByContent
+	WithFindMaxResults     = engine.WithFindMaxResults
+	WithFindNoDelta        = engine.WithFindNoDelta
+	WithFindVerbose        = engine.WithFindVerbose
+
+	ParseSizeCompare = engine.ParseSizeCompare
+	ParseFindTime    = engine.ParseFindTime
+)
+
+// Find locates files across the repository's snapshots without the caller
+// having to know which snapshot holds them.
+//
+// Unlike every other read operation, Find takes a snapshot as *output* rather
+// than input: it searches every snapshot by default, and reports for each
+// matching file the versions it has had and the snapshots each version lives in.
+//
+// It is a pure read path — no lock is taken, nothing is written, and the
+// repository format is not stamped.
+func (c *Client) Find(ctx context.Context, opts ...FindOption) (*FindResult, error) {
+	mgr := engine.NewFindManager(c.store)
+	return mgr.Run(ctx, opts...)
+}
+
+// ---------------------------------------------------------------------------
 // Prune
 // ---------------------------------------------------------------------------
 

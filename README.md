@@ -65,6 +65,9 @@ cloudstic backup -source local:/Volumes/MyUSB
 # List snapshots
 cloudstic list
 
+# Find a file across every snapshot, without knowing which one holds it
+cloudstic find "vault.kdbx"
+
 # Restore latest snapshot to a zip file
 cloudstic restore
 

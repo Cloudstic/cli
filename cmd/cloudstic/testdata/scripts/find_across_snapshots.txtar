@@ -1,0 +1,58 @@
+# find locates a file across snapshots without being told which one holds it.
+exec cloudstic init -store local:$WORK/repo -no-encryption -no-prompt
+stderr 'Repository initialized \(encrypted: false\)'
+
+# Two snapshots, with the file edited in between and a second file added.
+exec cloudstic backup -store local:$WORK/repo -source local:$WORK/source -no-prompt
+stdout 'Snapshot .* saved'
+cp extra/report.txt source/notes/report.txt
+cp edited/vault.kdbx source/vault.kdbx
+exec cloudstic backup -store local:$WORK/repo -source local:$WORK/source -no-prompt
+stdout 'Snapshot .* saved'
+
+# A basename pattern searches every snapshot by default and collapses the
+# file's history into one match carrying both versions.
+exec cloudstic find 'vault.kdbx' -store local:$WORK/repo -no-prompt
+stdout 'vault\.kdbx'
+stdout '2 versions'
+stdout 'searched 2 snapshots'
+stdout 'cloudstic restore -path'
+
+# A path pattern constrains the whole path; ** spans directories.
+exec cloudstic find 'notes/**/*.txt' -store local:$WORK/repo -no-prompt
+stdout 'notes/report\.txt'
+
+# A pattern that matches nothing is a successful search, not a failure.
+exec cloudstic find 'no-such-file.dat' -store local:$WORK/repo -no-prompt
+stdout 'No matches'
+
+# -json puts the result on stdout and nothing else.
+exec cloudstic find 'vault.kdbx' -store local:$WORK/repo -json -no-prompt
+stdout '"matches":'
+stdout '"snapshots_searched": ?2'
+! stdout 'Restore the newest version'
+
+# Scoping to one snapshot narrows the search.
+exec cloudstic find 'vault.kdbx' -snapshot latest -store local:$WORK/repo -no-prompt
+stdout 'searched 1 snapshot'
+
+# The delta scan and the full walk must agree.
+exec cloudstic find 'vault.kdbx' -no-delta -store local:$WORK/repo -no-prompt
+stdout '2 versions'
+
+# A query with no predicate is refused rather than dumping the repository.
+! exec cloudstic find -store local:$WORK/repo -no-prompt
+stderr 'at least one predicate'
+
+# An unparseable size is reported before the repository is opened.
+! exec cloudstic find 'vault.kdbx' -size 10Q -store local:$WORK/repo -no-prompt
+stderr '-size'
+
+-- source/vault.kdbx --
+first version
+-- source/notes/todo.txt --
+remember to back up
+-- edited/vault.kdbx --
+second version, longer than the first
+-- extra/report.txt --
+quarterly report

@@ -243,6 +243,8 @@ func fishValueSpec(completer string) string {
 		return " -x -a 'local: sftp:// gdrive gdrive-changes onedrive onedrive-changes'"
 	case "_cloudstic_shells":
 		return " -x -a 'bash zsh fish'"
+	case "_cloudstic_find_types":
+		return " -x -a 'f d'"
 	default:
 		return " -x"
 	}
@@ -411,6 +413,8 @@ func bashCompleterWords(completer string) string {
 		return "local: s3: b2: sftp://"
 	case "_cloudstic_source_prefixes":
 		return "local: sftp:// gdrive gdrive-changes onedrive onedrive-changes"
+	case "_cloudstic_find_types":
+		return "f d"
 	default:
 		return ""
 	}

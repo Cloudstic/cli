@@ -1,0 +1,10 @@
+
+content 9f86d081  (2 files)
+  v1 filemeta/2c624232  4.0 MiB  2026-01-21 12:53  1 snapshot 410b18a2
+  v2 filemeta/e3b0c442  4.0 MiB  2026-01-21 12:53  1 snapshot 410b18a2
+       at Backup/report.pdf
+
+1 content group, 2 versions across 1 snapshot (searched 4 snapshots in 42ms)
+
+Restore the newest version of Documents/report.pdf:
+  cloudstic restore -path Documents/report.pdf 410b18a2 -output ./restored

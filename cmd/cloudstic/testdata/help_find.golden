@@ -1,0 +1,60 @@
+Cloudstic — Content-Addressable Backup System
+
+COMMAND
+  cloudstic find [options] [pattern]
+  Locate a file across every snapshot in the repository
+
+ARGUMENTS
+    [pattern]                      Optional.
+
+OPTIONS
+    -name <glob>                   Match the file's basename against a glob
+    -path <glob>                   Match the file's full path against a glob (** spans directories)
+    -regex <re>                    Match the file's full path against a regular expression
+    -i                             Match case-insensitively
+    -id <file-id>                  Match one source file ID (stable across renames)
+    -content-hash <sha256>         Match files whose content has this SHA-256
+    -ref <ref>                     Match one exact metadata object (filemeta/<hash>)
+    -type f|d                      Match only files (f) or only folders (d)
+    -size <size>                   Match by size: +10M (at least), -1k (at most), 4096 (exactly)
+    -newer <time>                  Match files modified after a time (RFC3339, a date, or 7d)
+    -older <time>                  Match files modified before a time (RFC3339, a date, or 7d)
+    -snapshot <ref>                Search only these snapshots (repeatable; accepts latest)
+    -source <uri>                  Search only snapshots of this source URI (e.g. local:./docs)
+    -tag <tag>                     Search only snapshots carrying this tag (repeatable)
+    -latest N                      Search only the N newest selected snapshots
+    -since <time>                  Search only snapshots created at or after a time
+    -until <time>                  Search only snapshots created at or before a time
+    -by-content                    Group results by content hash instead of by file
+    -max-results N                 Stop accumulating after N matching files
+    -no-delta                      Walk every snapshot in full instead of diffing consecutive ones
+
+GLOBAL OPTIONS (also settable via environment variables)
+    -no-prompt                     Disable interactive prompts (for scripts and CI)
+    -store <uri>                   Storage backend URI: local:<path>, s3:<bucket>[/<prefix>], b2:<bucket>[/<prefix>], sftp://[user@]host[:port]/<path>  [env: CLOUDSTIC_STORE]
+    -profile <name>                Profile name from profiles.yaml  [env: CLOUDSTIC_PROFILE]
+    -profiles-file <path>          Path to profiles YAML file  [env: CLOUDSTIC_PROFILES_FILE]
+    -s3-endpoint <url>             S3 compatible endpoint URL (for MinIO, R2, etc.)  [env: CLOUDSTIC_S3_ENDPOINT]
+    -s3-region <region>            S3 region  [env: CLOUDSTIC_S3_REGION]
+    -s3-profile <name>             AWS shared config profile for S3 credentials  [env: CLOUDSTIC_S3_PROFILE]
+    -s3-access-key <key>           S3 access key ID  [env: AWS_ACCESS_KEY_ID]
+    -s3-secret-key <secret>        S3 secret access key  [env: AWS_SECRET_ACCESS_KEY]
+    -b2-key-id <key-id>            Backblaze B2 application key ID  [env: B2_KEY_ID]
+    -b2-app-key <key>              Backblaze B2 application key  [env: B2_APP_KEY]
+    -disable-packfile              Disable bundling small objects into 8MB packs  [env: CLOUDSTIC_DISABLE_PACKFILE]
+    -store-sftp-password <pw>      SFTP store password  [env: CLOUDSTIC_STORE_SFTP_PASSWORD]
+    -store-sftp-key <path>         Path to SSH private key for SFTP store  [env: CLOUDSTIC_STORE_SFTP_KEY]
+    -store-sftp-insecure           Skip host key validation for SFTP store (INSECURE)  [env: CLOUDSTIC_STORE_SFTP_INSECURE]
+    -store-sftp-known-hosts <path> Path to known_hosts file for SFTP store  [env: CLOUDSTIC_STORE_SFTP_KNOWN_HOSTS]
+    -password <pw>                 Repository password  [env: CLOUDSTIC_PASSWORD]
+    -encryption-key <hex>          Platform key (hex-encoded, 32 bytes)  [env: CLOUDSTIC_ENCRYPTION_KEY]
+    -recovery-key <words>          Recovery key (BIP39 24-word mnemonic)  [env: CLOUDSTIC_RECOVERY_KEY]
+    -kms-key-arn <arn>             AWS KMS key ARN for kms-platform slots  [env: CLOUDSTIC_KMS_KEY_ARN]
+    -kms-region <region>           AWS KMS region (defaults to us-east-1)  [env: CLOUDSTIC_KMS_REGION]
+    -kms-endpoint <url>            Custom AWS KMS endpoint URL  [env: CLOUDSTIC_KMS_ENDPOINT]
+    -prompt                        Prompt for password interactively (use alongside --encryption-key or --kms-key-arn to add a password layer)
+    -verbose                       Log detailed file-level operations
+    -quiet                         Suppress progress bars (keeps final summary)
+    -json                          Write command result as JSON to stdout
+    -debug                         Log every store request (network calls, timing, sizes)
+

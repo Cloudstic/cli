@@ -2,20 +2,15 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
-	"errors"
 	"io"
 	"os"
-	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/secretref"
-	"github.com/cloudstic/cli/internal/tui"
-	xterm "golang.org/x/term"
+	"github.com/cloudstic/cli/internal/tui/forms"
 )
 
 type testWritableSecretBackend struct {
@@ -63,87 +58,23 @@ func TestTUIProfileSourceCompose(t *testing.T) {
 	}
 }
 
-func TestTUIProfileModalSubmitReturnsTypedFieldError(t *testing.T) {
-	dir := t.TempDir()
-	profilesPath := dir + "/profiles.yaml"
-	if err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
-		Version: 1,
-		Stores: map[string]cloudstic.ProfileStore{
-			"remote": {URI: "s3:bucket/test"},
-		},
-	}); err != nil {
+// newTestFormsBackend builds the dashboard's forms backend over a temporary
+// profiles file, returning the backend and the file's path.
+func newTestFormsBackend(t *testing.T, cfg *cloudstic.ProfilesConfig) (*tuiFormsBackend, string) {
+	t.Helper()
+	path := t.TempDir() + "/profiles.yaml"
+	if err := cloudstic.SaveProfilesFile(path, cfg); err != nil {
 		t.Fatalf("SaveProfilesFile: %v", err)
 	}
-
-	modal, err := newTUIProfileModal(profilesPath, "", false)
+	loaded, err := tuiLoadConfig(path)
 	if err != nil {
-		t.Fatalf("newTUIProfileModal: %v", err)
+		t.Fatalf("tuiLoadConfig: %v", err)
 	}
-	modal.fieldByKey("name").Value = ""
-
-	_, err = modal.submit()
-	if err == nil {
-		t.Fatalf("expected validation error")
-	}
-	fieldErr, ok := err.(*tuiFieldError)
-	if !ok {
-		t.Fatalf("expected *tuiFieldError, got %T", err)
-	}
-	if fieldErr.Field != "name" {
-		t.Fatalf("field=%q want name", fieldErr.Field)
-	}
+	return newTUIFormsBackend(&runner{out: io.Discard, errOut: io.Discard}, path, loaded), path
 }
 
-func TestTUIProfileModalViewDoesNotMutateState(t *testing.T) {
-	dir := t.TempDir()
-	profilesPath := dir + "/profiles.yaml"
-	if err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
-		Version: 1,
-		Stores: map[string]cloudstic.ProfileStore{
-			"remote": {URI: "s3:bucket/test"},
-		},
-	}); err != nil {
-		t.Fatalf("SaveProfilesFile: %v", err)
-	}
-
-	modal, err := newTUIProfileModal(profilesPath, "", false)
-	if err != nil {
-		t.Fatalf("newTUIProfileModal: %v", err)
-	}
-	before := modal.modal
-	_ = modal.View()
-	after := modal.modal
-	if !reflect.DeepEqual(before, after) {
-		t.Fatalf("View mutated modal state")
-	}
-}
-
-func TestNewTUIProfileModal_AllowsCreatingStoreWhenNoneExist(t *testing.T) {
-	dir := t.TempDir()
-	profilesPath := dir + "/profiles.yaml"
-	if err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
-		Version: 1,
-	}); err != nil {
-		t.Fatalf("SaveProfilesFile: %v", err)
-	}
-
-	modal, err := newTUIProfileModal(profilesPath, "", false)
-	if err != nil {
-		t.Fatalf("newTUIProfileModal: %v", err)
-	}
-	storeField := modal.fieldByKey("store")
-	if storeField == nil {
-		t.Fatalf("missing store field")
-	}
-	if len(storeField.Options) != 1 || storeField.Options[0] != tuiCreateStoreOption {
-		t.Fatalf("store options=%v want [%q]", storeField.Options, tuiCreateStoreOption)
-	}
-}
-
-func TestNewTUIStoreModal_PopulatesExistingSecretFields(t *testing.T) {
-	dir := t.TempDir()
-	profilesPath := dir + "/profiles.yaml"
-	if err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
+func TestInitialStoreValues_PopulatesExistingSecretFields(t *testing.T) {
+	backend, _ := newTestFormsBackend(t, &cloudstic.ProfilesConfig{
 		Version: 1,
 		Stores: map[string]cloudstic.ProfileStore{
 			"remote": {
@@ -159,67 +90,50 @@ func TestNewTUIStoreModal_PopulatesExistingSecretFields(t *testing.T) {
 				KMSEndpoint:       "https://kms.example.com",
 			},
 		},
-	}); err != nil {
-		t.Fatalf("SaveProfilesFile: %v", err)
-	}
+	})
 
-	modal, err := newTUIStoreModal(profilesPath, "remote", true)
-	if err != nil {
-		t.Fatalf("newTUIStoreModal: %v", err)
+	values := backend.InitialStoreValues("remote")
+	want := map[string]string{
+		forms.FieldStoreType:      "s3",
+		forms.FieldStoreValue:     "bucket/prod",
+		forms.FieldS3Region:       "us-east-1",
+		forms.FieldS3Profile:      "work",
+		forms.FieldS3AccessKey:    "env://S3_ACCESS_KEY",
+		forms.FieldS3SecretKey:    "keychain://cloudstic/store/remote/s3-secret",
+		forms.FieldEncryptionMode: string(tuiStoreEncryptionKMS),
+		forms.FieldKMSKeyARN:      "arn:aws:kms:us-east-1:123:key/abc",
 	}
-	if got := modal.fieldValue("store_type"); got != "s3" {
-		t.Fatalf("store_type=%q want s3", got)
-	}
-	if got := modal.fieldValue("s3_access_key_secret"); got != "env://S3_ACCESS_KEY" {
-		t.Fatalf("s3_access_key_secret=%q", got)
-	}
-	if got := modal.fieldValue("s3_secret_key_secret"); got != "keychain://cloudstic/store/remote/s3-secret" {
-		t.Fatalf("s3_secret_key_secret=%q", got)
-	}
-	if got := modal.fieldValue("encryption_mode"); got != string(tuiStoreEncryptionKMS) {
-		t.Fatalf("encryption_mode=%q want kms", got)
-	}
-	if got := modal.fieldValue("kms_key_arn"); got != "arn:aws:kms:us-east-1:123:key/abc" {
-		t.Fatalf("kms_key_arn=%q", got)
-	}
-	if field := modal.fieldByKey("kms_key_arn"); field == nil || field.Disabled {
-		t.Fatalf("expected kms_key_arn field to be enabled")
+	for key, expected := range want {
+		if got := values[key]; got != expected {
+			t.Fatalf("%s=%q want %q", key, got, expected)
+		}
 	}
 }
 
-func TestTUIStoreModalSubmit_SavesSecretRefs(t *testing.T) {
-	dir := t.TempDir()
-	profilesPath := dir + "/profiles.yaml"
-	if err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
-		Version: 1,
-	}); err != nil {
-		t.Fatalf("SaveProfilesFile: %v", err)
-	}
+func TestSaveStore_PersistsSecretRefsAndClearsUnusedModes(t *testing.T) {
+	backend, path := newTestFormsBackend(t, &cloudstic.ProfilesConfig{Version: 1})
 
-	modal, err := newTUIStoreModal(profilesPath, "", false)
+	uri, err := backend.ComposeStore("s3", "bucket/prod")
 	if err != nil {
-		t.Fatalf("newTUIStoreModal: %v", err)
+		t.Fatalf("ComposeStore: %v", err)
 	}
-	modal.fieldByKey("name").Value = "remote"
-	modal.fieldByKey("store_type").Value = "s3"
-	modal.fieldByKey("store_value").Value = "bucket/prod"
-	modal.fieldByKey("s3_region").Value = "us-east-1"
-	modal.fieldByKey("s3_endpoint").Value = "https://s3.example.com"
-	modal.fieldByKey("s3_access_key_secret").Value = "env://S3_ACCESS_KEY"
-	modal.fieldByKey("s3_secret_key_secret").Value = "keychain://cloudstic/store/remote/s3-secret"
-	modal.fieldByKey("encryption_mode").Value = string(tuiStoreEncryptionPassword)
-	modal.rebuildDerivedFields()
-	modal.fieldByKey("password_secret").Value = "keychain://cloudstic/store/remote/password"
-
-	name, err := modal.submit()
+	err = backend.SaveStore("remote", map[string]string{
+		forms.FieldStoreURI:       uri,
+		forms.FieldStoreType:      "s3",
+		forms.FieldS3Region:       "us-east-1",
+		forms.FieldS3Endpoint:     "https://s3.example.com",
+		forms.FieldS3AccessKey:    "env://S3_ACCESS_KEY",
+		forms.FieldS3SecretKey:    "keychain://cloudstic/store/remote/s3-secret",
+		forms.FieldEncryptionMode: forms.EncPassword,
+		forms.FieldPasswordSecret: "keychain://cloudstic/store/remote/password",
+		// Set but irrelevant to the selected mode: must not be persisted.
+		forms.FieldKMSKeyARN: "arn:aws:kms:us-east-1:123:key/abc",
+	}, false)
 	if err != nil {
-		t.Fatalf("submit: %v", err)
-	}
-	if name != "remote" {
-		t.Fatalf("name=%q want remote", name)
+		t.Fatalf("SaveStore: %v", err)
 	}
 
-	cfg, err := cloudstic.LoadProfilesFile(profilesPath)
+	cfg, err := cloudstic.LoadProfilesFile(path)
 	if err != nil {
 		t.Fatalf("LoadProfilesFile: %v", err)
 	}
@@ -244,40 +158,44 @@ func TestTUIStoreModalSubmit_SavesSecretRefs(t *testing.T) {
 	}
 }
 
-func TestTUIStoreModalView_HidesIrrelevantFields(t *testing.T) {
-	dir := t.TempDir()
-	profilesPath := dir + "/profiles.yaml"
-	if err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
+func TestSaveStore_ClearsConnectionFieldsOfOtherTypes(t *testing.T) {
+	backend, path := newTestFormsBackend(t, &cloudstic.ProfilesConfig{
 		Version: 1,
 		Stores: map[string]cloudstic.ProfileStore{
-			"local-store": {
-				URI:               "local:/tmp/backups",
+			"remote": {
+				URI:               "s3:bucket/prod",
 				S3Region:          "us-east-1",
-				S3Endpoint:        "https://s3.example.com",
 				S3AccessKeySecret: "env://S3_ACCESS_KEY",
-				KMSKeyARN:         "",
 			},
 		},
-	}); err != nil {
-		t.Fatalf("SaveProfilesFile: %v", err)
+	})
+
+	uri, err := backend.ComposeStore("local", "/tmp/backups")
+	if err != nil {
+		t.Fatalf("ComposeStore: %v", err)
+	}
+	if err := backend.SaveStore("remote", map[string]string{
+		forms.FieldStoreURI:  uri,
+		forms.FieldStoreType: "local",
+	}, true); err != nil {
+		t.Fatalf("SaveStore: %v", err)
 	}
 
-	modal, err := newTUIStoreModal(profilesPath, "local-store", true)
+	cfg, err := cloudstic.LoadProfilesFile(path)
 	if err != nil {
-		t.Fatalf("newTUIStoreModal: %v", err)
+		t.Fatalf("LoadProfilesFile: %v", err)
 	}
-	view := modal.View()
-	for _, key := range []string{"s3_region", "s3_endpoint", "s3_access_key_secret", "password_secret", "kms_key_arn"} {
-		for _, field := range view.Fields {
-			if field.Key == key {
-				t.Fatalf("did not expect field %q in visible view", key)
-			}
-		}
+	store := cfg.Stores["remote"]
+	if store.URI != "local:/tmp/backups" {
+		t.Fatalf("uri=%q want local:/tmp/backups", store.URI)
+	}
+	if store.S3Region != "" || store.S3AccessKeySecret != "" {
+		t.Fatalf("s3 fields not cleared for a local store: %+v", store)
 	}
 }
 
-func TestTUISecretRefModal_SubmitStoresSecretInWritableBackend(t *testing.T) {
-	backend := &testWritableSecretBackend{
+func TestStoreSecret_WritesThroughWritableBackend(t *testing.T) {
+	secretBackend := &testWritableSecretBackend{
 		scheme:      "test",
 		displayName: "Test Backend",
 		defaultRef:  "test://cloudstic/store/remote/password",
@@ -286,53 +204,38 @@ func TestTUISecretRefModal_SubmitStoresSecretInWritableBackend(t *testing.T) {
 	t.Cleanup(func() { tuiSecretResolver = oldResolver })
 	tuiSecretResolver = secretref.NewResolver(map[string]secretref.Backend{
 		"env":  secretref.NewEnvBackend(nil),
-		"test": backend,
+		"test": secretBackend,
 	})
 
-	modal := newTUISecretRefModal("remote", tuiSecretFieldSpec{
-		FieldKey:       "password_secret",
-		SecretLabel:    "repository password",
-		DefaultEnvName: "CLOUDSTIC_PASSWORD",
-		DefaultAccount: "password",
-	}, "")
-	modal.fieldByKey("storage").Value = "test"
-	modal.updateFields()
-	modal.fieldByKey("value").Value = "super-secret"
+	backend, _ := newTestFormsBackend(t, &cloudstic.ProfilesConfig{Version: 1})
 
-	ref, err := modal.submit(context.Background())
-	if err != nil {
-		t.Fatalf("submit: %v", err)
-	}
+	ref := backend.DefaultRef("test", "remote", "password")
 	if ref != "test://cloudstic/store/remote/password" {
-		t.Fatalf("ref=%q", ref)
+		t.Fatalf("default ref=%q", ref)
 	}
-	if backend.storedRef != ref || backend.storedValue != "super-secret" {
-		t.Fatalf("unexpected stored secret: ref=%q value=%q", backend.storedRef, backend.storedValue)
+	if err := backend.StoreSecret(ref, "super-secret"); err != nil {
+		t.Fatalf("StoreSecret: %v", err)
+	}
+	if secretBackend.storedRef != ref || secretBackend.storedValue != "super-secret" {
+		t.Fatalf("unexpected stored secret: ref=%q value=%q", secretBackend.storedRef, secretBackend.storedValue)
 	}
 }
 
-func stubTUITestHooks(t *testing.T) {
-	t.Helper()
-
-	oldIsTerminal := isTerminalFunc
-	oldMakeRaw := tuiMakeRaw
-	oldRestore := tuiRestoreTerminal
-	oldEnterAlt := tuiEnterAltScreen
-	oldLeaveAlt := tuiLeaveAltScreen
-
-	isTerminalFunc = func(uintptr) bool { return true }
-	tuiMakeRaw = func(int) (*xterm.State, error) { return nil, nil }
-	tuiRestoreTerminal = func(int, *xterm.State) error { return nil }
-	tuiEnterAltScreen = func(io.Writer) error { return nil }
-	tuiLeaveAltScreen = func(io.Writer) error { return nil }
-
-	t.Cleanup(func() {
-		isTerminalFunc = oldIsTerminal
-		tuiMakeRaw = oldMakeRaw
-		tuiRestoreTerminal = oldRestore
-		tuiEnterAltScreen = oldEnterAlt
-		tuiLeaveAltScreen = oldLeaveAlt
-	})
+func TestProfileAuthOptions_FiltersByProvider(t *testing.T) {
+	cfg := &cloudstic.ProfilesConfig{
+		Auth: map[string]cloudstic.ProfileAuth{
+			"work-gdrive": {Provider: "gdrive"},
+			"home-gdrive": {Provider: "gdrive"},
+			"onedrive":    {Provider: "onedrive"},
+		},
+	}
+	got := profileAuthOptions(cfg, "gdrive")
+	if len(got) != 2 || got[0] != "home-gdrive" || got[1] != "work-gdrive" {
+		t.Fatalf("auth options = %v want sorted gdrive refs", got)
+	}
+	if got := profileAuthOptions(cfg, "sftp"); len(got) != 0 {
+		t.Fatalf("auth options = %v want none", got)
+	}
 }
 
 func TestRunTUI_Help(t *testing.T) {
@@ -379,930 +282,6 @@ func TestRunTUI_RequiresInteractiveTerminal(t *testing.T) {
 	}
 }
 
-func TestRunTUI_RendersDashboardAndQuitsOnQ(t *testing.T) {
-	stubTUITestHooks(t)
-
-	dir := t.TempDir()
-	profilesPath := dir + "/profiles.yaml"
-	if err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
-		Version: 1,
-		Stores: map[string]cloudstic.ProfileStore{
-			"remote": {URI: "s3:bucket/prod"},
-		},
-		Profiles: map[string]cloudstic.BackupProfile{
-			"documents": {Source: "local:/tmp/Documents", Store: "remote"},
-		},
-	}); err != nil {
-		t.Fatalf("SaveProfilesFile: %v", err)
-	}
-	oldNoPrompt := os.Getenv("CLOUDSTIC_PROFILES_FILE")
-	t.Cleanup(func() {
-		_ = os.Setenv("CLOUDSTIC_PROFILES_FILE", oldNoPrompt)
-	})
-	_ = os.Setenv("CLOUDSTIC_PROFILES_FILE", profilesPath)
-	args := []string{"-profiles-file", profilesPath}
-
-	readEnd, writeEnd, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	defer func() { _ = readEnd.Close() }()
-	if _, err := writeEnd.WriteString("q"); err != nil {
-		t.Fatalf("WriteString: %v", err)
-	}
-	_ = writeEnd.Close()
-
-	var out strings.Builder
-	var errOut strings.Builder
-	oldBuild := tuiBuildDashboard
-	t.Cleanup(func() { tuiBuildDashboard = oldBuild })
-	tuiBuildDashboard = func(context.Context, string) (tui.Dashboard, error) {
-		return tui.Dashboard{
-			ProfileCount:    1,
-			StoreCount:      1,
-			AuthCount:       0,
-			SelectedProfile: "documents",
-			Profiles: []tui.ProfileCard{{
-				Name:       "documents",
-				Source:     "local:/tmp/Documents",
-				StoreRef:   "remote",
-				Enabled:    true,
-				Status:     tui.ProfileStatusReady,
-				LastBackup: "2026-04-03 11:05",
-				LastRef:    "snapshot/abc123",
-			}},
-		}, nil
-	}
-
-	r := &runner{
-		out:        &out,
-		errOut:     &errOut,
-		stdoutFile: os.Stdout,
-		stdin:      readEnd,
-		lineIn:     bufio.NewReader(readEnd),
-	}
-	if code := tuiCommand().execute(r.withArgs(args), context.Background(), "tui"); code != 0 {
-		t.Fatalf("code=%d err=%s", code, errOut.String())
-	}
-	got := out.String()
-	if !strings.Contains(got, "Cloudstic TUI") || !strings.Contains(got, "documents") || !strings.Contains(got, "enabled") || !strings.Contains(got, "›") {
-		t.Fatalf("unexpected output:\n%s", got)
-	}
-}
-
-func TestRunTUI_ArrowNavigationChangesSelection(t *testing.T) {
-	stubTUITestHooks(t)
-	args := []string{}
-
-	readEnd, writeEnd, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	defer func() { _ = readEnd.Close() }()
-	if _, err := writeEnd.WriteString("\x1b[Bq"); err != nil {
-		t.Fatalf("WriteString: %v", err)
-	}
-	_ = writeEnd.Close()
-
-	var out strings.Builder
-	var errOut strings.Builder
-	oldBuild := tuiBuildDashboard
-	t.Cleanup(func() { tuiBuildDashboard = oldBuild })
-	tuiBuildDashboard = func(context.Context, string) (tui.Dashboard, error) {
-		return tui.Dashboard{
-			ProfileCount: 2,
-			StoreCount:   1,
-			Profiles: []tui.ProfileCard{
-				{Name: "documents", Source: "local:/tmp/Documents", StoreRef: "remote", Enabled: true, Status: tui.ProfileStatusReady},
-				{Name: "photos", Source: "local:/tmp/Photos", StoreRef: "remote", Enabled: true, Status: tui.ProfileStatusReady},
-			},
-		}, nil
-	}
-	r := &runner{
-		out:        &out,
-		errOut:     &errOut,
-		stdoutFile: os.Stdout,
-		stdin:      readEnd,
-		lineIn:     bufio.NewReader(readEnd),
-	}
-	if code := tuiCommand().execute(r.withArgs(args), context.Background(), "tui"); code != 0 {
-		t.Fatalf("code=%d err=%s", code, errOut.String())
-	}
-	got := out.String()
-	if !strings.Contains(got, "\x1b[36m› \x1b[0m\x1b[1mphotos\x1b[0m") {
-		t.Fatalf("expected selection to move to photos, got:\n%s", got)
-	}
-}
-
-func TestRunTUI_BackupActionRunsSelectedProfileAction(t *testing.T) {
-	stubTUITestHooks(t)
-	args := []string{}
-
-	readEnd, writeEnd, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	defer func() { _ = readEnd.Close() }()
-	if _, err := writeEnd.WriteString("bq"); err != nil {
-		t.Fatalf("WriteString: %v", err)
-	}
-	_ = writeEnd.Close()
-
-	var out strings.Builder
-	var errOut strings.Builder
-	var ranProfile string
-	oldBuild := tuiBuildDashboard
-	oldAction := tuiRunProfileAction
-	oldCheck := tuiRunProfileCheck
-	t.Cleanup(func() {
-		tuiBuildDashboard = oldBuild
-		tuiRunProfileAction = oldAction
-		tuiRunProfileCheck = oldCheck
-	})
-	tuiBuildDashboard = func(context.Context, string) (tui.Dashboard, error) {
-		return tui.Dashboard{
-			ProfileCount:    1,
-			StoreCount:      1,
-			SelectedProfile: "documents",
-			Profiles: []tui.ProfileCard{
-				{
-					Name:     "documents",
-					Source:   "local:/tmp/Documents",
-					StoreRef: "remote",
-					Enabled:  true,
-					Status:   tui.ProfileStatusReady,
-					Actions: []tui.ProfileAction{
-						{Kind: tui.ActionKindBackup, Key: "b", Label: "Press b to run backup", Enabled: true},
-						{Kind: tui.ActionKindCheck, Key: "c", Label: "Press c to run repository check", Enabled: true},
-					},
-				},
-			},
-		}, nil
-	}
-	tuiRunProfileAction = func(_ context.Context, _ *runner, _ string, profile tui.ProfileCard, _ *tuiActionState) error {
-		ranProfile = profile.Name
-		return nil
-	}
-	r := &runner{
-		out:        &out,
-		errOut:     &errOut,
-		stdoutFile: os.Stdout,
-		stdin:      readEnd,
-		lineIn:     bufio.NewReader(readEnd),
-	}
-	if code := tuiCommand().execute(r.withArgs(args), context.Background(), "tui"); code != 0 {
-		t.Fatalf("code=%d err=%s", code, errOut.String())
-	}
-	if ranProfile != "documents" {
-		t.Fatalf("selected action ran for %q, want documents", ranProfile)
-	}
-	if !strings.Contains(out.String(), "Running backup for profile documents") {
-		t.Fatalf("expected activity log in dashboard, got:\n%s", out.String())
-	}
-	if !strings.Contains(out.String(), "Action completed successfully") {
-		t.Fatalf("expected success activity log in dashboard, got:\n%s", out.String())
-	}
-	if errOut.Len() != 0 {
-		t.Fatalf("expected no stderr spillover, got:\n%s", errOut.String())
-	}
-}
-
-func TestRunTUI_CheckActionRunsSelectedProfileCheck(t *testing.T) {
-	stubTUITestHooks(t)
-	args := []string{}
-
-	readEnd, writeEnd, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	defer func() { _ = readEnd.Close() }()
-	if _, err := writeEnd.WriteString("cq"); err != nil {
-		t.Fatalf("WriteString: %v", err)
-	}
-	_ = writeEnd.Close()
-
-	var out strings.Builder
-	var errOut strings.Builder
-	var checkedProfile string
-	oldBuild := tuiBuildDashboard
-	oldAction := tuiRunProfileAction
-	oldCheck := tuiRunProfileCheck
-	t.Cleanup(func() {
-		tuiBuildDashboard = oldBuild
-		tuiRunProfileAction = oldAction
-		tuiRunProfileCheck = oldCheck
-	})
-	tuiBuildDashboard = func(context.Context, string) (tui.Dashboard, error) {
-		return tui.Dashboard{
-			ProfileCount:    1,
-			StoreCount:      1,
-			SelectedProfile: "documents",
-			Profiles: []tui.ProfileCard{
-				{
-					Name:        "documents",
-					Source:      "local:/tmp/Documents",
-					StoreRef:    "remote",
-					Enabled:     true,
-					Status:      tui.ProfileStatusReady,
-					StoreHealth: tui.StoreHealthReady,
-					Actions: []tui.ProfileAction{
-						{Kind: tui.ActionKindBackup, Key: "b", Label: "Press b to run backup", Enabled: true},
-						{Kind: tui.ActionKindCheck, Key: "c", Label: "Press c to run repository check", Enabled: true},
-					},
-				},
-			},
-		}, nil
-	}
-	tuiRunProfileAction = func(_ context.Context, _ *runner, _ string, _ tui.ProfileCard, _ *tuiActionState) error {
-		t.Fatalf("backup action should not run")
-		return nil
-	}
-	tuiRunProfileCheck = func(_ context.Context, _ *runner, _ string, profile tui.ProfileCard, _ *tuiActionState) error {
-		checkedProfile = profile.Name
-		return nil
-	}
-	r := &runner{
-		out:        &out,
-		errOut:     &errOut,
-		stdoutFile: os.Stdout,
-		stdin:      readEnd,
-		lineIn:     bufio.NewReader(readEnd),
-	}
-	if code := tuiCommand().execute(r.withArgs(args), context.Background(), "tui"); code != 0 {
-		t.Fatalf("code=%d err=%s", code, errOut.String())
-	}
-	if checkedProfile != "documents" {
-		t.Fatalf("selected check ran for %q, want documents", checkedProfile)
-	}
-	if !strings.Contains(out.String(), "Running repository check for profile documents") {
-		t.Fatalf("expected check activity log in dashboard, got:\n%s", out.String())
-	}
-	if !strings.Contains(out.String(), "Check completed successfully") {
-		t.Fatalf("expected check success log in dashboard, got:\n%s", out.String())
-	}
-}
-
-func TestRunTUI_CreateActionUsesModalAndSavesProfile(t *testing.T) {
-	stubTUITestHooks(t)
-	args := []string{}
-
-	dir := t.TempDir()
-	profilesPath := dir + "/profiles.yaml"
-	if err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
-		Version: 1,
-		Stores: map[string]cloudstic.ProfileStore{
-			"remote": {URI: "s3:bucket/test"},
-		},
-		Profiles: map[string]cloudstic.BackupProfile{
-			"docs": {Source: "local:/docs", Store: "remote"},
-		},
-	}); err != nil {
-		t.Fatalf("SaveProfilesFile: %v", err)
-	}
-
-	readEnd, writeEnd, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	defer func() { _ = readEnd.Close() }()
-	if _, err := writeEnd.WriteString("nphotos\t\t/photos\rq"); err != nil {
-		t.Fatalf("WriteString: %v", err)
-	}
-	_ = writeEnd.Close()
-
-	var out strings.Builder
-	var errOut strings.Builder
-
-	r := &runner{
-		out:        &out,
-		errOut:     &errOut,
-		stdoutFile: os.Stdout,
-		stdin:      readEnd,
-		lineIn:     bufio.NewReader(readEnd),
-	}
-	oldEnv := os.Getenv("CLOUDSTIC_PROFILES_FILE")
-	t.Cleanup(func() { _ = os.Setenv("CLOUDSTIC_PROFILES_FILE", oldEnv) })
-	_ = os.Setenv("CLOUDSTIC_PROFILES_FILE", profilesPath)
-	if code := tuiCommand().execute(r.withArgs(args), context.Background(), "tui"); code != 0 {
-		t.Fatalf("code=%d err=%s", code, errOut.String())
-	}
-	cfg, err := cloudstic.LoadProfilesFile(profilesPath)
-	if err != nil {
-		t.Fatalf("LoadProfilesFile: %v", err)
-	}
-	if got := cfg.Profiles["photos"].Source; got != "local:/photos" {
-		t.Fatalf("saved profile source=%q want local:/photos", got)
-	}
-	if !strings.Contains(out.String(), "saved \"photos\"") {
-		t.Fatalf("expected create activity in output, got:\n%s", out.String())
-	}
-}
-
-func TestReadTUIAction_ParsesCSIArrowKeys(t *testing.T) {
-	ev, err := readTUIAction(bufio.NewReader(bytes.NewBufferString("\x1b[A")), tui.DashboardLayout{})
-	if err != nil {
-		t.Fatalf("readTUIAction up: %v", err)
-	}
-	if ev.Kind != tuiActionUp {
-		t.Fatalf("up action=%v want %v", ev.Kind, tuiActionUp)
-	}
-
-	ev, err = readTUIAction(bufio.NewReader(bytes.NewBufferString("\x1b[B")), tui.DashboardLayout{})
-	if err != nil {
-		t.Fatalf("readTUIAction down: %v", err)
-	}
-	if ev.Kind != tuiActionDown {
-		t.Fatalf("down action=%v want %v", ev.Kind, tuiActionDown)
-	}
-}
-
-func TestReadTUIAction_ParsesParameterizedCSIArrowKeys(t *testing.T) {
-	ev, err := readTUIAction(bufio.NewReader(bytes.NewBufferString("\x1b[1;2A")), tui.DashboardLayout{})
-	if err != nil {
-		t.Fatalf("readTUIAction param up: %v", err)
-	}
-	if ev.Kind != tuiActionUp {
-		t.Fatalf("param up action=%v want %v", ev.Kind, tuiActionUp)
-	}
-
-	ev, err = readTUIAction(bufio.NewReader(bytes.NewBufferString("\x1b[1;2B")), tui.DashboardLayout{})
-	if err != nil {
-		t.Fatalf("readTUIAction param down: %v", err)
-	}
-	if ev.Kind != tuiActionDown {
-		t.Fatalf("param down action=%v want %v", ev.Kind, tuiActionDown)
-	}
-}
-
-func TestReadTUIAction_ParsesSS3ArrowKeys(t *testing.T) {
-	ev, err := readTUIAction(bufio.NewReader(bytes.NewBufferString("\x1bOA")), tui.DashboardLayout{})
-	if err != nil {
-		t.Fatalf("readTUIAction ss3 up: %v", err)
-	}
-	if ev.Kind != tuiActionUp {
-		t.Fatalf("ss3 up action=%v want %v", ev.Kind, tuiActionUp)
-	}
-
-	ev, err = readTUIAction(bufio.NewReader(bytes.NewBufferString("\x1bOB")), tui.DashboardLayout{})
-	if err != nil {
-		t.Fatalf("readTUIAction ss3 down: %v", err)
-	}
-	if ev.Kind != tuiActionDown {
-		t.Fatalf("ss3 down action=%v want %v", ev.Kind, tuiActionDown)
-	}
-}
-
-func TestReadTUIAction_ParsesCheckShortcut(t *testing.T) {
-	ev, err := readTUIAction(bufio.NewReader(bytes.NewBufferString("c")), tui.DashboardLayout{})
-	if err != nil {
-		t.Fatalf("readTUIAction check: %v", err)
-	}
-	if ev.Kind != tuiActionCheck {
-		t.Fatalf("check action=%v want %v", ev.Kind, tuiActionCheck)
-	}
-}
-
-func TestReadTUIAction_ParsesViewShortcuts(t *testing.T) {
-	ev, err := readTUIAction(bufio.NewReader(bytes.NewBufferString("s")), tui.DashboardLayout{})
-	if err != nil {
-		t.Fatalf("readTUIAction summary: %v", err)
-	}
-	if ev.Kind != tuiActionSummaryView {
-		t.Fatalf("summary action=%v want %v", ev.Kind, tuiActionSummaryView)
-	}
-
-	ev, err = readTUIAction(bufio.NewReader(bytes.NewBufferString("h")), tui.DashboardLayout{})
-	if err != nil {
-		t.Fatalf("readTUIAction history: %v", err)
-	}
-	if ev.Kind != tuiActionHistoryView {
-		t.Fatalf("history action=%v want %v", ev.Kind, tuiActionHistoryView)
-	}
-}
-
-func TestReadTUIAction_ParsesManagementShortcuts(t *testing.T) {
-	ev, err := readTUIAction(bufio.NewReader(bytes.NewBufferString("n")), tui.DashboardLayout{})
-	if err != nil {
-		t.Fatalf("readTUIAction create: %v", err)
-	}
-	if ev.Kind != tuiActionCreate {
-		t.Fatalf("create action=%v want %v", ev.Kind, tuiActionCreate)
-	}
-
-	ev, err = readTUIAction(bufio.NewReader(bytes.NewBufferString("e")), tui.DashboardLayout{})
-	if err != nil {
-		t.Fatalf("readTUIAction edit: %v", err)
-	}
-	if ev.Kind != tuiActionEdit {
-		t.Fatalf("edit action=%v want %v", ev.Kind, tuiActionEdit)
-	}
-
-	ev, err = readTUIAction(bufio.NewReader(bytes.NewBufferString("d")), tui.DashboardLayout{})
-	if err != nil {
-		t.Fatalf("readTUIAction delete: %v", err)
-	}
-	if ev.Kind != tuiActionDelete {
-		t.Fatalf("delete action=%v want %v", ev.Kind, tuiActionDelete)
-	}
-}
-
-func TestReadTUIAction_ParsesProfileClick(t *testing.T) {
-	layout := tui.DashboardLayout{
-		ProfileRows: map[int]string{8: "photos"},
-		ProfileRect: tui.Rect{X: 1, Y: 5, W: 20, H: 6},
-	}
-	ev, err := readTUIAction(bufio.NewReader(bytes.NewBufferString("\x1b[<0;5;8M")), layout)
-	if err != nil {
-		t.Fatalf("readTUIAction click: %v", err)
-	}
-	if ev.Kind != tuiActionSelectProfile {
-		t.Fatalf("click action=%v want %v", ev.Kind, tuiActionSelectProfile)
-	}
-	if ev.Profile != "photos" {
-		t.Fatalf("click profile=%q want photos", ev.Profile)
-	}
-}
-
-func TestReadTUIAction_ParsesActionClick(t *testing.T) {
-	layout := tui.DashboardLayout{
-		ActionRows: map[int]string{12: "c"},
-		ActionRect: tui.Rect{X: 30, Y: 10, W: 40, H: 6},
-	}
-	ev, err := readTUIAction(bufio.NewReader(bytes.NewBufferString("\x1b[<0;35;12M")), layout)
-	if err != nil {
-		t.Fatalf("readTUIAction action click: %v", err)
-	}
-	if ev.Kind != tuiActionCheck {
-		t.Fatalf("click action=%v want %v", ev.Kind, tuiActionCheck)
-	}
-}
-
-func TestReadTUIModalInput_ParsesStandaloneEscape(t *testing.T) {
-	ev, err := readTUIModalInput(bufio.NewReader(bytes.NewBufferString("\x1b")))
-	if err != nil {
-		t.Fatalf("readTUIModalInput escape: %v", err)
-	}
-	if ev.Kind != tuiModalInputEscape {
-		t.Fatalf("escape kind=%v want %v", ev.Kind, tuiModalInputEscape)
-	}
-}
-
-func TestTUISession_EnterLeaveManagesTerminalState(t *testing.T) {
-	readEnd, writeEnd, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	defer func() {
-		_ = readEnd.Close()
-		_ = writeEnd.Close()
-	}()
-
-	oldMakeRaw := tuiMakeRaw
-	oldRestore := tuiRestoreTerminal
-	oldEnterAlt := tuiEnterAltScreen
-	oldLeaveAlt := tuiLeaveAltScreen
-	t.Cleanup(func() {
-		tuiMakeRaw = oldMakeRaw
-		tuiRestoreTerminal = oldRestore
-		tuiEnterAltScreen = oldEnterAlt
-		tuiLeaveAltScreen = oldLeaveAlt
-	})
-
-	var enteredAlt, leftAlt, madeRaw, restored int
-	state := &xterm.State{}
-	tuiEnterAltScreen = func(io.Writer) error { enteredAlt++; return nil }
-	tuiLeaveAltScreen = func(io.Writer) error { leftAlt++; return nil }
-	tuiMakeRaw = func(int) (*xterm.State, error) { madeRaw++; return state, nil }
-	tuiRestoreTerminal = func(int, *xterm.State) error { restored++; return nil }
-
-	s := newTUISession(&runner{out: io.Discard, stdin: readEnd}, "", tui.Dashboard{})
-	if err := s.enter(); err != nil {
-		t.Fatalf("enter: %v", err)
-	}
-	if s.rawState != state {
-		t.Fatalf("rawState not set")
-	}
-	s.leave()
-	if enteredAlt != 1 || leftAlt != 1 || madeRaw != 1 || restored != 1 {
-		t.Fatalf("unexpected terminal lifecycle counts: alt=%d/%d raw=%d restore=%d", enteredAlt, leftAlt, madeRaw, restored)
-	}
-	if s.rawState != nil {
-		t.Fatalf("rawState not cleared")
-	}
-}
-
-func TestTUISession_HandleActionRunRefreshesDashboard(t *testing.T) {
-	stubTUITestHooks(t)
-
-	oldBuild := tuiBuildDashboard
-	oldAction := tuiRunProfileAction
-	t.Cleanup(func() {
-		tuiBuildDashboard = oldBuild
-		tuiRunProfileAction = oldAction
-	})
-
-	tuiBuildDashboard = func(context.Context, string) (tui.Dashboard, error) {
-		return tui.Dashboard{
-			ProfileCount:    1,
-			StoreCount:      1,
-			SelectedProfile: "docs",
-			SelectedView:    tui.ProfileViewSummary,
-			Profiles: []tui.ProfileCard{
-				{
-					Name:       "docs",
-					Source:     "local:/docs",
-					StoreRef:   "remote",
-					Enabled:    true,
-					Status:     tui.ProfileStatusReady,
-					LastBackup: "2026-04-03 12:00",
-					Actions: []tui.ProfileAction{
-						{Kind: tui.ActionKindBackup, Key: "b", Label: "Press b to run backup", Enabled: true},
-						{Kind: tui.ActionKindCheck, Key: "c", Label: "Press c to run repository check", Enabled: true},
-					},
-				},
-			},
-		}, nil
-	}
-	tuiRunProfileAction = func(_ context.Context, _ *runner, _ string, _ tui.ProfileCard, log *tuiActionState) error {
-		log.Printf("backup complete")
-		return nil
-	}
-
-	var out strings.Builder
-	s := newTUISession(&runner{out: &out, stdoutFile: os.Stdout, stdin: os.Stdin}, "profiles.yaml", tui.Dashboard{
-		SelectedProfile: "docs",
-		SelectedView:    tui.ProfileViewHistory,
-		Profiles: []tui.ProfileCard{
-			{
-				Name:     "docs",
-				Source:   "local:/docs",
-				StoreRef: "remote",
-				Enabled:  true,
-				Status:   tui.ProfileStatusReady,
-				Actions: []tui.ProfileAction{
-					{Kind: tui.ActionKindBackup, Key: "b", Label: "Press b to run backup", Enabled: true},
-					{Kind: tui.ActionKindCheck, Key: "c", Label: "Press c to run repository check", Enabled: true},
-				},
-			},
-		},
-	})
-
-	if _, err := s.handleAction(context.Background(), tuiAction{Kind: tuiActionRun}); err != nil {
-		t.Fatalf("handleAction(run): %v", err)
-	}
-	if s.dashboard.SelectedProfile != "docs" {
-		t.Fatalf("selected profile lost after refresh: %+v", s.dashboard)
-	}
-	if s.dashboard.SelectedView != tui.ProfileViewHistory {
-		t.Fatalf("selected view lost after refresh: %+v", s.dashboard)
-	}
-	if len(s.dashboard.Activity.Lines) == 0 {
-		t.Fatalf("expected activity lines after action")
-	}
-	if s.dashboard.Activity.Status != tui.ActivityStatusSuccess {
-		t.Fatalf("unexpected activity status: %+v", s.dashboard.Activity)
-	}
-	if !strings.Contains(strings.Join(s.dashboard.Activity.Lines, "\n"), "Action completed successfully") {
-		t.Fatalf("missing completion activity: %+v", s.dashboard.Activity)
-	}
-}
-
-func TestTUISession_HandleActionSwitchesSelectedView(t *testing.T) {
-	stubTUITestHooks(t)
-
-	s := newTUISession(&runner{out: io.Discard, stdoutFile: os.Stdout, stdin: os.Stdin}, "profiles.yaml", tui.Dashboard{
-		SelectedProfile: "docs",
-		SelectedView:    tui.ProfileViewSummary,
-		Profiles: []tui.ProfileCard{
-			{Name: "docs", Enabled: true, Status: tui.ProfileStatusReady},
-		},
-	})
-
-	if _, err := s.handleAction(context.Background(), tuiAction{Kind: tuiActionHistoryView}); err != nil {
-		t.Fatalf("handleAction(history): %v", err)
-	}
-	if s.dashboard.SelectedView != tui.ProfileViewHistory {
-		t.Fatalf("selected view = %q want history", s.dashboard.SelectedView)
-	}
-
-	if _, err := s.handleAction(context.Background(), tuiAction{Kind: tuiActionSummaryView}); err != nil {
-		t.Fatalf("handleAction(summary): %v", err)
-	}
-	if s.dashboard.SelectedView != tui.ProfileViewSummary {
-		t.Fatalf("selected view = %q want summary", s.dashboard.SelectedView)
-	}
-}
-
-func TestTUISession_HandleActionRunRefreshFailureRestoresRawMode(t *testing.T) {
-	readEnd, writeEnd, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	defer func() {
-		_ = readEnd.Close()
-		_ = writeEnd.Close()
-	}()
-
-	oldBuild := tuiBuildDashboard
-	oldAction := tuiRunProfileAction
-	oldMakeRaw := tuiMakeRaw
-	oldRestore := tuiRestoreTerminal
-	oldEnterAlt := tuiEnterAltScreen
-	oldLeaveAlt := tuiLeaveAltScreen
-	t.Cleanup(func() {
-		tuiBuildDashboard = oldBuild
-		tuiRunProfileAction = oldAction
-		tuiMakeRaw = oldMakeRaw
-		tuiRestoreTerminal = oldRestore
-		tuiEnterAltScreen = oldEnterAlt
-		tuiLeaveAltScreen = oldLeaveAlt
-	})
-
-	var madeRaw, restored int
-	state := &xterm.State{}
-	tuiMakeRaw = func(int) (*xterm.State, error) { madeRaw++; return state, nil }
-	tuiRestoreTerminal = func(int, *xterm.State) error { restored++; return nil }
-	tuiEnterAltScreen = func(io.Writer) error { return nil }
-	tuiLeaveAltScreen = func(io.Writer) error { return nil }
-
-	tuiBuildDashboard = func(context.Context, string) (tui.Dashboard, error) {
-		return tui.Dashboard{}, errors.New("boom")
-	}
-	tuiRunProfileAction = func(_ context.Context, _ *runner, _ string, _ tui.ProfileCard, log *tuiActionState) error {
-		log.Printf("backup complete")
-		return nil
-	}
-
-	s := newTUISession(&runner{out: io.Discard, stdoutFile: os.Stdout, stdin: readEnd}, "profiles.yaml", tui.Dashboard{
-		SelectedProfile: "docs",
-		Profiles: []tui.ProfileCard{
-			{
-				Name:     "docs",
-				Source:   "local:/docs",
-				StoreRef: "remote",
-				Enabled:  true,
-				Status:   tui.ProfileStatusReady,
-				Actions: []tui.ProfileAction{
-					{Kind: tui.ActionKindBackup, Key: "b", Label: "Press b to run backup", Enabled: true},
-				},
-			},
-		},
-	})
-	s.rawState = state
-
-	if _, err := s.handleAction(context.Background(), tuiAction{Kind: tuiActionRun}); err == nil {
-		t.Fatalf("expected refresh failure")
-	}
-	if madeRaw != 1 || restored != 1 {
-		t.Fatalf("unexpected raw lifecycle counts: make=%d restore=%d", madeRaw, restored)
-	}
-	if s.rawState != state {
-		t.Fatalf("raw state not restored after refresh failure")
-	}
-}
-
-func TestTUISession_HandleActionCreateRefreshesDashboard(t *testing.T) {
-	stubTUITestHooks(t)
-
-	oldBuild := tuiBuildDashboard
-	t.Cleanup(func() { tuiBuildDashboard = oldBuild })
-
-	dir := t.TempDir()
-	profilesPath := dir + "/profiles.yaml"
-	if err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
-		Version: 1,
-		Stores: map[string]cloudstic.ProfileStore{
-			"remote": {URI: "s3:bucket/test"},
-		},
-		Profiles: map[string]cloudstic.BackupProfile{
-			"docs": {Source: "local:/docs", Store: "remote"},
-		},
-	}); err != nil {
-		t.Fatalf("SaveProfilesFile: %v", err)
-	}
-	tuiBuildDashboard = func(context.Context, string) (tui.Dashboard, error) {
-		return defaultBuildTUIDashboard(context.Background(), profilesPath)
-	}
-
-	readEnd, writeEnd, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	defer func() { _ = readEnd.Close() }()
-	if _, err := writeEnd.WriteString("photos\t\t/photos\r"); err != nil {
-		t.Fatalf("WriteString: %v", err)
-	}
-	_ = writeEnd.Close()
-
-	var out strings.Builder
-	s := newTUISession(&runner{out: &out, stdoutFile: os.Stdout, stdin: readEnd, lineIn: bufio.NewReader(readEnd)}, profilesPath, tui.Dashboard{})
-	if _, err := s.handleAction(context.Background(), tuiAction{Kind: tuiActionCreate}); err != nil {
-		t.Fatalf("handleAction(create): %v", err)
-	}
-	if s.dashboard.SelectedProfile != "photos" {
-		t.Fatalf("selected profile=%q want photos", s.dashboard.SelectedProfile)
-	}
-	if s.dashboard.Activity.Status != tui.ActivityStatusSuccess {
-		t.Fatalf("unexpected activity: %+v", s.dashboard.Activity)
-	}
-}
-
-func TestTUISession_HandleActionCreateCanCreateStoreInline(t *testing.T) {
-	stubTUITestHooks(t)
-
-	oldBuild := tuiBuildDashboard
-	t.Cleanup(func() { tuiBuildDashboard = oldBuild })
-
-	dir := t.TempDir()
-	profilesPath := dir + "/profiles.yaml"
-	if err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
-		Version: 1,
-	}); err != nil {
-		t.Fatalf("SaveProfilesFile: %v", err)
-	}
-	tuiBuildDashboard = func(context.Context, string) (tui.Dashboard, error) {
-		return defaultBuildTUIDashboard(context.Background(), profilesPath)
-	}
-
-	readEnd, writeEnd, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	defer func() { _ = readEnd.Close() }()
-	if _, err := writeEnd.WriteString("photos\t\t/photos\t\rbackup-store\t\t/backups\r\r"); err != nil {
-		t.Fatalf("WriteString: %v", err)
-	}
-	_ = writeEnd.Close()
-
-	s := newTUISession(&runner{out: io.Discard, stdoutFile: os.Stdout, stdin: readEnd, lineIn: bufio.NewReader(readEnd)}, profilesPath, tui.Dashboard{})
-	if _, err := s.handleAction(context.Background(), tuiAction{Kind: tuiActionCreate}); err != nil {
-		t.Fatalf("handleAction(create): %v", err)
-	}
-	cfg, err := cloudstic.LoadProfilesFile(profilesPath)
-	if err != nil {
-		t.Fatalf("LoadProfilesFile: %v", err)
-	}
-	if got := cfg.Stores["backup-store"].URI; got != "local:/backups" {
-		t.Fatalf("saved store uri=%q want local:/backups", got)
-	}
-	if got := cfg.Profiles["photos"].Store; got != "backup-store" {
-		t.Fatalf("saved profile store=%q want backup-store", got)
-	}
-}
-
-func TestTUISession_HandleActionDeleteRefreshesDashboard(t *testing.T) {
-	stubTUITestHooks(t)
-
-	oldBuild := tuiBuildDashboard
-	t.Cleanup(func() { tuiBuildDashboard = oldBuild })
-
-	dir := t.TempDir()
-	profilesPath := dir + "/profiles.yaml"
-	if err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
-		Version: 1,
-		Stores: map[string]cloudstic.ProfileStore{
-			"remote": {URI: "s3:bucket/test"},
-		},
-		Profiles: map[string]cloudstic.BackupProfile{
-			"docs":   {Source: "local:/docs", Store: "remote"},
-			"photos": {Source: "local:/photos", Store: "remote"},
-		},
-	}); err != nil {
-		t.Fatalf("SaveProfilesFile: %v", err)
-	}
-	tuiBuildDashboard = func(context.Context, string) (tui.Dashboard, error) {
-		return defaultBuildTUIDashboard(context.Background(), profilesPath)
-	}
-
-	readEnd, writeEnd, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	defer func() { _ = readEnd.Close() }()
-	if _, err := writeEnd.WriteString("\r"); err != nil {
-		t.Fatalf("WriteString: %v", err)
-	}
-	_ = writeEnd.Close()
-
-	s := newTUISession(&runner{out: io.Discard, stdoutFile: os.Stdout, stdin: os.Stdin}, "profiles.yaml", tui.Dashboard{
-		SelectedProfile: "docs",
-		Profiles:        []tui.ProfileCard{{Name: "docs", Source: "local:/docs", StoreRef: "remote", Enabled: true, Status: tui.ProfileStatusReady}},
-	})
-	s.r.stdin = readEnd
-	s.r.lineIn = bufio.NewReader(readEnd)
-	s.profilesFile = profilesPath
-	if _, err := s.handleAction(context.Background(), tuiAction{Kind: tuiActionDelete}); err != nil {
-		t.Fatalf("handleAction(delete): %v", err)
-	}
-	if s.dashboard.SelectedProfile != "photos" {
-		t.Fatalf("selected profile=%q want photos", s.dashboard.SelectedProfile)
-	}
-	if s.dashboard.Activity.Status != tui.ActivityStatusSuccess {
-		t.Fatalf("unexpected activity: %+v", s.dashboard.Activity)
-	}
-}
-
-func TestTUISession_HandleActionSelectProfileRefreshesSelection(t *testing.T) {
-	stubTUITestHooks(t)
-
-	s := newTUISession(&runner{out: io.Discard, stdoutFile: os.Stdout, stdin: os.Stdin}, "profiles.yaml", tui.Dashboard{
-		SelectedProfile: "docs",
-		Profiles: []tui.ProfileCard{
-			{Name: "docs", Source: "local:/docs", StoreRef: "remote", Enabled: true, Status: tui.ProfileStatusReady},
-			{Name: "photos", Source: "local:/photos", StoreRef: "remote", Enabled: true, Status: tui.ProfileStatusReady},
-		},
-	})
-	if _, err := s.handleAction(context.Background(), tuiAction{Kind: tuiActionSelectProfile, Profile: "photos"}); err != nil {
-		t.Fatalf("handleAction(select): %v", err)
-	}
-	if s.dashboard.SelectedProfile != "photos" {
-		t.Fatalf("selected profile=%q want photos", s.dashboard.SelectedProfile)
-	}
-}
-
-func TestTUISession_RefreshPreservesSelectionAndActivity(t *testing.T) {
-	oldBuild := tuiBuildDashboard
-	t.Cleanup(func() { tuiBuildDashboard = oldBuild })
-	tuiBuildDashboard = func(context.Context, string) (tui.Dashboard, error) {
-		return tui.Dashboard{
-			Profiles: []tui.ProfileCard{
-				{Name: "docs", Source: "local:/docs", StoreRef: "remote", Enabled: true, Status: tui.ProfileStatusReady},
-			},
-		}, nil
-	}
-
-	s := newTUISession(&runner{}, "profiles.yaml", tui.Dashboard{
-		SelectedProfile: "docs",
-		Activity:        tui.ActivityPanel{Status: tui.ActivityStatusRunning, Lines: []string{"running"}},
-		Profiles:        []tui.ProfileCard{{Name: "docs"}},
-	})
-	if err := s.refresh(context.Background()); err != nil {
-		t.Fatalf("refresh: %v", err)
-	}
-	if s.dashboard.SelectedProfile != "docs" {
-		t.Fatalf("selection not preserved: %+v", s.dashboard)
-	}
-	if len(s.dashboard.Activity.Lines) != 1 || s.dashboard.Activity.Lines[0] != "running" {
-		t.Fatalf("activity not preserved: %+v", s.dashboard.Activity)
-	}
-}
-
-func TestRunTUIActionIntoDashboard_RedrawsUsingCurrentWidthDuringLongAction(t *testing.T) {
-	stubTUITestHooks(t)
-
-	oldWidth := tuiGetTerminalSize
-	oldAction := tuiRunProfileAction
-	t.Cleanup(func() {
-		tuiGetTerminalSize = oldWidth
-		tuiRunProfileAction = oldAction
-	})
-
-	var widthCalls int
-	tuiGetTerminalSize = func(int) (int, int, error) {
-		widthCalls++
-		if widthCalls == 1 {
-			return 120, 40, nil
-		}
-		return 72, 40, nil
-	}
-	tuiRunProfileAction = func(_ context.Context, _ *runner, _ string, _ tui.ProfileCard, log *tuiActionState) error {
-		phase := log.Reporter().StartPhase("Uploading", 4, false)
-		time.Sleep(120 * time.Millisecond)
-		phase.Increment(2)
-		time.Sleep(120 * time.Millisecond)
-		phase.Increment(2)
-		phase.Done()
-		return nil
-	}
-
-	var out strings.Builder
-	dashboard := tui.Dashboard{
-		SelectedProfile: "docs",
-		Profiles: []tui.ProfileCard{
-			{
-				Name:     "docs",
-				Source:   "local:/docs",
-				StoreRef: "remote",
-				Enabled:  true,
-				Status:   tui.ProfileStatusReady,
-				Actions: []tui.ProfileAction{
-					{Kind: tui.ActionKindBackup, Key: "b", Label: "Press b to run backup", Enabled: true},
-				},
-			},
-		},
-	}
-	result := runTUIActionIntoDashboard(context.Background(), &runner{out: &out, stdoutFile: os.Stdout}, "profiles.yaml", dashboard)
-	if widthCalls < 2 {
-		t.Fatalf("expected multiple width polls during long action, got %d", widthCalls)
-	}
-	if result.Activity.Status != tui.ActivityStatusSuccess {
-		t.Fatalf("unexpected activity status: %+v", result.Activity)
-	}
-	if !strings.Contains(out.String(), "Progress") {
-		t.Fatalf("expected live renders with progress, got:\n%s", out.String())
-	}
-}
-
 func TestCaptureTUIRunnerOutput_RestoresRunnerState(t *testing.T) {
 	var out strings.Builder
 	var errOut strings.Builder
@@ -1320,60 +299,5 @@ func TestCaptureTUIRunnerOutput_RestoresRunnerState(t *testing.T) {
 	}
 	if r.out != &out || r.errOut != &errOut {
 		t.Fatalf("runner outputs not restored")
-	}
-}
-
-func TestReadInput_ClosesChannelOnEOF(t *testing.T) {
-	readEnd, writeEnd, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	defer func() { _ = readEnd.Close() }()
-	_ = writeEnd.Close()
-
-	s := newTUISession(&runner{stdin: readEnd, lineIn: bufio.NewReader(readEnd)}, "", tui.Dashboard{})
-	readPermitCh := make(chan tui.DashboardLayout, 1)
-	eventCh := make(chan tuiAction, 2)
-	errCh := make(chan error, 1)
-	close(readPermitCh)
-	s.readInput(readPermitCh, eventCh, errCh)
-
-	if _, ok := <-eventCh; ok {
-		t.Fatalf("expected event channel to be closed")
-	}
-	select {
-	case err := <-errCh:
-		t.Fatalf("unexpected read error: %v", err)
-	default:
-	}
-}
-
-func TestTUIBuildDashboardErrorPropagates(t *testing.T) {
-	oldBuild := tuiBuildDashboard
-	t.Cleanup(func() { tuiBuildDashboard = oldBuild })
-	tuiBuildDashboard = func(context.Context, string) (tui.Dashboard, error) {
-		return tui.Dashboard{}, errors.New("boom")
-	}
-	oldIsTerminal := isTerminalFunc
-	t.Cleanup(func() {
-		isTerminalFunc = oldIsTerminal
-	})
-	args := []string{}
-	isTerminalFunc = func(uintptr) bool { return true }
-
-	readEnd, writeEnd, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	defer func() { _ = readEnd.Close() }()
-	_ = writeEnd.Close()
-
-	var errOut strings.Builder
-	r := &runner{out: io.Discard, errOut: &errOut, stdin: readEnd, stdoutFile: os.Stdout, lineIn: bufio.NewReader(readEnd)}
-	if code := tuiCommand().execute(r.withArgs(args), context.Background(), "tui"); code == 0 {
-		t.Fatalf("expected failure")
-	}
-	if !strings.Contains(errOut.String(), "Failed to build TUI dashboard") {
-		t.Fatalf("unexpected stderr: %s", errOut.String())
 	}
 }

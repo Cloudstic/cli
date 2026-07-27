@@ -10,8 +10,8 @@ import (
 	cloudstic "github.com/cloudstic/cli"
 )
 
-func TestRunBubbleTeaTUI_Success(t *testing.T) {
-	restoreRun := swapBubbleTeaRunner(func(context.Context, tea.Model, ...tea.ProgramOption) error {
+func TestRunTUIProgram_Success(t *testing.T) {
+	restoreRun := swapTUIProgramRunner(func(context.Context, tea.Model, ...tea.ProgramOption) error {
 		return nil
 	})
 	defer restoreRun()
@@ -21,13 +21,13 @@ func TestRunBubbleTeaTUI_Success(t *testing.T) {
 	defer restoreCfg()
 
 	r := &runner{out: &strings.Builder{}, errOut: &strings.Builder{}}
-	if code := runBubbleTeaTUI(r, context.Background(), "profiles.yaml"); code != 0 {
+	if code := runTUIProgram(r, context.Background(), "profiles.yaml"); code != 0 {
 		t.Fatalf("exit code=%d want 0", code)
 	}
 }
 
-func TestRunBubbleTeaTUI_ProgramError(t *testing.T) {
-	restoreRun := swapBubbleTeaRunner(func(context.Context, tea.Model, ...tea.ProgramOption) error {
+func TestRunTUIProgram_ProgramError(t *testing.T) {
+	restoreRun := swapTUIProgramRunner(func(context.Context, tea.Model, ...tea.ProgramOption) error {
 		return errors.New("boom")
 	})
 	defer restoreRun()
@@ -38,7 +38,7 @@ func TestRunBubbleTeaTUI_ProgramError(t *testing.T) {
 
 	errOut := &strings.Builder{}
 	r := &runner{out: &strings.Builder{}, errOut: errOut}
-	if code := runBubbleTeaTUI(r, context.Background(), "profiles.yaml"); code == 0 {
+	if code := runTUIProgram(r, context.Background(), "profiles.yaml"); code == 0 {
 		t.Fatalf("exit code=0 want non-zero on error")
 	}
 	if !strings.Contains(errOut.String(), "boom") {
@@ -46,7 +46,7 @@ func TestRunBubbleTeaTUI_ProgramError(t *testing.T) {
 	}
 }
 
-func TestRunBubbleTeaTUI_ConfigError(t *testing.T) {
+func TestRunTUIProgram_ConfigError(t *testing.T) {
 	restoreCfg := swapTUILoadConfig(func(string) (*cloudstic.ProfilesConfig, error) {
 		return nil, errors.New("bad config")
 	})
@@ -54,7 +54,7 @@ func TestRunBubbleTeaTUI_ConfigError(t *testing.T) {
 
 	errOut := &strings.Builder{}
 	r := &runner{out: &strings.Builder{}, errOut: errOut}
-	if code := runBubbleTeaTUI(r, context.Background(), "profiles.yaml"); code == 0 {
+	if code := runTUIProgram(r, context.Background(), "profiles.yaml"); code == 0 {
 		t.Fatalf("exit code=0 want non-zero on config error")
 	}
 	if !strings.Contains(errOut.String(), "bad config") {
@@ -62,10 +62,10 @@ func TestRunBubbleTeaTUI_ConfigError(t *testing.T) {
 	}
 }
 
-func swapBubbleTeaRunner(fn func(context.Context, tea.Model, ...tea.ProgramOption) error) func() {
-	prev := tuiRunBubbleTea
-	tuiRunBubbleTea = fn
-	return func() { tuiRunBubbleTea = prev }
+func swapTUIProgramRunner(fn func(context.Context, tea.Model, ...tea.ProgramOption) error) func() {
+	prev := tuiRunProgram
+	tuiRunProgram = fn
+	return func() { tuiRunProgram = prev }
 }
 
 func swapTUILoadConfig(fn func(string) (*cloudstic.ProfilesConfig, error)) func() {

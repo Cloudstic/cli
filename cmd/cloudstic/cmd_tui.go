@@ -6,7 +6,6 @@ import (
 
 type tuiArgs struct {
 	profilesFile string
-	bubbletea    bool
 }
 
 func declareTUIArgs(_ *globalFlags) (*tuiArgs, commandInput) {
@@ -15,9 +14,6 @@ func declareTUIArgs(_ *globalFlags) (*tuiArgs, commandInput) {
 	return a, commandInput{flags: []flagSpec{
 		stringFlag(&a.profilesFile, "profiles-file", defaultProfilesPathNoCreate(), "Path to profiles YAML file",
 			withEnv("CLOUDSTIC_PROFILES_FILE"), withPlaceholder("<path>"), withCompleter("_files")),
-		boolFlag(&a.bubbletea, "bubbletea", false,
-			"Use the experimental Bubble Tea renderer (RFC 0012 Phase 2)",
-			withEnv("CLOUDSTIC_TUI_BUBBLETEA")),
 	}}
 }
 
@@ -25,18 +21,7 @@ func runTUI(r *runner, ctx context.Context, args *tuiArgs) int {
 	if !r.canPrompt() {
 		return r.fail("cloudstic tui requires an interactive terminal")
 	}
-
-	if args.bubbletea {
-		// The Bubble Tea renderer builds its own skeleton and probes stores
-		// concurrently, so it skips the serial pre-probe below.
-		return runBubbleTeaTUI(r, ctx, args.profilesFile)
-	}
-
-	dashboard, err := tuiBuildDashboard(ctx, args.profilesFile)
-	if err != nil {
-		return r.fail("Failed to build TUI dashboard: %v", err)
-	}
-	return newTUISession(r, args.profilesFile, dashboard).run(ctx)
+	return runTUIProgram(r, ctx, args.profilesFile)
 }
 
 // tuiCommand declares the `tui` command.

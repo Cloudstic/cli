@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -68,9 +66,6 @@ func TestBuildDashboard_SortsProfilesAndCountsSections(t *testing.T) {
 	}
 	if got.Profiles[0].LastRef != "snapshot/abc" {
 		t.Fatalf("last ref = %q want snapshot/abc", got.Profiles[0].LastRef)
-	}
-	if got.SelectedView != ProfileViewSummary {
-		t.Fatalf("selected view = %q want summary", got.SelectedView)
 	}
 	if got.Profiles[0].Status != ProfileStatusReady {
 		t.Fatalf("status = %q want ready", got.Profiles[0].Status)
@@ -149,7 +144,7 @@ func TestBuildDashboard_NormalizesStoreProbeErrors(t *testing.T) {
 	}
 }
 
-func TestBuildDashboardFromConfig_LoadsStoreSnapshots(t *testing.T) {
+func TestBuildDashboard_UsesStoreProbeSnapshots(t *testing.T) {
 	cfg := &engine.ProfilesConfig{
 		Stores: map[string]engine.ProfileStore{
 			"remote": {URI: "s3:bucket/prod"},
@@ -159,17 +154,17 @@ func TestBuildDashboardFromConfig_LoadsStoreSnapshots(t *testing.T) {
 		},
 	}
 
-	got := BuildDashboardFromConfig(context.Background(), cfg, func(_ context.Context, name string, _ engine.ProfileStore) ([]engine.SnapshotEntry, error) {
-		if name != "remote" {
-			t.Fatalf("unexpected store %q", name)
-		}
-		return []engine.SnapshotEntry{{
-			Ref:     "snapshot/1",
-			Created: mustTime(t, "2026-04-03T10:00:00Z"),
-			Snap: core.Snapshot{
-				Source: &core.SourceInfo{Type: "local", Path: "/docs"},
-			},
-		}}, nil
+	got := BuildDashboard(cfg, map[string]StoreProbe{
+		"remote": {
+			Status: "ok",
+			Snapshots: []engine.SnapshotEntry{{
+				Ref:     "snapshot/1",
+				Created: mustTime(t, "2026-04-03T10:00:00Z"),
+				Snap: core.Snapshot{
+					Source: &core.SourceInfo{Type: "local", Path: "/docs"},
+				},
+			}},
+		},
 	})
 	if len(got.Profiles) != 1 || got.Profiles[0].LastRef != "snapshot/1" {
 		t.Fatalf("unexpected dashboard: %+v", got)
@@ -227,7 +222,7 @@ func TestBuildDashboard_BuildsProfileHistoryNewestFirst(t *testing.T) {
 	}
 }
 
-func TestBuildDashboardFromConfig_StoreErrorBecomesWarning(t *testing.T) {
+func TestBuildDashboard_StoreErrorBecomesWarning(t *testing.T) {
 	cfg := &engine.ProfilesConfig{
 		Stores: map[string]engine.ProfileStore{
 			"remote": {URI: "s3:bucket/prod"},
@@ -237,8 +232,8 @@ func TestBuildDashboardFromConfig_StoreErrorBecomesWarning(t *testing.T) {
 		},
 	}
 
-	got := BuildDashboardFromConfig(context.Background(), cfg, func(context.Context, string, engine.ProfileStore) ([]engine.SnapshotEntry, error) {
-		return nil, errors.New("unlock failed")
+	got := BuildDashboard(cfg, map[string]StoreProbe{
+		"remote": {Status: "error", Error: "unlock failed"},
 	})
 	if got.Profiles[0].Status != ProfileStatusWarning || got.Profiles[0].StatusNote != "unlock failed" {
 		t.Fatalf("unexpected profile status: %+v", got.Profiles[0])

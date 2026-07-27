@@ -9,7 +9,7 @@ import (
 func mouseDashboard() Dashboard {
 	ready := deriveProfileActions(ProfileStatusReady, StoreHealthReady)
 	return Dashboard{
-		ProfileCount: 3, StoreCount: 1, SelectedProfile: "alpha", SelectedView: ProfileViewSummary,
+		ProfileCount: 3, StoreCount: 1, SelectedProfile: "alpha",
 		Profiles: []ProfileCard{
 			{Name: "alpha", Source: "local:/a", StoreRef: "s1", Enabled: true, Status: ProfileStatusReady,
 				StoreHealth: StoreHealthReady, Reachability: StoreReachabilityReachable, Repository: RepositoryStateInitialized, Actions: ready},

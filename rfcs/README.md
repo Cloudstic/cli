@@ -19,3 +19,4 @@
 - [RFC 0017: Snapshot Copy Between Repositories](0017-snapshot-copy-between-repositories.md)
 - [RFC 0018: Self-Describing Packfiles](0018-self-describing-packfiles.md)
 - [RFC 0019: Repository File Search](0019-repository-file-search.md)
+- [RFC 0020: WORM Mode Backup](0020-worm-mode-backup.md)

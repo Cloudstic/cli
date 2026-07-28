@@ -310,7 +310,7 @@ func TestCheckOrInitStore_AlreadyInitialized(t *testing.T) {
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
-	raw, err := newObjectStore(context.Background(), sc.store)
+	raw, err := newObjectStore(context.Background(), sc.Store)
 	if err != nil {
 		t.Fatalf("newObjectStore: %v", err)
 	}
@@ -349,7 +349,7 @@ func TestCheckOrInitStore_InitializedEncrypted_ValidCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
-	raw, err := newObjectStore(context.Background(), sc.store)
+	raw, err := newObjectStore(context.Background(), sc.Store)
 	if err != nil {
 		t.Fatalf("newObjectStore: %v", err)
 	}
@@ -389,7 +389,7 @@ func TestCheckOrInitStore_InitializedEncrypted_InvalidCredentials(t *testing.T) 
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
-	raw, err := newObjectStore(context.Background(), sc.store)
+	raw, err := newObjectStore(context.Background(), sc.Store)
 	if err != nil {
 		t.Fatalf("newObjectStore: %v", err)
 	}
@@ -434,23 +434,23 @@ func TestClientConfigFromProfileStore_ResolvesEnvVars(t *testing.T) {
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
-	if sc.store.uri != "s3:bucket/prefix" {
-		t.Fatalf("store=%q", sc.store.uri)
+	if sc.Store.URI != "s3:bucket/prefix" {
+		t.Fatalf("store=%q", sc.Store.URI)
 	}
-	if sc.store.s3.region != "eu-west-1" {
-		t.Fatalf("s3Region=%q", sc.store.s3.region)
+	if sc.Store.S3.Region != "eu-west-1" {
+		t.Fatalf("s3Region=%q", sc.Store.S3.Region)
 	}
-	if sc.store.s3.accessKey != "my-access-key" {
-		t.Fatalf("s3AccessKey=%q", sc.store.s3.accessKey)
+	if sc.Store.S3.AccessKey != "my-access-key" {
+		t.Fatalf("s3AccessKey=%q", sc.Store.S3.AccessKey)
 	}
-	if sc.store.s3.secretKey != "my-secret-key" {
-		t.Fatalf("s3SecretKey=%q", sc.store.s3.secretKey)
+	if sc.Store.S3.SecretKey != "my-secret-key" {
+		t.Fatalf("s3SecretKey=%q", sc.Store.S3.SecretKey)
 	}
-	if sc.unlock.password != "s3cret" {
-		t.Fatalf("password=%q", sc.unlock.password)
+	if sc.Unlock.Password != "s3cret" {
+		t.Fatalf("password=%q", sc.Unlock.Password)
 	}
-	if sc.unlock.kms.keyARN != "arn:aws:kms:us-east-1:123:key/abc" {
-		t.Fatalf("kmsKeyARN=%q", sc.unlock.kms.keyARN)
+	if sc.Unlock.KMS.KeyARN != "arn:aws:kms:us-east-1:123:key/abc" {
+		t.Fatalf("kmsKeyARN=%q", sc.Unlock.KMS.KeyARN)
 	}
 }
 
@@ -466,8 +466,8 @@ func TestClientConfigFromProfileStore_ResolvesSecretRef(t *testing.T) {
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
-	if sc.store.s3.accessKey != "secret-ak" {
-		t.Fatalf("s3AccessKey=%q want secret-ak", sc.store.s3.accessKey)
+	if sc.Store.S3.AccessKey != "secret-ak" {
+		t.Fatalf("s3AccessKey=%q want secret-ak", sc.Store.S3.AccessKey)
 	}
 }
 
@@ -1420,10 +1420,10 @@ func TestClientConfigFromProfileStore_DefaultRegion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
-	if sc.store.s3.region != "" {
-		t.Fatalf("expected the config to carry no region, got %q", sc.store.s3.region)
+	if sc.Store.S3.Region != "" {
+		t.Fatalf("expected the config to carry no region, got %q", sc.Store.S3.Region)
 	}
-	if got := s3Region(sc.store.s3.region); got != "us-east-1" {
+	if got := s3Region(sc.Store.S3.Region); got != "us-east-1" {
 		t.Fatalf("expected default region us-east-1 at construction, got %q", got)
 	}
 }
@@ -1436,7 +1436,7 @@ func TestClientConfigFromProfileStore_ExplicitRegionWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
-	if got := s3Region(sc.store.s3.region); got != "eu-west-3" {
+	if got := s3Region(sc.Store.S3.Region); got != "eu-west-3" {
 		t.Fatalf("expected the profile's region eu-west-3, got %q", got)
 	}
 }
@@ -1451,10 +1451,10 @@ func TestClientConfigFromProfileStore_SFTPFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
-	if sc.store.sftp.password != "direct-pw" {
-		t.Fatalf("expected storeSFTPPassword=direct-pw, got %q", sc.store.sftp.password)
+	if sc.Store.SFTP.Password != "direct-pw" {
+		t.Fatalf("expected storeSFTPPassword=direct-pw, got %q", sc.Store.SFTP.Password)
 	}
-	if sc.store.sftp.key != "/path/to/key" {
-		t.Fatalf("expected storeSFTPKey=/path/to/key, got %q", sc.store.sftp.key)
+	if sc.Store.SFTP.Key != "/path/to/key" {
+		t.Fatalf("expected storeSFTPKey=/path/to/key, got %q", sc.Store.SFTP.Key)
 	}
 }

@@ -28,7 +28,7 @@ func runKeyList(r *runner, ctx context.Context, a *keyListArgs) int {
 	if err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
-	raw, err := openStore(ctx, cfg.store)
+	raw, err := openStore(ctx, cfg.Store)
 	if err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
@@ -82,12 +82,12 @@ func runKeyPasswd(r *runner, ctx context.Context, a *keyPasswdArgs) int {
 	if err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
-	raw, err := openStore(ctx, cfg.store)
+	raw, err := openStore(ctx, cfg.Store)
 	if err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 
-	kc, err := buildKeychain(ctx, cfg.unlock)
+	kc, err := buildKeychain(ctx, cfg.Unlock)
 	if err != nil {
 		return r.fail("%v", err)
 	}
@@ -138,12 +138,12 @@ func runAddRecoveryKey(r *runner, ctx context.Context, a *addRecoveryKeyArgs) in
 	if err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
-	raw, err := openStore(ctx, cfg.store)
+	raw, err := openStore(ctx, cfg.Store)
 	if err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 
-	kc, err := buildKeychain(ctx, cfg.unlock)
+	kc, err := buildKeychain(ctx, cfg.Unlock)
 	if err != nil {
 		return r.fail("%v", err)
 	}

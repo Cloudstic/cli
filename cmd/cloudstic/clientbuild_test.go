@@ -34,19 +34,19 @@ func TestNewReporter_OutputModeSelectsReporter(t *testing.T) {
 		},
 		{
 			name:       "quiet silences progress",
-			cfg:        clientConfig{quiet: true},
+			cfg:        clientConfig{Quiet: true},
 			wantNoOp:   true,
 			wantReason: "-quiet must produce no progress output",
 		},
 		{
 			name:       "json silences progress",
-			cfg:        clientConfig{json: true},
+			cfg:        clientConfig{JSON: true},
 			wantNoOp:   true,
 			wantReason: "progress output would corrupt the JSON document on stdout",
 		},
 		{
 			name:       "quiet and json together",
-			cfg:        clientConfig{quiet: true, json: true},
+			cfg:        clientConfig{Quiet: true, JSON: true},
 			wantNoOp:   true,
 			wantReason: "either flag alone is enough",
 		},
@@ -77,7 +77,7 @@ func TestNewReporter_DebugLogOnlyAffectsTheConsoleReporter(t *testing.T) {
 		t.Error("a debug log must not turn the console reporter into a no-op reporter")
 	}
 
-	got = newReporter(clientConfig{quiet: true}, debugLog)
+	got = newReporter(clientConfig{Quiet: true}, debugLog)
 	if _, isNoOp := got.(*ui.NoOpReporter); !isNoOp {
 		t.Errorf("got %T, want a no-op reporter: a debug log must not override -quiet", got)
 	}
@@ -91,11 +91,11 @@ func TestNewReporter_DebugLogOnlyAffectsTheConsoleReporter(t *testing.T) {
 func TestOpenClient_UnencryptedLocalRepo(t *testing.T) {
 	ctx := context.Background()
 	cfg := clientConfig{
-		store: storeConfig{uri: "local:" + t.TempDir()},
-		quiet: true,
+		Store: storeConfig{URI: "local:" + t.TempDir()},
+		Quiet: true,
 	}
 
-	raw, err := openStore(ctx, cfg.store)
+	raw, err := openStore(ctx, cfg.Store)
 	if err != nil {
 		t.Fatalf("openStore: %v", err)
 	}
@@ -123,14 +123,14 @@ func TestOpenClient_UnencryptedLocalRepo(t *testing.T) {
 // error from any layer.
 func TestClientConfigZeroValueEnablesPackfiles(t *testing.T) {
 	var cfg clientConfig
-	if cfg.disablePackfile {
+	if cfg.DisablePackfile {
 		t.Error("the zero value must leave packfiles enabled, matching NewClient's own default")
 	}
 
 	// The two constructors must agree with the zero value when nothing asks
 	// otherwise.
 	fromFlags := clientConfigFromFlags(&globalFlags{})
-	if fromFlags.disablePackfile {
+	if fromFlags.DisablePackfile {
 		t.Error("clientConfigFromFlags with no flags set must leave packfiles enabled")
 	}
 
@@ -138,13 +138,13 @@ func TestClientConfigZeroValueEnablesPackfiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
-	if fromProfile.disablePackfile {
+	if fromProfile.DisablePackfile {
 		t.Error("a profile store that says nothing about packfiles must leave them enabled")
 	}
 
 	// And the flag still works.
 	disabled := clientConfigFromFlags(&globalFlags{disablePackfile: true})
-	if !disabled.disablePackfile {
+	if !disabled.DisablePackfile {
 		t.Error("-disable-packfile must still disable packfiles")
 	}
 }
@@ -167,10 +167,10 @@ func TestS3RegionDefault(t *testing.T) {
 func TestOpenClient_ReporterOverrideWins(t *testing.T) {
 	ctx := context.Background()
 	cfg := clientConfig{
-		store: storeConfig{uri: "local:" + t.TempDir()},
+		Store: storeConfig{URI: "local:" + t.TempDir()},
 	}
 
-	raw, err := openStore(ctx, cfg.store)
+	raw, err := openStore(ctx, cfg.Store)
 	if err != nil {
 		t.Fatalf("openStore: %v", err)
 	}

@@ -99,10 +99,10 @@ func TestSFTPSourceOpts_TranslatesConfig(t *testing.T) {
 	}
 
 	full := sftpSourceOpts(sftpConfig{
-		password:   "s3cret",
-		key:        "/path/to/key",
-		insecure:   true,
-		knownHosts: "/path/to/known_hosts",
+		Password:   "s3cret",
+		Key:        "/path/to/key",
+		Insecure:   true,
+		KnownHosts: "/path/to/known_hosts",
 	}, uri)
 	if len(full) != 7 {
 		t.Fatalf("full config: got %d options, want 7", len(full))

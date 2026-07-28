@@ -669,17 +669,17 @@ func sftpSourceOpts(cfg sftpConfig, uri *sourceURIParts) []sftpsource.Option {
 	if uri.user != "" {
 		opts = append(opts, sftpsource.WithUser(uri.user))
 	}
-	if cfg.password != "" {
-		opts = append(opts, sftpsource.WithPassword(cfg.password))
+	if cfg.Password != "" {
+		opts = append(opts, sftpsource.WithPassword(cfg.Password))
 	}
-	if cfg.key != "" {
-		opts = append(opts, sftpsource.WithKey(cfg.key))
+	if cfg.Key != "" {
+		opts = append(opts, sftpsource.WithKey(cfg.Key))
 	}
-	if cfg.insecure {
+	if cfg.Insecure {
 		opts = append(opts, sftpsource.WithHostKeyCallback(ssh.InsecureIgnoreHostKey())) //nolint:gosec // explicitly requested by user
 	}
-	if cfg.knownHosts != "" {
-		opts = append(opts, sftpsource.WithKnownHosts(cfg.knownHosts))
+	if cfg.KnownHosts != "" {
+		opts = append(opts, sftpsource.WithKnownHosts(cfg.KnownHosts))
 	}
 	return opts
 }

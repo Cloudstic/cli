@@ -208,8 +208,8 @@ func tuiClientConfig(storeCfg profile.Store) (clientConfig, error) {
 	if err != nil {
 		return clientConfig{}, err
 	}
-	cfg.quiet = true
-	cfg.store.debug = false
+	cfg.Quiet = true
+	cfg.Store.Debug = false
 	return cfg, nil
 }
 

@@ -352,8 +352,8 @@ func checkOrInitStore(r *runner, ctx context.Context, cfg *profile.Config, store
 		}
 		return fmt.Errorf("could not resolve store credentials: %w", err)
 	}
-	resolved.unlock.noPrompt = r.noPrompt
-	raw, err := newObjectStore(ctx, resolved.store)
+	resolved.Unlock.NoPrompt = r.noPrompt
+	raw, err := newObjectStore(ctx, resolved.Store)
 	if err != nil {
 		return fmt.Errorf("could not connect to store: %w", err)
 	}
@@ -371,7 +371,7 @@ func checkOrInitStore(r *runner, ctx context.Context, cfg *profile.Config, store
 		}
 		if repoStatus.Encrypted {
 			_, _ = fmt.Fprintln(r.out, "Repository is encrypted; verifying configured credentials...")
-			if err := verifyStoreEncryptionCredentials(ctx, resolved.unlock, raw); err != nil {
+			if err := verifyStoreEncryptionCredentials(ctx, resolved.Unlock, raw); err != nil {
 				return fmt.Errorf("store is initialized, but configured encryption credentials are invalid: %w", err)
 			}
 			_, _ = fmt.Fprintln(r.out, "Encryption credentials are valid.")
@@ -406,7 +406,7 @@ func checkOrInitStore(r *runner, ctx context.Context, cfg *profile.Config, store
 	// Build keychain from the store's encryption settings.
 	// For password-based encryption, the env var must be set for init.
 	// If not set, prompt for the password interactively.
-	kc, err := buildKeychain(ctx, resolved.unlock)
+	kc, err := buildKeychain(ctx, resolved.Unlock)
 	if err != nil {
 		return fmt.Errorf("failed to build keychain: %w", err)
 	}

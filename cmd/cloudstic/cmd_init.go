@@ -42,12 +42,12 @@ func runInit(r *runner, ctx context.Context, a *initArgs) int {
 // configuration rather than deriving it, so callers that address a store
 // directly (the TUI) can reuse it without going through flag parsing.
 func execInit(r *runner, ctx context.Context, a *initArgs, cfg clientConfig) int {
-	raw, err := openStore(ctx, cfg.store)
+	raw, err := openStore(ctx, cfg.Store)
 	if err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 
-	kc, err := buildKeychain(ctx, cfg.unlock)
+	kc, err := buildKeychain(ctx, cfg.Unlock)
 	if err != nil {
 		return r.fail("Failed to build keychain: %v", err)
 	}
@@ -59,8 +59,8 @@ func execInit(r *runner, ctx context.Context, a *initArgs, cfg clientConfig) int
 			if err != nil {
 				return r.fail("Error: %v", err)
 			}
-			cfg.unlock.password = pw
-			kc, _ = buildKeychain(ctx, cfg.unlock)
+			cfg.Unlock.Password = pw
+			kc, _ = buildKeychain(ctx, cfg.Unlock)
 		} else {
 			return r.fail("Error: encryption is required by default.\nProvide --password or --encryption-key to encrypt your repository.\nTo create an unencrypted repository, pass --no-encryption (not recommended).")
 		}

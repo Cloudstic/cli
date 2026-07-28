@@ -57,7 +57,7 @@ func TestWithDebugStore_Enabled(t *testing.T) {
 // through flag parsing at all.
 func TestNewObjectStore_FromConfigWithoutFlagParsing(t *testing.T) {
 	dir := t.TempDir()
-	s, err := newObjectStore(context.Background(), storeConfig{uri: "local:" + dir})
+	s, err := newObjectStore(context.Background(), storeConfig{URI: "local:" + dir})
 	if err != nil {
 		t.Fatalf("newObjectStore: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestNewObjectStore_FromConfigWithoutFlagParsing(t *testing.T) {
 }
 
 func TestNewObjectStore_UnknownScheme(t *testing.T) {
-	if _, err := newObjectStore(context.Background(), storeConfig{uri: "nope:whatever"}); err == nil {
+	if _, err := newObjectStore(context.Background(), storeConfig{URI: "nope:whatever"}); err == nil {
 		t.Fatal("expected error for unknown store scheme")
 	}
 }
@@ -77,13 +77,13 @@ func TestNewObjectStore_UnknownScheme(t *testing.T) {
 // attempted.
 func TestNewObjectStore_B2_RequiresCredentials(t *testing.T) {
 	cases := []storeConfig{
-		{uri: "b2:my-bucket"},
-		{uri: "b2:my-bucket", b2: b2Config{keyID: "id-only"}},
-		{uri: "b2:my-bucket", b2: b2Config{appKey: "key-only"}},
+		{URI: "b2:my-bucket"},
+		{URI: "b2:my-bucket", B2: b2Config{KeyID: "id-only"}},
+		{URI: "b2:my-bucket", B2: b2Config{AppKey: "key-only"}},
 	}
 	for _, cfg := range cases {
 		if _, err := newObjectStore(context.Background(), cfg); err == nil {
-			t.Fatalf("expected error for incomplete B2 credentials: %+v", cfg.b2)
+			t.Fatalf("expected error for incomplete B2 credentials: %+v", cfg.B2)
 		}
 	}
 }

@@ -1,15 +1,59 @@
 package hamt
 
-import "github.com/cloudstic/cli/internal/core"
+// A HAMT node exists in two forms: the one this package stores under
+// "node/<sha256>" and the one it works with in memory. Both live here, together
+// with the conversion between them, so that the encoding and the invariant it
+// serves cannot drift apart.
+//
+// The stored form is the repository format. Its field set, struct tags and
+// omitempty behavior are what every released version has written, and
+// core.ComputeJSONHash marshals fields in declaration order — so changing any of
+// it changes every root hash in every repository. TestRootHashGolden pins the
+// bytes against exactly that.
+//
+// These types are unexported, and nothing outside this package names them. A
+// node's layout is how the tree keeps its promises about routing and sharing;
+// the value it carries is opaque to it. Callers see Tree, Txn and NodeStore,
+// which speak in keys, values and refs.
 
-// node is the in-memory form of a HAMT node. It differs from core.HAMTNode in
-// one way that matters: a child is a child, not a ref string, so a node can
-// point at another node that has never been serialized.
+// nodeType is the "type" discriminator of a stored node. It is a distinct type
+// only so the two legal values cannot be confused with an arbitrary string; it
+// marshals as the JSON string it is.
+type nodeType string
+
+const (
+	nodeTypeInternal nodeType = "internal"
+	nodeTypeLeaf     nodeType = "leaf"
+)
+
+// storedNode is a HAMT node as serialized under "node/<sha256>".
+type storedNode struct {
+	Type     nodeType    `json:"type"` // "internal" or "leaf"
+	Bitmap   uint32      `json:"bitmap,omitempty"`
+	Children []string    `json:"children,omitempty"` // ["node/<sha256>", ...]
+	Entries  []leafEntry `json:"entries,omitempty"`
+}
+
+// leafEntry is one entry of a leaf node, in both forms — it holds no child
+// pointers, so the stored and in-memory representations coincide.
+//
+// The tree treats Value as opaque. The backup engine happens to store filemeta
+// refs in it, which is the only reason the wire tag reads "filemeta": that tag
+// is a fact about this encoding, not about the map the tree implements.
+type leafEntry struct {
+	Key     string `json:"key"`                // caller's entry key (the source file ID)
+	PathKey string `json:"path_key,omitempty"` // routing key; falls back to SHA256(Key) if empty
+	Value   string `json:"filemeta"`           // "filemeta/<sha256>"
+}
+
+// node is the in-memory form of a HAMT node. It differs from storedNode in one
+// way that matters: a child is a child, not a ref string, so a node can point at
+// another node that has never been serialized.
 type node struct {
 	leaf     bool
 	bitmap   uint32
-	children []child          // internal nodes only, packed per bitmap
-	entries  []core.LeafEntry // leaf nodes only, sorted by Key
+	children []child     // internal nodes only, packed per bitmap
+	entries  []leafEntry // leaf nodes only, sorted by Key
 }
 
 // child is one slot in an internal node: either clean, meaning it is already
@@ -38,7 +82,7 @@ func (n *node) clone() *node {
 		copy(c.children, n.children)
 	}
 	if n.entries != nil {
-		c.entries = make([]core.LeafEntry, len(n.entries))
+		c.entries = make([]leafEntry, len(n.entries))
 		copy(c.entries, n.entries)
 	}
 	return c
@@ -56,15 +100,15 @@ func (n *node) indexOfKey(key string) int {
 
 // decodeNode converts the on-disk form into the in-memory form. Every child of
 // a decoded node is clean by definition.
-func decodeNode(hn *core.HAMTNode) *node {
-	n := &node{leaf: hn.Type == core.ObjectTypeLeaf}
+func decodeNode(sn *storedNode) *node {
+	n := &node{leaf: sn.Type == nodeTypeLeaf}
 	if n.leaf {
-		n.entries = hn.Entries
+		n.entries = sn.Entries
 		return n
 	}
-	n.bitmap = hn.Bitmap
-	n.children = make([]child, len(hn.Children))
-	for i, ref := range hn.Children {
+	n.bitmap = sn.Bitmap
+	n.children = make([]child, len(sn.Children))
+	for i, ref := range sn.Children {
 		n.children[i] = child{ref: ref}
 	}
 	return n
@@ -77,9 +121,9 @@ func decodeNode(hn *core.HAMTNode) *node {
 // The shape here is the repository format: same field set, same struct tags,
 // same omitempty behavior as every release before this one. Changing it changes
 // every root hash.
-func encodeNode(n *node, childRefs []string) *core.HAMTNode {
+func encodeNode(n *node, childRefs []string) *storedNode {
 	if n.leaf {
-		return &core.HAMTNode{Type: core.ObjectTypeLeaf, Entries: n.entries}
+		return &storedNode{Type: nodeTypeLeaf, Entries: n.entries}
 	}
-	return &core.HAMTNode{Type: core.ObjectTypeInternal, Bitmap: n.bitmap, Children: childRefs}
+	return &storedNode{Type: nodeTypeInternal, Bitmap: n.bitmap, Children: childRefs}
 }

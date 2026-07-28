@@ -626,6 +626,7 @@ var (
 	WithExcludeHash         = engine.WithExcludeHash
 	WithWorkstationProfiles = engine.WithWorkstationProfiles
 	WithWorkstationStoreRef = engine.WithWorkstationStoreRef
+	WithWorkstationDryRun   = engine.WithWorkstationDryRun
 )
 
 // noRepoConfig marks Client.openCfg as spent. A plain nil cannot: nil is also

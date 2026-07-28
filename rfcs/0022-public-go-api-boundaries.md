@@ -1,6 +1,7 @@
 # RFC 0022: Public Go API Boundaries
 
-- **Status:** Partially implemented — §1–§6 landed; §7 and §8 outstanding
+- **Status:** Partially implemented — §1–§6 landed; §7's `pkg/config` half
+  landed, its `pkg/open` half outstanding; §8 outstanding
 - **Date:** 2026-07-28
 - **Affects:** `client.go`, `pkg/source`, `pkg/store`, `pkg/crypto`, `pkg/config`,
   `pkg/open`, `internal/logger`, `internal/storelayer`, `cmd/cloudstic`, `docs/`
@@ -407,13 +408,27 @@ Four decisions this encodes, and why:
   testable without a real keychain, and lets a consumer register Vault —
   which `pkg/secretref/backends.Default()` was already designed to allow.
 
-**Precedence stays in the CLI, and the direction inverts.** `applyProfileStore`
-takes a `provided func(string) bool` so an explicit flag beats a profile value.
-That callback is meaningless outside a flag parser. `pkg/config` therefore
-resolves a profile into a *complete* configuration, and `cmd/cloudstic` keeps a
-thin overlay applying flag overrides on top. Same precedence rule as documented
-in `AGENTS.md`; the profile is no longer folded into flags, flags are folded
-onto the resolved config.
+**Precedence stays in the CLI — but only the part that is actually
+CLI-specific.** `applyProfileStore` takes a `provided func(string) bool` so an
+explicit flag beats a profile value, and that callback is meaningless outside a
+flag parser. What it turned out to be worth separating is narrower than "the
+precedence": deciding *whether the user typed a flag* is a flag-parser concept
+and stays in `cmd/cloudstic`, while the fold that decision drives is shared, so
+an external caller applies the same rules rather than a second reading of them.
+`pkg/config` exposes both — `FromProfileStore` for a caller with no overrides,
+and `ApplyProfileStore(…, overridden func(flag string) bool)` for one that has
+some — and `cmd/cloudstic`'s `applyProfileStore` becomes four lines over the
+latter.
+
+The two groups of fields behave differently and both behaviours are
+load-bearing, so the move preserves them exactly rather than regularizing
+them. Location and KMS settings are taken only when the profile names one;
+credentials are taken even when the profile is silent, *clearing* what the
+caller had. The second is what makes selecting a profile override an ambient
+credential from the environment — a profile is an explicit choice of which
+store to talk to, so reaching it with an identity inherited from the
+environment would be worse than failing to reach it. Paired tests now fail if
+the two rules are ever collapsed into one.
 
 **Two zero-value defects must be fixed before these structs are published, not
 after.** `clientConfig.packfile` is `true`-by-default in meaning but `false` in
@@ -591,7 +606,8 @@ Stages 5–8 add three requirements:
 7. Export the resolved config types' *fields* in place, still in
    `package main`; then move the types to `pkg/config` behind
    `type clientConfig = config.Client` aliases; then the URI parsers; then
-   profile resolution with the resolver injected.
+   profile resolution with the resolver injected. **Done** — this is §7's
+   `pkg/config` half; the `pkg/open` half is step 8.
 
    The first of those was not in the original plan, which assumed the aliases
    made the move call-site-neutral on their own. They do not: an alias makes

@@ -32,10 +32,10 @@ jobs:
         include:
           - name: macOS
             os: macos-latest
-            run: go test ./internal/secretref ./cmd/cloudstic
+            run: go test ./pkg/secretref/... ./cmd/cloudstic
           - name: Windows
             os: windows-latest
-            run: go test ./internal/secretref ./cmd/cloudstic
+            run: go test ./pkg/secretref/... ./cmd/cloudstic
     steps:
       - uses: actions/checkout@v7
         with:

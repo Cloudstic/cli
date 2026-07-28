@@ -4,7 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/cloudstic/cli/internal/secretref"
+	"github.com/cloudstic/cli/pkg/secretref"
+	secretrefbackends "github.com/cloudstic/cli/pkg/secretref/backends"
 )
 
 // Secret-ref form backend (tui/forms.SecretBackend), implemented over the
@@ -14,7 +15,7 @@ func (b *tuiFormsBackend) secretResolver() *secretref.Resolver {
 	if tuiSecretResolver != nil {
 		return tuiSecretResolver
 	}
-	return secretref.NewDefaultResolver()
+	return secretrefbackends.NewDefaultResolver()
 }
 
 func (b *tuiFormsBackend) StorageOptions() []string {

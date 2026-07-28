@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/cloudstic/cli/internal/secretref"
+	secretrefbackends "github.com/cloudstic/cli/pkg/secretref/backends"
 )
 
-var profileSecretResolver = secretref.NewDefaultResolver()
+var profileSecretResolver = secretrefbackends.NewDefaultResolver()
 
 func resolveProfileStoreValue(fieldName, direct, secretRef string) (string, error) {
 	if direct != "" {

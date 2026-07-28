@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	cloudstic "github.com/cloudstic/cli"
-	"github.com/cloudstic/cli/internal/secretref"
 	"github.com/cloudstic/cli/internal/ui"
+	"github.com/cloudstic/cli/pkg/secretref"
 	"github.com/cloudstic/cli/pkg/store"
 )
 

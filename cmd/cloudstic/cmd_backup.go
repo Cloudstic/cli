@@ -15,7 +15,7 @@ import (
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/engine"
 	"github.com/cloudstic/cli/internal/paths"
-	"github.com/cloudstic/cli/internal/secretref"
+	secretrefbackends "github.com/cloudstic/cli/pkg/secretref/backends"
 	"github.com/cloudstic/cli/pkg/source"
 	"github.com/cloudstic/cli/pkg/source/gdrive"
 	"github.com/cloudstic/cli/pkg/source/local"
@@ -556,7 +556,7 @@ func initSource(ctx context.Context, opts initSourceOptions) (source.Source, err
 		return nil, err
 	}
 
-	resolver := secretref.NewDefaultResolver()
+	resolver := secretrefbackends.NewDefaultResolver()
 
 	switch uri.scheme {
 	case "local":

@@ -14,8 +14,8 @@ import (
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/paths"
 	"github.com/cloudstic/cli/internal/retry"
-	"github.com/cloudstic/cli/internal/secretref"
 	"github.com/cloudstic/cli/internal/sourceoauth"
+	"github.com/cloudstic/cli/pkg/secretref"
 	"github.com/cloudstic/cli/pkg/source"
 
 	"golang.org/x/oauth2"

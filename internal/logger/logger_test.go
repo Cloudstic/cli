@@ -94,3 +94,68 @@ func TestLogger_Debugf_WriterNil(t *testing.T) {
 	// Should not panic.
 	l.Debugf("hello")
 }
+
+// TestLoggerTo_BoundSinkBeatsTheGlobal is the property the injectable sink
+// exists for: two loggers in one process can write to different places, which
+// the package-level Writer alone cannot express.
+func TestLoggerTo_BoundSinkBeatsTheGlobal(t *testing.T) {
+	Writer = nil
+	defer func() { Writer = nil }()
+
+	var global, boundA, boundB bytes.Buffer
+	Writer = &global
+
+	base := New("comp", "")
+	base.To(&boundA).Debugf("to a")
+	base.To(&boundB).Debugf("to b")
+	base.Debugf("to the fallback")
+
+	if got := boundA.String(); got != "[comp] to a\n" {
+		t.Errorf("bound sink A = %q", got)
+	}
+	if got := boundB.String(); got != "[comp] to b\n" {
+		t.Errorf("bound sink B = %q", got)
+	}
+	if got := global.String(); got != "[comp] to the fallback\n" {
+		t.Errorf("fallback = %q, want only the unbound logger's line", got)
+	}
+}
+
+// TestLoggerTo_NilSinkFallsBack lets a caller pass a sink through
+// unconditionally instead of branching on whether it has one.
+func TestLoggerTo_NilSinkFallsBack(t *testing.T) {
+	Writer = nil
+	defer func() { Writer = nil }()
+
+	var global bytes.Buffer
+	Writer = &global
+
+	New("comp", "").To(nil).Debugf("still logged")
+
+	if got := global.String(); got != "[comp] still logged\n" {
+		t.Errorf("got %q, want the message on the fallback", got)
+	}
+}
+
+// TestLoggerTo_KeepsPrefixAndDoesNotMutate guards the copy: binding a sink must
+// not change the logger it was derived from.
+func TestLoggerTo_KeepsPrefixAndDoesNotMutate(t *testing.T) {
+	Writer = nil
+	defer func() { Writer = nil }()
+
+	var bound, global bytes.Buffer
+	Writer = &global
+
+	base := New("comp", ColorCyan)
+	derived := base.To(&bound)
+
+	derived.Debugf("x")
+	base.Debugf("y")
+
+	if !strings.Contains(bound.String(), "[comp]") {
+		t.Errorf("derived logger lost its prefix: %q", bound.String())
+	}
+	if !strings.Contains(global.String(), "y") {
+		t.Error("binding a sink must not redirect the logger it was derived from")
+	}
+}

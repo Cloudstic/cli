@@ -6,6 +6,7 @@ import (
 
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/ui"
+	"github.com/cloudstic/cli/pkg/profile"
 )
 
 // Characterization tests for the client construction path, which RFC 0022 §7
@@ -90,9 +91,8 @@ func TestNewReporter_DebugLogOnlyAffectsTheConsoleReporter(t *testing.T) {
 func TestOpenClient_UnencryptedLocalRepo(t *testing.T) {
 	ctx := context.Background()
 	cfg := clientConfig{
-		store:    storeConfig{uri: "local:" + t.TempDir()},
-		packfile: true,
-		quiet:    true,
+		store: storeConfig{uri: "local:" + t.TempDir()},
+		quiet: true,
 	}
 
 	raw, err := openStore(ctx, cfg.store)
@@ -115,14 +115,59 @@ func TestOpenClient_UnencryptedLocalRepo(t *testing.T) {
 	}
 }
 
+// TestClientConfigZeroValueEnablesPackfiles is the regression test for the
+// defect that made the field negative. NewClient enables packfiles by default,
+// and openClient passes this field on unconditionally, so a zero-valued config
+// must not turn them off — a consumer who never mentions packfiles would
+// otherwise write a repository with a different physical layout and get no
+// error from any layer.
+func TestClientConfigZeroValueEnablesPackfiles(t *testing.T) {
+	var cfg clientConfig
+	if cfg.disablePackfile {
+		t.Error("the zero value must leave packfiles enabled, matching NewClient's own default")
+	}
+
+	// The two constructors must agree with the zero value when nothing asks
+	// otherwise.
+	fromFlags := clientConfigFromFlags(&globalFlags{})
+	if fromFlags.disablePackfile {
+		t.Error("clientConfigFromFlags with no flags set must leave packfiles enabled")
+	}
+
+	fromProfile, err := clientConfigFromProfileStore(profile.Store{URI: "local:/tmp/x"})
+	if err != nil {
+		t.Fatalf("clientConfigFromProfileStore: %v", err)
+	}
+	if fromProfile.disablePackfile {
+		t.Error("a profile store that says nothing about packfiles must leave them enabled")
+	}
+
+	// And the flag still works.
+	disabled := clientConfigFromFlags(&globalFlags{disablePackfile: true})
+	if !disabled.disablePackfile {
+		t.Error("-disable-packfile must still disable packfiles")
+	}
+}
+
+// TestS3RegionDefault covers the other zero-value hazard: the region default
+// used to be pre-filled into one of the two config constructors, so a config
+// built any other way reached the S3 backend with an empty region.
+func TestS3RegionDefault(t *testing.T) {
+	if got := s3Region(""); got != defaultS3Region {
+		t.Errorf("s3Region(\"\") = %q, want %q", got, defaultS3Region)
+	}
+	if got := s3Region("eu-west-3"); got != "eu-west-3" {
+		t.Errorf("s3Region(%q) = %q, want it left alone", "eu-west-3", got)
+	}
+}
+
 // TestOpenClient_ReporterOverrideWins pins the parameter that lets the TUI and
 // tests supply their own reporter: when one is passed, the output mode does
 // not get to pick a different one.
 func TestOpenClient_ReporterOverrideWins(t *testing.T) {
 	ctx := context.Background()
 	cfg := clientConfig{
-		store:    storeConfig{uri: "local:" + t.TempDir()},
-		packfile: true,
+		store: storeConfig{uri: "local:" + t.TempDir()},
 	}
 
 	raw, err := openStore(ctx, cfg.store)

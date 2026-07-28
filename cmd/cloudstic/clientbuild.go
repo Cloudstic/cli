@@ -33,7 +33,7 @@ func openClient(ctx context.Context, cfg clientConfig, reporterOverride cloudsti
 	return cloudstic.NewClient(ctx, raw,
 		cloudstic.WithKeychain(kc),
 		cloudstic.WithReporter(reporter),
-		cloudstic.WithPackfile(cfg.packfile),
+		cloudstic.WithPackfile(!cfg.disablePackfile),
 	)
 }
 

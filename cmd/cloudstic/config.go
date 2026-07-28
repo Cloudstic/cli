@@ -72,12 +72,21 @@ type unlockConfig struct {
 }
 
 // clientConfig is the resolved configuration for opening a repository client.
+//
+// Fields are oriented so the zero value is the correct default, because
+// RFC 0022 §7 makes these types public and a consumer writing
+// clientConfig{store: …} must get the same behaviour the CLI gets. That is why
+// packfiles are expressed as disablePackfile rather than packfile: NewClient
+// enables them by default, so a `packfile bool` zero value would silently turn
+// them off and write a repository with a different physical layout, with no
+// error at any layer. The negative field also matches the -disable-packfile
+// flag it comes from.
 type clientConfig struct {
-	store    storeConfig
-	unlock   unlockConfig
-	packfile bool
-	quiet    bool
-	json     bool
+	store           storeConfig
+	unlock          unlockConfig
+	disablePackfile bool
+	quiet           bool
+	json            bool
 }
 
 // clientConfigFromFlags projects parsed flags into a resolved configuration,
@@ -118,9 +127,9 @@ func clientConfigFromFlags(g *globalFlags) clientConfig {
 			prompt:   g.prompt,
 			noPrompt: g.noPrompt,
 		},
-		packfile: !g.disablePackfile,
-		quiet:    g.quiet,
-		json:     g.json,
+		disablePackfile: g.disablePackfile,
+		quiet:           g.quiet,
+		json:            g.json,
 	}
 }
 
@@ -204,8 +213,7 @@ func lookupProfileStore(cfg *profile.Config, profileName string, p profile.Profi
 // `store new`'s flags from an existing store entry for editing — an unrelated
 // concept despite the similar name.
 func clientConfigFromProfileStore(s profile.Store) (clientConfig, error) {
-	cfg := clientConfig{packfile: true}
-	cfg.store.s3.region = defaultS3Region
+	var cfg clientConfig
 	if err := applyProfileStore(&cfg, s, func(string) bool { return false }); err != nil {
 		return clientConfig{}, err
 	}

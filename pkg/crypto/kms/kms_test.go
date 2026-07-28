@@ -1,4 +1,4 @@
-package crypto
+package kms
 
 import (
 	"context"
@@ -7,56 +7,62 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/kms"
+	awskms "github.com/aws/aws-sdk-go-v2/service/kms"
+
+	"github.com/cloudstic/cli/pkg/crypto"
 )
 
-type mockKMSAPI struct {
-	encryptFunc func(ctx context.Context, params *kms.EncryptInput, optFns ...func(*kms.Options)) (*kms.EncryptOutput, error)
-	decryptFunc func(ctx context.Context, params *kms.DecryptInput, optFns ...func(*kms.Options)) (*kms.DecryptOutput, error)
+// Client must satisfy the interface pkg/crypto describes it in; that is the
+// whole point of keeping the interface there and the implementation here.
+var _ crypto.KMSClient = (*Client)(nil)
+
+type mockAPI struct {
+	encryptFunc func(ctx context.Context, params *awskms.EncryptInput, optFns ...func(*awskms.Options)) (*awskms.EncryptOutput, error)
+	decryptFunc func(ctx context.Context, params *awskms.DecryptInput, optFns ...func(*awskms.Options)) (*awskms.DecryptOutput, error)
 }
 
-func (m *mockKMSAPI) Encrypt(ctx context.Context, params *kms.EncryptInput, optFns ...func(*kms.Options)) (*kms.EncryptOutput, error) {
+func (m *mockAPI) Encrypt(ctx context.Context, params *awskms.EncryptInput, optFns ...func(*awskms.Options)) (*awskms.EncryptOutput, error) {
 	if m.encryptFunc != nil {
 		return m.encryptFunc(ctx, params, optFns...)
 	}
 	return nil, fmt.Errorf("encrypt not implemented")
 }
 
-func (m *mockKMSAPI) Decrypt(ctx context.Context, params *kms.DecryptInput, optFns ...func(*kms.Options)) (*kms.DecryptOutput, error) {
+func (m *mockAPI) Decrypt(ctx context.Context, params *awskms.DecryptInput, optFns ...func(*awskms.Options)) (*awskms.DecryptOutput, error) {
 	if m.decryptFunc != nil {
 		return m.decryptFunc(ctx, params, optFns...)
 	}
 	return nil, fmt.Errorf("decrypt not implemented")
 }
 
-func TestAWSKMSClient_EncryptDecrypt(t *testing.T) {
+func TestClient_EncryptDecrypt(t *testing.T) {
 	ctx := context.Background()
 	arn := "arn:aws:kms:us-east-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
 	plaintext := []byte("secret-message")
 	ciphertext := []byte("encrypted-blob")
 
-	mock := &mockKMSAPI{
-		encryptFunc: func(ctx context.Context, params *kms.EncryptInput, optFns ...func(*kms.Options)) (*kms.EncryptOutput, error) {
+	mock := &mockAPI{
+		encryptFunc: func(ctx context.Context, params *awskms.EncryptInput, optFns ...func(*awskms.Options)) (*awskms.EncryptOutput, error) {
 			if *params.KeyId != arn {
 				return nil, fmt.Errorf("wrong key id: got %s, want %s", *params.KeyId, arn)
 			}
 			if !reflect.DeepEqual(params.Plaintext, plaintext) {
 				return nil, fmt.Errorf("wrong plaintext")
 			}
-			return &kms.EncryptOutput{CiphertextBlob: ciphertext}, nil
+			return &awskms.EncryptOutput{CiphertextBlob: ciphertext}, nil
 		},
-		decryptFunc: func(ctx context.Context, params *kms.DecryptInput, optFns ...func(*kms.Options)) (*kms.DecryptOutput, error) {
+		decryptFunc: func(ctx context.Context, params *awskms.DecryptInput, optFns ...func(*awskms.Options)) (*awskms.DecryptOutput, error) {
 			if *params.KeyId != arn {
 				return nil, fmt.Errorf("wrong key id: got %s, want %s", *params.KeyId, arn)
 			}
 			if !reflect.DeepEqual(params.CiphertextBlob, ciphertext) {
 				return nil, fmt.Errorf("wrong ciphertext")
 			}
-			return &kms.DecryptOutput{Plaintext: plaintext}, nil
+			return &awskms.DecryptOutput{Plaintext: plaintext}, nil
 		},
 	}
 
-	client := &AWSKMSClient{
+	client := &Client{
 		arn:    arn,
 		client: mock,
 	}
@@ -80,35 +86,35 @@ func TestAWSKMSClient_EncryptDecrypt(t *testing.T) {
 	}
 }
 
-func TestNewAWSKMSClient_Options(t *testing.T) {
+func TestNew_Options(t *testing.T) {
 	ctx := context.Background()
 	arn := "test-arn"
 
-	// Test WithKMSConfig
+	// Test WithConfig
 	customCfg := aws.Config{Region: "us-west-2"}
-	client, err := NewAWSKMSClient(ctx, arn, WithKMSConfig(customCfg))
+	client, err := New(ctx, arn, WithConfig(customCfg))
 	if err != nil {
-		t.Fatalf("NewAWSKMSClient with custom config failed: %v", err)
+		t.Fatalf("New with custom config failed: %v", err)
 	}
 	if client.arn != arn {
 		t.Errorf("expected arn %s, got %s", arn, client.arn)
 	}
 
 	// Test Region and Endpoint options (this exercises LoadDefaultConfig path)
-	_, err = NewAWSKMSClient(ctx, arn, WithKMSRegion("us-east-1"), WithKMSEndpoint("http://localhost:4566"))
+	_, err = New(ctx, arn, WithRegion("us-east-1"), WithEndpoint("http://localhost:4566"))
 	if err != nil {
 		// This might fail if no AWS environment is set up, but we want to exercise the code path.
 		// config.LoadDefaultConfig usually succeeds even without credentials if region is set.
-		t.Logf("NewAWSKMSClient with region/endpoint: %v", err)
+		t.Logf("New with region/endpoint: %v", err)
 	}
 }
 
-func TestAWSKMSClient_Errors(t *testing.T) {
+func TestClient_Errors(t *testing.T) {
 	ctx := context.Background()
-	client := &AWSKMSClient{
+	client := &Client{
 		arn: "test-arn",
-		client: &mockKMSAPI{
-			encryptFunc: func(ctx context.Context, params *kms.EncryptInput, optFns ...func(*kms.Options)) (*kms.EncryptOutput, error) {
+		client: &mockAPI{
+			encryptFunc: func(ctx context.Context, params *awskms.EncryptInput, optFns ...func(*awskms.Options)) (*awskms.EncryptOutput, error) {
 				return nil, fmt.Errorf("kms error")
 			},
 		},

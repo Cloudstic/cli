@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/cloudstic/cli/pkg/config"
 	"io"
 	"os"
 	"strings"
@@ -181,7 +182,7 @@ func runStoreNew(r *runner, ctx context.Context, a *storeNewArgs) int {
 				if v == "" {
 					return fmt.Errorf("store URI is required")
 				}
-				_, err := parseStoreURI(v)
+				_, err := config.ParseStoreURI(v)
 				return err
 			})
 			if err != nil {
@@ -195,7 +196,7 @@ func runStoreNew(r *runner, ctx context.Context, a *storeNewArgs) int {
 	}
 
 	// Validate the URI before saving.
-	if _, err := parseStoreURI(a.uri); err != nil {
+	if _, err := config.ParseStoreURI(a.uri); err != nil {
 		return r.fail("%v", err)
 	}
 

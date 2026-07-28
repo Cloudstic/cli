@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/cloudstic/cli/pkg/config"
 	"slices"
 
 	"github.com/cloudstic/cli/pkg/profile"
@@ -31,7 +32,7 @@ func firstNonEmpty(values ...string) string {
 }
 
 func sourceTypeFromSource(raw string) string {
-	parts, err := parseSourceURI(raw)
+	parts, err := config.ParseSourceURI(raw)
 	if err != nil {
 		return ""
 	}
@@ -39,7 +40,7 @@ func sourceTypeFromSource(raw string) string {
 }
 
 func sourceValueFromSource(raw string) string {
-	parts, err := parseSourceURI(raw)
+	parts, err := config.ParseSourceURI(raw)
 	if err != nil {
 		return ""
 	}

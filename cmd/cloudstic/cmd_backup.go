@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/cloudstic/cli/pkg/config"
 	"io"
 	"slices"
 	"strings"
@@ -179,7 +180,7 @@ func runSingleBackup(r *runner, ctx context.Context, a *backupArgs) int {
 }
 
 func ensureDefaultAuthRefForCloudBackup(a *backupArgs) error {
-	uri, err := parseSourceURI(a.sourceURI)
+	uri, err := config.ParseSourceURI(a.sourceURI)
 	if err != nil {
 		return err
 	}
@@ -414,7 +415,7 @@ func mergeProfileBackupArgs(base *backupArgs, profileName string, p profile.Prof
 }
 
 func applyProfileAuthToBackupArgs(a *backupArgs, auth profile.Auth) error {
-	uri, err := parseSourceURI(a.sourceURI)
+	uri, err := config.ParseSourceURI(a.sourceURI)
 	if err != nil {
 		return fmt.Errorf("parse source URI: %w", err)
 	}
@@ -553,7 +554,7 @@ type initSourceOptions struct {
 }
 
 func initSource(ctx context.Context, opts initSourceOptions) (source.Source, error) {
-	uri, err := parseSourceURI(opts.sourceURI)
+	uri, err := config.ParseSourceURI(opts.sourceURI)
 	if err != nil {
 		return nil, err
 	}

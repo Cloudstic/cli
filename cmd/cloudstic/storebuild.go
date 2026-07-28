@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/cloudstic/cli/pkg/config"
 
 	"golang.org/x/crypto/ssh"
 
@@ -47,7 +48,7 @@ func withDebugStore(s store.ObjectStore, debug bool) (store.ObjectStore, *ui.Saf
 // newObjectStore constructs the backend store named by the configured URI,
 // without any decorator layers.
 func newObjectStore(ctx context.Context, cfg storeConfig) (store.ObjectStore, error) {
-	uri, err := parseStoreURI(cfg.URI)
+	uri, err := config.ParseStoreURI(cfg.URI)
 	if err != nil {
 		return nil, err
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/cloudstic/cli/pkg/config"
 	"strings"
 
 	"github.com/cloudstic/cli/pkg/profile"
@@ -29,7 +30,7 @@ const (
 var tuiSecretResolver = profileSecretResolver
 
 func newTUIStoreConfig(raw string) tuiStoreConfig {
-	parts, err := parseStoreURI(raw)
+	parts, err := config.ParseStoreURI(raw)
 	if err != nil {
 		return tuiStoreConfig{Type: "local"}
 	}

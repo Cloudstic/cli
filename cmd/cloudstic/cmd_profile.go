@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/cloudstic/cli/pkg/config"
 	"os"
 	"sort"
 	"strings"
@@ -188,7 +189,7 @@ func runProfileNew(r *runner, ctx context.Context, a *profileNewArgs) int {
 				if v == "" {
 					return fmt.Errorf("source URI is required")
 				}
-				_, err := parseSourceURI(v)
+				_, err := config.ParseSourceURI(v)
 				if err != nil {
 					return fmt.Errorf("invalid source: %w", err)
 				}
@@ -203,7 +204,7 @@ func runProfileNew(r *runner, ctx context.Context, a *profileNewArgs) int {
 			return r.fail("-source is required")
 		}
 	}
-	if _, err := parseSourceURI(a.source); err != nil {
+	if _, err := config.ParseSourceURI(a.source); err != nil {
 		return r.fail("Invalid source: %v", err)
 	}
 	if a.store != "" && a.storeRef == "" {
@@ -222,7 +223,7 @@ func runProfileNew(r *runner, ctx context.Context, a *profileNewArgs) int {
 	createdStore := false
 
 	if a.store != "" {
-		if _, err := parseStoreURI(a.store); err != nil {
+		if _, err := config.ParseStoreURI(a.store); err != nil {
 			return r.fail("Invalid store URI: %v", err)
 		}
 		cfg.Stores[a.storeRef] = profile.Store{URI: a.store}
@@ -366,7 +367,7 @@ func (r *runner) promptStoreSelection(ctx context.Context, cfg *profile.Config) 
 		if v == "" {
 			return fmt.Errorf("store URI is required")
 		}
-		_, err := parseStoreURI(v)
+		_, err := config.ParseStoreURI(v)
 		if err != nil {
 			return fmt.Errorf("invalid store URI: %w", err)
 		}
@@ -490,7 +491,7 @@ func prefillProfileArgs(a *profileNewArgs, p profile.Profile) {
 }
 
 func profileProviderFromSource(sourceURI string) string {
-	uri, err := parseSourceURI(sourceURI)
+	uri, err := config.ParseSourceURI(sourceURI)
 	if err != nil {
 		return ""
 	}

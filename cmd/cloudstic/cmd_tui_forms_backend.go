@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/cloudstic/cli/pkg/config"
 
 	"github.com/cloudstic/cli/pkg/profile"
 
@@ -64,7 +65,7 @@ func (b *tuiFormsBackend) ComposeSource(sourceType, value string) (string, error
 	if source == "" {
 		return "", nil
 	}
-	if _, err := parseSourceURI(source); err != nil {
+	if _, err := config.ParseSourceURI(source); err != nil {
 		return "", fmt.Errorf("invalid source: %v", err)
 	}
 	return source, nil

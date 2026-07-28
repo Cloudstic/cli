@@ -85,11 +85,46 @@ func (b *FileBackend) Store(ctx context.Context, ref secretref.Ref, value string
 }
 
 // ConfigTokenBackend handles config-token://<provider>/<name> references.
-// It stores tokens in the app's managed config directory.
-type ConfigTokenBackend struct{}
+// It stores tokens in a managed config directory, encrypted at rest.
+//
+// Unlike file://, whose reference carries its own path, this backend chooses
+// where to write. That choice defaults to Cloudstic's own config directory,
+// which is right for the CLI but not for a program embedding this package —
+// hence WithConfigDir.
+type ConfigTokenBackend struct {
+	// configDir overrides the managed directory. Empty means "ask
+	// paths.ConfigDir", i.e. CLOUDSTIC_CONFIG_DIR or the OS default.
+	configDir string
+}
 
-func NewConfigTokenBackend() *ConfigTokenBackend {
-	return &ConfigTokenBackend{}
+// ConfigTokenOption configures a ConfigTokenBackend.
+type ConfigTokenOption func(*ConfigTokenBackend)
+
+// WithConfigDir places managed tokens under dir instead of Cloudstic's own
+// config directory.
+//
+// The salt that derives the at-rest encryption key lives in this directory
+// too, so pointing two backends at different directories gives them different
+// keys: tokens written under one are not readable under the other.
+func WithConfigDir(dir string) ConfigTokenOption {
+	return func(b *ConfigTokenBackend) { b.configDir = dir }
+}
+
+func NewConfigTokenBackend(opts ...ConfigTokenOption) *ConfigTokenBackend {
+	b := &ConfigTokenBackend{}
+	for _, opt := range opts {
+		opt(b)
+	}
+	return b
+}
+
+// dir returns the managed directory, falling back to the process-wide default
+// when the caller did not choose one.
+func (b *ConfigTokenBackend) dir() (string, error) {
+	if b.configDir != "" {
+		return b.configDir, nil
+	}
+	return paths.ConfigDir()
 }
 
 func (b *ConfigTokenBackend) Resolve(ctx context.Context, ref secretref.Ref) (string, error) {
@@ -197,7 +232,7 @@ func (b *ConfigTokenBackend) Store(ctx context.Context, ref secretref.Ref, value
 }
 
 func (b *ConfigTokenBackend) getEncryptionKey() ([]byte, error) {
-	configDir, err := paths.ConfigDir()
+	configDir, err := b.dir()
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +281,7 @@ func (b *ConfigTokenBackend) resolvePath(ref secretref.Ref) (string, error) {
 		}
 	}
 
-	configDir, err := paths.ConfigDir()
+	configDir, err := b.dir()
 	if err != nil {
 		return "", secretref.NewError(secretref.KindBackendUnavailable, ref.Raw, "failed to determine config directory", err)
 	}

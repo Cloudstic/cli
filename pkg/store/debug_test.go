@@ -1,4 +1,4 @@
-package store
+package store_test
 
 import (
 	"bytes"
@@ -7,6 +7,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/cloudstic/cli/pkg/store"
+	"github.com/cloudstic/cli/pkg/store/local"
 )
 
 func TestDebugStore_Operations(t *testing.T) {
@@ -18,13 +21,13 @@ func TestDebugStore_Operations(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
 
-	inner, err := NewLocalStore(tmp)
+	inner, err := local.New(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var buf bytes.Buffer
-	ds := NewDebugStore(inner, &buf)
+	ds := store.NewDebugStore(inner, &buf)
 
 	if ds.Unwrap() != inner {
 		t.Error("Unwrap should return the inner store")
@@ -128,13 +131,13 @@ func TestDebugStore_LogsErrors(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
 
-	inner, err := NewLocalStore(tmp)
+	inner, err := local.New(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var buf bytes.Buffer
-	ds := NewDebugStore(inner, &buf)
+	ds := store.NewDebugStore(inner, &buf)
 
 	// Get on missing key should log the error.
 	_, getErr := ds.Get(ctx, "nonexistent/key")
@@ -151,7 +154,7 @@ func TestDebugStore_Flush_WithFlusher(t *testing.T) {
 
 	var buf bytes.Buffer
 	inner := &flushableStore{err: nil}
-	ds := NewDebugStore(inner, &buf)
+	ds := store.NewDebugStore(inner, &buf)
 
 	if err := ds.Flush(ctx); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -167,33 +170,14 @@ func TestDebugStore_Flush_WithFlusherError(t *testing.T) {
 	var buf bytes.Buffer
 	flushErr := errors.New("flush failed")
 	inner := &flushableStore{err: flushErr}
-	ds := NewDebugStore(inner, &buf)
+	ds := store.NewDebugStore(inner, &buf)
 
 	if err := ds.Flush(ctx); !errors.Is(err, flushErr) {
 		t.Fatalf("expected flush error, got: %v", err)
 	}
 }
 
-func TestFmtBytes(t *testing.T) {
-	tests := []struct {
-		input int
-		want  string
-	}{
-		{500, "500B"},
-		{1024, "1.0KB"},
-		{2048, "2.0KB"},
-		{1 << 20, "1.0MB"},
-		{2 << 20, "2.0MB"},
-	}
-	for _, tc := range tests {
-		got := fmtBytes(tc.input)
-		if got != tc.want {
-			t.Errorf("fmtBytes(%d) = %q, want %q", tc.input, got, tc.want)
-		}
-	}
-}
-
-// flushableStore is a minimal ObjectStore that also implements Flush.
+// flushableStore is a minimal store.ObjectStore that also implements Flush.
 type flushableStore struct {
 	flushed bool
 	err     error

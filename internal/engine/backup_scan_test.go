@@ -7,9 +7,9 @@ import (
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
+	"github.com/cloudstic/cli/internal/storelayer"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/source"
-	"github.com/cloudstic/cli/pkg/store"
 )
 
 func TestIsGoogleNativeMeta(t *testing.T) {
@@ -64,7 +64,7 @@ func TestDetectChange_NativeFileFastPath(t *testing.T) {
 	}
 
 	// Verify the file was stored.
-	readStore := store.NewCompressedStore(dest)
+	readStore := storelayer.NewCompressedStore(dest)
 	tree := hamt.NewTree(readStore)
 	ref1, err := tree.Lookup(ctx, result1.Root, AffinityKey("", "DOC_1"), "DOC_1")
 	if err != nil || ref1 == "" {
@@ -189,7 +189,7 @@ func TestDetectChange_NativeFileCarriesForwardMetadata(t *testing.T) {
 	}
 
 	// Read the stored meta to get the ContentHash and Size set by the upload.
-	readStore := store.NewCompressedStore(dest)
+	readStore := storelayer.NewCompressedStore(dest)
 	ref, err := hamt.NewTree(readStore).Lookup(ctx, result1.Root, AffinityKey("", "DOC_1"), "DOC_1")
 	if err != nil {
 		t.Fatalf("Lookup: %v", err)
@@ -291,7 +291,7 @@ func TestScanIncremental_DeleteWithoutParentUsesExistingMetadataParent(t *testin
 		t.Fatalf("second backup failed: %v", err)
 	}
 
-	tree := hamt.NewTree(store.NewCompressedStore(dest))
+	tree := hamt.NewTree(storelayer.NewCompressedStore(dest))
 	ref, err := tree.Lookup(ctx, second.Root, AffinityKey("FOLDER_1", "FILE_1"), "FILE_1")
 	if err != nil {
 		t.Fatalf("lookup failed: %v", err)

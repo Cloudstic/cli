@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/internal/storelayer"
 	"github.com/cloudstic/cli/internal/ui"
-	"github.com/cloudstic/cli/pkg/store"
 )
 
 // setupBackupForRestoreLarge backs up one file that is large enough to take the
@@ -60,7 +60,7 @@ func TestRestore_RejectsTamperedChunk(t *testing.T) {
 	dest := setupBackupForRestoreLarge(t)
 	tamperChunk(t, dest, []byte("attacker controlled content"))
 
-	rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())
+	rsMgr := NewRestoreManager(storelayer.NewCompressedStore(dest), ui.NewNoOpReporter())
 	outDir := filepath.Join(t.TempDir(), "restored")
 	writer, err := NewFSRestoreWriter(outDir)
 	if err != nil {
@@ -91,7 +91,7 @@ func TestRestore_NoVerifyStillWritesTamperedChunk(t *testing.T) {
 	dest := setupBackupForRestoreLarge(t)
 	tamperChunk(t, dest, []byte("attacker controlled content"))
 
-	rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())
+	rsMgr := NewRestoreManager(storelayer.NewCompressedStore(dest), ui.NewNoOpReporter())
 	outDir := filepath.Join(t.TempDir(), "restored")
 	writer, err := NewFSRestoreWriter(outDir)
 	if err != nil {
@@ -117,7 +117,7 @@ func TestRestore_NoVerifyStillWritesTamperedChunk(t *testing.T) {
 // Verification must not fire on healthy data.
 func TestRestore_VerifiesCleanRestore(t *testing.T) {
 	dest := setupBackupForRestore(t)
-	rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())
+	rsMgr := NewRestoreManager(storelayer.NewCompressedStore(dest), ui.NewNoOpReporter())
 
 	outDir := filepath.Join(t.TempDir(), "restored")
 	writer, err := NewFSRestoreWriter(outDir)
@@ -179,7 +179,7 @@ func TestRestore_VerifiesInlineContent(t *testing.T) {
 	dest.Data[contentKey] = tampered
 	dest.mu.Unlock()
 
-	rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())
+	rsMgr := NewRestoreManager(storelayer.NewCompressedStore(dest), ui.NewNoOpReporter())
 	outDir := filepath.Join(t.TempDir(), "restored")
 	writer, err := NewFSRestoreWriter(outDir)
 	if err != nil {

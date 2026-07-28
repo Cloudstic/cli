@@ -6,8 +6,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/cloudstic/cli/internal/core"
 	"golang.org/x/sys/unix"
+
+	"github.com/cloudstic/cli/internal/core"
 )
 
 var setRestoreXattr = unix.Setxattr

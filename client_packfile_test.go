@@ -7,10 +7,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	localstore "github.com/cloudstic/cli/pkg/store/local"
+
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/pkg/crypto"
 	"github.com/cloudstic/cli/pkg/source/local"
-	"github.com/cloudstic/cli/pkg/store"
 )
 
 // Cloudstic is consumed as a library as well as a CLI, and this is the only
@@ -35,7 +36,7 @@ func packfileTestKey() []byte {
 // encrypted repository with packfiles enabled.
 func newPackfileClient(t *testing.T, dir string) *Client {
 	t.Helper()
-	base, err := store.NewLocalStore(dir)
+	base, err := localstore.New(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +58,7 @@ func newPackfileClient(t *testing.T, dir string) *Client {
 // the marker has to be readable before any key is available.
 func writeRepoConfig(t *testing.T, dir string) {
 	t.Helper()
-	base, err := store.NewLocalStore(dir)
+	base, err := localstore.New(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +102,7 @@ func assertRestored(t *testing.T, dir string, want map[string]string) {
 // newPackfileClientOrErr is newPackfileClient without the fatal, for tests that
 // assert a client can be constructed at all.
 func newPackfileClientOrErr(dir string) (*Client, error) {
-	base, err := store.NewLocalStore(dir)
+	base, err := localstore.New(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +132,7 @@ func TestClient_PackfileBackupRestoreRoundTrip(t *testing.T) {
 		t.Fatalf("backup: %v", err)
 	}
 
-	base, err := store.NewLocalStore(storeDir)
+	base, err := localstore.New(storeDir)
 	if err != nil {
 		t.Fatal(err)
 	}

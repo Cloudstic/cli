@@ -6,11 +6,12 @@ import (
 
 	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/pkg/store"
+	localstore "github.com/cloudstic/cli/pkg/store/local"
 )
 
-func newTestLocalStore(t *testing.T) *store.LocalStore {
+func newTestLocalStore(t *testing.T) *localstore.Store {
 	t.Helper()
-	s, err := store.NewLocalStore(t.TempDir())
+	s, err := localstore.New(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewLocalStore: %v", err)
 	}
@@ -60,8 +61,8 @@ func TestNewObjectStore_FromConfigWithoutFlagParsing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newObjectStore: %v", err)
 	}
-	if _, ok := s.(*store.LocalStore); !ok {
-		t.Fatalf("expected *store.LocalStore, got %T", s)
+	if _, ok := s.(*localstore.Store); !ok {
+		t.Fatalf("expected *localstore.Store, got %T", s)
 	}
 }
 

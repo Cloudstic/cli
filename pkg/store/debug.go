@@ -127,12 +127,6 @@ var opColor = map[string]string{
 	"TOTAL_SIZE": logger.ColorDim,
 }
 
-var debugLog = logger.New("store", logger.ColorYellow)
-
-func debugf(format string, args ...any) {
-	debugLog.Debugf(format, args...)
-}
-
 func (s *DebugStore) log(op, key string, bytes, count int, d time.Duration, err error) {
 	n := s.calls.Add(1)
 	ms := float64(d.Microseconds()) / 1000.0

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	localstore "github.com/cloudstic/cli/pkg/store/local"
+
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/pkg/source/local"
 	"github.com/cloudstic/cli/pkg/store"
@@ -49,7 +51,7 @@ func rewindConfigVersion(t *testing.T, s store.ObjectStore, version int) {
 
 func newFormatTestStore(t *testing.T) store.ObjectStore {
 	t.Helper()
-	s, err := store.NewLocalStore(t.TempDir())
+	s, err := localstore.New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +263,7 @@ func TestBackupThatSealsStampsTheFormat(t *testing.T) {
 
 	writeRepoConfig(t, storeDir)
 
-	base, err := store.NewLocalStore(storeDir)
+	base, err := localstore.New(storeDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +302,7 @@ func TestUnsealedRepositoryKeepsBaselineFormat(t *testing.T) {
 	sourceDir := t.TempDir()
 	writeSourceTree(t, sourceDir, map[string]string{"a.txt": "alpha"})
 
-	base, err := store.NewLocalStore(storeDir)
+	base, err := localstore.New(storeDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +338,7 @@ func TestWritesStampTheFormatButReadsDoNot(t *testing.T) {
 	sourceDir := t.TempDir()
 	writeSourceTree(t, sourceDir, map[string]string{"a.txt": "alpha"})
 
-	base, err := store.NewLocalStore(storeDir)
+	base, err := localstore.New(storeDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -471,7 +473,7 @@ func TestDryRunsDoNotStampTheFormat(t *testing.T) {
 	sourceDir := t.TempDir()
 	writeSourceTree(t, sourceDir, map[string]string{"a.txt": "alpha"})
 
-	base, err := store.NewLocalStore(storeDir)
+	base, err := localstore.New(storeDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -521,7 +523,7 @@ func TestForgetPolicyStampsTheFormat(t *testing.T) {
 	sourceDir := t.TempDir()
 	writeSourceTree(t, sourceDir, map[string]string{"a.txt": "alpha"})
 
-	base, err := store.NewLocalStore(storeDir)
+	base, err := localstore.New(storeDir)
 	if err != nil {
 		t.Fatal(err)
 	}

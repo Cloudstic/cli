@@ -5,9 +5,10 @@ import (
 	"io"
 	"strings"
 
+	"github.com/jedib0t/go-pretty/v6/table"
+
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/engine"
-	"github.com/jedib0t/go-pretty/v6/table"
 )
 
 // formatBytes returns a human-readable representation of a byte count.

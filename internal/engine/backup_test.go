@@ -9,8 +9,8 @@ import (
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
+	"github.com/cloudstic/cli/internal/storelayer"
 	"github.com/cloudstic/cli/internal/ui"
-	"github.com/cloudstic/cli/pkg/store"
 )
 
 // TestBackupManager_ResolvesPathsForOpaqueIDs verifies that when a source
@@ -60,7 +60,7 @@ func TestBackupManager_ResolvesPathsForOpaqueIDs(t *testing.T) {
 	}
 
 	// Read back the stored FileMeta and verify Paths were not persisted.
-	readStore := store.NewCompressedStore(dest)
+	readStore := storelayer.NewCompressedStore(dest)
 	tree := hamt.NewTree(readStore)
 
 	checkNoStoredPath := func(parentID, fileID string) {
@@ -100,7 +100,7 @@ func TestBackupManager_Run(t *testing.T) {
 
 	// Read store wraps dest with CompressedStore so we can read back
 	// the compressed data written by the BackupManager.
-	readStore := store.NewCompressedStore(dest)
+	readStore := storelayer.NewCompressedStore(dest)
 
 	// Helper: lookup a key in the HAMT and load the FileMeta from the store.
 	lookupMeta := func(root, key string) *core.FileMeta {
@@ -237,7 +237,7 @@ func TestBackupManager_IgnoreEmptySnapshot(t *testing.T) {
 		t.Fatalf("first backup failed: %v", err)
 	}
 
-	readStore := store.NewCompressedStore(dest)
+	readStore := storelayer.NewCompressedStore(dest)
 	idxData, err := readStore.Get(ctx, "index/latest")
 	if err != nil {
 		t.Fatalf("read index/latest after first backup: %v", err)
@@ -544,7 +544,7 @@ func TestBackupManager_Run_PropagatesLatestIndexError(t *testing.T) {
 func TestBackupManager_Run_FlushesPacksBeforeUpdatingIndexLatest(t *testing.T) {
 	ctx := context.Background()
 	rec := &recordingStore{ObjectStore: NewMockStore()}
-	packed, err := store.NewPackStore(rec)
+	packed, err := storelayer.NewPackStore(rec)
 	if err != nil {
 		t.Fatalf("NewPackStore: %v", err)
 	}

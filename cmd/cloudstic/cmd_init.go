@@ -6,10 +6,11 @@ import (
 	"io"
 	"os"
 
+	"github.com/moby/term"
+
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/keychain"
-	"github.com/moby/term"
 )
 
 type initArgs struct {

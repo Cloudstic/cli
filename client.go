@@ -12,6 +12,7 @@ import (
 	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/internal/repoconfig"
 	"github.com/cloudstic/cli/internal/secretref"
+	"github.com/cloudstic/cli/internal/storelayer"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/crypto"
 	"github.com/cloudstic/cli/pkg/keychain"
@@ -428,7 +429,7 @@ type Client struct {
 	// of this client does not immediately re-read it. It is consumed on first
 	// use (swapped for the noRepoConfig sentinel) and never consulted again.
 	openCfg        atomic.Pointer[RepoConfig]
-	storedMeter    *store.MeteredStore
+	storedMeter    *storelayer.MeteredStore
 	encryptionKey  []byte
 	hmacKey        []byte
 	keychain       keychain.Chain
@@ -474,27 +475,27 @@ func NewClient(ctx context.Context, base store.ObjectStore, opts ...ClientOption
 		// PackStore sits below the encryption layer, so the catalog and pack
 		// footers it writes never pass through EncryptedStore. Give it its own
 		// derived key so they are not left in plaintext.
-		var packOpts []store.PackOption
+		var packOpts []storelayer.PackOption
 		if len(c.encryptionKey) > 0 {
 			indexKey, err := crypto.DeriveKey(c.encryptionKey, crypto.HKDFInfoPackIndexV1)
 			if err != nil {
 				return nil, fmt.Errorf("derive pack index key: %w", err)
 			}
-			packOpts = append(packOpts, store.WithPackIndexKey(indexKey))
+			packOpts = append(packOpts, storelayer.WithPackIndexKey(indexKey))
 
 		}
 
-		packStore, err := store.NewPackStore(inner, packOpts...)
+		packStore, err := storelayer.NewPackStore(inner, packOpts...)
 		if err != nil {
 			return nil, fmt.Errorf("init packstore: %w", err)
 		}
 		inner = packStore
 	}
 
-	storedMeter := store.NewMeteredStore(inner)
+	storedMeter := storelayer.NewMeteredStore(inner)
 	inner = storedMeter
 	if len(c.encryptionKey) > 0 {
-		inner = store.NewEncryptedStore(storedMeter, c.encryptionKey)
+		inner = storelayer.NewEncryptedStore(storedMeter, c.encryptionKey)
 	}
 
 	// Seed the in-process format from disk, then let the compression layer read
@@ -507,7 +508,7 @@ func NewClient(ctx context.Context, base store.ObjectStore, opts ...ClientOption
 		c.repoFormat.Store(int64(cfg.Version))
 		c.openCfg.Store(cfg)
 	}
-	c.store = store.NewCompressedStore(inner, store.WithFrameGate(c.framingEnabled))
+	c.store = storelayer.NewCompressedStore(inner, storelayer.WithFrameGate(c.framingEnabled))
 	c.storedMeter = storedMeter
 	return c, nil
 }
@@ -704,7 +705,7 @@ func (c *Client) Backup(ctx context.Context, src source.Source, opts ...BackupOp
 		return nil, fmt.Errorf("raise repository format before writing: %w", err)
 	}
 
-	rawMeter := store.NewMeteredStore(c.store)
+	rawMeter := storelayer.NewMeteredStore(c.store)
 	c.storedMeter.Reset()
 
 	mgr := engine.NewBackupManager(src, rawMeter, c.reporter, c.hmacKey, opts...)
@@ -1005,6 +1006,12 @@ type RepoLock = engine.RepoLock
 // repository is held by another operation. Use errors.Is(err, ErrRepoLocked)
 // to detect the condition and prompt the caller toward BreakLock.
 var ErrRepoLocked = engine.ErrRepoLocked
+
+// ErrPlaintextObject reports that an encrypted repository contains an object
+// that is not ciphertext. Use errors.Is(err, ErrPlaintextObject) to tell this
+// apart from a decryption failure: the object was never encrypted, rather than
+// encrypted with a key you do not hold.
+var ErrPlaintextObject = storelayer.ErrPlaintextObject
 
 func (c *Client) BreakLock(ctx context.Context) ([]*RepoLock, error) {
 	return engine.BreakRepoLock(ctx, c.store)

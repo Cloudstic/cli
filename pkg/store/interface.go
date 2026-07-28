@@ -63,9 +63,19 @@ func GetConcurrencyHint(s ObjectStore, defaultConcurrency int) int {
 	return defaultConcurrency
 }
 
-// httpRangeHeader renders an inclusive byte range for backends that speak HTTP
-// range requests. The end offset is inclusive, which is the classic off-by-one
-// in this header.
-func httpRangeHeader(offset, length int64) string {
+// HTTPRangeHeader renders an inclusive byte range for backends that speak HTTP
+// range requests, for use when implementing RangeGetter. The end offset is
+// inclusive, which is the classic off-by-one in this header.
+func HTTPRangeHeader(offset, length int64) string {
 	return fmt.Sprintf("bytes=%d-%d", offset, offset+length-1)
 }
+
+// KeySlotPrefix is the object key prefix for encryption key slot objects.
+// These objects are stored unencrypted (they contain already-wrapped keys)
+// so they can be read without the encryption key — avoiding a chicken-and-egg
+// problem during key loading.
+//
+// It lives in the contract package rather than with the encryption layer
+// because it is a repository key-namespace fact that pkg/keychain also needs,
+// alongside the chunk/, snapshot/ and index/ conventions.
+const KeySlotPrefix = "keys/"

@@ -6,10 +6,11 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/jedib0t/go-pretty/v6/table"
+
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/internal/ui"
-	"github.com/jedib0t/go-pretty/v6/table"
 )
 
 func newConfigTableWriter(out io.Writer) table.Writer {

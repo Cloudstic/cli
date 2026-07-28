@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cloudstic/cli/internal/storelayer"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/store"
 )
@@ -116,7 +117,7 @@ func NewForgetManager(s store.ObjectStore, reporter ui.Reporter) *ForgetManager 
 	return &ForgetManager{
 		store:    s,
 		reporter: reporter,
-		pruner:   NewPruneManager(store.NewMeteredStore(s), reporter),
+		pruner:   NewPruneManager(storelayer.NewMeteredStore(s), reporter),
 	}
 }
 

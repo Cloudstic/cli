@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	localstore "github.com/cloudstic/cli/pkg/store/local"
+
 	"github.com/cloudstic/cli/pkg/source/local"
 	"github.com/cloudstic/cli/pkg/store"
 )
@@ -30,7 +32,7 @@ func newPlaintextTestRepo(t *testing.T) (string, store.ObjectStore) {
 	storeDir := t.TempDir()
 	writeRepoConfig(t, storeDir)
 
-	base, err := store.NewLocalStore(storeDir)
+	base, err := localstore.New(storeDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,8 +85,8 @@ func TestClient_RefusesPlaintextContentObject(t *testing.T) {
 	if err == nil {
 		t.Fatalf("reading a forged object succeeded, returning %q", got[0].Data)
 	}
-	if !errors.Is(err, store.ErrPlaintextObject) {
-		t.Fatalf("error = %v, want store.ErrPlaintextObject", err)
+	if !errors.Is(err, ErrPlaintextObject) {
+		t.Fatalf("error = %v, want ErrPlaintextObject", err)
 	}
 	if !strings.Contains(err.Error(), "snapshot/forged") {
 		t.Errorf("error should mention the offending key, got: %v", err)

@@ -10,9 +10,9 @@ Every source must implement the `Source` interface (`pkg/source/interface.go`):
 
 ```go
 type Source interface {
-    Walk(ctx context.Context, callback func(core.FileMeta) error) error
+    Walk(ctx context.Context, callback func(FileMeta) error) error
     GetFileStream(fileID string) (io.ReadCloser, error)
-    Info() core.SourceInfo
+    Info() SourceInfo
     Size(ctx context.Context) (*SourceSize, error)
 }
 ```
@@ -231,14 +231,14 @@ The backup engine (`internal/engine/backup.go`) interacts with sources as follow
 ## Implementing a new source
 
 A source can live **in its own Go module** — you do not need to fork or vendor
-Cloudstic. The `Source` contract lives in `pkg/source`, which re-exports the
-types it is written in (`FileMeta`, `SourceInfo`, `FileType`) as Go type
-aliases. An alias denotes the identical type, so a `source.FileMeta` you
-construct satisfies the interface exactly.
+Cloudstic. `pkg/source` defines both the contract and the types it is written
+in (`FileMeta`, `SourceInfo`, `FileType`), so importing that one package is all
+you need.
 
-Importing `pkg/source` is all you need, and it costs no third-party
-dependencies — the provider SDKs live in the per-provider subpackages, not in
-the contract.
+It depends on nothing outside the standard library — not even on the rest of
+Cloudstic. The provider SDKs live in the per-provider subpackages, and the
+repository format in `internal/core` aliases these types rather than owning
+them, so implementing a source costs no dependency at all.
 
 ```go
 package mysource

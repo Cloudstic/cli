@@ -7,6 +7,27 @@ import (
 	"github.com/cloudstic/cli/internal/core"
 )
 
+// The types the Source contract is written in, re-exported so an
+// implementation in another module can name them without reaching for the root
+// cloudstic package — which pulls in every provider SDK. A Go alias denotes the
+// identical type, so these are interchangeable with cloudstic.FileMeta and
+// friends; importing this package alone is enough to write a source, and costs
+// no third-party dependencies.
+type (
+	// FileMeta is the per-file metadata a source emits during Walk.
+	FileMeta = core.FileMeta
+	// SourceInfo describes the origin of a snapshot, returned by Info.
+	SourceInfo = core.SourceInfo
+	// FileType distinguishes a file from a folder.
+	FileType = core.FileType
+)
+
+// FileType values.
+const (
+	FileTypeFile   = core.FileTypeFile
+	FileTypeFolder = core.FileTypeFolder
+)
+
 // SourceSize holds the total size of a source.
 type SourceSize struct {
 	Bytes int64 `json:"bytes"`

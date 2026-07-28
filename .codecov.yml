@@ -6,6 +6,10 @@ codecov:
 # reports them as 0% however heavily they are used.
 ignore:
   - "pkg/store/storetest/**"
+  # The external-module fixture (RFC 0022). It is a separate Go module built by
+  # a test to prove the public contracts are implementable from outside; it is
+  # never linked into this module, so it has no coverage to report.
+  - "internal/apicheck/testdata/**"
 
 coverage:
   status:

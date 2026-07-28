@@ -231,11 +231,14 @@ The backup engine (`internal/engine/backup.go`) interacts with sources as follow
 ## Implementing a new source
 
 A source can live **in its own Go module** — you do not need to fork or vendor
-Cloudstic. The `Source` contract lives in `pkg/source`, which depends on nothing
-outside the standard library, and the `FileMeta`/`SourceInfo` types it is
-written in are re-exported from the root `cloudstic` package as type aliases.
-Because a Go type alias denotes the identical type, a `FileMeta` you construct
-satisfies the interface exactly.
+Cloudstic. The `Source` contract lives in `pkg/source`, which re-exports the
+types it is written in (`FileMeta`, `SourceInfo`, `FileType`) as Go type
+aliases. An alias denotes the identical type, so a `source.FileMeta` you
+construct satisfies the interface exactly.
+
+Importing `pkg/source` is all you need, and it costs no third-party
+dependencies — the provider SDKs live in the per-provider subpackages, not in
+the contract.
 
 ```go
 package mysource
@@ -244,26 +247,25 @@ import (
     "context"
     "io"
 
-    cloudstic "github.com/cloudstic/cli"
     "github.com/cloudstic/cli/pkg/source"
 )
 
 type Source struct{ /* ... */ }
 
-func (s *Source) Walk(ctx context.Context, cb func(cloudstic.FileMeta) error) error {
+func (s *Source) Walk(ctx context.Context, cb func(source.FileMeta) error) error {
     // Parents MUST be emitted before their children.
-    return cb(cloudstic.FileMeta{
+    return cb(source.FileMeta{
         FileID: "docs/report.pdf", // stable + unique: this is the HAMT key
         Name:   "report.pdf",
-        Type:   cloudstic.FileTypeFile,
+        Type:   source.FileTypeFile,
         Size:   1234,
     })
 }
 
 func (s *Source) GetFileStream(fileID string) (io.ReadCloser, error) { /* ... */ }
 
-func (s *Source) Info() cloudstic.SourceInfo {
-    return cloudstic.SourceInfo{
+func (s *Source) Info() source.SourceInfo {
+    return source.SourceInfo{
         Type:     "com.example.mysource", // namespace third-party types
         Identity: "stable-container-id",  // stable across runs: drives lineage
         PathID:   "/selected/root",

@@ -6,7 +6,7 @@ import (
 
 	"github.com/jedib0t/go-pretty/v6/table"
 
-	cloudstic "github.com/cloudstic/cli"
+	"github.com/cloudstic/cli/internal/workstation"
 )
 
 type sourceDiscoverArgs struct {
@@ -22,12 +22,17 @@ func declareSourceDiscoverArgs(_ *globalFlags) (*sourceDiscoverArgs, commandInpu
 	}}
 }
 
-func runSourceDiscover(r *runner, ctx context.Context, a *sourceDiscoverArgs) int {
-	if r.client == nil {
-		r.client = &cloudstic.Client{}
-	}
+// discoverSources is the seam tests replace. Discovery reads the machine's
+// real mount table, so without it the tests below would assert against
+// whatever disks the developer or CI runner happens to have attached.
+//
+// It is a package-level var rather than a method on cloudsticClient because
+// discovery needs nothing from the repository client — the method it used to
+// hang off never touched its receiver.
+var discoverSources = workstation.DiscoverSources
 
-	results, err := r.client.DiscoverSources(ctx)
+func runSourceDiscover(r *runner, ctx context.Context, a *sourceDiscoverArgs) int {
+	results, err := discoverSources(ctx)
 	if err != nil {
 		return r.fail("Failed to discover sources: %v", err)
 	}

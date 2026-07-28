@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cloudstic/cli/pkg/profile"
+
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/tui"
 )
@@ -201,7 +203,7 @@ func (p tuiReporterPhase) Error() {
 
 // tuiStoreConfig resolves a store definition into a client configuration for
 // the TUI, which addresses stores by name and never parses command-line flags.
-func tuiClientConfig(storeCfg cloudstic.ProfileStore) (clientConfig, error) {
+func tuiClientConfig(storeCfg profile.Store) (clientConfig, error) {
 	cfg, err := clientConfigFromProfileStore(storeCfg)
 	if err != nil {
 		return clientConfig{}, err

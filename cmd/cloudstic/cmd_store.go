@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/cloudstic/cli/pkg/profile"
+
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/secretref"
@@ -22,7 +24,7 @@ func declareStoreListArgs(_ *globalFlags) (*storeListArgs, commandInput) {
 }
 
 func runStoreList(r *runner, ctx context.Context, a *storeListArgs) int {
-	cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
+	cfg, err := profile.Load(a.profilesFile)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return 0
@@ -48,7 +50,7 @@ func declareStoreShowArgs(_ *globalFlags) (*storeShowArgs, commandInput) {
 }
 
 func runStoreShow(r *runner, ctx context.Context, a *storeShowArgs) int {
-	cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
+	cfg, err := profile.Load(a.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
 	}
@@ -199,7 +201,7 @@ func runStoreNew(r *runner, ctx context.Context, a *storeNewArgs) int {
 
 	cfg.Stores[a.name] = buildProfileStoreFromFlags(storeFlags)
 
-	if err := cloudstic.SaveProfilesFile(a.profilesFile, cfg); err != nil {
+	if err := profile.Save(a.profilesFile, cfg); err != nil {
 		return r.fail("Failed to save profiles: %v", err)
 	}
 	_, _ = fmt.Fprintf(r.out, "Store %q saved in %s\n", a.name, a.profilesFile)
@@ -248,7 +250,7 @@ func declareStoreVerifyArgs(_ *globalFlags) (*storeVerifyArgs, commandInput) {
 }
 
 func runStoreVerify(r *runner, ctx context.Context, a *storeVerifyArgs) int {
-	cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
+	cfg, err := profile.Load(a.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
 	}
@@ -297,7 +299,7 @@ func declareStoreInitArgs(_ *globalFlags) (*storeInitArgs, commandInput) {
 }
 
 func runStoreInit(r *runner, ctx context.Context, a *storeInitArgs) int {
-	cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
+	cfg, err := profile.Load(a.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
 	}
@@ -337,7 +339,7 @@ type checkOrInitOptions struct {
 	assumeYes            bool
 }
 
-func checkOrInitStore(r *runner, ctx context.Context, cfg *cloudstic.ProfilesConfig, storeName, profilesFile string, opts checkOrInitOptions) error {
+func checkOrInitStore(r *runner, ctx context.Context, cfg *profile.Config, storeName, profilesFile string, opts checkOrInitOptions) error {
 	s := cfg.Stores[storeName]
 	resolved, err := clientConfigFromProfileStore(s)
 	if err != nil {
@@ -419,7 +421,7 @@ func checkOrInitStore(r *runner, ctx context.Context, cfg *cloudstic.ProfilesCon
 	return nil
 }
 
-func checkOrInitStoreWithRecovery(r *runner, ctx context.Context, cfg *cloudstic.ProfilesConfig, storeName, profilesFile string, opts checkOrInitOptions, allowSkip bool) error {
+func checkOrInitStoreWithRecovery(r *runner, ctx context.Context, cfg *profile.Config, storeName, profilesFile string, opts checkOrInitOptions, allowSkip bool) error {
 	for {
 		err := checkOrInitStore(r, ctx, cfg, storeName, profilesFile, opts)
 		if err == nil || !r.canPrompt() {
@@ -464,7 +466,7 @@ func checkOrInitStoreWithRecovery(r *runner, ctx context.Context, cfg *cloudstic
 // promptEncryptionConfig guides the user through encryption configuration
 // and saves the chosen settings to profiles.yaml. It does not build a keychain
 // or prompt for the actual password — that happens later during init.
-func (r *runner) promptEncryptionConfig(ctx context.Context, cfg *cloudstic.ProfilesConfig, storeName, profilesFile string) {
+func (r *runner) promptEncryptionConfig(ctx context.Context, cfg *profile.Config, storeName, profilesFile string) {
 	_, _ = fmt.Fprintln(r.out)
 	_, _ = fmt.Fprintln(r.out, "No encryption is configured for this store.")
 
@@ -499,19 +501,19 @@ func (r *runner) promptEncryptionConfig(ctx context.Context, cfg *cloudstic.Prof
 
 	// Save updated store config.
 	cfg.Stores[storeName] = s
-	if saveErr := cloudstic.SaveProfilesFile(profilesFile, cfg); saveErr != nil {
+	if saveErr := profile.Save(profilesFile, cfg); saveErr != nil {
 		_, _ = fmt.Fprintf(r.errOut, "Warning: could not save encryption settings: %v\n", saveErr)
 	}
 }
 
 func configureStoreEncryptionSelection(
 	ctx context.Context,
-	s cloudstic.ProfileStore,
+	s profile.Store,
 	storeName, picked string,
 	promptSecretRef func(context.Context, string, string, string, string) (string, error),
 	promptLine func(context.Context, string, string) (string, error),
 	out io.Writer,
-) (cloudstic.ProfileStore, error) {
+) (profile.Store, error) {
 	switch picked {
 	case "Password (recommended for interactive use)":
 		secretRef, err := promptSecretRef(ctx, storeName, "repository password", "CLOUDSTIC_PASSWORD", "password")
@@ -664,7 +666,7 @@ func verifyStoreEncryptionCredentials(ctx context.Context, cfg unlockConfig, raw
 	return nil
 }
 
-func awsSSOLoginOption(s cloudstic.ProfileStore, err error) string {
+func awsSSOLoginOption(s profile.Store, err error) string {
 	if !isAWSExpiredAuthError(err) {
 		return ""
 	}
@@ -697,7 +699,7 @@ func isAWSExpiredAuthError(err error) bool {
 	return false
 }
 
-func runAWSSSOLogin(r *runner, ctx context.Context, s cloudstic.ProfileStore) error {
+func runAWSSSOLogin(r *runner, ctx context.Context, s profile.Store) error {
 	args := []string{"sso", "login"}
 	if s.S3Profile != "" {
 		args = append(args, "--profile", s.S3Profile)
@@ -740,7 +742,7 @@ func envRef(name string) string {
 	return "env://" + name
 }
 
-func storeHasExplicitEncryption(s cloudstic.ProfileStore) bool {
+func storeHasExplicitEncryption(s profile.Store) bool {
 	return s.PasswordSecret != "" || s.EncryptionKeySecret != "" || s.RecoveryKeySecret != "" ||
 		s.KMSKeyARN != ""
 }

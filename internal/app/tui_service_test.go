@@ -5,40 +5,42 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/cloudstic/cli/pkg/profile"
+
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/engine"
 	"github.com/cloudstic/cli/internal/tui"
 )
 
 type stubTUIBackend struct {
-	loadStoreSnapshots func(context.Context, string, cloudstic.ProfileStore) ([]engine.SnapshotEntry, error)
-	initProfile        func(context.Context, string, string, cloudstic.BackupProfile, *cloudstic.ProfilesConfig) error
-	backupProfile      func(context.Context, string, string, cloudstic.BackupProfile, *cloudstic.ProfilesConfig, cloudstic.Reporter) error
-	checkProfile       func(context.Context, string, string, cloudstic.BackupProfile, *cloudstic.ProfilesConfig, cloudstic.Reporter) error
+	loadStoreSnapshots func(context.Context, string, profile.Store) ([]engine.SnapshotEntry, error)
+	initProfile        func(context.Context, string, string, profile.Profile, *profile.Config) error
+	backupProfile      func(context.Context, string, string, profile.Profile, *profile.Config, cloudstic.Reporter) error
+	checkProfile       func(context.Context, string, string, profile.Profile, *profile.Config, cloudstic.Reporter) error
 }
 
-func (b stubTUIBackend) LoadStoreSnapshots(ctx context.Context, storeName string, storeCfg cloudstic.ProfileStore) ([]engine.SnapshotEntry, error) {
+func (b stubTUIBackend) LoadStoreSnapshots(ctx context.Context, storeName string, storeCfg profile.Store) ([]engine.SnapshotEntry, error) {
 	if b.loadStoreSnapshots == nil {
 		return nil, nil
 	}
 	return b.loadStoreSnapshots(ctx, storeName, storeCfg)
 }
 
-func (b stubTUIBackend) InitProfile(ctx context.Context, profilesFile, profileName string, profileCfg cloudstic.BackupProfile, cfg *cloudstic.ProfilesConfig) error {
+func (b stubTUIBackend) InitProfile(ctx context.Context, profilesFile, profileName string, profileCfg profile.Profile, cfg *profile.Config) error {
 	if b.initProfile == nil {
 		return nil
 	}
 	return b.initProfile(ctx, profilesFile, profileName, profileCfg, cfg)
 }
 
-func (b stubTUIBackend) BackupProfile(ctx context.Context, profilesFile, profileName string, profileCfg cloudstic.BackupProfile, cfg *cloudstic.ProfilesConfig, reporter cloudstic.Reporter) error {
+func (b stubTUIBackend) BackupProfile(ctx context.Context, profilesFile, profileName string, profileCfg profile.Profile, cfg *profile.Config, reporter cloudstic.Reporter) error {
 	if b.backupProfile == nil {
 		return nil
 	}
 	return b.backupProfile(ctx, profilesFile, profileName, profileCfg, cfg, reporter)
 }
 
-func (b stubTUIBackend) CheckProfile(ctx context.Context, profilesFile, profileName string, profileCfg cloudstic.BackupProfile, cfg *cloudstic.ProfilesConfig, reporter cloudstic.Reporter) error {
+func (b stubTUIBackend) CheckProfile(ctx context.Context, profilesFile, profileName string, profileCfg profile.Profile, cfg *profile.Config, reporter cloudstic.Reporter) error {
 	if b.checkProfile == nil {
 		return nil
 	}
@@ -47,8 +49,8 @@ func (b stubTUIBackend) CheckProfile(ctx context.Context, profilesFile, profileN
 
 func TestTUIServiceLoadDashboardConfigInitializesMaps(t *testing.T) {
 	svc := NewTUIService(nil)
-	svc.loadProfiles = func(string) (*cloudstic.ProfilesConfig, error) {
-		return &cloudstic.ProfilesConfig{Version: 1}, nil
+	svc.loadProfiles = func(string) (*profile.Config, error) {
+		return &profile.Config{Version: 1}, nil
 	}
 
 	cfg, err := svc.LoadDashboardConfig("profiles.yaml")
@@ -66,19 +68,19 @@ func TestTUIServiceLoadDashboardConfigInitializesMaps(t *testing.T) {
 func TestTUIServiceRunProfileActionRunsInitWhenNeeded(t *testing.T) {
 	called := ""
 	svc := NewTUIService(stubTUIBackend{
-		initProfile: func(context.Context, string, string, cloudstic.BackupProfile, *cloudstic.ProfilesConfig) error {
+		initProfile: func(context.Context, string, string, profile.Profile, *profile.Config) error {
 			called = "init"
 			return nil
 		},
-		backupProfile: func(context.Context, string, string, cloudstic.BackupProfile, *cloudstic.ProfilesConfig, cloudstic.Reporter) error {
+		backupProfile: func(context.Context, string, string, profile.Profile, *profile.Config, cloudstic.Reporter) error {
 			called = "backup"
 			return nil
 		},
 	})
-	svc.loadProfiles = func(string) (*cloudstic.ProfilesConfig, error) {
-		return &cloudstic.ProfilesConfig{
+	svc.loadProfiles = func(string) (*profile.Config, error) {
+		return &profile.Config{
 			Version: 1,
-			Profiles: map[string]cloudstic.BackupProfile{
+			Profiles: map[string]profile.Profile{
 				"docs": {Source: "local:/docs", Store: "remote"},
 			},
 		}, nil
@@ -99,15 +101,15 @@ func TestTUIServiceRunProfileActionRunsInitWhenNeeded(t *testing.T) {
 func TestTUIServiceRunProfileActionRunsBackup(t *testing.T) {
 	called := ""
 	svc := NewTUIService(stubTUIBackend{
-		backupProfile: func(context.Context, string, string, cloudstic.BackupProfile, *cloudstic.ProfilesConfig, cloudstic.Reporter) error {
+		backupProfile: func(context.Context, string, string, profile.Profile, *profile.Config, cloudstic.Reporter) error {
 			called = "backup"
 			return nil
 		},
 	})
-	svc.loadProfiles = func(string) (*cloudstic.ProfilesConfig, error) {
-		return &cloudstic.ProfilesConfig{
+	svc.loadProfiles = func(string) (*profile.Config, error) {
+		return &profile.Config{
 			Version: 1,
-			Profiles: map[string]cloudstic.BackupProfile{
+			Profiles: map[string]profile.Profile{
 				"docs": {Source: "local:/docs", Store: "remote"},
 			},
 		}, nil
@@ -127,7 +129,7 @@ func TestTUIServiceRunProfileActionRunsBackup(t *testing.T) {
 
 func TestTUIServiceRunProfileActionPropagatesLoadError(t *testing.T) {
 	svc := NewTUIService(nil)
-	svc.loadProfiles = func(string) (*cloudstic.ProfilesConfig, error) {
+	svc.loadProfiles = func(string) (*profile.Config, error) {
 		return nil, errors.New("boom")
 	}
 
@@ -140,15 +142,15 @@ func TestTUIServiceRunProfileActionPropagatesLoadError(t *testing.T) {
 func TestTUIServiceRunProfileCheckRunsBackend(t *testing.T) {
 	called := ""
 	svc := NewTUIService(stubTUIBackend{
-		checkProfile: func(context.Context, string, string, cloudstic.BackupProfile, *cloudstic.ProfilesConfig, cloudstic.Reporter) error {
+		checkProfile: func(context.Context, string, string, profile.Profile, *profile.Config, cloudstic.Reporter) error {
 			called = "check"
 			return nil
 		},
 	})
-	svc.loadProfiles = func(string) (*cloudstic.ProfilesConfig, error) {
-		return &cloudstic.ProfilesConfig{
+	svc.loadProfiles = func(string) (*profile.Config, error) {
+		return &profile.Config{
 			Version: 1,
-			Profiles: map[string]cloudstic.BackupProfile{
+			Profiles: map[string]profile.Profile{
 				"docs": {Source: "local:/docs", Store: "remote"},
 			},
 		}, nil
@@ -169,10 +171,10 @@ func TestTUIServiceRunProfileCheckRunsBackend(t *testing.T) {
 
 func TestTUIServiceRunProfileCheckRejectsUninitializedRepo(t *testing.T) {
 	svc := NewTUIService(stubTUIBackend{})
-	svc.loadProfiles = func(string) (*cloudstic.ProfilesConfig, error) {
-		return &cloudstic.ProfilesConfig{
+	svc.loadProfiles = func(string) (*profile.Config, error) {
+		return &profile.Config{
 			Version: 1,
-			Profiles: map[string]cloudstic.BackupProfile{
+			Profiles: map[string]profile.Profile{
 				"docs": {Source: "local:/docs", Store: "remote"},
 			},
 		}, nil
@@ -189,22 +191,22 @@ func TestTUIServiceRunProfileCheckRejectsUninitializedRepo(t *testing.T) {
 
 func TestTUIServiceSaveProfilePersistsConfig(t *testing.T) {
 	svc := NewTUIService(nil)
-	svc.loadProfiles = func(string) (*cloudstic.ProfilesConfig, error) {
-		return &cloudstic.ProfilesConfig{
+	svc.loadProfiles = func(string) (*profile.Config, error) {
+		return &profile.Config{
 			Version: 1,
-			Stores: map[string]cloudstic.ProfileStore{
+			Stores: map[string]profile.Store{
 				"remote": {URI: "s3:bucket"},
 			},
-			Profiles: map[string]cloudstic.BackupProfile{},
+			Profiles: map[string]profile.Profile{},
 		}, nil
 	}
-	var saved *cloudstic.ProfilesConfig
-	svc.saveProfiles = func(_ string, cfg *cloudstic.ProfilesConfig) error {
+	var saved *profile.Config
+	svc.saveProfiles = func(_ string, cfg *profile.Config) error {
 		saved = cfg
 		return nil
 	}
 
-	err := svc.SaveProfile("profiles.yaml", "docs", cloudstic.BackupProfile{
+	err := svc.SaveProfile("profiles.yaml", "docs", profile.Profile{
 		Source: "local:/docs",
 		Store:  "remote",
 	})
@@ -221,16 +223,16 @@ func TestTUIServiceSaveProfilePersistsConfig(t *testing.T) {
 
 func TestTUIServiceDeleteProfileRemovesProfile(t *testing.T) {
 	svc := NewTUIService(nil)
-	svc.loadProfiles = func(string) (*cloudstic.ProfilesConfig, error) {
-		return &cloudstic.ProfilesConfig{
+	svc.loadProfiles = func(string) (*profile.Config, error) {
+		return &profile.Config{
 			Version: 1,
-			Profiles: map[string]cloudstic.BackupProfile{
+			Profiles: map[string]profile.Profile{
 				"docs": {Source: "local:/docs", Store: "remote"},
 			},
 		}, nil
 	}
-	var saved *cloudstic.ProfilesConfig
-	svc.saveProfiles = func(_ string, cfg *cloudstic.ProfilesConfig) error {
+	var saved *profile.Config
+	svc.saveProfiles = func(_ string, cfg *profile.Config) error {
 		saved = cfg
 		return nil
 	}
@@ -249,19 +251,19 @@ func TestTUIServiceDeleteProfileRemovesProfile(t *testing.T) {
 
 func TestTUIServiceSaveStorePersistsConfig(t *testing.T) {
 	svc := NewTUIService(nil)
-	svc.loadProfiles = func(string) (*cloudstic.ProfilesConfig, error) {
-		return &cloudstic.ProfilesConfig{
+	svc.loadProfiles = func(string) (*profile.Config, error) {
+		return &profile.Config{
 			Version: 1,
-			Stores:  map[string]cloudstic.ProfileStore{},
+			Stores:  map[string]profile.Store{},
 		}, nil
 	}
-	var saved *cloudstic.ProfilesConfig
-	svc.saveProfiles = func(_ string, cfg *cloudstic.ProfilesConfig) error {
+	var saved *profile.Config
+	svc.saveProfiles = func(_ string, cfg *profile.Config) error {
 		saved = cfg
 		return nil
 	}
 
-	err := svc.SaveStore("profiles.yaml", "remote", cloudstic.ProfileStore{URI: "local:/tmp/store"})
+	err := svc.SaveStore("profiles.yaml", "remote", profile.Store{URI: "local:/tmp/store"})
 	if err != nil {
 		t.Fatalf("SaveStore: %v", err)
 	}

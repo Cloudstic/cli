@@ -1,6 +1,6 @@
 //go:build darwin
 
-package engine
+package workstation
 
 import (
 	"os/exec"

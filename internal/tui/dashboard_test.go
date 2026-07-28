@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cloudstic/cli/pkg/profile"
+
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/engine"
 )
@@ -11,14 +13,14 @@ import (
 func TestBuildDashboard_SortsProfilesAndCountsSections(t *testing.T) {
 	enabled := true
 	disabled := false
-	cfg := &engine.ProfilesConfig{
-		Stores: map[string]engine.ProfileStore{
+	cfg := &profile.Config{
+		Stores: map[string]profile.Store{
 			"remote": {URI: "s3:bucket/prod"},
 		},
-		Auth: map[string]engine.ProfileAuth{
+		Auth: map[string]profile.Auth{
 			"google-work": {Provider: "google"},
 		},
-		Profiles: map[string]engine.BackupProfile{
+		Profiles: map[string]profile.Profile{
 			"zeta": {
 				Source:  "local:/tmp/zeta",
 				Store:   "remote",
@@ -100,11 +102,11 @@ func TestBuildDashboard_SortsProfilesAndCountsSections(t *testing.T) {
 }
 
 func TestBuildDashboard_NormalizesStoreProbeErrors(t *testing.T) {
-	cfg := &engine.ProfilesConfig{
-		Stores: map[string]engine.ProfileStore{
+	cfg := &profile.Config{
+		Stores: map[string]profile.Store{
 			"1": {URI: "local:/tmp/store"},
 		},
-		Profiles: map[string]engine.BackupProfile{
+		Profiles: map[string]profile.Profile{
 			"desktop": {
 				Source: "local:/tmp/Desktop",
 				Store:  "1",
@@ -145,11 +147,11 @@ func TestBuildDashboard_NormalizesStoreProbeErrors(t *testing.T) {
 }
 
 func TestBuildDashboard_UsesStoreProbeSnapshots(t *testing.T) {
-	cfg := &engine.ProfilesConfig{
-		Stores: map[string]engine.ProfileStore{
+	cfg := &profile.Config{
+		Stores: map[string]profile.Store{
 			"remote": {URI: "s3:bucket/prod"},
 		},
-		Profiles: map[string]engine.BackupProfile{
+		Profiles: map[string]profile.Profile{
 			"docs": {Source: "local:/docs", Store: "remote"},
 		},
 	}
@@ -172,11 +174,11 @@ func TestBuildDashboard_UsesStoreProbeSnapshots(t *testing.T) {
 }
 
 func TestBuildDashboard_BuildsProfileHistoryNewestFirst(t *testing.T) {
-	cfg := &engine.ProfilesConfig{
-		Stores: map[string]engine.ProfileStore{
+	cfg := &profile.Config{
+		Stores: map[string]profile.Store{
 			"remote": {URI: "s3:bucket/prod"},
 		},
-		Profiles: map[string]engine.BackupProfile{
+		Profiles: map[string]profile.Profile{
 			"docs": {Source: "local:/docs", Store: "remote"},
 		},
 	}
@@ -223,11 +225,11 @@ func TestBuildDashboard_BuildsProfileHistoryNewestFirst(t *testing.T) {
 }
 
 func TestBuildDashboard_StoreErrorBecomesWarning(t *testing.T) {
-	cfg := &engine.ProfilesConfig{
-		Stores: map[string]engine.ProfileStore{
+	cfg := &profile.Config{
+		Stores: map[string]profile.Store{
 			"remote": {URI: "s3:bucket/prod"},
 		},
-		Profiles: map[string]engine.BackupProfile{
+		Profiles: map[string]profile.Profile{
 			"docs": {Source: "local:/docs", Store: "remote"},
 		},
 	}

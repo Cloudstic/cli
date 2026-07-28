@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	cloudstic "github.com/cloudstic/cli"
+	"github.com/cloudstic/cli/pkg/profile"
 )
 
 // TestResolveClientConfig_ProfileOverridesEnvironment documents and locks in
@@ -27,12 +27,12 @@ func TestResolveClientConfig_ProfileOverridesEnvironment(t *testing.T) {
 	}
 
 	profilesPath := filepath.Join(t.TempDir(), "profiles.yaml")
-	err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
+	err := profile.Save(profilesPath, &profile.Config{
 		Version: 1,
-		Stores: map[string]cloudstic.ProfileStore{
+		Stores: map[string]profile.Store{
 			"s": {URI: "s3:bucket", S3Region: "profile-region"},
 		},
-		Profiles: map[string]cloudstic.BackupProfile{
+		Profiles: map[string]profile.Profile{
 			"p": {Source: "local:/data", Store: "s"},
 		},
 	})
@@ -54,12 +54,12 @@ func TestResolveClientConfig_ProfileOverridesEnvironment(t *testing.T) {
 func TestResolveClientConfig_AppliesProfileStore(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
-	err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
+	err := profile.Save(profilesPath, &profile.Config{
 		Version: 1,
-		Stores: map[string]cloudstic.ProfileStore{
+		Stores: map[string]profile.Store{
 			"s": {URI: "s3:bucket/prefix", S3Region: "eu-west-1", S3Profile: "prod"},
 		},
-		Profiles: map[string]cloudstic.BackupProfile{
+		Profiles: map[string]profile.Profile{
 			"p": {Source: "local:/data", Store: "s"},
 		},
 	})
@@ -94,9 +94,9 @@ func TestResolveClientConfig_EncryptionFields(t *testing.T) {
 	t.Setenv("TEST_ENC_KEY", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	t.Setenv("TEST_RECOVERY_KEY", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
 
-	err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
+	err := profile.Save(profilesPath, &profile.Config{
 		Version: 1,
-		Stores: map[string]cloudstic.ProfileStore{
+		Stores: map[string]profile.Store{
 			"enc": {
 				URI:                 "s3:bucket/enc",
 				PasswordSecret:      "env://TEST_BACKUP_PASSWORD",
@@ -107,7 +107,7 @@ func TestResolveClientConfig_EncryptionFields(t *testing.T) {
 				KMSEndpoint:         "https://kms.example.com",
 			},
 		},
-		Profiles: map[string]cloudstic.BackupProfile{
+		Profiles: map[string]profile.Profile{
 			"p": {Source: "local:/data", Store: "enc"},
 		},
 	})
@@ -146,12 +146,12 @@ func TestResolveClientConfig_EncryptionFields(t *testing.T) {
 func TestResolveClientConfig_DoesNotOverrideExplicitStoreFlag(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
-	err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
+	err := profile.Save(profilesPath, &profile.Config{
 		Version: 1,
-		Stores: map[string]cloudstic.ProfileStore{
+		Stores: map[string]profile.Store{
 			"s": {URI: "s3:bucket/prefix"},
 		},
-		Profiles: map[string]cloudstic.BackupProfile{
+		Profiles: map[string]profile.Profile{
 			"p": {Source: "local:/data", Store: "s"},
 		},
 	})

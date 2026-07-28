@@ -3,8 +3,6 @@ package cloudstic
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"path/filepath"
 	"testing"
 
 	"github.com/cloudstic/cli/internal/core"
@@ -227,34 +225,6 @@ func TestAddRecoveryKey_WrongCredentials(t *testing.T) {
 	}
 	if _, err := AddRecoveryKey(ctx, s, keychain.Chain{keychain.WithPassword("wrong-pass")}, AddRecoveryKeyOptions{}); err == nil {
 		t.Error("expected error with wrong credentials")
-	}
-}
-
-func TestClientDiscoverSources(t *testing.T) {
-	c := &Client{}
-	if _, err := c.DiscoverSources(context.Background()); err != nil {
-		t.Fatalf("DiscoverSources: %v", err)
-	}
-}
-
-func TestClientPlanWorkstationSetup(t *testing.T) {
-	if _, err := PlanWorkstationSetup(context.Background()); err != nil {
-		t.Fatalf("PlanWorkstationSetup: %v", err)
-	}
-}
-
-func TestApplyWorkstationSetupPlan(t *testing.T) {
-	cfg := &ProfilesConfig{}
-	result, err := ApplyWorkstationSetupPlan(cfg, &WorkstationSetupPlan{
-		Profiles: []WorkstationProfileDraft{
-			{Name: "documents", SourceURI: "local:/Users/test/Documents", StoreRef: "primary", Tags: []string{"workstation"}, Selected: true},
-		},
-	})
-	if err != nil {
-		t.Fatalf("ApplyWorkstationSetupPlan: %v", err)
-	}
-	if result.ProfilesCreated != 1 || cfg.Profiles["documents"].Store != "primary" {
-		t.Fatalf("unexpected apply result: %#v %#v", result, cfg)
 	}
 }
 
@@ -526,34 +496,5 @@ func TestClient_Cat_WithCompression(t *testing.T) {
 	if len(rawData) >= len(largeJSON) {
 		t.Logf("Warning: Compressed data (%d bytes) not smaller than original (%d bytes)",
 			len(rawData), len(largeJSON))
-	}
-}
-
-// TestSaveProfilesFile_SecretRefErrorIsInspectable confirms SecretRefError is
-// actually reachable through errors.As on a public entry point: a malformed
-// secret reference in a profile fails validation inside internal/engine and
-// internal/secretref, neither of which a library consumer can import, so
-// SecretRefError is the only way to inspect it programmatically rather than
-// just displaying the message.
-func TestSaveProfilesFile_SecretRefErrorIsInspectable(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "profiles.yaml")
-	cfg := &ProfilesConfig{
-		Version: 1,
-		Stores: map[string]ProfileStore{
-			"prod": {URI: "local:./store", PasswordSecret: "invalid"},
-		},
-	}
-
-	err := SaveProfilesFile(path, cfg)
-	if err == nil {
-		t.Fatal("SaveProfilesFile: expected a validation error")
-	}
-
-	var refErr *SecretRefError
-	if !errors.As(err, &refErr) {
-		t.Fatalf("errors.As(err, &SecretRefError) failed on: %v", err)
-	}
-	if refErr.Kind != SecretRefInvalid {
-		t.Errorf("Kind = %v, want %v", refErr.Kind, SecretRefInvalid)
 	}
 }

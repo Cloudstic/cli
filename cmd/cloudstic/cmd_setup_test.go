@@ -7,14 +7,15 @@ import (
 	"strings"
 	"testing"
 
-	cloudstic "github.com/cloudstic/cli"
-	"github.com/cloudstic/cli/internal/engine"
+	"github.com/cloudstic/cli/pkg/profile"
+
+	"github.com/cloudstic/cli/internal/workstation"
 )
 
-func stubSetupWorkstationPlan(t *testing.T, plan *cloudstic.WorkstationSetupPlan, err error) {
+func stubSetupWorkstationPlan(t *testing.T, plan *workstation.SetupPlan, err error) {
 	t.Helper()
 	old := planWorkstationSetup
-	planWorkstationSetup = func(context.Context, ...cloudstic.WorkstationSetupOption) (*cloudstic.WorkstationSetupPlan, error) {
+	planWorkstationSetup = func(context.Context, ...workstation.SetupOption) (*workstation.SetupPlan, error) {
 		return plan, err
 	}
 	t.Cleanup(func() { planWorkstationSetup = old })
@@ -22,14 +23,14 @@ func stubSetupWorkstationPlan(t *testing.T, plan *cloudstic.WorkstationSetupPlan
 
 func TestRunSetupWorkstation_DryRun(t *testing.T) {
 	t.Setenv("CLOUDSTIC_CONFIG_DIR", t.TempDir())
-	stubSetupWorkstationPlan(t, &cloudstic.WorkstationSetupPlan{
+	stubSetupWorkstationPlan(t, &workstation.SetupPlan{
 		Hostname:    "testbox",
 		StoreRef:    "primary",
 		StoreAction: "use-existing",
-		Profiles: []cloudstic.WorkstationProfileDraft{
+		Profiles: []workstation.ProfileDraft{
 			{Name: "documents", SourceURI: "local:/Users/test/Documents", StoreRef: "primary", Tags: []string{"workstation"}, Action: "create", Selected: true},
 		},
-		Coverage: cloudstic.WorkstationCoverageSummary{
+		Coverage: workstation.CoverageSummary{
 			ProtectedNow:         []string{"Documents (/Users/test/Documents)"},
 			SkippedIntentionally: []string{"Downloads (/Users/test/Downloads)"},
 		},
@@ -50,7 +51,7 @@ func TestRunSetupWorkstation_DryRun(t *testing.T) {
 
 func TestRunSetupWorkstation_JSON(t *testing.T) {
 	t.Setenv("CLOUDSTIC_CONFIG_DIR", t.TempDir())
-	stubSetupWorkstationPlan(t, &cloudstic.WorkstationSetupPlan{
+	stubSetupWorkstationPlan(t, &workstation.SetupPlan{
 		Hostname: "testbox",
 	}, nil)
 	args := []string{"workstation", "-dry-run", "-json"}
@@ -67,18 +68,18 @@ func TestRunSetupWorkstation_JSON(t *testing.T) {
 }
 
 func TestRunSetupWorkstation_ApplyYes(t *testing.T) {
-	stubSetupWorkstationPlan(t, &cloudstic.WorkstationSetupPlan{
+	stubSetupWorkstationPlan(t, &workstation.SetupPlan{
 		Hostname:    "testbox",
 		StoreRef:    "primary",
 		StoreAction: "use-existing",
-		Profiles: []cloudstic.WorkstationProfileDraft{
+		Profiles: []workstation.ProfileDraft{
 			{Name: "documents", SourceURI: "local:/Users/test/Documents", StoreRef: "primary", Tags: []string{"workstation"}, Action: "create", Selected: true},
 		},
 	}, nil)
 	profilesPath := filepath.Join(t.TempDir(), "profiles.yaml")
-	if err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
+	if err := profile.Save(profilesPath, &profile.Config{
 		Version: 1,
-		Stores:  map[string]cloudstic.ProfileStore{"primary": {URI: "local:/repo"}},
+		Stores:  map[string]profile.Store{"primary": {URI: "local:/repo"}},
 	}); err != nil {
 		t.Fatalf("SaveProfilesFile: %v", err)
 	}
@@ -90,7 +91,7 @@ func TestRunSetupWorkstation_ApplyYes(t *testing.T) {
 	if code := setupCommand().execute(r.withArgs(args), context.Background(), "setup"); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}
-	cfg, err := cloudstic.LoadProfilesFile(profilesPath)
+	cfg, err := profile.Load(profilesPath)
 	if err != nil {
 		t.Fatalf("LoadProfilesFile: %v", err)
 	}
@@ -111,12 +112,12 @@ func TestRunSetupWorkstation_RequiresStoreResolutionWithoutPrompt(t *testing.T) 
 }
 
 func TestReviewWorkstationPlan_CanSkipSources(t *testing.T) {
-	cfg := &cloudstic.ProfilesConfig{}
-	plan := &engine.WorkstationSetupPlan{
-		Profiles: []engine.WorkstationProfileDraft{
+	cfg := &profile.Config{}
+	plan := &workstation.SetupPlan{
+		Profiles: []workstation.ProfileDraft{
 			{Name: "documents", SourceURI: "local:/Users/test/Documents", Action: "create", DisplayLabel: "Documents (/Users/test/Documents)", Selected: true},
 		},
-		Coverage: engine.WorkstationCoverageSummary{
+		Coverage: workstation.CoverageSummary{
 			ProtectedNow: []string{"Documents (/Users/test/Documents)"},
 		},
 	}
@@ -143,16 +144,16 @@ func TestReviewWorkstationPlan_CanSkipSources(t *testing.T) {
 }
 
 func TestReviewWorkstationPlan_RenameUpdate(t *testing.T) {
-	cfg := &cloudstic.ProfilesConfig{
-		Profiles: map[string]cloudstic.BackupProfile{
+	cfg := &profile.Config{
+		Profiles: map[string]profile.Profile{
 			"documents": {Source: "local:/Users/test/Documents"},
 		},
 	}
-	plan := &engine.WorkstationSetupPlan{
-		Profiles: []engine.WorkstationProfileDraft{
+	plan := &workstation.SetupPlan{
+		Profiles: []workstation.ProfileDraft{
 			{Name: "documents", SourceURI: "local:/Users/test/Documents", Action: "update", DisplayLabel: "Documents (/Users/test/Documents)", Selected: true},
 		},
-		Coverage: engine.WorkstationCoverageSummary{
+		Coverage: workstation.CoverageSummary{
 			ProtectedNow: []string{"Documents (/Users/test/Documents)"},
 		},
 	}

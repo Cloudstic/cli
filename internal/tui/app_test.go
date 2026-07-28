@@ -4,18 +4,19 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudstic/cli/pkg/profile"
+
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/cloudstic/cli/internal/engine"
 )
 
 func testDashboard() Dashboard {
 	enabled := true
 	disabled := false
-	cfg := &engine.ProfilesConfig{
-		Stores: map[string]engine.ProfileStore{
+	cfg := &profile.Config{
+		Stores: map[string]profile.Store{
 			"remote": {URI: "s3:bucket/prod"},
 		},
-		Profiles: map[string]engine.BackupProfile{
+		Profiles: map[string]profile.Profile{
 			"alpha": {Source: "local:/tmp/alpha", Store: "remote", Enabled: &enabled},
 			"zeta":  {Source: "local:/tmp/zeta", Store: "remote", Enabled: &disabled},
 		},

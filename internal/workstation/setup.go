@@ -1,4 +1,4 @@
-package engine
+package workstation
 
 import (
 	"context"
@@ -9,12 +9,14 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/cloudstic/cli/pkg/profile"
 )
 
 var (
 	workstationDiscoverSourcesFunc = DiscoverSources
 	workstationUserHomeDirFunc     = os.UserHomeDir
-	workstationHostnameFunc        = os.Hostname
+	hostnameFunc                   = os.Hostname
 	workstationPathExistsFunc      = func(path string) bool {
 		info, err := os.Stat(path)
 		return err == nil && info.IsDir()
@@ -22,27 +24,27 @@ var (
 	workstationGOOS = runtime.GOOS
 )
 
-type WorkstationSetupOption func(*workstationSetupOptions)
+type SetupOption func(*setupOptions)
 
-type workstationSetupOptions struct {
-	profiles *ProfilesConfig
+type setupOptions struct {
+	profiles *profile.Config
 	storeRef string
 	dryRun   bool
 }
 
-func WithWorkstationProfiles(cfg *ProfilesConfig) WorkstationSetupOption {
-	return func(o *workstationSetupOptions) { o.profiles = cfg }
+func WithProfiles(cfg *profile.Config) SetupOption {
+	return func(o *setupOptions) { o.profiles = cfg }
 }
 
-func WithWorkstationStoreRef(name string) WorkstationSetupOption {
-	return func(o *workstationSetupOptions) { o.storeRef = strings.TrimSpace(name) }
+func WithStoreRef(name string) SetupOption {
+	return func(o *setupOptions) { o.storeRef = strings.TrimSpace(name) }
 }
 
-func WithWorkstationDryRun() WorkstationSetupOption {
-	return func(o *workstationSetupOptions) { o.dryRun = true }
+func WithDryRun() SetupOption {
+	return func(o *setupOptions) { o.dryRun = true }
 }
 
-type WorkstationFolderCandidate struct {
+type FolderCandidate struct {
 	Key      string `json:"key"`
 	Label    string `json:"label"`
 	Category string `json:"category"`
@@ -50,7 +52,7 @@ type WorkstationFolderCandidate struct {
 	Selected bool   `json:"selected"`
 }
 
-type WorkstationProfileDraft struct {
+type ProfileDraft struct {
 	Name         string   `json:"name"`
 	SourceURI    string   `json:"source_uri"`
 	StoreRef     string   `json:"store_ref,omitempty"`
@@ -60,32 +62,32 @@ type WorkstationProfileDraft struct {
 	Selected     bool     `json:"selected"`
 }
 
-type WorkstationCoverageSummary struct {
+type CoverageSummary struct {
 	ProtectedNow         []string `json:"protected_now,omitempty"`
 	SkippedIntentionally []string `json:"skipped_intentionally,omitempty"`
 	NotAvailableNow      []string `json:"not_available_now,omitempty"`
 	Warnings             []string `json:"warnings,omitempty"`
 }
 
-type WorkstationApplyResult struct {
+type ApplyResult struct {
 	ProfilesCreated int      `json:"profiles_created"`
 	ProfilesUpdated int      `json:"profiles_updated"`
 	ProfileNames    []string `json:"profile_names,omitempty"`
 }
 
-type WorkstationSetupResult struct {
-	Plan    *WorkstationSetupPlan   `json:"plan,omitempty"`
-	Applied *WorkstationApplyResult `json:"applied,omitempty"`
+type SetupResult struct {
+	Plan    *SetupPlan   `json:"plan,omitempty"`
+	Applied *ApplyResult `json:"applied,omitempty"`
 }
 
-type WorkstationSetupPlan struct {
-	Hostname        string                       `json:"hostname"`
-	StoreRef        string                       `json:"store_ref,omitempty"`
-	StoreAction     string                       `json:"store_action"`
-	Folders         []WorkstationFolderCandidate `json:"folders,omitempty"`
-	PortableSources []DiscoveredSource           `json:"portable_sources,omitempty"`
-	Profiles        []WorkstationProfileDraft    `json:"profiles,omitempty"`
-	Coverage        WorkstationCoverageSummary   `json:"coverage"`
+type SetupPlan struct {
+	Hostname        string             `json:"hostname"`
+	StoreRef        string             `json:"store_ref,omitempty"`
+	StoreAction     string             `json:"store_action"`
+	Folders         []FolderCandidate  `json:"folders,omitempty"`
+	PortableSources []DiscoveredSource `json:"portable_sources,omitempty"`
+	Profiles        []ProfileDraft     `json:"profiles,omitempty"`
+	Coverage        CoverageSummary    `json:"coverage"`
 }
 
 type workstationFolderSpec struct {
@@ -95,14 +97,14 @@ type workstationFolderSpec struct {
 	path     string
 }
 
-func PlanWorkstationSetup(ctx context.Context, opts ...WorkstationSetupOption) (*WorkstationSetupPlan, error) {
-	options := workstationSetupOptions{}
+func Plan(ctx context.Context, opts ...SetupOption) (*SetupPlan, error) {
+	options := setupOptions{}
 	for _, opt := range opts {
 		opt(&options)
 	}
 
-	cfg := normalizeProfilesConfig(options.profiles)
-	hostname, err := workstationHostnameFunc()
+	cfg := profile.Normalize(options.profiles)
+	hostname, err := hostnameFunc()
 	if err != nil {
 		return nil, fmt.Errorf("resolve hostname: %w", err)
 	}
@@ -129,7 +131,7 @@ func PlanWorkstationSetup(ctx context.Context, opts ...WorkstationSetupOption) (
 
 	storeRef, storeAction, warnings := resolveWorkstationStore(cfg, options.storeRef)
 
-	plan := &WorkstationSetupPlan{
+	plan := &SetupPlan{
 		Hostname:        hostname,
 		StoreRef:        storeRef,
 		StoreAction:     storeAction,
@@ -147,7 +149,7 @@ func PlanWorkstationSetup(ctx context.Context, opts ...WorkstationSetupOption) (
 			continue
 		}
 		name, action := nextWorkstationProfileName(cfg, usedNames, folder.Key, hostname, "local:"+folder.Path)
-		plan.Profiles = append(plan.Profiles, WorkstationProfileDraft{
+		plan.Profiles = append(plan.Profiles, ProfileDraft{
 			Name:         name,
 			SourceURI:    "local:" + folder.Path,
 			StoreRef:     storeRef,
@@ -162,7 +164,7 @@ func PlanWorkstationSetup(ctx context.Context, opts ...WorkstationSetupOption) (
 	for _, src := range portable {
 		base := sanitizeWorkstationName(firstNonEmpty(src.DriveName, src.DisplayName, filepath.Base(src.MountPoint), "portable"))
 		name, action := nextWorkstationProfileName(cfg, usedNames, base, hostname, src.SourceURI)
-		plan.Profiles = append(plan.Profiles, WorkstationProfileDraft{
+		plan.Profiles = append(plan.Profiles, ProfileDraft{
 			Name:         name,
 			SourceURI:    src.SourceURI,
 			StoreRef:     storeRef,
@@ -179,23 +181,23 @@ func PlanWorkstationSetup(ctx context.Context, opts ...WorkstationSetupOption) (
 	return plan, nil
 }
 
-func SetupWorkstation(ctx context.Context, opts ...WorkstationSetupOption) (*WorkstationSetupResult, error) {
-	options := workstationSetupOptions{}
+func Setup(ctx context.Context, opts ...SetupOption) (*SetupResult, error) {
+	options := setupOptions{}
 	for _, opt := range opts {
 		opt(&options)
 	}
 
-	plan, err := PlanWorkstationSetup(ctx, opts...)
+	plan, err := Plan(ctx, opts...)
 	if err != nil {
 		return nil, err
 	}
 
-	result := &WorkstationSetupResult{Plan: plan}
+	result := &SetupResult{Plan: plan}
 	if options.dryRun {
 		return result, nil
 	}
 
-	applied, err := ApplyWorkstationSetupPlan(options.profiles, plan)
+	applied, err := Apply(options.profiles, plan)
 	if err != nil {
 		return nil, err
 	}
@@ -203,13 +205,13 @@ func SetupWorkstation(ctx context.Context, opts ...WorkstationSetupOption) (*Wor
 	return result, nil
 }
 
-func ApplyWorkstationSetupPlan(cfg *ProfilesConfig, plan *WorkstationSetupPlan) (*WorkstationApplyResult, error) {
+func Apply(cfg *profile.Config, plan *SetupPlan) (*ApplyResult, error) {
 	if plan == nil {
 		return nil, fmt.Errorf("workstation setup plan is required")
 	}
-	cfg = normalizeProfilesConfig(cfg)
+	cfg = profile.Normalize(cfg)
 
-	result := &WorkstationApplyResult{
+	result := &ApplyResult{
 		ProfileNames: make([]string, 0, len(plan.Profiles)),
 	}
 
@@ -230,7 +232,7 @@ func ApplyWorkstationSetupPlan(cfg *ProfilesConfig, plan *WorkstationSetupPlan) 
 			result.ProfilesCreated++
 		}
 
-		cfg.Profiles[draft.Name] = BackupProfile{
+		cfg.Profiles[draft.Name] = profile.Profile{
 			Source: draft.SourceURI,
 			Store:  draft.StoreRef,
 			Tags:   slices.Clone(draft.Tags),
@@ -242,7 +244,7 @@ func ApplyWorkstationSetupPlan(cfg *ProfilesConfig, plan *WorkstationSetupPlan) 
 	return result, nil
 }
 
-func discoverWorkstationFolders() ([]WorkstationFolderCandidate, []string, error) {
+func discoverWorkstationFolders() ([]FolderCandidate, []string, error) {
 	home, err := workstationUserHomeDirFunc()
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolve home directory: %w", err)
@@ -270,7 +272,7 @@ func discoverWorkstationFolders() ([]WorkstationFolderCandidate, []string, error
 		addSpec(sanitizeWorkstationName(name), name, "developer projects", name)
 	}
 
-	folders := make([]WorkstationFolderCandidate, 0, len(specs))
+	folders := make([]FolderCandidate, 0, len(specs))
 	seenPaths := map[string]struct{}{}
 	for _, spec := range specs {
 		if !workstationPathExistsFunc(spec.path) {
@@ -281,7 +283,7 @@ func discoverWorkstationFolders() ([]WorkstationFolderCandidate, []string, error
 			continue
 		}
 		seenPaths[cleanPath] = struct{}{}
-		folders = append(folders, WorkstationFolderCandidate{
+		folders = append(folders, FolderCandidate{
 			Key:      spec.key,
 			Label:    spec.label,
 			Category: spec.category,
@@ -289,7 +291,7 @@ func discoverWorkstationFolders() ([]WorkstationFolderCandidate, []string, error
 			Selected: true,
 		})
 	}
-	slices.SortFunc(folders, func(a, b WorkstationFolderCandidate) int {
+	slices.SortFunc(folders, func(a, b FolderCandidate) int {
 		if v := strings.Compare(a.Category, b.Category); v != 0 {
 			return v
 		}
@@ -305,7 +307,7 @@ func discoverWorkstationFolders() ([]WorkstationFolderCandidate, []string, error
 	return folders, skipped, nil
 }
 
-func resolveWorkstationStore(cfg *ProfilesConfig, requested string) (string, string, []string) {
+func resolveWorkstationStore(cfg *profile.Config, requested string) (string, string, []string) {
 	if requested != "" {
 		if _, ok := cfg.Stores[requested]; ok {
 			return requested, "use-existing", nil
@@ -324,7 +326,7 @@ func resolveWorkstationStore(cfg *ProfilesConfig, requested string) (string, str
 	}
 }
 
-func nextWorkstationProfileName(cfg *ProfilesConfig, used map[string]struct{}, base, hostname, sourceURI string) (string, string) {
+func nextWorkstationProfileName(cfg *profile.Config, used map[string]struct{}, base, hostname, sourceURI string) (string, string) {
 	base = sanitizeWorkstationName(base)
 	if base == "" {
 		base = "workstation"

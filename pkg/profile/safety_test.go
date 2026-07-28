@@ -1,4 +1,4 @@
-package engine
+package profile
 
 import (
 	"errors"
@@ -15,7 +15,7 @@ import (
 // IsEnabled treats a missing `enabled` key as true: a profile without the
 // field must still run under -all-profiles, or adding the field later would
 // silently change which profiles back up.
-func TestBackupProfile_IsEnabled(t *testing.T) {
+func TestProfile_IsEnabled(t *testing.T) {
 	enabled, disabled := true, false
 	for _, tc := range []struct {
 		name string
@@ -27,7 +27,7 @@ func TestBackupProfile_IsEnabled(t *testing.T) {
 		{"explicitly disabled", &disabled, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := (BackupProfile{Enabled: tc.in}).IsEnabled(); got != tc.want {
+			if got := (Profile{Enabled: tc.in}).IsEnabled(); got != tc.want {
 				t.Errorf("IsEnabled() = %v, want %v", got, tc.want)
 			}
 		})
@@ -36,8 +36,8 @@ func TestBackupProfile_IsEnabled(t *testing.T) {
 
 // A missing file must read as an empty config, not an error: the caller
 // distinguishing "no profiles file" from "unknown profile" depends on it.
-func TestLoadProfilesFileOrEmpty_MissingFile(t *testing.T) {
-	cfg, err := LoadProfilesFileOrEmpty(filepath.Join(t.TempDir(), "absent.yaml"))
+func TestLoadOrEmpty_MissingFile(t *testing.T) {
+	cfg, err := LoadOrEmpty(filepath.Join(t.TempDir(), "absent.yaml"))
 	if err != nil {
 		t.Fatalf("a missing profiles file must not be an error: %v", err)
 	}
@@ -51,50 +51,50 @@ func TestLoadProfilesFileOrEmpty_MissingFile(t *testing.T) {
 
 // Any other read error must still surface — swallowing it would report a
 // broken file as "no profiles".
-func TestLoadProfilesFileOrEmpty_MalformedFileStillErrors(t *testing.T) {
+func TestLoadOrEmpty_MalformedFileStillErrors(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "profiles.yaml")
 	if err := os.WriteFile(path, []byte("this: is: not: valid: yaml:\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadProfilesFileOrEmpty(path); err == nil {
+	if _, err := LoadOrEmpty(path); err == nil {
 		t.Fatal("expected a malformed profiles file to error")
 	} else if errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("a malformed file must not be reported as missing: %v", err)
 	}
 }
 
-func TestEnsureProfilesMaps(t *testing.T) {
-	cfg := &ProfilesConfig{}
-	EnsureProfilesMaps(cfg)
+func TestEnsureMaps(t *testing.T) {
+	cfg := &Config{}
+	EnsureMaps(cfg)
 	if cfg.Stores == nil || cfg.Profiles == nil || cfg.Auth == nil {
 		t.Fatalf("all map fields must be non-nil, got %+v", cfg)
 	}
 
 	// Existing content must survive a second call.
-	cfg.Profiles["keep"] = BackupProfile{}
-	EnsureProfilesMaps(cfg)
+	cfg.Profiles["keep"] = Profile{}
+	EnsureMaps(cfg)
 	if _, ok := cfg.Profiles["keep"]; !ok {
-		t.Error("EnsureProfilesMaps discarded existing entries")
+		t.Error("EnsureMaps discarded existing entries")
 	}
 }
 
 // Round-tripping is what the move must preserve end to end.
-func TestSaveThenLoadProfilesFile_RoundTrip(t *testing.T) {
+func TestSaveThenLoad_RoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "profiles.yaml")
-	want := &ProfilesConfig{
+	want := &Config{
 		Version: 1,
-		Stores:  map[string]ProfileStore{"s3": {URI: "local:///tmp/repo"}},
-		Profiles: map[string]BackupProfile{
+		Stores:  map[string]Store{"s3": {URI: "local:///tmp/repo"}},
+		Profiles: map[string]Profile{
 			"docs": {Source: "local:///home/me/docs", Store: "s3"},
 		},
 	}
-	if err := SaveProfilesFile(path, want); err != nil {
-		t.Fatalf("SaveProfilesFile: %v", err)
+	if err := Save(path, want); err != nil {
+		t.Fatalf("Save: %v", err)
 	}
 
-	got, err := LoadProfilesFile(path)
+	got, err := Load(path)
 	if err != nil {
-		t.Fatalf("LoadProfilesFile: %v", err)
+		t.Fatalf("Load: %v", err)
 	}
 	if got.Profiles["docs"].Source != want.Profiles["docs"].Source {
 		t.Errorf("Source = %q, want %q", got.Profiles["docs"].Source, want.Profiles["docs"].Source)

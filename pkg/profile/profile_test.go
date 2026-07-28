@@ -1,4 +1,4 @@
-package engine
+package profile
 
 import (
 	"os"
@@ -7,16 +7,16 @@ import (
 	"testing"
 )
 
-func TestLoadProfilesFile_NormalizesMapsAndVersion(t *testing.T) {
+func TestLoad_NormalizesMapsAndVersion(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "profiles.yaml")
 	if err := os.WriteFile(path, []byte("profiles:\n  a:\n    source: local:/tmp\n"), 0600); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
 
-	cfg, err := LoadProfilesFile(path)
+	cfg, err := Load(path)
 	if err != nil {
-		t.Fatalf("LoadProfilesFile: %v", err)
+		t.Fatalf("Load: %v", err)
 	}
 	if cfg.Version != 1 {
 		t.Fatalf("Version=%d want=1", cfg.Version)
@@ -32,12 +32,12 @@ func TestLoadProfilesFile_NormalizesMapsAndVersion(t *testing.T) {
 	}
 }
 
-func TestSaveProfilesFile_RoundTrip(t *testing.T) {
+func TestSave_RoundTrip(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "profiles.yaml")
 
-	err := SaveProfilesFile(path, &ProfilesConfig{
-		Stores: map[string]ProfileStore{
+	err := Save(path, &Config{
+		Stores: map[string]Store{
 			"s": {
 				URI:                     "local:./store",
 				PasswordSecret:          "env://CLOUDSTIC_PASSWORD",
@@ -51,17 +51,17 @@ func TestSaveProfilesFile_RoundTrip(t *testing.T) {
 				StoreSFTPKeySecret:      "env://STORE_SFTP_KEY",
 			},
 		},
-		Profiles: map[string]BackupProfile{
+		Profiles: map[string]Profile{
 			"p": {Source: "local:./docs", Store: "s"},
 		},
 	})
 	if err != nil {
-		t.Fatalf("SaveProfilesFile: %v", err)
+		t.Fatalf("Save: %v", err)
 	}
 
-	cfg, err := LoadProfilesFile(path)
+	cfg, err := Load(path)
 	if err != nil {
-		t.Fatalf("LoadProfilesFile: %v", err)
+		t.Fatalf("Load: %v", err)
 	}
 	if cfg.Profiles["p"].Source != "local:./docs" {
 		t.Fatalf("unexpected source: %q", cfg.Profiles["p"].Source)
@@ -83,7 +83,7 @@ func TestSaveProfilesFile_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestLoadProfilesFile_InvalidSecretRef(t *testing.T) {
+func TestLoad_InvalidSecretRef(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "profiles.yaml")
 	content := `version: 1
@@ -96,9 +96,9 @@ stores:
 		t.Fatalf("write file: %v", err)
 	}
 
-	_, err := LoadProfilesFile(path)
+	_, err := Load(path)
 	if err == nil {
-		t.Fatal("LoadProfilesFile: expected validation error")
+		t.Fatal("Load: expected validation error")
 	}
 	msg := err.Error()
 	if !strings.Contains(msg, `store "prod" field "password_secret"`) {
@@ -109,11 +109,11 @@ stores:
 	}
 }
 
-func TestSaveProfilesFile_InvalidSecretRef(t *testing.T) {
+func TestSave_InvalidSecretRef(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "profiles.yaml")
-	err := SaveProfilesFile(path, &ProfilesConfig{
-		Stores: map[string]ProfileStore{
+	err := Save(path, &Config{
+		Stores: map[string]Store{
 			"prod": {
 				URI:                "local:./store",
 				StoreSFTPKeySecret: "env:/bad-format",
@@ -121,18 +121,18 @@ func TestSaveProfilesFile_InvalidSecretRef(t *testing.T) {
 		},
 	})
 	if err == nil {
-		t.Fatal("SaveProfilesFile: expected validation error")
+		t.Fatal("Save: expected validation error")
 	}
 	if !strings.Contains(err.Error(), `store "prod" field "store_sftp_key_secret"`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestSaveProfilesFile_InvalidB2SecretRef(t *testing.T) {
+func TestSave_InvalidB2SecretRef(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "profiles.yaml")
-	err := SaveProfilesFile(path, &ProfilesConfig{
-		Stores: map[string]ProfileStore{
+	err := Save(path, &Config{
+		Stores: map[string]Store{
 			"b2store": {
 				URI:            "b2:bucket",
 				B2AppKeySecret: "env:/bad-format",
@@ -140,7 +140,7 @@ func TestSaveProfilesFile_InvalidB2SecretRef(t *testing.T) {
 		},
 	})
 	if err == nil {
-		t.Fatal("SaveProfilesFile: expected validation error")
+		t.Fatal("Save: expected validation error")
 	}
 	if !strings.Contains(err.Error(), `store "b2store" field "b2_app_key_secret"`) {
 		t.Fatalf("unexpected error: %v", err)

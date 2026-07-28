@@ -1,17 +1,19 @@
-package engine
+package workstation
 
 import (
 	"context"
 	"errors"
 	"reflect"
 	"testing"
+
+	"github.com/cloudstic/cli/pkg/profile"
 )
 
-func TestPlanWorkstationSetup_BuildsPreview(t *testing.T) {
+func TestPlan_BuildsPreview(t *testing.T) {
 	reset := stubWorkstationSetupEnv(t)
 	defer reset()
 
-	workstationHostnameFunc = func() (string, error) { return "MacBook-Pro", nil }
+	hostnameFunc = func() (string, error) { return "MacBook-Pro", nil }
 	workstationUserHomeDirFunc = func() (string, error) { return "/Users/test", nil }
 	workstationGOOS = "darwin"
 	workstationPathExistsFunc = func(path string) bool {
@@ -29,19 +31,19 @@ func TestPlanWorkstationSetup_BuildsPreview(t *testing.T) {
 		}, nil
 	}
 
-	cfg := &ProfilesConfig{
-		Stores: map[string]ProfileStore{
+	cfg := &profile.Config{
+		Stores: map[string]profile.Store{
 			"primary": {URI: "s3:bucket"},
 		},
-		Profiles: map[string]BackupProfile{
+		Profiles: map[string]profile.Profile{
 			"documents": {Source: "local:/Users/test/Documents"},
 			"archive":   {Source: "local:/old-archive"},
 		},
 	}
 
-	plan, err := PlanWorkstationSetup(context.Background(), WithWorkstationProfiles(cfg))
+	plan, err := Plan(context.Background(), WithProfiles(cfg))
 	if err != nil {
-		t.Fatalf("PlanWorkstationSetup: %v", err)
+		t.Fatalf("Plan: %v", err)
 	}
 
 	if plan.StoreRef != "primary" || plan.StoreAction != "use-existing" {
@@ -51,7 +53,7 @@ func TestPlanWorkstationSetup_BuildsPreview(t *testing.T) {
 		t.Fatalf("unexpected portable sources: %#v", plan.PortableSources)
 	}
 
-	gotProfiles := map[string]WorkstationProfileDraft{}
+	gotProfiles := map[string]ProfileDraft{}
 	for _, profile := range plan.Profiles {
 		gotProfiles[profile.Name] = profile
 	}
@@ -69,24 +71,24 @@ func TestPlanWorkstationSetup_BuildsPreview(t *testing.T) {
 	}
 }
 
-func TestPlanWorkstationSetup_StoreWarnings(t *testing.T) {
+func TestPlan_StoreWarnings(t *testing.T) {
 	reset := stubWorkstationSetupEnv(t)
 	defer reset()
 
-	workstationHostnameFunc = func() (string, error) { return "host", nil }
+	hostnameFunc = func() (string, error) { return "host", nil }
 	workstationUserHomeDirFunc = func() (string, error) { return "/home/test", nil }
 	workstationPathExistsFunc = func(path string) bool { return path == "/home/test/Documents" }
 	workstationDiscoverSourcesFunc = func(context.Context) ([]DiscoveredSource, error) { return nil, nil }
 
-	cfg := &ProfilesConfig{
-		Stores: map[string]ProfileStore{
+	cfg := &profile.Config{
+		Stores: map[string]profile.Store{
 			"a": {URI: "local:/a"},
 			"b": {URI: "local:/b"},
 		},
 	}
-	plan, err := PlanWorkstationSetup(context.Background(), WithWorkstationProfiles(cfg))
+	plan, err := Plan(context.Background(), WithProfiles(cfg))
 	if err != nil {
-		t.Fatalf("PlanWorkstationSetup: %v", err)
+		t.Fatalf("Plan: %v", err)
 	}
 	if plan.StoreRef != "" || plan.StoreAction != "choose-existing" {
 		t.Fatalf("unexpected store selection: %#v", plan)
@@ -96,18 +98,18 @@ func TestPlanWorkstationSetup_StoreWarnings(t *testing.T) {
 	}
 }
 
-func TestPlanWorkstationSetup_ErrorPaths(t *testing.T) {
+func TestPlan_ErrorPaths(t *testing.T) {
 	reset := stubWorkstationSetupEnv(t)
 	defer reset()
 
-	workstationHostnameFunc = func() (string, error) { return "", errors.New("boom") }
-	if _, err := PlanWorkstationSetup(context.Background()); err == nil {
+	hostnameFunc = func() (string, error) { return "", errors.New("boom") }
+	if _, err := Plan(context.Background()); err == nil {
 		t.Fatal("expected hostname error")
 	}
 
-	workstationHostnameFunc = func() (string, error) { return "host", nil }
+	hostnameFunc = func() (string, error) { return "host", nil }
 	workstationUserHomeDirFunc = func() (string, error) { return "", errors.New("no home") }
-	if _, err := PlanWorkstationSetup(context.Background()); err == nil {
+	if _, err := Plan(context.Background()); err == nil {
 		t.Fatal("expected home dir error")
 	}
 
@@ -116,25 +118,25 @@ func TestPlanWorkstationSetup_ErrorPaths(t *testing.T) {
 	workstationDiscoverSourcesFunc = func(context.Context) ([]DiscoveredSource, error) {
 		return nil, errors.New("discover failed")
 	}
-	if _, err := PlanWorkstationSetup(context.Background()); err == nil {
+	if _, err := Plan(context.Background()); err == nil {
 		t.Fatal("expected discover error")
 	}
 }
 
-func TestApplyWorkstationSetupPlan(t *testing.T) {
-	cfg := &ProfilesConfig{
-		Profiles: map[string]BackupProfile{
+func TestApply(t *testing.T) {
+	cfg := &profile.Config{
+		Profiles: map[string]profile.Profile{
 			"documents": {Source: "local:/old"},
 		},
 	}
-	result, err := ApplyWorkstationSetupPlan(cfg, &WorkstationSetupPlan{
-		Profiles: []WorkstationProfileDraft{
+	result, err := Apply(cfg, &SetupPlan{
+		Profiles: []ProfileDraft{
 			{Name: "documents", SourceURI: "local:/Users/test/Documents", StoreRef: "primary", Tags: []string{"workstation"}, Selected: true},
 			{Name: "archive", SourceURI: "local:/Volumes/Archive", StoreRef: "primary", Tags: []string{"portable", "workstation"}, Selected: true},
 		},
 	})
 	if err != nil {
-		t.Fatalf("ApplyWorkstationSetupPlan: %v", err)
+		t.Fatalf("Apply: %v", err)
 	}
 	if result.ProfilesCreated != 1 || result.ProfilesUpdated != 1 {
 		t.Fatalf("unexpected counts: %#v", result)
@@ -147,16 +149,16 @@ func TestApplyWorkstationSetupPlan(t *testing.T) {
 	}
 }
 
-func TestApplyWorkstationSetupPlan_SkipsDeselectedDrafts(t *testing.T) {
-	cfg := &ProfilesConfig{}
-	result, err := ApplyWorkstationSetupPlan(cfg, &WorkstationSetupPlan{
-		Profiles: []WorkstationProfileDraft{
+func TestApply_SkipsDeselectedDrafts(t *testing.T) {
+	cfg := &profile.Config{}
+	result, err := Apply(cfg, &SetupPlan{
+		Profiles: []ProfileDraft{
 			{Name: "documents", SourceURI: "local:/Users/test/Documents", Selected: true},
 			{Name: "desktop", SourceURI: "local:/Users/test/Desktop", Selected: false},
 		},
 	})
 	if err != nil {
-		t.Fatalf("ApplyWorkstationSetupPlan: %v", err)
+		t.Fatalf("Apply: %v", err)
 	}
 	if result.ProfilesCreated != 1 {
 		t.Fatalf("ProfilesCreated = %d, want 1", result.ProfilesCreated)
@@ -166,35 +168,35 @@ func TestApplyWorkstationSetupPlan_SkipsDeselectedDrafts(t *testing.T) {
 	}
 }
 
-func TestApplyWorkstationSetupPlan_Errors(t *testing.T) {
-	if _, err := ApplyWorkstationSetupPlan(nil, nil); err == nil {
+func TestApply_Errors(t *testing.T) {
+	if _, err := Apply(nil, nil); err == nil {
 		t.Fatal("expected nil plan error")
 	}
-	if _, err := ApplyWorkstationSetupPlan(nil, &WorkstationSetupPlan{
-		Profiles: []WorkstationProfileDraft{{Name: "", SourceURI: "local:/tmp", Selected: true}},
+	if _, err := Apply(nil, &SetupPlan{
+		Profiles: []ProfileDraft{{Name: "", SourceURI: "local:/tmp", Selected: true}},
 	}); err == nil {
 		t.Fatal("expected missing name error")
 	}
-	if _, err := ApplyWorkstationSetupPlan(nil, &WorkstationSetupPlan{
-		Profiles: []WorkstationProfileDraft{{Name: "docs", SourceURI: "", Selected: true}},
+	if _, err := Apply(nil, &SetupPlan{
+		Profiles: []ProfileDraft{{Name: "docs", SourceURI: "", Selected: true}},
 	}); err == nil {
 		t.Fatal("expected missing source error")
 	}
 }
 
-func TestSetupWorkstation_DryRun(t *testing.T) {
+func TestSetup_DryRun(t *testing.T) {
 	reset := stubWorkstationSetupEnv(t)
 	defer reset()
 
-	workstationHostnameFunc = func() (string, error) { return "host", nil }
+	hostnameFunc = func() (string, error) { return "host", nil }
 	workstationUserHomeDirFunc = func() (string, error) { return "/home/test", nil }
 	workstationPathExistsFunc = func(path string) bool { return path == "/home/test/Documents" }
 	workstationDiscoverSourcesFunc = func(context.Context) ([]DiscoveredSource, error) { return nil, nil }
 
-	cfg := &ProfilesConfig{}
-	result, err := SetupWorkstation(context.Background(), WithWorkstationProfiles(cfg), WithWorkstationDryRun())
+	cfg := &profile.Config{}
+	result, err := Setup(context.Background(), WithProfiles(cfg), WithDryRun())
 	if err != nil {
-		t.Fatalf("SetupWorkstation: %v", err)
+		t.Fatalf("Setup: %v", err)
 	}
 	if result.Plan == nil || result.Applied != nil {
 		t.Fatalf("unexpected setup result: %#v", result)
@@ -204,23 +206,23 @@ func TestSetupWorkstation_DryRun(t *testing.T) {
 	}
 }
 
-func TestSetupWorkstation_Apply(t *testing.T) {
+func TestSetup_Apply(t *testing.T) {
 	reset := stubWorkstationSetupEnv(t)
 	defer reset()
 
-	workstationHostnameFunc = func() (string, error) { return "host", nil }
+	hostnameFunc = func() (string, error) { return "host", nil }
 	workstationUserHomeDirFunc = func() (string, error) { return "/home/test", nil }
 	workstationPathExistsFunc = func(path string) bool { return path == "/home/test/Documents" }
 	workstationDiscoverSourcesFunc = func(context.Context) ([]DiscoveredSource, error) { return nil, nil }
 
-	cfg := &ProfilesConfig{
-		Stores: map[string]ProfileStore{
+	cfg := &profile.Config{
+		Stores: map[string]profile.Store{
 			"primary": {URI: "local:/repo"},
 		},
 	}
-	result, err := SetupWorkstation(context.Background(), WithWorkstationProfiles(cfg), WithWorkstationStoreRef("primary"))
+	result, err := Setup(context.Background(), WithProfiles(cfg), WithStoreRef("primary"))
 	if err != nil {
-		t.Fatalf("SetupWorkstation: %v", err)
+		t.Fatalf("Setup: %v", err)
 	}
 	if result.Applied == nil || result.Applied.ProfilesCreated != 1 {
 		t.Fatalf("unexpected apply result: %#v", result)
@@ -234,13 +236,13 @@ func stubWorkstationSetupEnv(t *testing.T) func() {
 	t.Helper()
 	oldDiscover := workstationDiscoverSourcesFunc
 	oldHome := workstationUserHomeDirFunc
-	oldHost := workstationHostnameFunc
+	oldHost := hostnameFunc
 	oldExists := workstationPathExistsFunc
 	oldGOOS := workstationGOOS
 	return func() {
 		workstationDiscoverSourcesFunc = oldDiscover
 		workstationUserHomeDirFunc = oldHome
-		workstationHostnameFunc = oldHost
+		hostnameFunc = oldHost
 		workstationPathExistsFunc = oldExists
 		workstationGOOS = oldGOOS
 	}

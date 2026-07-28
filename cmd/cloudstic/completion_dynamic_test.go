@@ -9,18 +9,18 @@ import (
 	"reflect"
 	"testing"
 
-	cloudstic "github.com/cloudstic/cli"
+	"github.com/cloudstic/cli/pkg/profile"
 )
 
 func TestCompletionCandidates_ProfileAndAuthNames(t *testing.T) {
 	profilesPath := filepath.Join(t.TempDir(), "profiles.yaml")
-	if err := cloudstic.SaveProfilesFile(profilesPath, &cloudstic.ProfilesConfig{
+	if err := profile.Save(profilesPath, &profile.Config{
 		Version: 1,
-		Profiles: map[string]cloudstic.BackupProfile{
+		Profiles: map[string]profile.Profile{
 			"laptop": {},
 			"server": {},
 		},
-		Auth: map[string]cloudstic.ProfileAuth{
+		Auth: map[string]profile.Auth{
 			"google-work": {},
 			"ms-personal": {},
 		},
@@ -58,10 +58,10 @@ func TestCompletionCandidates_MissingProfilesFileIsEmpty(t *testing.T) {
 
 func TestRunCompletionQuery_WritesCandidates(t *testing.T) {
 	oldLoad := completionLoadProfilesFile
-	completionLoadProfilesFile = func(string) (*cloudstic.ProfilesConfig, error) {
-		return &cloudstic.ProfilesConfig{
+	completionLoadProfilesFile = func(string) (*profile.Config, error) {
+		return &profile.Config{
 			Version: 1,
-			Profiles: map[string]cloudstic.BackupProfile{
+			Profiles: map[string]profile.Profile{
 				"work": {},
 			},
 		}, nil
@@ -93,10 +93,10 @@ func TestRunCompletionQuery_WritesCandidates(t *testing.T) {
 
 func TestCompleteCommand_AcceptsForwardedFlags(t *testing.T) {
 	oldLoad := completionLoadProfilesFile
-	completionLoadProfilesFile = func(string) (*cloudstic.ProfilesConfig, error) {
-		return &cloudstic.ProfilesConfig{
+	completionLoadProfilesFile = func(string) (*profile.Config, error) {
+		return &profile.Config{
 			Version:  1,
-			Profiles: map[string]cloudstic.BackupProfile{"work": {}},
+			Profiles: map[string]profile.Profile{"work": {}},
 		}, nil
 	}
 	t.Cleanup(func() { completionLoadProfilesFile = oldLoad })

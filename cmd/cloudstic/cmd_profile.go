@@ -8,7 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	cloudstic "github.com/cloudstic/cli"
+	"github.com/cloudstic/cli/pkg/profile"
+
 	"github.com/cloudstic/cli/internal/paths"
 )
 
@@ -32,7 +33,7 @@ func declareProfileShowArgs(_ *globalFlags) (*profileShowArgs, commandInput) {
 }
 
 func runProfileShow(r *runner, ctx context.Context, a *profileShowArgs) int {
-	cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
+	cfg, err := profile.Load(a.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
 	}
@@ -55,7 +56,7 @@ func runProfileShow(r *runner, ctx context.Context, a *profileShowArgs) int {
 	return 0
 }
 
-func profileStoreAuthMode(s cloudstic.ProfileStore) string {
+func profileStoreAuthMode(s profile.Store) string {
 	if s.S3AccessKey != "" || s.S3SecretKey != "" || s.S3AccessKeySecret != "" || s.S3SecretKeySecret != "" {
 		return "static-keys"
 	}
@@ -81,7 +82,7 @@ func declareProfileListArgs(_ *globalFlags) (*profileListArgs, commandInput) {
 }
 
 func runProfileList(r *runner, ctx context.Context, a *profileListArgs) int {
-	cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
+	cfg, err := profile.Load(a.profilesFile)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return 0
@@ -224,7 +225,7 @@ func runProfileNew(r *runner, ctx context.Context, a *profileNewArgs) int {
 		if _, err := parseStoreURI(a.store); err != nil {
 			return r.fail("Invalid store URI: %v", err)
 		}
-		cfg.Stores[a.storeRef] = cloudstic.ProfileStore{URI: a.store}
+		cfg.Stores[a.storeRef] = profile.Store{URI: a.store}
 		createdStore = true
 	} else if a.storeRef != "" {
 		if _, ok := cfg.Stores[a.storeRef]; !ok {
@@ -303,7 +304,7 @@ func runProfileNew(r *runner, ctx context.Context, a *profileNewArgs) int {
 		}
 	}
 
-	p := cloudstic.BackupProfile{
+	p := profile.Profile{
 		Source:            a.source,
 		Store:             a.storeRef,
 		AuthRef:           a.authRef,
@@ -324,7 +325,7 @@ func runProfileNew(r *runner, ctx context.Context, a *profileNewArgs) int {
 	}
 	cfg.Profiles[a.name] = p
 
-	if err := cloudstic.SaveProfilesFile(a.profilesFile, cfg); err != nil {
+	if err := profile.Save(a.profilesFile, cfg); err != nil {
 		return r.fail("Failed to save profiles: %v", err)
 	}
 
@@ -335,7 +336,7 @@ func runProfileNew(r *runner, ctx context.Context, a *profileNewArgs) int {
 // promptStoreSelection prompts the user to pick an existing store or create a
 // new one. It returns the chosen store-ref name, whether a new store was
 // created, and exit code 0 on success.
-func (r *runner) promptStoreSelection(ctx context.Context, cfg *cloudstic.ProfilesConfig) (string, bool, int) {
+func (r *runner) promptStoreSelection(ctx context.Context, cfg *profile.Config) (string, bool, int) {
 	options := []string{"Create new store"}
 	for name := range cfg.Stores {
 		options = append(options, name)
@@ -374,14 +375,14 @@ func (r *runner) promptStoreSelection(ctx context.Context, cfg *cloudstic.Profil
 	if err != nil {
 		return "", false, r.fail("Failed to read store URI: %v", err)
 	}
-	cfg.Stores[refName] = cloudstic.ProfileStore{URI: uri}
+	cfg.Stores[refName] = profile.Store{URI: uri}
 	return refName, true, 0
 }
 
 // promptAuthSelection prompts the user to pick an existing auth entry (filtered
 // by provider) or create a new one. It returns the chosen auth-ref name and
 // exit code 0 on success. The new entry is added to cfg.Auth in place.
-func (r *runner) promptAuthSelection(ctx context.Context, cfg *cloudstic.ProfilesConfig, provider, profileName string) (string, int) {
+func (r *runner) promptAuthSelection(ctx context.Context, cfg *profile.Config, provider, profileName string) (string, int) {
 	options := []string{"Create new auth"}
 	for name, auth := range cfg.Auth {
 		if auth.Provider == provider {
@@ -417,7 +418,7 @@ func (r *runner) promptAuthSelection(ctx context.Context, cfg *cloudstic.Profile
 		tokenStorage = defTokenRef
 	}
 
-	auth := cloudstic.ProfileAuth{Provider: provider}
+	auth := profile.Auth{Provider: provider}
 	if strings.Contains(tokenStorage, "://") {
 		switch provider {
 		case "google":
@@ -437,7 +438,7 @@ func (r *runner) promptAuthSelection(ctx context.Context, cfg *cloudstic.Profile
 	return refName, 0
 }
 
-func prefillProfileArgs(a *profileNewArgs, p cloudstic.BackupProfile) {
+func prefillProfileArgs(a *profileNewArgs, p profile.Profile) {
 	if !a.flagProvided("source") && p.Source != "" {
 		a.source = p.Source
 	}

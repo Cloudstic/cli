@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cloudstic/cli/pkg/profile"
+
 	tea "github.com/charmbracelet/bubbletea"
 
 	cloudstic "github.com/cloudstic/cli"
@@ -24,7 +26,7 @@ var tuiRunProgram = func(ctx context.Context, model tea.Model, opts ...tea.Progr
 
 // tuiLoadConfig loads the profiles config for the dashboard. It is a package
 // var so tests can supply a fixed config.
-var tuiLoadConfig = func(profilesFile string) (*cloudstic.ProfilesConfig, error) {
+var tuiLoadConfig = func(profilesFile string) (*profile.Config, error) {
 	return app.NewTUIService(nil).LoadDashboardConfig(profilesFile)
 }
 
@@ -74,7 +76,7 @@ type tuiCLIBackend struct {
 	profilesFile string
 }
 
-func (b tuiCLIBackend) LoadStoreSnapshots(ctx context.Context, storeName string, storeCfg cloudstic.ProfileStore) ([]engine.SnapshotEntry, error) {
+func (b tuiCLIBackend) LoadStoreSnapshots(ctx context.Context, storeName string, storeCfg profile.Store) ([]engine.SnapshotEntry, error) {
 	cfg, err := tuiClientConfig(storeCfg)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", storeName, err)
@@ -90,7 +92,7 @@ func (b tuiCLIBackend) LoadStoreSnapshots(ctx context.Context, storeName string,
 	return result.Snapshots, nil
 }
 
-func (b tuiCLIBackend) InitProfile(ctx context.Context, profilesFile, profileName string, profileCfg cloudstic.BackupProfile, cfg *cloudstic.ProfilesConfig) error {
+func (b tuiCLIBackend) InitProfile(ctx context.Context, profilesFile, profileName string, profileCfg profile.Profile, cfg *profile.Config) error {
 	storeCfg, ok := cfg.Stores[profileCfg.Store]
 	if !ok {
 		return fmt.Errorf("profile %q references unknown store %q", profileName, profileCfg.Store)
@@ -106,7 +108,7 @@ func (b tuiCLIBackend) InitProfile(ctx context.Context, profilesFile, profileNam
 	return nil
 }
 
-func (b tuiCLIBackend) BackupProfile(ctx context.Context, profilesFile, profileName string, profileCfg cloudstic.BackupProfile, cfg *cloudstic.ProfilesConfig, reporter cloudstic.Reporter) error {
+func (b tuiCLIBackend) BackupProfile(ctx context.Context, profilesFile, profileName string, profileCfg profile.Profile, cfg *profile.Config, reporter cloudstic.Reporter) error {
 	g := &globalFlags{profile: profileName, profilesFile: profilesFile, quiet: true}
 	base := &backupArgs{globalFlags: g}
 	effective, err := mergeProfileBackupArgs(base, profileName, profileCfg, cfg)
@@ -129,7 +131,7 @@ func (b tuiCLIBackend) BackupProfile(ctx context.Context, profilesFile, profileN
 	return nil
 }
 
-func (b tuiCLIBackend) CheckProfile(ctx context.Context, profilesFile, profileName string, profileCfg cloudstic.BackupProfile, cfg *cloudstic.ProfilesConfig, reporter cloudstic.Reporter) error {
+func (b tuiCLIBackend) CheckProfile(ctx context.Context, profilesFile, profileName string, profileCfg profile.Profile, cfg *profile.Config, reporter cloudstic.Reporter) error {
 	storeCfg, ok := cfg.Stores[profileCfg.Store]
 	if !ok {
 		return fmt.Errorf("profile %q references unknown store %q", profileName, profileCfg.Store)
@@ -158,7 +160,7 @@ type tuiStoreProber struct {
 	r *runner
 }
 
-func (p tuiStoreProber) Probe(ctx context.Context, name string, store cloudstic.ProfileStore) tui.StoreProbe {
+func (p tuiStoreProber) Probe(ctx context.Context, name string, store profile.Store) tui.StoreProbe {
 	snapshots, err := (tuiCLIBackend{r: p.r}).LoadStoreSnapshots(ctx, name, store)
 	if err != nil {
 		return tui.StoreProbe{Status: "error", Error: err.Error()}

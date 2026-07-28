@@ -5,28 +5,29 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudstic/cli/pkg/profile"
+
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/cloudstic/cli/internal/engine"
 )
 
 type stubProber struct {
 	results map[string]StoreProbe
 }
 
-func (p stubProber) Probe(_ context.Context, name string, _ engine.ProfileStore) StoreProbe {
+func (p stubProber) Probe(_ context.Context, name string, _ profile.Store) StoreProbe {
 	if probe, ok := p.results[name]; ok {
 		return probe
 	}
 	return StoreProbe{Status: "error", Error: "no result"}
 }
 
-func probeConfig() *engine.ProfilesConfig {
+func probeConfig() *profile.Config {
 	enabled := true
-	return &engine.ProfilesConfig{
-		Stores: map[string]engine.ProfileStore{
+	return &profile.Config{
+		Stores: map[string]profile.Store{
 			"remote": {URI: "s3:bucket/prod"},
 		},
-		Profiles: map[string]engine.BackupProfile{
+		Profiles: map[string]profile.Profile{
 			"alpha": {Source: "local:/tmp/alpha", Store: "remote", Enabled: &enabled},
 		},
 	}
@@ -84,7 +85,7 @@ func TestModel_ProbeResultPreservesSelection(t *testing.T) {
 func TestProbeStoreCmd_UsesTimeout(t *testing.T) {
 	var gotDeadline bool
 	prober := deadlineProber{seen: &gotDeadline}
-	cmd := probeStoreCmd(prober, "remote", engine.ProfileStore{})
+	cmd := probeStoreCmd(prober, "remote", profile.Store{})
 	msg := cmd()
 	if _, ok := msg.(probeResultMsg); !ok {
 		t.Fatalf("probeStoreCmd returned %T want probeResultMsg", msg)
@@ -98,7 +99,7 @@ type deadlineProber struct {
 	seen *bool
 }
 
-func (p deadlineProber) Probe(ctx context.Context, _ string, _ engine.ProfileStore) StoreProbe {
+func (p deadlineProber) Probe(ctx context.Context, _ string, _ profile.Store) StoreProbe {
 	if _, ok := ctx.Deadline(); ok {
 		*p.seen = true
 	}

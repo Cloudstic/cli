@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	cloudstic "github.com/cloudstic/cli"
+	"github.com/cloudstic/cli/pkg/profile"
 )
 
 func TestRunProfileList_Success(t *testing.T) {
@@ -357,16 +357,16 @@ func TestRunProfileNew_AuthRefRequiresCloudSource(t *testing.T) {
 func TestProfileStoreAuthMode(t *testing.T) {
 	tests := []struct {
 		name string
-		s    cloudstic.ProfileStore
+		s    profile.Store
 		want string
 	}{
-		{"s3_access_key", cloudstic.ProfileStore{S3AccessKey: "x"}, "static-keys"},
-		{"s3_profile", cloudstic.ProfileStore{S3Profile: "x"}, "aws-shared-profile"},
-		{"b2_key_id", cloudstic.ProfileStore{B2KeyID: "x"}, "b2-keys"},
-		{"b2_app_key_secret", cloudstic.ProfileStore{B2AppKeySecret: "env://B2_APP_KEY"}, "b2-keys"},
-		{"sftp_password", cloudstic.ProfileStore{StoreSFTPPassword: "x"}, "sftp"},
-		{"sftp_key", cloudstic.ProfileStore{StoreSFTPKey: "x"}, "sftp"},
-		{"empty", cloudstic.ProfileStore{}, "default-chain"},
+		{"s3_access_key", profile.Store{S3AccessKey: "x"}, "static-keys"},
+		{"s3_profile", profile.Store{S3Profile: "x"}, "aws-shared-profile"},
+		{"b2_key_id", profile.Store{B2KeyID: "x"}, "b2-keys"},
+		{"b2_app_key_secret", profile.Store{B2AppKeySecret: "env://B2_APP_KEY"}, "b2-keys"},
+		{"sftp_password", profile.Store{StoreSFTPPassword: "x"}, "sftp"},
+		{"sftp_key", profile.Store{StoreSFTPKey: "x"}, "sftp"},
+		{"empty", profile.Store{}, "default-chain"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

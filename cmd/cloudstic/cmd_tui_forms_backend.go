@@ -3,7 +3,8 @@ package main
 import (
 	"fmt"
 
-	cloudstic "github.com/cloudstic/cli"
+	"github.com/cloudstic/cli/pkg/profile"
+
 	"github.com/cloudstic/cli/internal/tui"
 )
 
@@ -14,10 +15,10 @@ import (
 type tuiFormsBackend struct {
 	r            *runner
 	profilesFile string
-	cfg          *cloudstic.ProfilesConfig
+	cfg          *profile.Config
 }
 
-func newTUIFormsBackend(r *runner, profilesFile string, cfg *cloudstic.ProfilesConfig) *tuiFormsBackend {
+func newTUIFormsBackend(r *runner, profilesFile string, cfg *profile.Config) *tuiFormsBackend {
 	return &tuiFormsBackend{r: r, profilesFile: profilesFile, cfg: cfg}
 }
 
@@ -82,7 +83,7 @@ func (b *tuiFormsBackend) ProfileExists(name string) bool {
 }
 
 func (b *tuiFormsBackend) SaveProfile(name, sourceURI, storeRef, authRef string, editing bool) error {
-	profile := cloudstic.BackupProfile{}
+	profile := profile.Profile{}
 	if editing && b.cfg != nil {
 		if existing, ok := b.cfg.Profiles[name]; ok {
 			profile = existing
@@ -98,7 +99,7 @@ func (b *tuiFormsBackend) DeleteProfile(name string) error {
 	return tuiServiceFactory(nil, b.profilesFile).DeleteProfile(b.profilesFile, name)
 }
 
-func (b *tuiFormsBackend) Reload() (*cloudstic.ProfilesConfig, error) {
+func (b *tuiFormsBackend) Reload() (*profile.Config, error) {
 	cfg, err := tuiLoadConfig(b.profilesFile)
 	if err != nil {
 		return nil, err

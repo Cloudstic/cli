@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"io"
 
-	cloudstic "github.com/cloudstic/cli"
+	"github.com/cloudstic/cli/pkg/profile"
 )
 
-var completionLoadProfilesFile = cloudstic.LoadProfilesFileOrEmpty
+var completionLoadProfilesFile = profile.LoadOrEmpty
 
 type completionQueryArgs struct{ values []string }
 
@@ -68,7 +68,7 @@ func completionAuthNames(args []string) ([]string, error) {
 	return sortedKeys(cfg.Auth), nil
 }
 
-func completionLoadProfilesConfig(path string) (*cloudstic.ProfilesConfig, error) {
+func completionLoadProfilesConfig(path string) (*profile.Config, error) {
 	cfg, err := completionLoadProfilesFile(path)
 	if err != nil {
 		return nil, err

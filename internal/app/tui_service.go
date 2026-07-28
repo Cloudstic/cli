@@ -4,28 +4,30 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/cloudstic/cli/pkg/profile"
+
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/engine"
 	"github.com/cloudstic/cli/internal/tui"
 )
 
 type TUIBackend interface {
-	LoadStoreSnapshots(context.Context, string, cloudstic.ProfileStore) ([]engine.SnapshotEntry, error)
-	InitProfile(context.Context, string, string, cloudstic.BackupProfile, *cloudstic.ProfilesConfig) error
-	BackupProfile(context.Context, string, string, cloudstic.BackupProfile, *cloudstic.ProfilesConfig, cloudstic.Reporter) error
-	CheckProfile(context.Context, string, string, cloudstic.BackupProfile, *cloudstic.ProfilesConfig, cloudstic.Reporter) error
+	LoadStoreSnapshots(context.Context, string, profile.Store) ([]engine.SnapshotEntry, error)
+	InitProfile(context.Context, string, string, profile.Profile, *profile.Config) error
+	BackupProfile(context.Context, string, string, profile.Profile, *profile.Config, cloudstic.Reporter) error
+	CheckProfile(context.Context, string, string, profile.Profile, *profile.Config, cloudstic.Reporter) error
 }
 
 type TUIService struct {
-	loadProfiles func(string) (*cloudstic.ProfilesConfig, error)
-	saveProfiles func(string, *cloudstic.ProfilesConfig) error
+	loadProfiles func(string) (*profile.Config, error)
+	saveProfiles func(string, *profile.Config) error
 	backend      TUIBackend
 }
 
 func NewTUIService(backend TUIBackend) *TUIService {
 	return &TUIService{
 		loadProfiles: loadProfilesConfig,
-		saveProfiles: cloudstic.SaveProfilesFile,
+		saveProfiles: profile.Save,
 		backend:      backend,
 	}
 }
@@ -73,15 +75,15 @@ func (s *TUIService) RunProfileCheck(ctx context.Context, profilesFile string, p
 	return s.backend.CheckProfile(ctx, profilesFile, profile.Name, profileCfg, cfg, reporter)
 }
 
-func (s *TUIService) SaveProfile(profilesFile, name string, profile cloudstic.BackupProfile) error {
+func (s *TUIService) SaveProfile(profilesFile, name string, p profile.Profile) error {
 	cfg, err := s.loadConfig(profilesFile)
 	if err != nil {
 		return fmt.Errorf("load profiles: %w", err)
 	}
-	cfg.Profiles[name] = profile
+	cfg.Profiles[name] = p
 	save := s.saveProfiles
 	if save == nil {
-		save = cloudstic.SaveProfilesFile
+		save = profile.Save
 	}
 	if err := save(profilesFile, cfg); err != nil {
 		return fmt.Errorf("save profiles: %w", err)
@@ -100,7 +102,7 @@ func (s *TUIService) DeleteProfile(profilesFile, name string) error {
 	delete(cfg.Profiles, name)
 	save := s.saveProfiles
 	if save == nil {
-		save = cloudstic.SaveProfilesFile
+		save = profile.Save
 	}
 	if err := save(profilesFile, cfg); err != nil {
 		return fmt.Errorf("save profiles: %w", err)
@@ -108,7 +110,7 @@ func (s *TUIService) DeleteProfile(profilesFile, name string) error {
 	return nil
 }
 
-func (s *TUIService) SaveStore(profilesFile, name string, store cloudstic.ProfileStore) error {
+func (s *TUIService) SaveStore(profilesFile, name string, store profile.Store) error {
 	cfg, err := s.loadConfig(profilesFile)
 	if err != nil {
 		return fmt.Errorf("load profiles: %w", err)
@@ -116,7 +118,7 @@ func (s *TUIService) SaveStore(profilesFile, name string, store cloudstic.Profil
 	cfg.Stores[name] = store
 	save := s.saveProfiles
 	if save == nil {
-		save = cloudstic.SaveProfilesFile
+		save = profile.Save
 	}
 	if err := save(profilesFile, cfg); err != nil {
 		return fmt.Errorf("save profiles: %w", err)
@@ -127,11 +129,11 @@ func (s *TUIService) SaveStore(profilesFile, name string, store cloudstic.Profil
 // LoadDashboardConfig loads and normalizes the profiles config for the TUI.
 // The Bubble Tea renderer builds a probe-less dashboard skeleton from it and
 // then probes stores concurrently, rather than probing serially up front.
-func (s *TUIService) LoadDashboardConfig(profilesFile string) (*cloudstic.ProfilesConfig, error) {
+func (s *TUIService) LoadDashboardConfig(profilesFile string) (*profile.Config, error) {
 	return s.loadConfig(profilesFile)
 }
 
-func (s *TUIService) loadConfig(profilesFile string) (*cloudstic.ProfilesConfig, error) {
+func (s *TUIService) loadConfig(profilesFile string) (*profile.Config, error) {
 	load := s.loadProfiles
 	if load == nil {
 		load = loadProfilesConfig
@@ -144,12 +146,12 @@ func (s *TUIService) loadConfig(profilesFile string) (*cloudstic.ProfilesConfig,
 	return cfg, nil
 }
 
-func loadProfilesConfig(path string) (*cloudstic.ProfilesConfig, error) {
-	return cloudstic.LoadProfilesFileOrEmpty(path)
+func loadProfilesConfig(path string) (*profile.Config, error) {
+	return profile.LoadOrEmpty(path)
 }
 
-func ensureProfilesMaps(cfg *cloudstic.ProfilesConfig) {
-	cloudstic.EnsureProfilesMaps(cfg)
+func ensureProfilesMaps(cfg *profile.Config) {
+	profile.EnsureMaps(cfg)
 }
 
 func profileNeedsInit(profile tui.ProfileCard) bool {

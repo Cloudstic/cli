@@ -9,8 +9,9 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/cloudstic/cli/internal/core"
 	"golang.org/x/sys/unix"
+
+	"github.com/cloudstic/cli/pkg/source"
 )
 
 func TestSource_Walk_ExtendedMeta(t *testing.T) {
@@ -24,8 +25,8 @@ func TestSource_Walk_ExtendedMeta(t *testing.T) {
 
 	s := New(tmpDir)
 
-	var files []core.FileMeta
-	err := s.Walk(context.Background(), func(fm core.FileMeta) error {
+	var files []source.FileMeta
+	err := s.Walk(context.Background(), func(fm source.FileMeta) error {
 		files = append(files, fm)
 		return nil
 	})
@@ -69,8 +70,8 @@ func TestSource_Walk_SkipMode(t *testing.T) {
 
 	s := New(tmpDir, WithSkipMode())
 
-	var files []core.FileMeta
-	err := s.Walk(context.Background(), func(fm core.FileMeta) error {
+	var files []source.FileMeta
+	err := s.Walk(context.Background(), func(fm source.FileMeta) error {
 		files = append(files, fm)
 		return nil
 	})
@@ -98,8 +99,8 @@ func TestSource_Walk_SkipXattrs(t *testing.T) {
 
 	s := New(tmpDir, WithSkipXattrs())
 
-	var files []core.FileMeta
-	err := s.Walk(context.Background(), func(fm core.FileMeta) error {
+	var files []source.FileMeta
+	err := s.Walk(context.Background(), func(fm source.FileMeta) error {
 		files = append(files, fm)
 		return nil
 	})
@@ -125,8 +126,8 @@ func TestSource_Walk_SkipFlags(t *testing.T) {
 
 	s := New(tmpDir, WithSkipFlags())
 
-	var files []core.FileMeta
-	err := s.Walk(context.Background(), func(fm core.FileMeta) error {
+	var files []source.FileMeta
+	err := s.Walk(context.Background(), func(fm source.FileMeta) error {
 		files = append(files, fm)
 		return nil
 	})
@@ -172,8 +173,8 @@ func TestSource_Walk_XattrNamespaces(t *testing.T) {
 	// Use a namespace that doesn't match the xattr we set.
 	s := New(tmpDir, WithXattrNamespaces([]string{"nomatch."}))
 
-	var files []core.FileMeta
-	err := s.Walk(context.Background(), func(fm core.FileMeta) error {
+	var files []source.FileMeta
+	err := s.Walk(context.Background(), func(fm source.FileMeta) error {
 		files = append(files, fm)
 		return nil
 	})
@@ -211,8 +212,8 @@ func TestSource_Walk_Xattr_RoundTrip(t *testing.T) {
 
 	s := New(tmpDir)
 
-	var files []core.FileMeta
-	err := s.Walk(context.Background(), func(fm core.FileMeta) error {
+	var files []source.FileMeta
+	err := s.Walk(context.Background(), func(fm source.FileMeta) error {
 		files = append(files, fm)
 		return nil
 	})

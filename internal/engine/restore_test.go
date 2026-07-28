@@ -676,7 +676,7 @@ func TestRestoreManager_PathFilter_MixedLegacyAndNormalizedFileMeta(t *testing.T
 		Size:    int64(len("guide")),
 	}
 
-	rootRef, rootData, err := rootMeta.Ref()
+	rootRef, rootData, err := core.FileMetaRef(&rootMeta)
 	if err != nil {
 		t.Fatalf("root meta ref: %v", err)
 	}
@@ -696,7 +696,7 @@ func TestRestoreManager_PathFilter_MixedLegacyAndNormalizedFileMeta(t *testing.T
 
 	childMeta.ContentHash = core.ComputeHash([]byte("guide"))
 	childMeta.ContentRef = contentHash
-	childRef, childData, err := childMeta.Ref()
+	childRef, childData, err := core.FileMetaRef(&childMeta)
 	if err != nil {
 		t.Fatalf("child meta ref: %v", err)
 	}

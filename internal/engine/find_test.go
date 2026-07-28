@@ -88,7 +88,7 @@ func (r *findRepo) snapshot(created string, source *core.SourceInfo, entries ...
 	root := ""
 	for _, e := range entries {
 		meta := e.meta()
-		ref, data, err := meta.Ref()
+		ref, data, err := core.FileMetaRef(&meta)
 		if err != nil {
 			r.t.Fatalf("compute filemeta ref: %v", err)
 		}
@@ -551,7 +551,7 @@ func TestFind_RefPredicateMatchesExactlyOneMetadataObject(t *testing.T) {
 	r.snapshot("2026-01-01T00:00:00Z", src, folder("d1", "Documents"), target, file("f2", "other.pdf", "d1"))
 
 	meta := target.meta()
-	ref, _, err := meta.Ref()
+	ref, _, err := core.FileMetaRef(&meta)
 	if err != nil {
 		t.Fatalf("ref: %v", err)
 	}

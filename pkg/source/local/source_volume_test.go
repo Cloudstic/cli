@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/pkg/source"
 )
 
 func TestDetectVolumeIdentity_TempDir(t *testing.T) {
@@ -125,7 +125,7 @@ func TestSource_Walk_NormalizesPathSeparators(t *testing.T) {
 
 	src := New(tmpDir)
 	var metas []struct{ id, parent, path string }
-	err = src.Walk(t.Context(), func(fm core.FileMeta) error {
+	err = src.Walk(t.Context(), func(fm source.FileMeta) error {
 		var parent string
 		if len(fm.Parents) > 0 {
 			parent = fm.Parents[0]

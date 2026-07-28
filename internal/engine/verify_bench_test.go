@@ -32,7 +32,7 @@ func benchFileMetaCorpus(b *testing.B, n int) (*MockStore, []string) {
 			Mtime:       1700000000,
 			Owner:       "user@example.com",
 		}
-		ref, data, err := fm.Ref()
+		ref, data, err := core.FileMetaRef(&fm)
 		if err != nil {
 			b.Fatalf("ref: %v", err)
 		}

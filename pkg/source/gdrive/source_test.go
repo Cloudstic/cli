@@ -7,7 +7,6 @@ import (
 
 	"google.golang.org/api/drive/v3"
 
-	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/pkg/source"
 )
 
@@ -33,7 +32,7 @@ func TestToFileMeta_RegularFile(t *testing.T) {
 	if meta.Name != "photo.jpg" {
 		t.Errorf("Name = %q, want %q", meta.Name, "photo.jpg")
 	}
-	if meta.Type != core.FileTypeFile {
+	if meta.Type != source.FileTypeFile {
 		t.Errorf("Type = %v, want FileTypeFile", meta.Type)
 	}
 	if meta.Size != 1024 {
@@ -126,7 +125,7 @@ func TestToFileMeta_Folder(t *testing.T) {
 
 	meta := s.toFileMeta(f)
 
-	if meta.Type != core.FileTypeFolder {
+	if meta.Type != source.FileTypeFolder {
 		t.Errorf("Type = %v, want FileTypeFolder", meta.Type)
 	}
 	if meta.Name != "My Folder" {
@@ -174,7 +173,7 @@ func TestVisitEntryWithPath_SkipNativeFiles(t *testing.T) {
 	}
 
 	var visited []string
-	callback := func(meta core.FileMeta) error {
+	callback := func(meta source.FileMeta) error {
 		visited = append(visited, meta.FileID)
 		return nil
 	}
@@ -215,7 +214,7 @@ func TestVisitEntryWithPath_NativeFilesIncludedByDefault(t *testing.T) {
 	}
 
 	var visited []string
-	callback := func(meta core.FileMeta) error {
+	callback := func(meta source.FileMeta) error {
 		visited = append(visited, meta.FileID)
 		return nil
 	}
@@ -243,7 +242,7 @@ func TestVisitEntryWithPath_RecordsMimeType(t *testing.T) {
 		mimeTypes: make(map[string]string),
 	}
 
-	callback := func(meta core.FileMeta) error { return nil }
+	callback := func(meta source.FileMeta) error { return nil }
 	pathMap := make(map[string]string)
 	excludedPaths := make(map[string]bool)
 
@@ -288,7 +287,7 @@ func TestVisitEntryWithPath_SkipNativeStillRecordsMimeType(t *testing.T) {
 		mimeTypes:       make(map[string]string),
 	}
 
-	callback := func(meta core.FileMeta) error { return nil }
+	callback := func(meta source.FileMeta) error { return nil }
 	pathMap := make(map[string]string)
 	excludedPaths := make(map[string]bool)
 
@@ -312,7 +311,7 @@ func TestVisitEntryWithPath_PathComputation(t *testing.T) {
 	}
 
 	var paths []string
-	callback := func(meta core.FileMeta) error {
+	callback := func(meta source.FileMeta) error {
 		if len(meta.Paths) > 0 {
 			paths = append(paths, meta.Paths[0])
 		}
@@ -356,7 +355,7 @@ func TestVisitEntryWithPath_RootRelativePath_NoLeadingSlash(t *testing.T) {
 	}
 
 	var got string
-	callback := func(meta core.FileMeta) error {
+	callback := func(meta source.FileMeta) error {
 		if len(meta.Paths) > 0 {
 			got = meta.Paths[0]
 		}

@@ -121,7 +121,7 @@ func (bm *BackupManager) processFile(ctx context.Context, meta core.FileMeta, ph
 	meta.Size = size
 
 	persisted := persistedFileMeta(meta)
-	metaRef, metaData, err := persisted.Ref()
+	metaRef, metaData, err := core.FileMetaRef(&persisted)
 	if err != nil {
 		return uploadResult{err: err}
 	}

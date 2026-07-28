@@ -10,7 +10,6 @@ import (
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 
-	"github.com/cloudstic/cli/internal/core"
 	intsftp "github.com/cloudstic/cli/internal/sftp"
 	"github.com/cloudstic/cli/pkg/source"
 )
@@ -155,9 +154,9 @@ func (s *Source) Close() error {
 	return s.client.Close()
 }
 
-func (s *Source) Info() core.SourceInfo {
+func (s *Source) Info() source.SourceInfo {
 	identity := fmt.Sprintf("%s@%s", s.user, s.host)
-	return core.SourceInfo{
+	return source.SourceInfo{
 		Type:     "sftp",
 		Account:  identity,
 		Path:     s.rootPath,
@@ -167,7 +166,7 @@ func (s *Source) Info() core.SourceInfo {
 	}
 }
 
-func (s *Source) Walk(ctx context.Context, callback func(core.FileMeta) error) error {
+func (s *Source) Walk(ctx context.Context, callback func(source.FileMeta) error) error {
 	walker := s.client.Walk(s.rootPath)
 	// Track excluded directory prefixes so we can skip their children
 	// (the sftp walker does not support SkipDir).
@@ -204,11 +203,11 @@ func (s *Source) Walk(ctx context.Context, callback func(core.FileMeta) error) e
 			continue
 		}
 
-		var fileType core.FileType
+		var fileType source.FileType
 		if info.IsDir() {
-			fileType = core.FileTypeFolder
+			fileType = source.FileTypeFolder
 		} else {
-			fileType = core.FileTypeFile
+			fileType = source.FileTypeFile
 		}
 
 		var parents []string
@@ -216,7 +215,7 @@ func (s *Source) Walk(ctx context.Context, callback func(core.FileMeta) error) e
 			parents = []string{dir}
 		}
 
-		meta := core.FileMeta{
+		meta := source.FileMeta{
 			FileID:  rel,
 			Name:    path.Base(p),
 			Type:    fileType,

@@ -3,7 +3,6 @@ package onedrive
 import (
 	"testing"
 
-	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/pkg/source"
 )
 
@@ -56,42 +55,42 @@ func TestOneDriveFilterChangesByRootPath(t *testing.T) {
 	changes := []source.FileChange{
 		{
 			Type: source.ChangeUpsert,
-			Meta: core.FileMeta{
+			Meta: source.FileMeta{
 				Name:  "file1.txt",
 				Paths: []string{"my/root/path/file1.txt"},
 			},
 		},
 		{
 			Type: source.ChangeUpsert,
-			Meta: core.FileMeta{
+			Meta: source.FileMeta{
 				Name:  "file2.txt",
 				Paths: []string{"my/root/path/sub/file2.txt"},
 			},
 		},
 		{
 			Type: source.ChangeUpsert,
-			Meta: core.FileMeta{
+			Meta: source.FileMeta{
 				Name:  "file3.txt",
 				Paths: []string{"other/path/file3.txt"}, // Should be filtered out
 			},
 		},
 		{
 			Type: source.ChangeUpsert,
-			Meta: core.FileMeta{
+			Meta: source.FileMeta{
 				Name:  "my",
 				Paths: []string{"my/root/path"}, // The root path itself
 			},
 		},
 		{
 			Type: source.ChangeDelete,
-			Meta: core.FileMeta{
+			Meta: source.FileMeta{
 				Name:  "file4.txt",
 				Paths: nil, // Deletes don't have paths, should not be filtered out
 			},
 		},
 		{
 			Type: source.ChangeUpsert,
-			Meta: core.FileMeta{
+			Meta: source.FileMeta{
 				Name:  "file5.txt",
 				Paths: nil, // Upserts without paths are filtered out if not at root
 			},

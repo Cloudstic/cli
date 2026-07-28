@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/pkg/source"
 
 	"google.golang.org/api/drive/v3"
@@ -25,7 +24,7 @@ func NewChangeSource(ctx context.Context, opts ...Option) (*ChangeSource, error)
 	return &ChangeSource{Source: *base}, nil
 }
 
-func (s *ChangeSource) Info() core.SourceInfo {
+func (s *ChangeSource) Info() source.SourceInfo {
 	info := s.Source.Info()
 	info.Type = "gdrive-changes"
 	return info
@@ -78,7 +77,7 @@ func (s *ChangeSource) WalkChanges(ctx context.Context, token string, callback f
 				continue
 			}
 
-			if fc.Type == source.ChangeUpsert && fc.Meta.Type == core.FileTypeFolder {
+			if fc.Type == source.ChangeUpsert && fc.Meta.Type == source.FileTypeFolder {
 				folderChanges = append(folderChanges, fc)
 			} else {
 				fileChanges = append(fileChanges, fc)
@@ -182,7 +181,7 @@ func (s *ChangeSource) processChanges(ctx context.Context, changes []source.File
 }
 
 // isDescendantOfRoot checks if a changed file belongs to the rootFolderID tree.
-func (s *ChangeSource) isDescendantOfRoot(ctx context.Context, meta core.FileMeta) bool {
+func (s *ChangeSource) isDescendantOfRoot(ctx context.Context, meta source.FileMeta) bool {
 	if s.rootFolderID == "" {
 		return true // No root folder specified, everything is a descendant
 	}
@@ -204,7 +203,7 @@ func (s *ChangeSource) isDescendantOfRoot(ctx context.Context, meta core.FileMet
 // resolveChangePath computes the full path for a changed entry by looking up
 // its parent in pathMap. If the parent is not in the map, it walks up the
 // Drive hierarchy via API calls and caches every resolved segment.
-func (s *ChangeSource) resolveChangePath(ctx context.Context, meta core.FileMeta, pathMap map[string]string) (string, error) {
+func (s *ChangeSource) resolveChangePath(ctx context.Context, meta source.FileMeta, pathMap map[string]string) (string, error) {
 	if len(meta.Parents) == 0 {
 		if s.rootFolderID != "" {
 			return "", nil // Not in our root folder
@@ -271,7 +270,7 @@ func (s *ChangeSource) resolveDrivePath(ctx context.Context, folderID string, pa
 func (s *ChangeSource) shouldExcludeChange(fc source.FileChange, excludedIDs map[string]bool) bool {
 	// Check if parent is excluded.
 	if len(fc.Meta.Parents) > 0 && excludedIDs[fc.Meta.Parents[0]] {
-		if fc.Meta.Type == core.FileTypeFolder {
+		if fc.Meta.Type == source.FileTypeFolder {
 			excludedIDs[fc.Meta.FileID] = true
 		}
 		return true
@@ -279,7 +278,7 @@ func (s *ChangeSource) shouldExcludeChange(fc source.FileChange, excludedIDs map
 	if len(fc.Meta.Paths) == 0 {
 		return false // can't evaluate without a path
 	}
-	isDir := fc.Meta.Type == core.FileTypeFolder
+	isDir := fc.Meta.Type == source.FileTypeFolder
 	if s.exclude.Excludes(fc.Meta.Paths[0], isDir) {
 		if isDir {
 			excludedIDs[fc.Meta.FileID] = true
@@ -293,7 +292,7 @@ func (s *ChangeSource) changeToFileChange(ch *drive.Change) source.FileChange {
 	if ch.Removed || ch.File == nil || ch.File.Trashed {
 		return source.FileChange{
 			Type: source.ChangeDelete,
-			Meta: core.FileMeta{FileID: ch.FileId},
+			Meta: source.FileMeta{FileID: ch.FileId},
 		}
 	}
 

@@ -208,7 +208,7 @@ func (bm *BackupManager) detectChange(ctx context.Context, oldRoot string, meta 
 	}
 
 	newPersisted := persistedFileMeta(*meta)
-	newRef, _, err := newPersisted.Ref()
+	newRef, _, err := core.FileMetaRef(&newPersisted)
 	if err != nil {
 		return false, "", err
 	}
@@ -272,7 +272,7 @@ func (bm *BackupManager) insertFolder(ctx context.Context, meta *core.FileMeta, 
 	meta.Size = 0
 
 	persisted := persistedFileMeta(*meta)
-	metaRef, metaData, err := persisted.Ref()
+	metaRef, metaData, err := core.FileMetaRef(&persisted)
 	if err != nil {
 		return err
 	}

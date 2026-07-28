@@ -1,5 +1,7 @@
 package core
 
+import "github.com/cloudstic/cli/pkg/source"
+
 // ObjectType defines the type of the object in the system
 type ObjectType string
 
@@ -7,14 +9,6 @@ const (
 	ObjectTypeContent  ObjectType = "content"
 	ObjectTypeInternal ObjectType = "internal"
 	ObjectTypeLeaf     ObjectType = "leaf"
-)
-
-// FileType defines the generic type of the file (e.g. generic file, folder, symlink)
-type FileType string
-
-const (
-	FileTypeFile   FileType = "file"
-	FileTypeFolder FileType = "folder"
 )
 
 // Content represents a file's content as a list of chunks
@@ -26,33 +20,12 @@ type Content struct {
 	DataInlineB64 []byte     `json:"data_inline_b64,omitempty"` // For small files
 }
 
-// FileMeta represents immutable file metadata
-// Object key: filemeta/<sha256>
-type FileMeta struct {
-	Version int      `json:"version"`
-	FileID  string   `json:"fileId"` // Google Drive file ID (HAMT key)
-	Name    string   `json:"name"`
-	Type    FileType `json:"type"` // "file" or "folder"
-	// Parents holds raw source FileIDs — the same values used as HAMT keys —
-	// not "filemeta/<sha256>" refs. Resolving one therefore means a lookup by
-	// key, not a Get. See internal/engine/backup_scan.go and restore.go.
-	Parents     []string               `json:"parents"`
-	Paths       []string               `json:"paths,omitempty"`
-	ContentHash string                 `json:"content_hash"`          // SHA256 of the file content
-	ContentRef  string                 `json:"content_ref,omitempty"` // HMAC(dedupKey, ContentHash) for secure backend lookup
-	Size        int64                  `json:"size"`
-	Mtime       int64                  `json:"mtime"` // Unix timestamp
-	Owner       string                 `json:"owner"`
-	Extra       map[string]interface{} `json:"extra,omitempty"`
-	Mode        uint32                 `json:"mode,omitempty"`   // POSIX permission bits (st_mode & 0xFFF)
-	Uid         uint32                 `json:"uid,omitempty"`    // POSIX user ID
-	Gid         uint32                 `json:"gid,omitempty"`    // POSIX group ID
-	Btime       int64                  `json:"btime,omitempty"`  // birth/creation time, Unix seconds; 0 = not available
-	Flags       uint32                 `json:"flags,omitempty"`  // per-file flags (chflags / FS_IOC_GETFLAGS)
-	Xattrs      map[string][]byte      `json:"xattrs,omitempty"` // extended attributes: name → raw bytes
-}
-
-func (f *FileMeta) Ref() (string, []byte, error) {
+// FileMetaRef returns the object key and encoded bytes for a file's metadata.
+//
+// It is a function rather than a method on FileMeta because FileMeta is now
+// defined in pkg/source: "filemeta/<hash>" is repository-format naming, which
+// a source implementation has no business knowing about.
+func FileMetaRef(f *FileMeta) (string, []byte, error) {
 	hash, data, err := ComputeJSONHash(f)
 	if err != nil {
 		return "", data, err
@@ -76,19 +49,6 @@ type LeafEntry struct {
 	Key     string `json:"key"`                // caller's entry key (the source file ID)
 	PathKey string `json:"path_key,omitempty"` // routing key; falls back to SHA256(Key) if empty
 	Value   string `json:"filemeta"`           // "filemeta/<sha256>"
-}
-
-// SourceInfo describes the origin of a backup snapshot. It is stored as a
-// first-class field on the snapshot so that forget policies can group by
-// source identity (Type + Account + Path).
-type SourceInfo struct {
-	Type      string `json:"type"`                 // e.g. "gdrive", "local"
-	Account   string `json:"account,omitempty"`    // friendly account/host label for display
-	Path      string `json:"path,omitempty"`       // display path within the source container
-	Identity  string `json:"identity,omitempty"`   // stable container identity for lineage matching
-	PathID    string `json:"path_id,omitempty"`    // stable selected-root identity within container
-	DriveName string `json:"drive_name,omitempty"` // human-readable container label (e.g. "My Drive")
-	FsType    string `json:"fs_type,omitempty"`    // source filesystem type (e.g. "apfs", "ext4", "sftp")
 }
 
 // Snapshot represents a backup checkpoint
@@ -181,3 +141,21 @@ type RepoConfig struct {
 	Created   string `json:"created"` // ISO8601
 	Encrypted bool   `json:"encrypted"`
 }
+
+// The source-facing domain types are defined in pkg/source and aliased here.
+//
+// The definitions moved so that the public Source contract does not depend on
+// an internal package; the aliases stay so that the engine, the HAMT and the
+// stored JSON keep spelling them core.FileMeta and core.SourceInfo. A Go alias
+// denotes the identical type, so nothing about the on-disk format changes.
+type (
+	FileMeta   = source.FileMeta
+	SourceInfo = source.SourceInfo
+	FileType   = source.FileType
+)
+
+// FileType values.
+const (
+	FileTypeFile   = source.FileTypeFile
+	FileTypeFolder = source.FileTypeFolder
+)

@@ -73,15 +73,22 @@ var vendorSDKPrefixes = []string{
 }
 
 // sdkBearingPackages are the public packages allowed to depend on a provider
-// SDK, because carrying one is their entire purpose: each is a single
-// provider's implementation of a contract declared elsewhere.
+// SDK, because carrying one is their entire purpose.
 //
 // Membership is a deliberate API-design decision, not an exemption for
 // convenience. Adding an entry means "importing this package should cost a
 // cloud SDK", and every package NOT listed here is a promise that it does not.
+//
+// All but one are a single provider's implementation of a contract declared
+// elsewhere. pkg/open is the exception and is listed on different grounds: it
+// constructs stores and clients from any configuration, so it necessarily
+// links every provider it can build. That is precisely why the configuration
+// *types* live in pkg/config instead — resolving and validating a profile is
+// then free, and only actually connecting costs an SDK (RFC 0022 §7).
 var sdkBearingPackages = map[string]bool{
 	"github.com/cloudstic/cli/pkg/crypto/kms":      true,
 	"github.com/cloudstic/cli/pkg/keychain/kms":    true,
+	"github.com/cloudstic/cli/pkg/open":            true,
 	"github.com/cloudstic/cli/pkg/source/gdrive":   true,
 	"github.com/cloudstic/cli/pkg/source/onedrive": true,
 	"github.com/cloudstic/cli/pkg/store/s3":        true,

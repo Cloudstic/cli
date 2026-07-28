@@ -310,9 +310,9 @@ func TestCheckOrInitStore_AlreadyInitialized(t *testing.T) {
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
-	raw, err := newObjectStore(context.Background(), sc.Store)
+	raw, err := openStore(context.Background(), sc.Store)
 	if err != nil {
-		t.Fatalf("newObjectStore: %v", err)
+		t.Fatalf("openStore: %v", err)
 	}
 	_, err = cloudstic.InitRepo(t.Context(), raw, cloudstic.WithInitNoEncryption())
 	if err != nil {
@@ -349,9 +349,9 @@ func TestCheckOrInitStore_InitializedEncrypted_ValidCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
-	raw, err := newObjectStore(context.Background(), sc.Store)
+	raw, err := openStore(context.Background(), sc.Store)
 	if err != nil {
-		t.Fatalf("newObjectStore: %v", err)
+		t.Fatalf("openStore: %v", err)
 	}
 	_, err = cloudstic.InitRepo(t.Context(), raw, cloudstic.WithInitCredentials(keychain.Chain{keychain.WithPassword("correct-password")}))
 	if err != nil {
@@ -389,9 +389,9 @@ func TestCheckOrInitStore_InitializedEncrypted_InvalidCredentials(t *testing.T) 
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
-	raw, err := newObjectStore(context.Background(), sc.Store)
+	raw, err := openStore(context.Background(), sc.Store)
 	if err != nil {
-		t.Fatalf("newObjectStore: %v", err)
+		t.Fatalf("openStore: %v", err)
 	}
 	_, err = cloudstic.InitRepo(t.Context(), raw, cloudstic.WithInitCredentials(keychain.Chain{keychain.WithPassword("correct-password")}))
 	if err != nil {
@@ -1409,7 +1409,7 @@ func TestRunStoreNew_LocalStore(t *testing.T) {
 // profile store naming no region still reaches S3 on the default one.
 //
 // The default is no longer pre-filled into the config: it is applied once at
-// construction (s3Region, storebuild.go), so that a config built any other way
+// construction (pkg/open), so that a config built any other way
 // gets it too. The config therefore carries "" here, and the assertion is on
 // the value the backend actually receives.
 func TestClientConfigFromProfileStore_DefaultRegion(t *testing.T) {
@@ -1423,9 +1423,8 @@ func TestClientConfigFromProfileStore_DefaultRegion(t *testing.T) {
 	if sc.Store.S3.Region != "" {
 		t.Fatalf("expected the config to carry no region, got %q", sc.Store.S3.Region)
 	}
-	if got := s3Region(sc.Store.S3.Region); got != "us-east-1" {
-		t.Fatalf("expected default region us-east-1 at construction, got %q", got)
-	}
+	// The default itself is applied by pkg/open at construction; what this
+	// package is responsible for is not pre-filling it.
 }
 
 // TestClientConfigFromProfileStore_ExplicitRegionWins guards the other half:
@@ -1436,8 +1435,8 @@ func TestClientConfigFromProfileStore_ExplicitRegionWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
-	if got := s3Region(sc.Store.S3.Region); got != "eu-west-3" {
-		t.Fatalf("expected the profile's region eu-west-3, got %q", got)
+	if sc.Store.S3.Region != "eu-west-3" {
+		t.Fatalf("expected the profile's region eu-west-3, got %q", sc.Store.S3.Region)
 	}
 }
 

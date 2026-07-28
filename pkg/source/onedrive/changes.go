@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/retry"
 	"github.com/cloudstic/cli/pkg/source"
 )
@@ -28,7 +27,7 @@ func NewChangeSource(ctx context.Context, opts ...Option) (*ChangeSource, error)
 	return &ChangeSource{Source: *base}, nil
 }
 
-func (s *ChangeSource) Info() core.SourceInfo {
+func (s *ChangeSource) Info() source.SourceInfo {
 	info := s.Source.Info()
 	info.Type = "onedrive-changes"
 	return info
@@ -71,7 +70,7 @@ func (s *ChangeSource) WalkChanges(ctx context.Context, token string, callback f
 				continue
 			}
 			fc := s.itemToFileChange(item)
-			if fc.Type == source.ChangeUpsert && fc.Meta.Type == core.FileTypeFolder {
+			if fc.Type == source.ChangeUpsert && fc.Meta.Type == source.FileTypeFolder {
 				folderChanges = append(folderChanges, fc)
 			} else {
 				fileChanges = append(fileChanges, fc)
@@ -143,7 +142,7 @@ func (s *ChangeSource) itemToFileChange(item graphItem) source.FileChange {
 	if item.Deleted != nil {
 		return source.FileChange{
 			Type: source.ChangeDelete,
-			Meta: core.FileMeta{FileID: item.ID},
+			Meta: source.FileMeta{FileID: item.ID},
 		}
 	}
 	meta := s.toFileMeta(item)
@@ -183,7 +182,7 @@ func stripOneDriveRootPrefix(p string) string {
 func shouldExcludeOneDriveChange(m *source.ExcludeMatcher, fc source.FileChange, excludedIDs map[string]bool) bool {
 	// Check if parent is excluded.
 	if len(fc.Meta.Parents) > 0 && excludedIDs[fc.Meta.Parents[0]] {
-		if fc.Meta.Type == core.FileTypeFolder {
+		if fc.Meta.Type == source.FileTypeFolder {
 			excludedIDs[fc.Meta.FileID] = true
 		}
 		return true
@@ -191,7 +190,7 @@ func shouldExcludeOneDriveChange(m *source.ExcludeMatcher, fc source.FileChange,
 	if len(fc.Meta.Paths) == 0 {
 		return false
 	}
-	isDir := fc.Meta.Type == core.FileTypeFolder
+	isDir := fc.Meta.Type == source.FileTypeFolder
 	if m.Excludes(fc.Meta.Paths[0], isDir) {
 		if isDir {
 			excludedIDs[fc.Meta.FileID] = true

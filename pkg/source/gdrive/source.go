@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/paths"
 	"github.com/cloudstic/cli/internal/retry"
 	"github.com/cloudstic/cli/internal/sourceoauth"
@@ -360,7 +359,7 @@ func resolveDriveName(ctx context.Context, srv *drive.Service, cfg *gDriveOption
 	return nil
 }
 
-func (s *Source) Info() core.SourceInfo {
+func (s *Source) Info() source.SourceInfo {
 	account := s.account
 	accountID := s.accountID
 	if s.service != nil && (account == "" || accountID == "") {
@@ -376,7 +375,7 @@ func (s *Source) Info() core.SourceInfo {
 		}
 	}
 
-	info := core.SourceInfo{
+	info := source.SourceInfo{
 		Type:      "gdrive",
 		Account:   account,
 		Path:      s.rootPath,
@@ -576,7 +575,7 @@ func isRetryableGoogleErr(err error) bool {
 // Walk lists all files from Drive. Folders are accumulated in memory (necessary
 // for topological sort) but files are streamed page-by-page to avoid holding
 // the full file list in memory.
-func (s *Source) Walk(ctx context.Context, callback func(core.FileMeta) error) error {
+func (s *Source) Walk(ctx context.Context, callback func(source.FileMeta) error) error {
 	s.mimeTypes = make(map[string]string)
 
 	var folders []*drive.File
@@ -746,7 +745,7 @@ func topoSortFolders(folders []*drive.File) []*drive.File {
 	return sorted
 }
 
-func (s *Source) visitEntryWithPath(f *drive.File, pathMap map[string]string, excludedPaths map[string]bool, callback func(core.FileMeta) error) error {
+func (s *Source) visitEntryWithPath(f *drive.File, pathMap map[string]string, excludedPaths map[string]bool, callback func(source.FileMeta) error) error {
 	// Record MIME type for all non-folder entries so GetFileStream can
 	// decide between download and export.
 	if f.MimeType != "application/vnd.google-apps.folder" {
@@ -776,7 +775,7 @@ func (s *Source) visitEntryWithPath(f *drive.File, pathMap map[string]string, ex
 
 	// Skip entries under an already-excluded directory.
 	if len(f.Parents) > 0 && excludedPaths[f.Parents[0]] {
-		if meta.Type == core.FileTypeFolder {
+		if meta.Type == source.FileTypeFolder {
 			excludedPaths[f.Id] = true
 		}
 		return nil
@@ -784,7 +783,7 @@ func (s *Source) visitEntryWithPath(f *drive.File, pathMap map[string]string, ex
 
 	// Apply exclude patterns.
 	if !s.exclude.Empty() {
-		isDir := meta.Type == core.FileTypeFolder
+		isDir := meta.Type == source.FileTypeFolder
 		if s.exclude.Excludes(p, isDir) {
 			if isDir {
 				excludedPaths[f.Id] = true
@@ -796,7 +795,7 @@ func (s *Source) visitEntryWithPath(f *drive.File, pathMap map[string]string, ex
 	return callback(meta)
 }
 
-func (s *Source) toFileMeta(f *drive.File) core.FileMeta {
+func (s *Source) toFileMeta(f *drive.File) source.FileMeta {
 	var mtime int64
 	if t, err := time.Parse(time.RFC3339, f.ModifiedTime); err == nil {
 		mtime = t.Unix()
@@ -807,9 +806,9 @@ func (s *Source) toFileMeta(f *drive.File) core.FileMeta {
 		owner = f.Owners[0].EmailAddress
 	}
 
-	fileType := core.FileTypeFile
+	fileType := source.FileTypeFile
 	if f.MimeType == "application/vnd.google-apps.folder" {
-		fileType = core.FileTypeFolder
+		fileType = source.FileTypeFolder
 	}
 
 	name := f.Name
@@ -823,7 +822,7 @@ func (s *Source) toFileMeta(f *drive.File) core.FileMeta {
 		extra["headRevisionId"] = f.HeadRevisionId
 	}
 
-	return core.FileMeta{
+	return source.FileMeta{
 		Version:     1,
 		FileID:      f.Id,
 		Name:        name,

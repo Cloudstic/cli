@@ -3,29 +3,6 @@ package source
 import (
 	"context"
 	"io"
-
-	"github.com/cloudstic/cli/internal/core"
-)
-
-// The types the Source contract is written in, re-exported so an
-// implementation in another module can name them without reaching for the root
-// cloudstic package — which pulls in every provider SDK. A Go alias denotes the
-// identical type, so these are interchangeable with cloudstic.FileMeta and
-// friends; importing this package alone is enough to write a source, and costs
-// no third-party dependencies.
-type (
-	// FileMeta is the per-file metadata a source emits during Walk.
-	FileMeta = core.FileMeta
-	// SourceInfo describes the origin of a snapshot, returned by Info.
-	SourceInfo = core.SourceInfo
-	// FileType distinguishes a file from a folder.
-	FileType = core.FileType
-)
-
-// FileType values.
-const (
-	FileTypeFile   = core.FileTypeFile
-	FileTypeFolder = core.FileTypeFolder
 )
 
 // SourceSize holds the total size of a source.
@@ -38,9 +15,9 @@ type SourceSize struct {
 // Drive, OneDrive, etc.). Implementations MUST ensure that parent folders are
 // visited before their children during Walk.
 type Source interface {
-	Walk(ctx context.Context, callback func(core.FileMeta) error) error
+	Walk(ctx context.Context, callback func(FileMeta) error) error
 	GetFileStream(fileID string) (io.ReadCloser, error)
-	Info() core.SourceInfo
+	Info() SourceInfo
 	Size(ctx context.Context) (*SourceSize, error)
 }
 
@@ -56,7 +33,7 @@ const (
 // Meta.FileID is required.
 type FileChange struct {
 	Type ChangeType
-	Meta core.FileMeta
+	Meta FileMeta
 }
 
 // IncrementalSource

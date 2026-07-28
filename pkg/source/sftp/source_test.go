@@ -18,8 +18,8 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 
-	"github.com/cloudstic/cli/internal/core"
 	intsftp "github.com/cloudstic/cli/internal/sftp"
+	"github.com/cloudstic/cli/pkg/source"
 )
 
 // startSFTPContainer spins up an OpenSSH SFTP server using the atmoz/sftp
@@ -199,11 +199,11 @@ func TestSource(t *testing.T) {
 	// Test Walk()
 	var walkedFiles []string
 	var walkedFolders []string
-	err = src.Walk(ctx, func(fm core.FileMeta) error {
+	err = src.Walk(ctx, func(fm source.FileMeta) error {
 		switch fm.Type {
-		case core.FileTypeFile:
+		case source.FileTypeFile:
 			walkedFiles = append(walkedFiles, fm.FileID)
-		case core.FileTypeFolder:
+		case source.FileTypeFolder:
 			walkedFolders = append(walkedFolders, fm.FileID)
 		}
 		return nil

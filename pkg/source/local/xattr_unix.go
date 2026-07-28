@@ -6,14 +6,15 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/cloudstic/cli/internal/core"
 	"golang.org/x/sys/unix"
+
+	"github.com/cloudstic/cli/pkg/source"
 )
 
 // readExtendedMeta populates Mode, Uid, Gid, Btime, Flags, and Xattrs on
 // the given FileMeta by inspecting the file at path. The skip flags control
 // which metadata groups are collected.
-func readExtendedMeta(path string, meta *core.FileMeta, skipMode, skipFlags, skipXattrs bool, xattrNamespaces []string) {
+func readExtendedMeta(path string, meta *source.FileMeta, skipMode, skipFlags, skipXattrs bool, xattrNamespaces []string) {
 	if !skipMode {
 		var st syscall.Stat_t
 		if err := syscall.Lstat(path, &st); err == nil {

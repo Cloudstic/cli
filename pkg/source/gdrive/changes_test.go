@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/pkg/source"
 )
 
@@ -18,26 +17,26 @@ func TestIsDescendantOfRoot(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		meta     core.FileMeta
+		meta     source.FileMeta
 		expected bool
 	}{
 		{
 			name: "no parents",
-			meta: core.FileMeta{
+			meta: source.FileMeta{
 				Parents: nil,
 			},
 			expected: false,
 		},
 		{
 			name: "direct child of rootFolderID",
-			meta: core.FileMeta{
+			meta: source.FileMeta{
 				Parents: []string{"root123"},
 			},
 			expected: true,
 		},
 		{
 			name: "some other parent",
-			meta: core.FileMeta{
+			meta: source.FileMeta{
 				Parents: []string{"other456"},
 			},
 			expected: true, // Optimistic true
@@ -69,13 +68,13 @@ func TestResolveChangePath_WithRootFolder(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		meta        core.FileMeta
+		meta        source.FileMeta
 		expected    string
 		expectError bool
 	}{
 		{
 			name: "no parents",
-			meta: core.FileMeta{
+			meta: source.FileMeta{
 				Name:    "file.txt",
 				Parents: nil,
 			},
@@ -84,7 +83,7 @@ func TestResolveChangePath_WithRootFolder(t *testing.T) {
 		},
 		{
 			name: "direct child of root",
-			meta: core.FileMeta{
+			meta: source.FileMeta{
 				Name:    "file.txt",
 				Parents: []string{"root123"},
 			},
@@ -93,7 +92,7 @@ func TestResolveChangePath_WithRootFolder(t *testing.T) {
 		},
 		{
 			name: "child of known folder",
-			meta: core.FileMeta{
+			meta: source.FileMeta{
 				Name:    "file.txt",
 				Parents: []string{"folder2"},
 			},
@@ -130,7 +129,7 @@ func TestProcessChanges(t *testing.T) {
 	changes := []source.FileChange{
 		{
 			Type: source.ChangeUpsert,
-			Meta: core.FileMeta{
+			Meta: source.FileMeta{
 				FileID:  "file1",
 				Name:    "file1.txt",
 				Parents: []string{"root123"},
@@ -138,7 +137,7 @@ func TestProcessChanges(t *testing.T) {
 		},
 		{
 			Type: source.ChangeUpsert,
-			Meta: core.FileMeta{
+			Meta: source.FileMeta{
 				FileID:  "file2",
 				Name:    "file2.txt",
 				Parents: []string{"folder1"},
@@ -146,7 +145,7 @@ func TestProcessChanges(t *testing.T) {
 		},
 		{
 			Type: source.ChangeUpsert,
-			Meta: core.FileMeta{
+			Meta: source.FileMeta{
 				FileID:  "file3",
 				Name:    "file3.txt",
 				Parents: nil, // Should be skipped
@@ -154,7 +153,7 @@ func TestProcessChanges(t *testing.T) {
 		},
 		{
 			Type: source.ChangeDelete, // Deletes should be passed through
-			Meta: core.FileMeta{
+			Meta: source.FileMeta{
 				FileID: "file4",
 			},
 		},

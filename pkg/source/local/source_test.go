@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/pkg/source"
 )
 
 func TestSource_WithExcludes(t *testing.T) {
@@ -43,7 +43,7 @@ func TestSource_WithExcludes(t *testing.T) {
 
 	// Test Walk() — excluded files/dirs should not appear.
 	var walked []string
-	err = s.Walk(ctx, func(fm core.FileMeta) error {
+	err = s.Walk(ctx, func(fm source.FileMeta) error {
 		walked = append(walked, fm.FileID)
 		return nil
 	})
@@ -162,11 +162,11 @@ func TestSource(t *testing.T) {
 	// Test Walk()
 	var walkedFiles []string
 	var walkedFolders []string
-	err = src.Walk(ctx, func(fm core.FileMeta) error {
+	err = src.Walk(ctx, func(fm source.FileMeta) error {
 		switch fm.Type {
-		case core.FileTypeFile:
+		case source.FileTypeFile:
 			walkedFiles = append(walkedFiles, fm.FileID)
-		case core.FileTypeFolder:
+		case source.FileTypeFolder:
 			walkedFolders = append(walkedFolders, fm.FileID)
 		}
 		return nil

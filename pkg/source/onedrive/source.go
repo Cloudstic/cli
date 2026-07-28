@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/paths"
 	"github.com/cloudstic/cli/internal/retry"
 	"github.com/cloudstic/cli/internal/sourceoauth"
@@ -240,7 +239,7 @@ func (s *Source) resolveDriveName(ctx context.Context) error {
 	return nil
 }
 
-func (s *Source) Info() core.SourceInfo {
+func (s *Source) Info() source.SourceInfo {
 	if s.client != nil && (s.account == "" || s.accountID == "") {
 		id, upn := s.fetchAccountInfo()
 		if s.accountID == "" {
@@ -253,7 +252,7 @@ func (s *Source) Info() core.SourceInfo {
 	if s.client != nil && s.rootID == "" {
 		s.rootID = s.resolveRootID(context.Background())
 	}
-	info := core.SourceInfo{
+	info := source.SourceInfo{
 		Type:      "onedrive",
 		Account:   s.account,
 		Path:      s.rootPath,
@@ -413,16 +412,16 @@ type graphListResponse struct {
 	NextLink string      `json:"@odata.nextLink"`
 }
 
-func (s *Source) toFileMeta(item graphItem) core.FileMeta {
+func (s *Source) toFileMeta(item graphItem) source.FileMeta {
 	mtime := int64(0)
 	t, err := time.Parse(time.RFC3339, item.LastModifiedDateTime)
 	if err == nil {
 		mtime = t.Unix()
 	}
 
-	fileType := core.FileTypeFile
+	fileType := source.FileTypeFile
 	if item.Folder != nil {
-		fileType = core.FileTypeFolder
+		fileType = source.FileTypeFolder
 	}
 
 	parents := []string{}
@@ -430,7 +429,7 @@ func (s *Source) toFileMeta(item graphItem) core.FileMeta {
 		parents = append(parents, item.ParentReference.ID)
 	}
 
-	return core.FileMeta{
+	return source.FileMeta{
 		Version: 1,
 		FileID:  item.ID,
 		Name:    item.Name,
@@ -482,7 +481,7 @@ func encodeOneDriveRootPath(path string) string {
 	return strings.Join(parts, "/")
 }
 
-func (s *Source) Walk(ctx context.Context, callback func(core.FileMeta) error) error {
+func (s *Source) Walk(ctx context.Context, callback func(source.FileMeta) error) error {
 	rootURL := s.getRootURL()
 
 	var rootItem graphItem
@@ -551,7 +550,7 @@ func (s *Source) Walk(ctx context.Context, callback func(core.FileMeta) error) e
 
 				// Apply exclude patterns.
 				if !s.exclude.Empty() {
-					isDir := meta.Type == core.FileTypeFolder
+					isDir := meta.Type == source.FileTypeFolder
 					if s.exclude.Excludes(p, isDir) {
 						continue // skip entry; excluded dirs won't be pushed onto stack
 					}
@@ -561,7 +560,7 @@ func (s *Source) Walk(ctx context.Context, callback func(core.FileMeta) error) e
 					return err
 				}
 
-				if meta.Type == core.FileTypeFolder {
+				if meta.Type == source.FileTypeFolder {
 					childFolders = append(childFolders, stackEntry{
 						folderID: item.ID,
 						url:      fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/items/%s/children", item.ID),

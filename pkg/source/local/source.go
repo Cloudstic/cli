@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/pkg/source"
 )
 
@@ -17,7 +16,7 @@ func normalizeVolumeUUID(uuid string) string {
 	return strings.ToUpper(strings.TrimSpace(uuid))
 }
 
-func (s *Source) Info() core.SourceInfo {
+func (s *Source) Info() source.SourceInfo {
 	hostname, _ := os.Hostname()
 	absPath, _ := filepathAbs(s.rootPath)
 
@@ -60,7 +59,7 @@ func (s *Source) Info() core.SourceInfo {
 		pathID = displayPath
 	}
 
-	return core.SourceInfo{
+	return source.SourceInfo{
 		Type:      "local",
 		Account:   hostname,
 		Path:      displayPath,
@@ -180,7 +179,7 @@ func New(rootPath string, opts ...Option) *Source {
 	}
 }
 
-func (s *Source) Walk(ctx context.Context, callback func(core.FileMeta) error) error {
+func (s *Source) Walk(ctx context.Context, callback func(source.FileMeta) error) error {
 	return filepath.Walk(s.rootPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -203,11 +202,11 @@ func (s *Source) Walk(ctx context.Context, callback func(core.FileMeta) error) e
 			return nil
 		}
 
-		var fileType core.FileType
+		var fileType source.FileType
 		if info.IsDir() {
-			fileType = core.FileTypeFolder
+			fileType = source.FileTypeFolder
 		} else {
-			fileType = core.FileTypeFile
+			fileType = source.FileTypeFile
 		}
 
 		// Normalize to forward slashes so backup trees are portable across OS.
@@ -218,7 +217,7 @@ func (s *Source) Walk(ctx context.Context, callback func(core.FileMeta) error) e
 			parents = []string{dir}
 		}
 
-		meta := core.FileMeta{
+		meta := source.FileMeta{
 			FileID:  normalizedPath,
 			Name:    filepath.Base(path),
 			Type:    fileType,

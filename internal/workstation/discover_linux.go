@@ -1,6 +1,6 @@
 //go:build linux
 
-package engine
+package workstation
 
 import (
 	"os"

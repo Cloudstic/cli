@@ -1,6 +1,6 @@
 package main
 
-import cloudstic "github.com/cloudstic/cli"
+import "github.com/cloudstic/cli/pkg/profile"
 
 type storeNewFlagPtrs struct {
 	uri                 *string
@@ -27,7 +27,7 @@ type storeNewFlagPtrs struct {
 	kmsEndpoint         *string
 }
 
-func applyExistingStoreDefaults(g *globalFlags, existing cloudstic.ProfileStore, f storeNewFlagPtrs) {
+func applyExistingStoreDefaults(g *globalFlags, existing profile.Store, f storeNewFlagPtrs) {
 	if !g.flagProvided("uri") && existing.URI != "" {
 		*f.uri = existing.URI
 	}
@@ -96,8 +96,8 @@ func applyExistingStoreDefaults(g *globalFlags, existing cloudstic.ProfileStore,
 	}
 }
 
-func buildProfileStoreFromFlags(f storeNewFlagPtrs) cloudstic.ProfileStore {
-	return cloudstic.ProfileStore{
+func buildProfileStoreFromFlags(f storeNewFlagPtrs) profile.Store {
+	return profile.Store{
 		URI:                     *f.uri,
 		S3Region:                *f.s3Region,
 		S3Profile:               *f.s3Profile,

@@ -4,6 +4,8 @@ import (
 	"context"
 	"io"
 
+	"github.com/cloudstic/cli/internal/workstation"
+
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/pkg/source"
 )
@@ -13,9 +15,7 @@ import (
 type stubClient struct {
 	backupResult    *cloudstic.BackupResult
 	backupErr       error
-	discoverResult  []cloudstic.DiscoveredSource
-	discoverErr     error
-	setupPlan       *cloudstic.WorkstationSetupPlan
+	setupPlan       *workstation.SetupPlan
 	setupPlanErr    error
 	restoreResult   *cloudstic.RestoreResult
 	restoreErr      error
@@ -46,11 +46,7 @@ func (s *stubClient) Backup(_ context.Context, _ source.Source, _ ...cloudstic.B
 	return s.backupResult, s.backupErr
 }
 
-func (s *stubClient) DiscoverSources(_ context.Context) ([]cloudstic.DiscoveredSource, error) {
-	return s.discoverResult, s.discoverErr
-}
-
-func (s *stubClient) PlanWorkstationSetup(_ context.Context, _ ...cloudstic.WorkstationSetupOption) (*cloudstic.WorkstationSetupPlan, error) {
+func (s *stubClient) PlanWorkstationSetup(_ context.Context, _ ...workstation.SetupOption) (*workstation.SetupPlan, error) {
 	return s.setupPlan, s.setupPlanErr
 }
 

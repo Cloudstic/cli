@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	cloudstic "github.com/cloudstic/cli"
+	"github.com/cloudstic/cli/pkg/profile"
 )
 
 type authListArgs struct{ profilesFile string }
@@ -18,7 +18,7 @@ func declareAuthListArgs(_ *globalFlags) (*authListArgs, commandInput) {
 }
 
 func runAuthList(r *runner, ctx context.Context, a *authListArgs) int {
-	cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
+	cfg, err := profile.Load(a.profilesFile)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return 0
@@ -44,7 +44,7 @@ func declareAuthShowArgs(_ *globalFlags) (*authShowArgs, commandInput) {
 }
 
 func runAuthShow(r *runner, ctx context.Context, a *authShowArgs) int {
-	cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
+	cfg, err := profile.Load(a.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
 	}
@@ -131,7 +131,7 @@ func runAuthNew(r *runner, ctx context.Context, a *authNewArgs) int {
 		}
 	}
 
-	auth := cloudstic.ProfileAuth{Provider: a.provider}
+	auth := profile.Auth{Provider: a.provider}
 	if a.provider == "google" {
 		if a.googleTokenFile == "" && a.googleTokenRef == "" {
 			def := defaultAuthTokenRef("google", a.name)
@@ -185,7 +185,7 @@ func runAuthNew(r *runner, ctx context.Context, a *authNewArgs) int {
 	ensureProfilesMaps(cfg)
 	cfg.Auth[a.name] = auth
 
-	if err := cloudstic.SaveProfilesFile(a.profilesFile, cfg); err != nil {
+	if err := profile.Save(a.profilesFile, cfg); err != nil {
 		return r.fail("Failed to save profiles: %v", err)
 	}
 	_, _ = fmt.Fprintf(r.out, "Auth %q saved in %s\n", a.name, a.profilesFile)
@@ -209,7 +209,7 @@ func declareAuthLoginArgs(_ *globalFlags) (*authLoginArgs, commandInput) {
 }
 
 func runAuthLogin(r *runner, ctx context.Context, a *authLoginArgs) int {
-	cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
+	cfg, err := profile.Load(a.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
 	}

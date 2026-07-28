@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	"github.com/cloudstic/cli/pkg/profile"
 
-	cloudstic "github.com/cloudstic/cli"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestRunTUIProgram_Success(t *testing.T) {
@@ -16,8 +16,8 @@ func TestRunTUIProgram_Success(t *testing.T) {
 		return nil
 	})
 	defer restoreRun()
-	restoreCfg := swapTUILoadConfig(func(string) (*cloudstic.ProfilesConfig, error) {
-		return &cloudstic.ProfilesConfig{Version: 1}, nil
+	restoreCfg := swapTUILoadConfig(func(string) (*profile.Config, error) {
+		return &profile.Config{Version: 1}, nil
 	})
 	defer restoreCfg()
 
@@ -32,8 +32,8 @@ func TestRunTUIProgram_ProgramError(t *testing.T) {
 		return errors.New("boom")
 	})
 	defer restoreRun()
-	restoreCfg := swapTUILoadConfig(func(string) (*cloudstic.ProfilesConfig, error) {
-		return &cloudstic.ProfilesConfig{Version: 1}, nil
+	restoreCfg := swapTUILoadConfig(func(string) (*profile.Config, error) {
+		return &profile.Config{Version: 1}, nil
 	})
 	defer restoreCfg()
 
@@ -48,7 +48,7 @@ func TestRunTUIProgram_ProgramError(t *testing.T) {
 }
 
 func TestRunTUIProgram_ConfigError(t *testing.T) {
-	restoreCfg := swapTUILoadConfig(func(string) (*cloudstic.ProfilesConfig, error) {
+	restoreCfg := swapTUILoadConfig(func(string) (*profile.Config, error) {
 		return nil, errors.New("bad config")
 	})
 	defer restoreCfg()
@@ -69,7 +69,7 @@ func swapTUIProgramRunner(fn func(context.Context, tea.Model, ...tea.ProgramOpti
 	return func() { tuiRunProgram = prev }
 }
 
-func swapTUILoadConfig(fn func(string) (*cloudstic.ProfilesConfig, error)) func() {
+func swapTUILoadConfig(fn func(string) (*profile.Config, error)) func() {
 	prev := tuiLoadConfig
 	tuiLoadConfig = fn
 	return func() { tuiLoadConfig = prev }

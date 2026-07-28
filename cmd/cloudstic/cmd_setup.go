@@ -6,14 +6,16 @@ import (
 	"io"
 	"strings"
 
+	"github.com/cloudstic/cli/pkg/profile"
+
+	"github.com/cloudstic/cli/internal/workstation"
+
 	"github.com/jedib0t/go-pretty/v6/table"
 
-	cloudstic "github.com/cloudstic/cli"
-	"github.com/cloudstic/cli/internal/engine"
 	"github.com/cloudstic/cli/internal/paths"
 )
 
-var planWorkstationSetup = cloudstic.PlanWorkstationSetup
+var planWorkstationSetup = workstation.Plan
 
 func defaultProfilesPathNoCreate() string {
 	path, err := paths.ProfilesPath(defaultProfilesFilename, false)
@@ -87,9 +89,9 @@ func runSetupWorkstation(r *runner, ctx context.Context, args *setupWorkstationA
 		}
 	}
 
-	opts := []cloudstic.WorkstationSetupOption{cloudstic.WithWorkstationProfiles(cfg)}
+	opts := []workstation.SetupOption{workstation.WithProfiles(cfg)}
 	if args.storeRef != "" {
-		opts = append(opts, cloudstic.WithWorkstationStoreRef(args.storeRef))
+		opts = append(opts, workstation.WithStoreRef(args.storeRef))
 	}
 	plan, err := planWorkstationSetup(ctx, opts...)
 	if err != nil {
@@ -104,7 +106,7 @@ func runSetupWorkstation(r *runner, ctx context.Context, args *setupWorkstationA
 		if !r.canPrompt() {
 			return r.fail("setup workstation requires an interactive terminal or -yes")
 		}
-		if err := reviewWorkstationPlan(ctx, cfg, (*engine.WorkstationSetupPlan)(plan), workstationReviewPrompts{
+		if err := reviewWorkstationPlan(ctx, cfg, (*workstation.SetupPlan)(plan), workstationReviewPrompts{
 			confirm: func(ctx context.Context, label string, defaultYes bool) (bool, error) {
 				return r.promptConfirm(ctx, label, defaultYes)
 			},
@@ -142,11 +144,11 @@ func runSetupWorkstation(r *runner, ctx context.Context, args *setupWorkstationA
 		}
 	}
 
-	result, err := cloudstic.ApplyWorkstationSetupPlan(cfg, plan)
+	result, err := workstation.Apply(cfg, plan)
 	if err != nil {
 		return r.fail("Failed to apply workstation setup plan: %v", err)
 	}
-	if err := cloudstic.SaveProfilesFile(args.profilesFile, cfg); err != nil {
+	if err := profile.Save(args.profilesFile, cfg); err != nil {
 		return r.fail("Failed to save profiles: %v", err)
 	}
 	_, _ = fmt.Fprintf(r.out, "\nSaved %d profile(s) in %s", len(result.ProfileNames), args.profilesFile)
@@ -157,7 +159,7 @@ func runSetupWorkstation(r *runner, ctx context.Context, args *setupWorkstationA
 	return 0
 }
 
-func printWorkstationSetupPlan(out io.Writer, plan *cloudstic.WorkstationSetupPlan, dryRun bool) {
+func printWorkstationSetupPlan(out io.Writer, plan *workstation.SetupPlan, dryRun bool) {
 	if dryRun {
 		_, _ = fmt.Fprintln(out, "Workstation setup plan (dry-run)")
 	} else {
@@ -192,7 +194,7 @@ func printWorkstationSetupPlan(out io.Writer, plan *cloudstic.WorkstationSetupPl
 	printWorkstationCoverage(out, plan)
 }
 
-func printWorkstationCoverage(out io.Writer, plan *cloudstic.WorkstationSetupPlan) {
+func printWorkstationCoverage(out io.Writer, plan *workstation.SetupPlan) {
 	writeWorkstationLines := func(title string, items []string) {
 		if len(items) == 0 {
 			return
@@ -224,7 +226,7 @@ type workstationReviewPrompts struct {
 	input     func(context.Context, string, string, func(string) error) (string, error)
 }
 
-func reviewWorkstationPlan(ctx context.Context, cfg *cloudstic.ProfilesConfig, plan *engine.WorkstationSetupPlan, prompts workstationReviewPrompts) error {
+func reviewWorkstationPlan(ctx context.Context, cfg *profile.Config, plan *workstation.SetupPlan, prompts workstationReviewPrompts) error {
 	if plan == nil {
 		return nil
 	}
@@ -298,7 +300,7 @@ func reviewWorkstationPlan(ctx context.Context, cfg *cloudstic.ProfilesConfig, p
 	return nil
 }
 
-func promptWorkstationProfileName(ctx context.Context, prompts workstationReviewPrompts, cfg *cloudstic.ProfilesConfig, plan *engine.WorkstationSetupPlan, index int, defaultName string) (string, error) {
+func promptWorkstationProfileName(ctx context.Context, prompts workstationReviewPrompts, cfg *profile.Config, plan *workstation.SetupPlan, index int, defaultName string) (string, error) {
 	return prompts.input(ctx, "Profile name", defaultName, func(v string) error {
 		if v == "" {
 			return fmt.Errorf("profile name is required")
@@ -313,7 +315,7 @@ func promptWorkstationProfileName(ctx context.Context, prompts workstationReview
 	})
 }
 
-func nameTakenInWorkstationPlan(cfg *cloudstic.ProfilesConfig, plan *engine.WorkstationSetupPlan, index int, name string) bool {
+func nameTakenInWorkstationPlan(cfg *profile.Config, plan *workstation.SetupPlan, index int, name string) bool {
 	if existing, ok := cfg.Profiles[name]; ok {
 		if index >= 0 {
 			current := plan.Profiles[index]
@@ -334,7 +336,7 @@ func nameTakenInWorkstationPlan(cfg *cloudstic.ProfilesConfig, plan *engine.Work
 	return false
 }
 
-func nextAvailableWorkstationProfileName(cfg *cloudstic.ProfilesConfig, plan *engine.WorkstationSetupPlan, base string) string {
+func nextAvailableWorkstationProfileName(cfg *profile.Config, plan *workstation.SetupPlan, base string) string {
 	base = sanitizeWorkstationProfileName(base)
 	if base == "" {
 		base = "workstation"
@@ -348,7 +350,7 @@ func nextAvailableWorkstationProfileName(cfg *cloudstic.ProfilesConfig, plan *en
 	}
 }
 
-func refreshWorkstationCoverage(plan *engine.WorkstationSetupPlan) {
+func refreshWorkstationCoverage(plan *workstation.SetupPlan) {
 	if plan == nil {
 		return
 	}
@@ -378,14 +380,14 @@ func refreshWorkstationCoverage(plan *engine.WorkstationSetupPlan) {
 	}
 }
 
-func workstationDraftDecisionLabel(draft cloudstic.WorkstationProfileDraft) string {
+func workstationDraftDecisionLabel(draft workstation.ProfileDraft) string {
 	if !draft.Selected {
 		return "skip"
 	}
 	return draft.Action
 }
 
-func countSelectedWorkstationProfiles(plan *cloudstic.WorkstationSetupPlan) int {
+func countSelectedWorkstationProfiles(plan *workstation.SetupPlan) int {
 	if plan == nil {
 		return 0
 	}

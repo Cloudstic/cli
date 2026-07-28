@@ -3,7 +3,8 @@ package main
 import (
 	"fmt"
 
-	cloudstic "github.com/cloudstic/cli"
+	"github.com/cloudstic/cli/pkg/profile"
+
 	"github.com/cloudstic/cli/internal/tui/forms"
 	"github.com/cloudstic/cli/pkg/secretref"
 )
@@ -83,7 +84,7 @@ func (b *tuiFormsBackend) InitialStoreValues(name string) map[string]string {
 // persists it. Connection and encryption fields irrelevant to the selected
 // type/mode are cleared, mirroring the legacy store form.
 func (b *tuiFormsBackend) SaveStore(name string, values map[string]string, editing bool) error {
-	store := cloudstic.ProfileStore{}
+	store := profile.Store{}
 	if editing && b.cfg != nil {
 		if existing, ok := b.cfg.Stores[name]; ok {
 			store = existing
@@ -104,7 +105,7 @@ func (b *tuiFormsBackend) SaveStore(name string, values map[string]string, editi
 	return nil
 }
 
-func applyStoreConnectionValues(store *cloudstic.ProfileStore, values map[string]string) {
+func applyStoreConnectionValues(store *profile.Store, values map[string]string) {
 	// Start clean; only the selected type's fields are populated.
 	store.S3Region = ""
 	store.S3Profile = ""
@@ -127,7 +128,7 @@ func applyStoreConnectionValues(store *cloudstic.ProfileStore, values map[string
 	}
 }
 
-func applyStoreEncryptionValues(store *cloudstic.ProfileStore, values map[string]string) {
+func applyStoreEncryptionValues(store *profile.Store, values map[string]string) {
 	store.PasswordSecret = ""
 	store.EncryptionKeySecret = ""
 	store.KMSKeyARN = ""

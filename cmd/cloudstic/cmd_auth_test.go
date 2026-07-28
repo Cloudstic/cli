@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	cloudstic "github.com/cloudstic/cli"
+	"github.com/cloudstic/cli/pkg/profile"
 )
 
 func TestRunAuthNewAndListAndShow(t *testing.T) {
@@ -258,8 +258,8 @@ func TestRunAuthNew_DerivesDefaultTokenRef(t *testing.T) {
 func TestPromptAuthSelection_DerivesTokenRef(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("CLOUDSTIC_CONFIG_DIR", tmpDir)
-	cfg := &cloudstic.ProfilesConfig{
-		Auth: make(map[string]cloudstic.ProfileAuth),
+	cfg := &profile.Config{
+		Auth: make(map[string]profile.Auth),
 	}
 
 	r := &runner{

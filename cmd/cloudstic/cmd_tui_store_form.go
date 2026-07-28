@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	cloudstic "github.com/cloudstic/cli"
+	"github.com/cloudstic/cli/pkg/profile"
 )
 
 // Store-form domain helpers shared by the dashboard's store and secret backends
@@ -121,7 +121,7 @@ func (s tuiStoreConfig) ExampleText() string {
 	}
 }
 
-func newTUIStoreEncryptionMode(existing cloudstic.ProfileStore) tuiStoreEncryptionMode {
+func newTUIStoreEncryptionMode(existing profile.Store) tuiStoreEncryptionMode {
 	switch {
 	case existing.KMSKeyARN != "":
 		return tuiStoreEncryptionKMS

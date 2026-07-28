@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"sort"
 
-	cloudstic "github.com/cloudstic/cli"
+	"github.com/cloudstic/cli/pkg/profile"
 )
 
 var validRefName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
@@ -30,12 +30,12 @@ func profilesFileFlag(target *string) flagSpec {
 		withEnv("CLOUDSTIC_PROFILES_FILE"), withPlaceholder("<path>"), withCompleter("_files"))
 }
 
-func loadProfilesOrInit(path string) (*cloudstic.ProfilesConfig, error) {
-	return cloudstic.LoadProfilesFileOrEmpty(path)
+func loadProfilesOrInit(path string) (*profile.Config, error) {
+	return profile.LoadOrEmpty(path)
 }
 
-func ensureProfilesMaps(cfg *cloudstic.ProfilesConfig) {
-	cloudstic.EnsureProfilesMaps(cfg)
+func ensureProfilesMaps(cfg *profile.Config) {
+	profile.EnsureMaps(cfg)
 }
 
 func sortedKeys[T any](m map[string]T) []string {

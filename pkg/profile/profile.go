@@ -1,4 +1,4 @@
-package engine
+package profile
 
 import (
 	"errors"
@@ -11,16 +11,16 @@ import (
 	"github.com/cloudstic/cli/pkg/secretref"
 )
 
-// ProfilesConfig is the top-level YAML document for backup profiles.
-type ProfilesConfig struct {
+// Config is the top-level YAML document for backup profiles.
+type Config struct {
 	Version  int                      `yaml:"version"`
-	Stores   map[string]ProfileStore  `yaml:"stores"`
-	Auth     map[string]ProfileAuth   `yaml:"auth"`
-	Profiles map[string]BackupProfile `yaml:"profiles"`
+	Stores   map[string]Store  `yaml:"stores"`
+	Auth     map[string]Auth   `yaml:"auth"`
+	Profiles map[string]Profile `yaml:"profiles"`
 }
 
-// ProfileStore defines reusable backend settings.
-type ProfileStore struct {
+// Store defines reusable backend settings.
+type Store struct {
 	URI               string `yaml:"uri"`
 	S3Endpoint        string `yaml:"s3_endpoint,omitempty"`
 	S3Region          string `yaml:"s3_region,omitempty"`
@@ -47,8 +47,8 @@ type ProfileStore struct {
 	KMSEndpoint             string `yaml:"kms_endpoint,omitempty"`
 }
 
-// BackupProfile defines one backup job preset.
-type BackupProfile struct {
+// Profile defines one backup job preset.
+type Profile struct {
 	Source            string   `yaml:"source"`
 	Store             string   `yaml:"store,omitempty"`
 	AuthRef           string   `yaml:"auth_ref,omitempty"`
@@ -69,8 +69,8 @@ type BackupProfile struct {
 	Enabled           *bool    `yaml:"enabled,omitempty"`
 }
 
-// ProfileAuth defines reusable OAuth settings for cloud providers.
-type ProfileAuth struct {
+// Auth defines reusable OAuth settings for cloud providers.
+type Auth struct {
 	Provider          string `yaml:"provider"` // google | onedrive
 	GoogleCreds       string `yaml:"google_credentials,omitempty"`
 	GoogleCredsRef    string `yaml:"google_credentials_ref,omitempty"`
@@ -83,33 +83,42 @@ type ProfileAuth struct {
 }
 
 // IsEnabled reports whether the profile should be included in -all-profiles.
-func (p BackupProfile) IsEnabled() bool {
+func (p Profile) IsEnabled() bool {
 	if p.Enabled == nil {
 		return true
 	}
 	return *p.Enabled
 }
 
-func normalizeProfilesConfig(cfg *ProfilesConfig) *ProfilesConfig {
+// Normalize returns a config that is safe to read and write into: a nil
+// config becomes an empty one, the version defaults to 1, and every map field
+// is non-nil.
+//
+// It is the nil-tolerant form of EnsureMaps, which mutates an existing config
+// in place and leaves the version alone. Prefer Normalize when the config may
+// be nil or may have come from an empty file.
+func Normalize(cfg *Config) *Config { return normalizeConfig(cfg) }
+
+func normalizeConfig(cfg *Config) *Config {
 	if cfg == nil {
-		cfg = &ProfilesConfig{}
+		cfg = &Config{}
 	}
 	if cfg.Version == 0 {
 		cfg.Version = 1
 	}
 	if cfg.Stores == nil {
-		cfg.Stores = map[string]ProfileStore{}
+		cfg.Stores = map[string]Store{}
 	}
 	if cfg.Auth == nil {
-		cfg.Auth = map[string]ProfileAuth{}
+		cfg.Auth = map[string]Auth{}
 	}
 	if cfg.Profiles == nil {
-		cfg.Profiles = map[string]BackupProfile{}
+		cfg.Profiles = map[string]Profile{}
 	}
 	return cfg
 }
 
-func validateProfilesConfig(cfg *ProfilesConfig) error {
+func validateConfig(cfg *Config) error {
 	for storeName, s := range cfg.Stores {
 		if err := validateSecretRef("store", storeName, "password_secret", s.PasswordSecret); err != nil {
 			return err
@@ -174,58 +183,58 @@ func validateSecretRef(entryType, entryName, fieldName, ref string) error {
 	return nil
 }
 
-// LoadProfilesFile reads and parses a profiles YAML file.
-func LoadProfilesFile(path string) (*ProfilesConfig, error) {
+// Load reads and parses a profiles YAML file.
+func Load(path string) (*Config, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read profiles file %q: %w", path, err)
 	}
-	var cfg ProfilesConfig
+	var cfg Config
 	if err := yaml.Unmarshal(raw, &cfg); err != nil {
 		return nil, fmt.Errorf("parse profiles file %q: %w", path, err)
 	}
-	norm := normalizeProfilesConfig(&cfg)
-	if err := validateProfilesConfig(norm); err != nil {
+	norm := normalizeConfig(&cfg)
+	if err := validateConfig(norm); err != nil {
 		return nil, fmt.Errorf("validate profiles file %q: %w", path, err)
 	}
 	return norm, nil
 }
 
-// LoadProfilesFileOrEmpty loads profiles from path, treating a missing file
+// LoadOrEmpty loads profiles from path, treating a missing file
 // as an empty, version-1 config rather than an error. Callers that only read
 // or manage profiles (list, setup, the TUI) want this; callers running a
-// command against a named profile want LoadProfilesFile's hard error, since a
+// command against a named profile want Load's hard error, since a
 // silently-empty config there would misreport "unknown profile" instead of
 // "no profiles file".
-func LoadProfilesFileOrEmpty(path string) (*ProfilesConfig, error) {
-	cfg, err := LoadProfilesFile(path)
+func LoadOrEmpty(path string) (*Config, error) {
+	cfg, err := Load(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return &ProfilesConfig{Version: 1}, nil
+			return &Config{Version: 1}, nil
 		}
 		return nil, err
 	}
 	return cfg, nil
 }
 
-// EnsureProfilesMaps guarantees cfg's map fields are non-nil, so callers can
+// EnsureMaps guarantees cfg's map fields are non-nil, so callers can
 // write into them unconditionally.
-func EnsureProfilesMaps(cfg *ProfilesConfig) {
+func EnsureMaps(cfg *Config) {
 	if cfg.Stores == nil {
-		cfg.Stores = map[string]ProfileStore{}
+		cfg.Stores = map[string]Store{}
 	}
 	if cfg.Profiles == nil {
-		cfg.Profiles = map[string]BackupProfile{}
+		cfg.Profiles = map[string]Profile{}
 	}
 	if cfg.Auth == nil {
-		cfg.Auth = map[string]ProfileAuth{}
+		cfg.Auth = map[string]Auth{}
 	}
 }
 
-// SaveProfilesFile writes a profiles YAML file atomically.
-func SaveProfilesFile(path string, cfg *ProfilesConfig) error {
-	cfg = normalizeProfilesConfig(cfg)
-	if err := validateProfilesConfig(cfg); err != nil {
+// Save writes a profiles YAML file atomically.
+func Save(path string, cfg *Config) error {
+	cfg = normalizeConfig(cfg)
+	if err := validateConfig(cfg); err != nil {
 		return fmt.Errorf("validate profiles config: %w", err)
 	}
 

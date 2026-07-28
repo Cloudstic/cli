@@ -6,9 +6,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cloudstic/cli/pkg/profile"
+
 	"github.com/jedib0t/go-pretty/v6/table"
 
-	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/internal/ui"
 )
@@ -93,7 +94,7 @@ func boolLabel(v bool) string {
 	return "no"
 }
 
-func profileHealth(cfg *cloudstic.ProfilesConfig, p cloudstic.BackupProfile) (status string, details []string) {
+func profileHealth(cfg *profile.Config, p profile.Profile) (status string, details []string) {
 	status = "ready"
 	provider := profileProviderFromSource(p.Source)
 	if !p.IsEnabled() {
@@ -122,7 +123,7 @@ func profileHealth(cfg *cloudstic.ProfilesConfig, p cloudstic.BackupProfile) (st
 	return status, details
 }
 
-func authHealth(auth cloudstic.ProfileAuth) (string, []string) {
+func authHealth(auth profile.Auth) (string, []string) {
 	switch auth.Provider {
 	case "google":
 		if auth.GoogleTokenFile == "" && auth.GoogleTokenRef == "" {
@@ -139,7 +140,7 @@ func authHealth(auth cloudstic.ProfileAuth) (string, []string) {
 	}
 }
 
-func storeHealth(s cloudstic.ProfileStore) (string, []string) {
+func storeHealth(s profile.Store) (string, []string) {
 	if s.URI == "" {
 		return "error", []string{"missing uri"}
 	}
@@ -149,7 +150,7 @@ func storeHealth(s cloudstic.ProfileStore) (string, []string) {
 	return "ready", nil
 }
 
-func profilesUsingStore(cfg *cloudstic.ProfilesConfig, storeName string) []string {
+func profilesUsingStore(cfg *profile.Config, storeName string) []string {
 	var refs []string
 	for pName, p := range cfg.Profiles {
 		if p.Store == storeName {
@@ -160,7 +161,7 @@ func profilesUsingStore(cfg *cloudstic.ProfilesConfig, storeName string) []strin
 	return refs
 }
 
-func profilesUsingAuth(cfg *cloudstic.ProfilesConfig, authName string) []string {
+func profilesUsingAuth(cfg *profile.Config, authName string) []string {
 	var refs []string
 	for pName, p := range cfg.Profiles {
 		if p.AuthRef == authName {
@@ -178,7 +179,7 @@ func appendWarningRow(rows []table.Row, warnings []string) []table.Row {
 	return append(rows, table.Row{"Warnings", strings.Join(warnings, ", ")})
 }
 
-func renderStoreList(out io.Writer, cfg *cloudstic.ProfilesConfig) {
+func renderStoreList(out io.Writer, cfg *profile.Config) {
 	names := sortedKeys(cfg.Stores)
 	renderSectionHeading(out, "Stores", len(names))
 	if len(names) == 0 {
@@ -202,7 +203,7 @@ func renderStoreList(out io.Writer, cfg *cloudstic.ProfilesConfig) {
 	t.Render()
 }
 
-func renderAuthList(out io.Writer, cfg *cloudstic.ProfilesConfig) {
+func renderAuthList(out io.Writer, cfg *profile.Config) {
 	names := sortedKeys(cfg.Auth)
 	renderSectionHeading(out, "Auth", len(names))
 	if len(names) == 0 {
@@ -225,7 +226,7 @@ func renderAuthList(out io.Writer, cfg *cloudstic.ProfilesConfig) {
 	t.Render()
 }
 
-func renderProfileList(out io.Writer, cfg *cloudstic.ProfilesConfig) {
+func renderProfileList(out io.Writer, cfg *profile.Config) {
 	names := sortedKeys(cfg.Profiles)
 	renderSectionHeading(out, "Profiles", len(names))
 	if len(names) == 0 {
@@ -263,7 +264,7 @@ func dashIfEmpty(v string) string {
 	return v
 }
 
-func authTokenPath(auth cloudstic.ProfileAuth) string {
+func authTokenPath(auth profile.Auth) string {
 	if auth.GoogleTokenRef != "" {
 		return auth.GoogleTokenRef
 	}
@@ -279,7 +280,7 @@ func authTokenPath(auth cloudstic.ProfileAuth) string {
 	return "-"
 }
 
-func renderStoreShow(out io.Writer, cfg *cloudstic.ProfilesConfig, name string, s cloudstic.ProfileStore) {
+func renderStoreShow(out io.Writer, cfg *profile.Config, name string, s profile.Store) {
 	status, warnings := storeHealth(s)
 	renderSectionHeading(out, fmt.Sprintf("Store %s", name), -1)
 	renderKVTable(out, appendWarningRow([]table.Row{
@@ -333,7 +334,7 @@ func renderStoreShow(out io.Writer, cfg *cloudstic.ProfilesConfig, name string, 
 	t.Render()
 }
 
-func secretDisplayRows(s cloudstic.ProfileStore) []table.Row {
+func secretDisplayRows(s profile.Store) []table.Row {
 	var rows []table.Row
 	appendRow := func(label, value string, deprecated bool) {
 		if value == "" {
@@ -356,7 +357,7 @@ func secretDisplayRows(s cloudstic.ProfileStore) []table.Row {
 	return rows
 }
 
-func renderAuthShow(out io.Writer, cfg *cloudstic.ProfilesConfig, name string, auth cloudstic.ProfileAuth) {
+func renderAuthShow(out io.Writer, cfg *profile.Config, name string, auth profile.Auth) {
 	status, warnings := authHealth(auth)
 	renderSectionHeading(out, fmt.Sprintf("Auth %s", name), -1)
 	renderKVTable(out, appendWarningRow([]table.Row{
@@ -406,7 +407,7 @@ func renderAuthShow(out io.Writer, cfg *cloudstic.ProfilesConfig, name string, a
 	t.Render()
 }
 
-func renderProfileShow(out io.Writer, cfg *cloudstic.ProfilesConfig, name string, profile cloudstic.BackupProfile) {
+func renderProfileShow(out io.Writer, cfg *profile.Config, name string, profile profile.Profile) {
 	status, warnings := profileHealth(cfg, profile)
 	renderSectionHeading(out, fmt.Sprintf("Profile %s", name), -1)
 	renderKVTable(out, appendWarningRow([]table.Row{

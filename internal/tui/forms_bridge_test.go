@@ -4,26 +4,28 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudstic/cli/pkg/profile"
+
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/cloudstic/cli/internal/engine"
+
 	"github.com/cloudstic/cli/internal/tui/forms"
 )
 
 // stubFormsBackend implements FormsBackend for model-level tests.
 type stubFormsBackend struct {
-	stores      []string
-	cfg         *engine.ProfilesConfig
-	saved       bool
-	deleted     string
+	stores       []string
+	cfg          *profile.Config
+	saved        bool
+	deleted      string
 	reloadHits   int
 	savedStore   string
 	storeExists  map[string]bool
 	storedSecret string
 }
 
-func (b *stubFormsBackend) StoreOptions() []string                 { return b.stores }
-func (b *stubFormsBackend) ProviderForSourceType(string) string    { return "" }
-func (b *stubFormsBackend) AuthOptions(string) []string            { return nil }
+func (b *stubFormsBackend) StoreOptions() []string              { return b.stores }
+func (b *stubFormsBackend) ProviderForSourceType(string) string { return "" }
+func (b *stubFormsBackend) AuthOptions(string) []string         { return nil }
 func (b *stubFormsBackend) SourceParts(uri string) (string, string) {
 	for i := 0; i < len(uri); i++ {
 		if uri[i] == ':' {
@@ -32,9 +34,9 @@ func (b *stubFormsBackend) SourceParts(uri string) (string, string) {
 	}
 	return uri, ""
 }
-func (b *stubFormsBackend) SourceDetailLabel(string) string   { return "Path" }
-func (b *stubFormsBackend) SourceDetailRequired(string) bool  { return true }
-func (b *stubFormsBackend) SourceExample(string) string       { return "" }
+func (b *stubFormsBackend) SourceDetailLabel(string) string  { return "Path" }
+func (b *stubFormsBackend) SourceDetailRequired(string) bool { return true }
+func (b *stubFormsBackend) SourceExample(string) string      { return "" }
 func (b *stubFormsBackend) ComposeSource(t, v string) (string, error) {
 	if v == "" {
 		return "", nil
@@ -51,7 +53,7 @@ func (b *stubFormsBackend) DeleteProfile(name string) error {
 	b.deleted = name
 	return nil
 }
-func (b *stubFormsBackend) Reload() (*engine.ProfilesConfig, error) {
+func (b *stubFormsBackend) Reload() (*profile.Config, error) {
 	b.reloadHits++
 	return b.cfg, nil
 }
@@ -90,7 +92,7 @@ func (b *stubFormsBackend) ParseRef(ref string) (string, string, bool) {
 	}
 	return scheme, "", true
 }
-func (b *stubFormsBackend) ValidateRef(string) error         { return nil }
+func (b *stubFormsBackend) ValidateRef(string) error            { return nil }
 func (b *stubFormsBackend) StoreSecret(ref, value string) error { b.storedSecret = ref; return nil }
 
 func formsTestDashboard() Dashboard {
@@ -107,7 +109,7 @@ func keyPress(s string) tea.KeyMsg {
 }
 
 func TestModel_OpenCreateProfileForm(t *testing.T) {
-	backend := &stubFormsBackend{stores: []string{"s1"}, cfg: &engine.ProfilesConfig{}}
+	backend := &stubFormsBackend{stores: []string{"s1"}, cfg: &profile.Config{}}
 	m := NewModel(formsTestDashboard()).WithForms(backend)
 
 	next, _ := m.Update(keyPress("n"))
@@ -121,8 +123,8 @@ func TestModel_OpenCreateProfileForm(t *testing.T) {
 }
 
 func TestModel_CreateProfileSavesAndReloads(t *testing.T) {
-	backend := &stubFormsBackend{stores: []string{"s1"}, cfg: &engine.ProfilesConfig{}}
-	m := NewModel(formsTestDashboard()).WithForms(backend).WithConfig(&engine.ProfilesConfig{}, nil)
+	backend := &stubFormsBackend{stores: []string{"s1"}, cfg: &profile.Config{}}
+	m := NewModel(formsTestDashboard()).WithForms(backend).WithConfig(&profile.Config{}, nil)
 
 	next, _ := m.Update(keyPress("n"))
 	m = next.(Model)
@@ -163,8 +165,8 @@ func TestModel_CreateProfileSavesAndReloads(t *testing.T) {
 }
 
 func TestModel_DeleteProfileConfirmFlow(t *testing.T) {
-	backend := &stubFormsBackend{stores: []string{"s1"}, cfg: &engine.ProfilesConfig{}}
-	m := NewModel(formsTestDashboard()).WithForms(backend).WithConfig(&engine.ProfilesConfig{}, nil)
+	backend := &stubFormsBackend{stores: []string{"s1"}, cfg: &profile.Config{}}
+	m := NewModel(formsTestDashboard()).WithForms(backend).WithConfig(&profile.Config{}, nil)
 
 	next, _ := m.Update(keyPress("d"))
 	m = next.(Model)
@@ -190,7 +192,7 @@ func TestModel_DeleteProfileConfirmFlow(t *testing.T) {
 }
 
 func TestModel_DeleteProfileCancel(t *testing.T) {
-	backend := &stubFormsBackend{stores: []string{"s1"}, cfg: &engine.ProfilesConfig{}}
+	backend := &stubFormsBackend{stores: []string{"s1"}, cfg: &profile.Config{}}
 	m := NewModel(formsTestDashboard()).WithForms(backend)
 
 	next, _ := m.Update(keyPress("d"))
@@ -206,7 +208,7 @@ func TestModel_DeleteProfileCancel(t *testing.T) {
 }
 
 func TestModel_NestedEditSecretFromStoreForm(t *testing.T) {
-	backend := &stubFormsBackend{stores: []string{"s1"}, cfg: &engine.ProfilesConfig{}}
+	backend := &stubFormsBackend{stores: []string{"s1"}, cfg: &profile.Config{}}
 	m := NewModel(formsTestDashboard()).WithForms(backend)
 
 	// Open profile form, jump to store field, open a nested create-store form.
@@ -273,7 +275,7 @@ func TestModel_FormKeysNoOpWithoutBackend(t *testing.T) {
 }
 
 func TestModel_NestedCreateStoreFromProfileForm(t *testing.T) {
-	backend := &stubFormsBackend{stores: []string{"s1"}, cfg: &engine.ProfilesConfig{}}
+	backend := &stubFormsBackend{stores: []string{"s1"}, cfg: &profile.Config{}}
 	m := NewModel(formsTestDashboard()).WithForms(backend)
 
 	// Open the create-profile form.
@@ -332,4 +334,3 @@ func TestModel_NestedCreateStoreFromProfileForm(t *testing.T) {
 		t.Fatalf("profile store field=%q want newstore selected after nested create", got)
 	}
 }
-

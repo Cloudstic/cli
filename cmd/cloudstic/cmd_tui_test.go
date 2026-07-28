@@ -8,7 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	cloudstic "github.com/cloudstic/cli"
+	"github.com/cloudstic/cli/pkg/profile"
+
 	"github.com/cloudstic/cli/internal/tui/forms"
 	"github.com/cloudstic/cli/pkg/secretref"
 	secretrefbackends "github.com/cloudstic/cli/pkg/secretref/backends"
@@ -61,10 +62,10 @@ func TestTUIProfileSourceCompose(t *testing.T) {
 
 // newTestFormsBackend builds the dashboard's forms backend over a temporary
 // profiles file, returning the backend and the file's path.
-func newTestFormsBackend(t *testing.T, cfg *cloudstic.ProfilesConfig) (*tuiFormsBackend, string) {
+func newTestFormsBackend(t *testing.T, cfg *profile.Config) (*tuiFormsBackend, string) {
 	t.Helper()
 	path := t.TempDir() + "/profiles.yaml"
-	if err := cloudstic.SaveProfilesFile(path, cfg); err != nil {
+	if err := profile.Save(path, cfg); err != nil {
 		t.Fatalf("SaveProfilesFile: %v", err)
 	}
 	loaded, err := tuiLoadConfig(path)
@@ -75,9 +76,9 @@ func newTestFormsBackend(t *testing.T, cfg *cloudstic.ProfilesConfig) (*tuiForms
 }
 
 func TestInitialStoreValues_PopulatesExistingSecretFields(t *testing.T) {
-	backend, _ := newTestFormsBackend(t, &cloudstic.ProfilesConfig{
+	backend, _ := newTestFormsBackend(t, &profile.Config{
 		Version: 1,
-		Stores: map[string]cloudstic.ProfileStore{
+		Stores: map[string]profile.Store{
 			"remote": {
 				URI:               "s3:bucket/prod",
 				S3Region:          "us-east-1",
@@ -112,7 +113,7 @@ func TestInitialStoreValues_PopulatesExistingSecretFields(t *testing.T) {
 }
 
 func TestSaveStore_PersistsSecretRefsAndClearsUnusedModes(t *testing.T) {
-	backend, path := newTestFormsBackend(t, &cloudstic.ProfilesConfig{Version: 1})
+	backend, path := newTestFormsBackend(t, &profile.Config{Version: 1})
 
 	uri, err := backend.ComposeStore("s3", "bucket/prod")
 	if err != nil {
@@ -134,7 +135,7 @@ func TestSaveStore_PersistsSecretRefsAndClearsUnusedModes(t *testing.T) {
 		t.Fatalf("SaveStore: %v", err)
 	}
 
-	cfg, err := cloudstic.LoadProfilesFile(path)
+	cfg, err := profile.Load(path)
 	if err != nil {
 		t.Fatalf("LoadProfilesFile: %v", err)
 	}
@@ -160,9 +161,9 @@ func TestSaveStore_PersistsSecretRefsAndClearsUnusedModes(t *testing.T) {
 }
 
 func TestSaveStore_ClearsConnectionFieldsOfOtherTypes(t *testing.T) {
-	backend, path := newTestFormsBackend(t, &cloudstic.ProfilesConfig{
+	backend, path := newTestFormsBackend(t, &profile.Config{
 		Version: 1,
-		Stores: map[string]cloudstic.ProfileStore{
+		Stores: map[string]profile.Store{
 			"remote": {
 				URI:               "s3:bucket/prod",
 				S3Region:          "us-east-1",
@@ -182,7 +183,7 @@ func TestSaveStore_ClearsConnectionFieldsOfOtherTypes(t *testing.T) {
 		t.Fatalf("SaveStore: %v", err)
 	}
 
-	cfg, err := cloudstic.LoadProfilesFile(path)
+	cfg, err := profile.Load(path)
 	if err != nil {
 		t.Fatalf("LoadProfilesFile: %v", err)
 	}
@@ -208,7 +209,7 @@ func TestStoreSecret_WritesThroughWritableBackend(t *testing.T) {
 		"test": secretBackend,
 	})
 
-	backend, _ := newTestFormsBackend(t, &cloudstic.ProfilesConfig{Version: 1})
+	backend, _ := newTestFormsBackend(t, &profile.Config{Version: 1})
 
 	ref := backend.DefaultRef("test", "remote", "password")
 	if ref != "test://cloudstic/store/remote/password" {
@@ -223,8 +224,8 @@ func TestStoreSecret_WritesThroughWritableBackend(t *testing.T) {
 }
 
 func TestProfileAuthOptions_FiltersByProvider(t *testing.T) {
-	cfg := &cloudstic.ProfilesConfig{
-		Auth: map[string]cloudstic.ProfileAuth{
+	cfg := &profile.Config{
+		Auth: map[string]profile.Auth{
 			"work-gdrive": {Provider: "gdrive"},
 			"home-gdrive": {Provider: "gdrive"},
 			"onedrive":    {Provider: "onedrive"},

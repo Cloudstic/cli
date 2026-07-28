@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cloudstic/cli/pkg/profile"
+
 	"golang.org/x/crypto/ssh"
 
 	cloudstic "github.com/cloudstic/cli"
@@ -110,7 +112,7 @@ func runBackup(r *runner, ctx context.Context, a *backupArgs) int {
 	}
 
 	if a.authRef != "" {
-		cfg, err := cloudstic.LoadProfilesFile(a.profilesFile)
+		cfg, err := profile.Load(a.profilesFile)
 		if err != nil {
 			return r.fail("Failed to load profiles: %v", err)
 		}
@@ -249,7 +251,7 @@ func ensureDefaultAuthRefForCloudBackup(a *backupArgs) error {
 		}
 		cfg.Auth[authRef] = auth
 
-		if saveErr := cloudstic.SaveProfilesFile(a.profilesFile, cfg); saveErr != nil {
+		if saveErr := profile.Save(a.profilesFile, cfg); saveErr != nil {
 			return fmt.Errorf("save profiles with default auth: %w", saveErr)
 		}
 
@@ -262,7 +264,7 @@ func ensureDefaultAuthRefForCloudBackup(a *backupArgs) error {
 }
 
 func runBackupWithProfiles(r *runner, ctx context.Context, base *backupArgs) int {
-	cfg, err := cloudstic.LoadProfilesFile(base.profilesFile)
+	cfg, err := profile.Load(base.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
 	}
@@ -319,7 +321,7 @@ func runBackupWithProfiles(r *runner, ctx context.Context, base *backupArgs) int
 // can carry (source, tags, excludes, native-source credentials, auth). Both
 // apply the same "explicit flag beats profile value" precedence, just against
 // different field shapes.
-func mergeProfileBackupArgs(base *backupArgs, profileName string, p cloudstic.BackupProfile, cfg *cloudstic.ProfilesConfig) (*backupArgs, error) {
+func mergeProfileBackupArgs(base *backupArgs, profileName string, p profile.Profile, cfg *profile.Config) (*backupArgs, error) {
 	g := cloneGlobalFlags(base.globalFlags)
 	a := *base
 	a.globalFlags = g
@@ -411,7 +413,7 @@ func mergeProfileBackupArgs(base *backupArgs, profileName string, p cloudstic.Ba
 	return &a, nil
 }
 
-func applyProfileAuthToBackupArgs(a *backupArgs, auth cloudstic.ProfileAuth) error {
+func applyProfileAuthToBackupArgs(a *backupArgs, auth profile.Auth) error {
 	uri, err := parseSourceURI(a.sourceURI)
 	if err != nil {
 		return fmt.Errorf("parse source URI: %w", err)

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cloudstic/cli/pkg/profile"
+
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/engine"
 )
@@ -146,9 +148,9 @@ type StoreProbe struct {
 // BuildDashboard derives the dashboard view-model from the profiles config and
 // whatever store probes have completed so far. A nil probes map yields the
 // skeleton the model renders on its first frame, before any probe returns.
-func BuildDashboard(cfg *engine.ProfilesConfig, probes map[string]StoreProbe) Dashboard {
+func BuildDashboard(cfg *profile.Config, probes map[string]StoreProbe) Dashboard {
 	if cfg == nil {
-		cfg = &engine.ProfilesConfig{}
+		cfg = &profile.Config{}
 	}
 	if probes == nil {
 		probes = map[string]StoreProbe{}
@@ -271,7 +273,7 @@ func deriveProfileActions(status ProfileStatus, storeHealth StoreHealth) []Profi
 	}
 }
 
-func profileStatus(cfg *engine.ProfilesConfig, p engine.BackupProfile, probe StoreProbe) (ProfileStatus, string) {
+func profileStatus(cfg *profile.Config, p profile.Profile, probe StoreProbe) (ProfileStatus, string) {
 	if !p.IsEnabled() {
 		return ProfileStatusDisabled, "profile disabled"
 	}
@@ -362,7 +364,7 @@ func latestBackup(sourceURI string, entries []engine.SnapshotEntry) (string, str
 	return latest.Created.Local().Format("2006-01-02 15:04"), latest.Ref, latest.Created
 }
 
-func deriveStoreHealth(cfg *engine.ProfilesConfig, p engine.BackupProfile, probe StoreProbe) StoreHealth {
+func deriveStoreHealth(cfg *profile.Config, p profile.Profile, probe StoreProbe) StoreHealth {
 	if !p.IsEnabled() {
 		return StoreHealthDisabled
 	}

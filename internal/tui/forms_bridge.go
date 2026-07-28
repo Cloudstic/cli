@@ -2,8 +2,9 @@ package tui
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/cloudstic/cli/internal/engine"
+
 	"github.com/cloudstic/cli/internal/tui/forms"
+	"github.com/cloudstic/cli/pkg/profile"
 )
 
 // FormsBackend is the domain boundary the model uses for profile and store
@@ -21,7 +22,7 @@ type FormsBackend interface {
 	// DeleteProfile removes a profile from the profiles file.
 	DeleteProfile(name string) error
 	// Reload re-reads the profiles config after a mutation.
-	Reload() (*engine.ProfilesConfig, error)
+	Reload() (*profile.Config, error)
 }
 
 // formFrame is one level of the (possibly nested) form overlay. intent records
@@ -68,7 +69,7 @@ type confirmState struct {
 // configReloadedMsg carries a reloaded profiles config back into the model
 // after a form save or delete, with the profile name to reselect.
 type configReloadedMsg struct {
-	cfg        *engine.ProfilesConfig
+	cfg        *profile.Config
 	err        error
 	selectName string
 }

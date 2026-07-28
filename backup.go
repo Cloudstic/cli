@@ -17,17 +17,6 @@ import (
 
 type BackupOption = engine.BackupOption
 type BackupResult = engine.RunResult
-type ProfilesConfig = engine.ProfilesConfig
-type ProfileStore = engine.ProfileStore
-type ProfileAuth = engine.ProfileAuth
-type BackupProfile = engine.BackupProfile
-type DiscoveredSource = engine.DiscoveredSource
-type WorkstationSetupPlan = engine.WorkstationSetupPlan
-type WorkstationSetupOption = engine.WorkstationSetupOption
-type WorkstationApplyResult = engine.WorkstationApplyResult
-type WorkstationProfileDraft = engine.WorkstationProfileDraft
-type WorkstationFolderCandidate = engine.WorkstationFolderCandidate
-type WorkstationCoverageSummary = engine.WorkstationCoverageSummary
 
 var (
 	WithVerbose             = engine.WithVerbose
@@ -37,9 +26,6 @@ var (
 	WithGenerator           = engine.WithGenerator
 	WithMeta                = engine.WithMeta
 	WithExcludeHash         = engine.WithExcludeHash
-	WithWorkstationProfiles = engine.WithWorkstationProfiles
-	WithWorkstationStoreRef = engine.WithWorkstationStoreRef
-	WithWorkstationDryRun   = engine.WithWorkstationDryRun
 )
 
 // noRepoConfig marks Client.openCfg as spent. A plain nil cannot: nil is also
@@ -133,18 +119,6 @@ func (c *Client) Backup(ctx context.Context, src source.Source, opts ...BackupOp
 	return result, nil
 }
 
-func (c *Client) DiscoverSources(ctx context.Context) ([]DiscoveredSource, error) {
-	return engine.DiscoverSources(ctx)
-}
-
-func PlanWorkstationSetup(ctx context.Context, opts ...WorkstationSetupOption) (*WorkstationSetupPlan, error) {
-	return engine.PlanWorkstationSetup(ctx, opts...)
-}
-
-func ApplyWorkstationSetupPlan(cfg *ProfilesConfig, plan *WorkstationSetupPlan) (*WorkstationApplyResult, error) {
-	return engine.ApplyWorkstationSetupPlan(cfg, plan)
-}
-
 // SecretRefError reports a malformed scheme://path secret reference (e.g. in
 // one of a profile's *_secret fields). Use errors.As to inspect it and Kind
 // to branch on the failure mode.
@@ -169,25 +143,3 @@ type SecretRef = secretref.Ref
 // WritableSecretBackend is a secret backend that supports writing new values,
 // as returned by SecretResolver.WritableBackends.
 type WritableSecretBackend = secretref.WritableBackend
-
-// LoadProfilesFile parses a backup profiles YAML file.
-func LoadProfilesFile(path string) (*ProfilesConfig, error) {
-	return engine.LoadProfilesFile(path)
-}
-
-// SaveProfilesFile writes a backup profiles YAML file.
-func SaveProfilesFile(path string, cfg *ProfilesConfig) error {
-	return engine.SaveProfilesFile(path, cfg)
-}
-
-// LoadProfilesFileOrEmpty loads profiles from path, treating a missing file
-// as an empty, version-1 config rather than an error.
-func LoadProfilesFileOrEmpty(path string) (*ProfilesConfig, error) {
-	return engine.LoadProfilesFileOrEmpty(path)
-}
-
-// EnsureProfilesMaps guarantees cfg's map fields are non-nil, so callers can
-// write into them unconditionally.
-func EnsureProfilesMaps(cfg *ProfilesConfig) {
-	engine.EnsureProfilesMaps(cfg)
-}

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudstic/cli/pkg/profile"
+
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/pkg/keychain"
 	"github.com/cloudstic/cli/pkg/secretref"
@@ -115,9 +117,9 @@ func TestRunStoreNew_ExistingStorePrefillsUnsetValues(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
 
-	cfg := &cloudstic.ProfilesConfig{
+	cfg := &profile.Config{
 		Version: 1,
-		Stores: map[string]cloudstic.ProfileStore{
+		Stores: map[string]profile.Store{
 			"prod": {
 				URI:            "s3:bucket/backups",
 				S3Region:       "us-east-1",
@@ -126,7 +128,7 @@ func TestRunStoreNew_ExistingStorePrefillsUnsetValues(t *testing.T) {
 			},
 		},
 	}
-	if err := cloudstic.SaveProfilesFile(profilesPath, cfg); err != nil {
+	if err := profile.Save(profilesPath, cfg); err != nil {
 		t.Fatalf("SaveProfilesFile: %v", err)
 	}
 
@@ -142,7 +144,7 @@ func TestRunStoreNew_ExistingStorePrefillsUnsetValues(t *testing.T) {
 		t.Fatalf("store new failed: %s", errOut.String())
 	}
 
-	updated, err := cloudstic.LoadProfilesFile(profilesPath)
+	updated, err := profile.Load(profilesPath)
 	if err != nil {
 		t.Fatalf("LoadProfilesFile: %v", err)
 	}
@@ -303,7 +305,7 @@ func TestCheckOrInitStore_AlreadyInitialized(t *testing.T) {
 	storePath := filepath.Join(tmpDir, "store")
 
 	// Initialize the store first.
-	s := cloudstic.ProfileStore{URI: "local:" + storePath}
+	s := profile.Store{URI: "local:" + storePath}
 	sc, err := clientConfigFromProfileStore(s)
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
@@ -318,11 +320,11 @@ func TestCheckOrInitStore_AlreadyInitialized(t *testing.T) {
 	}
 
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
-	cfg := &cloudstic.ProfilesConfig{
+	cfg := &profile.Config{
 		Version: 1,
-		Stores:  map[string]cloudstic.ProfileStore{"test": s},
+		Stores:  map[string]profile.Store{"test": s},
 	}
-	if err := cloudstic.SaveProfilesFile(profilesPath, cfg); err != nil {
+	if err := profile.Save(profilesPath, cfg); err != nil {
 		t.Fatalf("SaveProfilesFile: %v", err)
 	}
 
@@ -342,7 +344,7 @@ func TestCheckOrInitStore_InitializedEncrypted_ValidCredentials(t *testing.T) {
 	tmpDir := t.TempDir()
 	storePath := filepath.Join(tmpDir, "store")
 
-	s := cloudstic.ProfileStore{URI: "local:" + storePath}
+	s := profile.Store{URI: "local:" + storePath}
 	sc, err := clientConfigFromProfileStore(s)
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
@@ -357,7 +359,7 @@ func TestCheckOrInitStore_InitializedEncrypted_ValidCredentials(t *testing.T) {
 	}
 
 	t.Setenv("VERIFY_STORE_PASSWORD", "correct-password")
-	cfg := &cloudstic.ProfilesConfig{Version: 1, Stores: map[string]cloudstic.ProfileStore{
+	cfg := &profile.Config{Version: 1, Stores: map[string]profile.Store{
 		"test": {
 			URI:            s.URI,
 			PasswordSecret: "env://VERIFY_STORE_PASSWORD",
@@ -382,7 +384,7 @@ func TestCheckOrInitStore_InitializedEncrypted_InvalidCredentials(t *testing.T) 
 	tmpDir := t.TempDir()
 	storePath := filepath.Join(tmpDir, "store")
 
-	s := cloudstic.ProfileStore{URI: "local:" + storePath}
+	s := profile.Store{URI: "local:" + storePath}
 	sc, err := clientConfigFromProfileStore(s)
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
@@ -397,7 +399,7 @@ func TestCheckOrInitStore_InitializedEncrypted_InvalidCredentials(t *testing.T) 
 	}
 
 	t.Setenv("VERIFY_STORE_PASSWORD_BAD", "wrong-password")
-	cfg := &cloudstic.ProfilesConfig{Version: 1, Stores: map[string]cloudstic.ProfileStore{
+	cfg := &profile.Config{Version: 1, Stores: map[string]profile.Store{
 		"test": {
 			URI:            s.URI,
 			PasswordSecret: "env://VERIFY_STORE_PASSWORD_BAD",
@@ -419,7 +421,7 @@ func TestClientConfigFromProfileStore_ResolvesEnvVars(t *testing.T) {
 	t.Setenv("TEST_SK", "my-secret-key")
 	t.Setenv("TEST_PW", "s3cret")
 
-	s := cloudstic.ProfileStore{
+	s := profile.Store{
 		URI:               "s3:bucket/prefix",
 		S3Region:          "eu-west-1",
 		S3AccessKeySecret: "env://TEST_AK",
@@ -455,7 +457,7 @@ func TestClientConfigFromProfileStore_ResolvesEnvVars(t *testing.T) {
 func TestClientConfigFromProfileStore_ResolvesSecretRef(t *testing.T) {
 	t.Setenv("SECRET_AK", "secret-ak")
 
-	s := cloudstic.ProfileStore{
+	s := profile.Store{
 		URI:               "s3:bucket/prefix",
 		S3AccessKeySecret: "env://SECRET_AK",
 	}
@@ -470,7 +472,7 @@ func TestClientConfigFromProfileStore_ResolvesSecretRef(t *testing.T) {
 }
 
 func TestClientConfigFromProfileStore_InvalidSecretRefReturnsError(t *testing.T) {
-	s := cloudstic.ProfileStore{
+	s := profile.Store{
 		URI:            "s3:bucket/prefix",
 		PasswordSecret: "env:/bad-format",
 	}
@@ -1010,7 +1012,7 @@ func TestPromptSecretReferenceWithFns_DarwinEnvUnsetSwitchesToKeychain(t *testin
 }
 
 func TestCheckOrInitStore_MissingSecretAllowed(t *testing.T) {
-	cfg := &cloudstic.ProfilesConfig{Version: 1, Stores: map[string]cloudstic.ProfileStore{
+	cfg := &profile.Config{Version: 1, Stores: map[string]profile.Store{
 		"test": {
 			URI:            "local:/tmp/store",
 			PasswordSecret: "env://MISSING_STORE_PASSWORD",
@@ -1029,7 +1031,7 @@ func TestCheckOrInitStore_MissingSecretAllowed(t *testing.T) {
 }
 
 func TestCheckOrInitStore_MissingSecretAllowedSilent(t *testing.T) {
-	cfg := &cloudstic.ProfilesConfig{Version: 1, Stores: map[string]cloudstic.ProfileStore{
+	cfg := &profile.Config{Version: 1, Stores: map[string]profile.Store{
 		"test": {
 			URI:            "local:/tmp/store",
 			PasswordSecret: "env://MISSING_STORE_PASSWORD",
@@ -1050,13 +1052,13 @@ func TestCheckOrInitStore_MissingSecretAllowedSilent(t *testing.T) {
 func TestRunStoreVerify_MissingSecretFails(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
-	cfg := &cloudstic.ProfilesConfig{Version: 1, Stores: map[string]cloudstic.ProfileStore{
+	cfg := &profile.Config{Version: 1, Stores: map[string]profile.Store{
 		"test": {
 			URI:            "local:/tmp/store",
 			PasswordSecret: "env://MISSING_VERIFY_PASSWORD",
 		},
 	}}
-	if err := cloudstic.SaveProfilesFile(profilesPath, cfg); err != nil {
+	if err := profile.Save(profilesPath, cfg); err != nil {
 		t.Fatalf("SaveProfilesFile: %v", err)
 	}
 
@@ -1073,10 +1075,10 @@ func TestRunStoreVerify_MissingSecretFails(t *testing.T) {
 }
 
 func TestStoreHasExplicitEncryption(t *testing.T) {
-	if storeHasExplicitEncryption(cloudstic.ProfileStore{}) {
+	if storeHasExplicitEncryption(profile.Store{}) {
 		t.Fatal("expected false for empty store")
 	}
-	if !storeHasExplicitEncryption(cloudstic.ProfileStore{PasswordSecret: "env://CLOUDSTIC_PASSWORD"}) {
+	if !storeHasExplicitEncryption(profile.Store{PasswordSecret: "env://CLOUDSTIC_PASSWORD"}) {
 		t.Fatal("expected true when password secret is set")
 	}
 }
@@ -1105,17 +1107,17 @@ func TestIsAWSExpiredAuthError(t *testing.T) {
 func TestAWSSSOLoginOption(t *testing.T) {
 	err := errors.New("failed to refresh cached credentials, the SSO session has expired or is invalid")
 
-	got := awsSSOLoginOption(cloudstic.ProfileStore{URI: "s3:bucket", S3Profile: "work"}, err)
+	got := awsSSOLoginOption(profile.Store{URI: "s3:bucket", S3Profile: "work"}, err)
 	if got != "Run aws sso login --profile work" {
 		t.Fatalf("got %q", got)
 	}
 
-	got = awsSSOLoginOption(cloudstic.ProfileStore{URI: "s3:bucket"}, err)
+	got = awsSSOLoginOption(profile.Store{URI: "s3:bucket"}, err)
 	if got != "Run aws sso login" {
 		t.Fatalf("got %q", got)
 	}
 
-	got = awsSSOLoginOption(cloudstic.ProfileStore{URI: "s3:bucket"}, errors.New("bucket not found"))
+	got = awsSSOLoginOption(profile.Store{URI: "s3:bucket"}, errors.New("bucket not found"))
 	if got != "" {
 		t.Fatalf("expected empty option, got %q", got)
 	}
@@ -1164,7 +1166,7 @@ func TestExistingStoreInteractivePlan(t *testing.T) {
 func TestConfigureStoreEncryptionSelection_Password(t *testing.T) {
 	var out strings.Builder
 	s, err := configureStoreEncryptionSelection(context.Background(),
-		cloudstic.ProfileStore{},
+		profile.Store{},
 		"prod",
 		"Password (recommended for interactive use)",
 		func(context.Context, string, string, string, string) (string, error) {
@@ -1187,7 +1189,7 @@ func TestConfigureStoreEncryptionSelection_Password(t *testing.T) {
 func TestConfigureStoreEncryptionSelection_KMS(t *testing.T) {
 	var out strings.Builder
 	s, err := configureStoreEncryptionSelection(context.Background(),
-		cloudstic.ProfileStore{},
+		profile.Store{},
 		"prod",
 		"AWS KMS key (enterprise)",
 		func(context.Context, string, string, string, string) (string, error) { return "", nil },
@@ -1214,7 +1216,7 @@ func TestConfigureStoreEncryptionSelection_KMS(t *testing.T) {
 func TestConfigureStoreEncryptionSelection_NoEncryption(t *testing.T) {
 	var out strings.Builder
 	_, err := configureStoreEncryptionSelection(context.Background(),
-		cloudstic.ProfileStore{},
+		profile.Store{},
 		"prod",
 		"No encryption (not recommended)",
 		func(context.Context, string, string, string, string) (string, error) { return "", nil },
@@ -1231,7 +1233,7 @@ func TestConfigureStoreEncryptionSelection_NoEncryption(t *testing.T) {
 
 func TestConfigureStoreEncryptionSelection_KMSError(t *testing.T) {
 	_, err := configureStoreEncryptionSelection(context.Background(),
-		cloudstic.ProfileStore{},
+		profile.Store{},
 		"prod",
 		"AWS KMS key (enterprise)",
 		func(context.Context, string, string, string, string) (string, error) { return "", nil },
@@ -1275,9 +1277,9 @@ func TestPromptEncryptionConfig_PasswordViaEnvRef(t *testing.T) {
 	t.Setenv("MY_BACKUP_PASSWORD", "set-for-test")
 	tmp := t.TempDir()
 	profilesPath := filepath.Join(tmp, "profiles.yaml")
-	cfg := &cloudstic.ProfilesConfig{
+	cfg := &profile.Config{
 		Version: 1,
-		Stores: map[string]cloudstic.ProfileStore{
+		Stores: map[string]profile.Store{
 			"prod": {URI: "local:/tmp/store"},
 		},
 	}
@@ -1404,7 +1406,7 @@ func TestRunStoreNew_LocalStore(t *testing.T) {
 }
 
 func TestClientConfigFromProfileStore_DefaultRegion(t *testing.T) {
-	s := cloudstic.ProfileStore{
+	s := profile.Store{
 		URI: "s3:some-bucket",
 	}
 	sc, err := clientConfigFromProfileStore(s)
@@ -1417,7 +1419,7 @@ func TestClientConfigFromProfileStore_DefaultRegion(t *testing.T) {
 }
 
 func TestClientConfigFromProfileStore_SFTPFields(t *testing.T) {
-	s := cloudstic.ProfileStore{
+	s := profile.Store{
 		URI:               "sftp://user@host/path",
 		StoreSFTPPassword: "direct-pw",
 		StoreSFTPKey:      "/path/to/key",

@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	cloudstic "github.com/cloudstic/cli"
+	"github.com/cloudstic/cli/pkg/profile"
 )
 
 // The types in this file are the resolved configuration a command runs with,
@@ -157,7 +157,7 @@ func resolveClientConfig(g *globalFlags) (clientConfig, error) {
 
 // loadProfileStore returns the store configuration for g's selected profile, or
 // nil when no profile is selected or the profile names no store.
-func loadProfileStore(g *globalFlags) (*cloudstic.ProfileStore, error) {
+func loadProfileStore(g *globalFlags) (*profile.Store, error) {
 	if g.profile == "" {
 		return nil, nil
 	}
@@ -165,7 +165,7 @@ func loadProfileStore(g *globalFlags) (*cloudstic.ProfileStore, error) {
 	if g.profilesFile != "" {
 		profilesFile = g.profilesFile
 	}
-	cfg, err := cloudstic.LoadProfilesFile(profilesFile)
+	cfg, err := profile.Load(profilesFile)
 	if err != nil {
 		return nil, fmt.Errorf("load profiles file %q: %w", profilesFile, err)
 	}
@@ -182,7 +182,7 @@ func loadProfileStore(g *globalFlags) (*cloudstic.ProfileStore, error) {
 // mergeProfileBackupArgs, which only needs the existence check: the store
 // itself is deliberately applied later, when resolveClientConfig runs for the
 // backup that's actually about to happen (see mergeProfileBackupArgs).
-func lookupProfileStore(cfg *cloudstic.ProfilesConfig, profileName string, p cloudstic.BackupProfile) (*cloudstic.ProfileStore, error) {
+func lookupProfileStore(cfg *profile.Config, profileName string, p profile.Profile) (*profile.Store, error) {
 	if p.Store == "" {
 		return nil, nil
 	}
@@ -203,7 +203,7 @@ func lookupProfileStore(cfg *cloudstic.ProfilesConfig, profileName string, p clo
 // applyExistingStoreDefaults (store_builder_helpers.go), which prefills
 // `store new`'s flags from an existing store entry for editing — an unrelated
 // concept despite the similar name.
-func clientConfigFromProfileStore(s cloudstic.ProfileStore) (clientConfig, error) {
+func clientConfigFromProfileStore(s profile.Store) (clientConfig, error) {
 	cfg := clientConfig{packfile: true}
 	cfg.store.s3.region = defaultS3Region
 	if err := applyProfileStore(&cfg, s, func(string) bool { return false }); err != nil {
@@ -226,7 +226,7 @@ func clientConfigFromProfileStore(s cloudstic.ProfileStore) (clientConfig, error
 // field types differ enough (bools, string slices, multi-field auth
 // resolution vs. plain strings here) that forcing a shared table would
 // obscure more than it clarifies.
-func applyProfileStore(cfg *clientConfig, s cloudstic.ProfileStore, provided func(string) bool) error {
+func applyProfileStore(cfg *clientConfig, s profile.Store, provided func(string) bool) error {
 	if !provided("store") && s.URI != "" {
 		cfg.store.uri = s.URI
 	}

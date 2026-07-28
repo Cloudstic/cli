@@ -6,14 +6,14 @@ import (
 	"strings"
 	"testing"
 
-	cloudstic "github.com/cloudstic/cli"
+	"github.com/cloudstic/cli/pkg/profile"
 )
 
 func TestMergeProfileBackupArgs_AppliesProfileAndStore(t *testing.T) {
 	profilesPath := filepath.Join(t.TempDir(), "profiles.yaml")
-	cfg := &cloudstic.ProfilesConfig{
+	cfg := &profile.Config{
 		Version: 1,
-		Stores: map[string]cloudstic.ProfileStore{
+		Stores: map[string]profile.Store{
 			"s": {
 				URI:         "s3:bucket/prefix",
 				S3Region:    "eu-west-1",
@@ -21,7 +21,7 @@ func TestMergeProfileBackupArgs_AppliesProfileAndStore(t *testing.T) {
 				S3SecretKey: "SECRET",
 			},
 		},
-		Profiles: map[string]cloudstic.BackupProfile{
+		Profiles: map[string]profile.Profile{
 			"p": {
 				Source:      "local:/data",
 				Store:       "s",
@@ -31,7 +31,7 @@ func TestMergeProfileBackupArgs_AppliesProfileAndStore(t *testing.T) {
 			},
 		},
 	}
-	if err := cloudstic.SaveProfilesFile(profilesPath, cfg); err != nil {
+	if err := profile.Save(profilesPath, cfg); err != nil {
 		t.Fatalf("SaveProfilesFile: %v", err)
 	}
 
@@ -73,12 +73,12 @@ func TestMergeProfileBackupArgs_AppliesProfileAndStore(t *testing.T) {
 
 func TestMergeProfileBackupArgs_CLIFlagsWin(t *testing.T) {
 	profilesPath := filepath.Join(t.TempDir(), "profiles.yaml")
-	cfg := &cloudstic.ProfilesConfig{
+	cfg := &profile.Config{
 		Version:  1,
-		Stores:   map[string]cloudstic.ProfileStore{"s": {URI: "s3:bucket"}},
-		Profiles: map[string]cloudstic.BackupProfile{"p": {Source: "local:/profile", Store: "s"}},
+		Stores:   map[string]profile.Store{"s": {URI: "s3:bucket"}},
+		Profiles: map[string]profile.Profile{"p": {Source: "local:/profile", Store: "s"}},
 	}
-	if err := cloudstic.SaveProfilesFile(profilesPath, cfg); err != nil {
+	if err := profile.Save(profilesPath, cfg); err != nil {
 		t.Fatalf("SaveProfilesFile: %v", err)
 	}
 
@@ -111,8 +111,8 @@ func TestMergeProfileBackupArgs_AppliesAuthRef(t *testing.T) {
 		sourceURI:   "gdrive-changes:/Docs",
 		globalFlags: newTestGlobalFlags(),
 	}
-	cfg := &cloudstic.ProfilesConfig{
-		Auth: map[string]cloudstic.ProfileAuth{
+	cfg := &profile.Config{
+		Auth: map[string]profile.Auth{
 			"google-work": {
 				Provider:        "google",
 				GoogleCreds:     "/tmp/creds.json",
@@ -120,7 +120,7 @@ func TestMergeProfileBackupArgs_AppliesAuthRef(t *testing.T) {
 			},
 		},
 	}
-	p := cloudstic.BackupProfile{Source: "gdrive-changes:/Docs", AuthRef: "google-work"}
+	p := profile.Profile{Source: "gdrive-changes:/Docs", AuthRef: "google-work"}
 
 	eff, err := mergeProfileBackupArgs(base, "p", p, cfg)
 	if err != nil {
@@ -139,8 +139,8 @@ func TestMergeProfileBackupArgs_AuthRefUnknownFails(t *testing.T) {
 		sourceURI:   "gdrive-changes:/Docs",
 		globalFlags: newTestGlobalFlags(),
 	}
-	cfg := &cloudstic.ProfilesConfig{}
-	p := cloudstic.BackupProfile{Source: "gdrive-changes:/Docs", AuthRef: "missing"}
+	cfg := &profile.Config{}
+	p := profile.Profile{Source: "gdrive-changes:/Docs", AuthRef: "missing"}
 
 	_, err := mergeProfileBackupArgs(base, "p", p, cfg)
 	if err == nil {
@@ -153,12 +153,12 @@ func TestMergeProfileBackupArgs_AuthProviderMismatchFails(t *testing.T) {
 		sourceURI:   "gdrive-changes:/Docs",
 		globalFlags: newTestGlobalFlags(),
 	}
-	cfg := &cloudstic.ProfilesConfig{
-		Auth: map[string]cloudstic.ProfileAuth{
+	cfg := &profile.Config{
+		Auth: map[string]profile.Auth{
 			"ms-work": {Provider: "onedrive", OneDriveTokenFile: "/tmp/ms.json"},
 		},
 	}
-	p := cloudstic.BackupProfile{Source: "gdrive-changes:/Docs", AuthRef: "ms-work"}
+	p := profile.Profile{Source: "gdrive-changes:/Docs", AuthRef: "ms-work"}
 
 	_, err := mergeProfileBackupArgs(base, "p", p, cfg)
 	if err == nil {
@@ -172,13 +172,13 @@ func TestMergeProfileBackupArgs_CLIAuthRefOverridesProfile(t *testing.T) {
 		authRef:     "google-alt",
 		globalFlags: testProvided(newTestGlobalFlags(), "auth-ref"),
 	}
-	cfg := &cloudstic.ProfilesConfig{
-		Auth: map[string]cloudstic.ProfileAuth{
+	cfg := &profile.Config{
+		Auth: map[string]profile.Auth{
 			"google-work": {Provider: "google", GoogleTokenFile: "/tmp/work.json"},
 			"google-alt":  {Provider: "google", GoogleTokenFile: "/tmp/alt.json"},
 		},
 	}
-	p := cloudstic.BackupProfile{Source: "gdrive-changes:/Docs", AuthRef: "google-work"}
+	p := profile.Profile{Source: "gdrive-changes:/Docs", AuthRef: "google-work"}
 
 	eff, err := mergeProfileBackupArgs(base, "p", p, cfg)
 	if err != nil {
@@ -224,7 +224,7 @@ func TestEnsureDefaultAuthRefForCloudBackup_CreatesDefaultEntry(t *testing.T) {
 	if _, err := os.Stat(profilesPath); err != nil {
 		t.Fatalf("expected profiles file to exist: %v", err)
 	}
-	cfg, err := cloudstic.LoadProfilesFile(profilesPath)
+	cfg, err := profile.Load(profilesPath)
 	if err != nil {
 		t.Fatalf("LoadProfilesFile: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestApplyProfileAuthToBackupArgs_OneDrive(t *testing.T) {
 	a := &backupArgs{
 		sourceURI: "onedrive:/Documents",
 	}
-	auth := cloudstic.ProfileAuth{
+	auth := profile.Auth{
 		Provider:          "onedrive",
 		OneDriveClientID:  "my-client-id",
 		OneDriveTokenFile: "/tmp/onedrive.json",
@@ -271,7 +271,7 @@ func TestApplyProfileAuthToBackupArgs_LocalSourceFails(t *testing.T) {
 	a := &backupArgs{
 		sourceURI: "local:/data",
 	}
-	auth := cloudstic.ProfileAuth{Provider: "google"}
+	auth := profile.Auth{Provider: "google"}
 	err := applyProfileAuthToBackupArgs(a, auth)
 	if err == nil {
 		t.Fatal("expected error for local source")
@@ -287,7 +287,7 @@ func TestApplyProfileAuthToBackupArgs_CLIFlagsPreserved(t *testing.T) {
 		googleTokenFile: "cli.json",
 		globalFlags:     testProvided(&globalFlags{}, "google-token-file"),
 	}
-	auth := cloudstic.ProfileAuth{
+	auth := profile.Auth{
 		Provider:        "google",
 		GoogleTokenFile: "/tmp/profile.json",
 	}
@@ -329,7 +329,7 @@ func TestCloneGlobalFlags_Independence(t *testing.T) {
 	}
 }
 
-func applyTestProfileStore(t *testing.T, s cloudstic.ProfileStore, provided ...string) (clientConfig, error) {
+func applyTestProfileStore(t *testing.T, s profile.Store, provided ...string) (clientConfig, error) {
 	t.Helper()
 	cfg := clientConfigFromFlags(newTestGlobalFlags())
 	set := map[string]bool{}
@@ -345,7 +345,7 @@ func TestApplyProfileStore_AllFields(t *testing.T) {
 	t.Setenv("TEST_ENC_KEY", "enc-key-val")
 	t.Setenv("TEST_REC_KEY", "rec-key-val")
 
-	cfg, err := applyTestProfileStore(t, cloudstic.ProfileStore{
+	cfg, err := applyTestProfileStore(t, profile.Store{
 		URI:                 "s3:my-bucket/prefix",
 		S3Region:            "us-east-1",
 		S3Endpoint:          "https://s3.example.com",
@@ -402,7 +402,7 @@ func TestApplyProfileStore_CLIFlagOverrides(t *testing.T) {
 		g.store = "local:/cli-store"
 		return g
 	}())
-	err := applyProfileStore(&cfg, cloudstic.ProfileStore{URI: "s3:profile-bucket"},
+	err := applyProfileStore(&cfg, profile.Store{URI: "s3:profile-bucket"},
 		func(name string) bool { return name == "store" })
 	if err != nil {
 		t.Fatalf("applyProfileStore: %v", err)
@@ -415,7 +415,7 @@ func TestApplyProfileStore_CLIFlagOverrides(t *testing.T) {
 func TestApplyProfileStore_SecretRef(t *testing.T) {
 	t.Setenv("SECRET_PW", "from-secret-ref")
 
-	cfg, err := applyTestProfileStore(t, cloudstic.ProfileStore{PasswordSecret: "env://SECRET_PW"})
+	cfg, err := applyTestProfileStore(t, profile.Store{PasswordSecret: "env://SECRET_PW"})
 	if err != nil {
 		t.Fatalf("applyProfileStore: %v", err)
 	}
@@ -428,7 +428,7 @@ func TestApplyProfileStore_B2SecretRef(t *testing.T) {
 	t.Setenv("SECRET_B2_KEY_ID", "b2-id-from-env")
 	t.Setenv("SECRET_B2_APP_KEY", "b2-key-from-env")
 
-	cfg, err := applyTestProfileStore(t, cloudstic.ProfileStore{
+	cfg, err := applyTestProfileStore(t, profile.Store{
 		B2KeyIDSecret:  "env://SECRET_B2_KEY_ID",
 		B2AppKeySecret: "env://SECRET_B2_APP_KEY",
 	})
@@ -444,7 +444,7 @@ func TestApplyProfileStore_B2SecretRef(t *testing.T) {
 }
 
 func TestApplyProfileStore_InvalidSecretRef(t *testing.T) {
-	_, err := applyTestProfileStore(t, cloudstic.ProfileStore{PasswordSecret: "env:/invalid-format"})
+	_, err := applyTestProfileStore(t, profile.Store{PasswordSecret: "env:/invalid-format"})
 	if err == nil {
 		t.Fatal("expected error for invalid secret ref")
 	}
@@ -458,9 +458,9 @@ func TestApplyProfileStore_InvalidSecretRef(t *testing.T) {
 func TestMergeProfileBackupArgs_NamesProfileWithoutRewritingFlags(t *testing.T) {
 	base := &backupArgs{sourceURI: "", globalFlags: newTestGlobalFlags()}
 	baseStore := base.store
-	cfg := &cloudstic.ProfilesConfig{
-		Stores:   map[string]cloudstic.ProfileStore{"s": {URI: "s3:profile-bucket"}},
-		Profiles: map[string]cloudstic.BackupProfile{"p": {Source: "local:/data", Store: "s"}},
+	cfg := &profile.Config{
+		Stores:   map[string]profile.Store{"s": {URI: "s3:profile-bucket"}},
+		Profiles: map[string]profile.Profile{"p": {Source: "local:/data", Store: "s"}},
 	}
 	eff, err := mergeProfileBackupArgs(base, "p", cfg.Profiles["p"], cfg)
 	if err != nil {
@@ -482,8 +482,8 @@ func TestMergeProfileBackupArgs_EmptySourceFails(t *testing.T) {
 		sourceURI:   "",
 		globalFlags: newTestGlobalFlags(),
 	}
-	cfg := &cloudstic.ProfilesConfig{}
-	p := cloudstic.BackupProfile{Source: ""}
+	cfg := &profile.Config{}
+	p := profile.Profile{Source: ""}
 
 	_, err := mergeProfileBackupArgs(base, "empty", p, cfg)
 	if err == nil {
@@ -496,10 +496,10 @@ func TestMergeProfileBackupArgs_UnknownStoreFails(t *testing.T) {
 		sourceURI:   "local:/data",
 		globalFlags: newTestGlobalFlags(),
 	}
-	cfg := &cloudstic.ProfilesConfig{
-		Stores: map[string]cloudstic.ProfileStore{},
+	cfg := &profile.Config{
+		Stores: map[string]profile.Store{},
 	}
-	p := cloudstic.BackupProfile{Source: "local:/data", Store: "missing"}
+	p := profile.Profile{Source: "local:/data", Store: "missing"}
 
 	_, err := mergeProfileBackupArgs(base, "p", p, cfg)
 	if err == nil {
@@ -512,8 +512,8 @@ func TestMergeProfileBackupArgs_SkipNativeFiles(t *testing.T) {
 		sourceURI:   "gdrive:/Docs",
 		globalFlags: newTestGlobalFlags(),
 	}
-	cfg := &cloudstic.ProfilesConfig{}
-	p := cloudstic.BackupProfile{Source: "gdrive:/Docs", SkipNativeFiles: true}
+	cfg := &profile.Config{}
+	p := profile.Profile{Source: "gdrive:/Docs", SkipNativeFiles: true}
 
 	eff, err := mergeProfileBackupArgs(base, "p", p, cfg)
 	if err != nil {
@@ -529,8 +529,8 @@ func TestMergeProfileBackupArgs_ExcludeFile(t *testing.T) {
 		sourceURI:   "local:/data",
 		globalFlags: newTestGlobalFlags(),
 	}
-	cfg := &cloudstic.ProfilesConfig{}
-	p := cloudstic.BackupProfile{Source: "local:/data", ExcludeFile: "/tmp/excludes.txt"}
+	cfg := &profile.Config{}
+	p := profile.Profile{Source: "local:/data", ExcludeFile: "/tmp/excludes.txt"}
 
 	eff, err := mergeProfileBackupArgs(base, "p", p, cfg)
 	if err != nil {

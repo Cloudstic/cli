@@ -3,14 +3,14 @@ package main
 import (
 	"slices"
 
-	cloudstic "github.com/cloudstic/cli"
+	"github.com/cloudstic/cli/pkg/profile"
 )
 
 // Profile-form domain helpers shared by the dashboard's forms backend
 // (cmd_tui_forms_backend.go). They translate between a profile's stored source
 // URI and the parts a form edits, and list the auth refs a source can use.
 
-func profileAuthOptions(cfg *cloudstic.ProfilesConfig, provider string) []string {
+func profileAuthOptions(cfg *profile.Config, provider string) []string {
 	options := []string{}
 	for name, auth := range cfg.Auth {
 		if auth.Provider == provider {

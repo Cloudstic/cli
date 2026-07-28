@@ -6,9 +6,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cloudstic/cli/pkg/profile"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/cloudstic/cli/internal/engine"
 )
 
 // Model is the root Bubble Tea model for the interactive dashboard. This is
@@ -29,7 +30,7 @@ type Model struct {
 	// model probes every store concurrently on Init and rebuilds the
 	// dashboard from probes as they arrive, so the first paint shows
 	// "checking…" instead of blocking.
-	cfg    *engine.ProfilesConfig
+	cfg    *profile.Config
 	prober StoreProber
 	probes map[string]StoreProbe
 
@@ -75,7 +76,7 @@ func NewModel(d Dashboard) Model {
 // WithConfig attaches the profiles config and a store prober, enabling
 // concurrent probing on Init. The seeded dashboard should be a probe-less
 // skeleton (BuildDashboard(cfg, nil)) so the first frame renders immediately.
-func (m Model) WithConfig(cfg *engine.ProfilesConfig, prober StoreProber) Model {
+func (m Model) WithConfig(cfg *profile.Config, prober StoreProber) Model {
 	m.cfg = cfg
 	m.prober = prober
 	return m

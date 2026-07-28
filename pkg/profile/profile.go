@@ -13,9 +13,9 @@ import (
 
 // Config is the top-level YAML document for backup profiles.
 type Config struct {
-	Version  int                      `yaml:"version"`
-	Stores   map[string]Store  `yaml:"stores"`
-	Auth     map[string]Auth   `yaml:"auth"`
+	Version  int                `yaml:"version"`
+	Stores   map[string]Store   `yaml:"stores"`
+	Auth     map[string]Auth    `yaml:"auth"`
 	Profiles map[string]Profile `yaml:"profiles"`
 }
 

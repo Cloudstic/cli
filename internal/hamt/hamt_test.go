@@ -734,7 +734,6 @@ func TestNodeCacheLRUEviction(t *testing.T) {
 	}
 }
 
-
 func TestInternalNodeType(t *testing.T) {
 	store := newInMemoryStore()
 	tree := NewTree(store)

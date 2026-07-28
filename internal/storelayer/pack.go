@@ -96,13 +96,13 @@ func NewPackStore(inner store.ObjectStore, opts ...PackOption) (*PackStore, erro
 	}
 
 	s := &PackStore{
-		ObjectStore: inner,
-		packBuffer:        new(bytes.Buffer),
-		packKeys:          make(map[string]PackEntry),
-		catalog:           make(map[string]PackEntry),
-		pendingShard:      make(map[string]PackEntry),
-		mergedIndex:       make(map[string]bool),
-		packCache:         cache,
+		ObjectStore:  inner,
+		packBuffer:   new(bytes.Buffer),
+		packKeys:     make(map[string]PackEntry),
+		catalog:      make(map[string]PackEntry),
+		pendingShard: make(map[string]PackEntry),
+		mergedIndex:  make(map[string]bool),
+		packCache:    cache,
 	}
 	for _, opt := range opts {
 		opt(s)

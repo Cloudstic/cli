@@ -8,13 +8,13 @@ import (
 )
 
 type stubStoreBackend struct {
-	saved       map[string]string
-	savedName   string
-	savedEdit   bool
-	exists      map[string]bool
-	saveErr     error
-	secretErr   error
-	composeErr  error
+	saved      map[string]string
+	savedName  string
+	savedEdit  bool
+	exists     map[string]bool
+	saveErr    error
+	secretErr  error
+	composeErr error
 }
 
 func newStubStoreBackend() *stubStoreBackend {
@@ -63,7 +63,7 @@ func focusKey(f *Form, key string) *Form {
 func TestStoreForm_CreateLocalSaves(t *testing.T) {
 	b := newStubStoreBackend()
 	f := NewStoreForm(b, "", nil, false)
-	f = typeInto(f, "mystore")           // name
+	f = typeInto(f, "mystore") // name
 	f = focusKey(f, FieldStoreValue)
 	f = typeInto(f, "/backups")
 	f, _ = f.Update(tea.KeyMsg{Type: tea.KeyEnter})

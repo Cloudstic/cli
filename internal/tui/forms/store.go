@@ -68,9 +68,9 @@ var StoreTypes = []string{"local", "s3", "b2", "sftp"}
 var EncryptionModes = []string{EncNone, EncPassword, EncPlatform, EncKMS}
 
 var (
-	storeS3Fields   = []string{FieldS3Region, FieldS3Profile, FieldS3Endpoint, FieldS3AccessKey, FieldS3SecretKey}
-	storeSFTPFields = []string{FieldSFTPPassword, FieldSFTPKey}
-	storeEncFields  = []string{FieldPasswordSecret, FieldPlatformSecret, FieldKMSKeyARN, FieldKMSRegion, FieldKMSEndpoint}
+	storeS3Fields        = []string{FieldS3Region, FieldS3Profile, FieldS3Endpoint, FieldS3AccessKey, FieldS3SecretKey}
+	storeSFTPFields      = []string{FieldSFTPPassword, FieldSFTPKey}
+	storeEncFields       = []string{FieldPasswordSecret, FieldPlatformSecret, FieldKMSKeyARN, FieldKMSRegion, FieldKMSEndpoint}
 	storeSecretRefFields = []string{
 		FieldS3AccessKey, FieldS3SecretKey, FieldSFTPPassword, FieldSFTPKey,
 		FieldPasswordSecret, FieldPlatformSecret,

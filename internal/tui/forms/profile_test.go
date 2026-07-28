@@ -79,7 +79,7 @@ func (b *stubProfileBackend) SaveProfile(name, source, store, auth string, editi
 func TestProfileForm_CreateSaves(t *testing.T) {
 	b := newStubBackend()
 	f := NewProfileForm(b, "", "", "", "", false)
-	f = typeInto(f, "alpha")               // name
+	f = typeInto(f, "alpha")                      // name
 	f, _ = f.Update(tea.KeyMsg{Type: tea.KeyTab}) // -> source_type
 	f, _ = f.Update(tea.KeyMsg{Type: tea.KeyTab}) // -> source_value
 	f = typeInto(f, "/data")

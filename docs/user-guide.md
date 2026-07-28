@@ -193,7 +193,13 @@ Cloudstic stores OAuth tokens and other state files in a platform-specific confi
 | macOS    | `~/Library/Application Support/cloudstic/` |
 | Windows  | `%AppData%\cloudstic\` |
 
-Override with the `CLOUDSTIC_CONFIG_DIR` environment variable.
+Override with the `-config-dir` flag, which every command accepts, or the
+`CLOUDSTIC_CONFIG_DIR` environment variable. The flag wins where both are
+given.
+
+The directory is created when something is first written into it, so asking
+where it *would* be — `cloudstic <command> -h`, shell completion, or
+`cloudstic setup workstation -dry-run` — never creates it.
 
 ### Setting defaults with environment variables
 
@@ -321,6 +327,7 @@ cloudstic backup -source local:~/Documents -dry-run
 | `-all-profiles` | `false` | Run backup for all enabled profiles from `profiles.yaml` |
 | `-auth-ref` | | Use one named auth entry from `profiles.yaml` for cloud source credentials |
 | `-profiles-file` | `<config-dir>/profiles.yaml` | Override profile YAML location (also `CLOUDSTIC_PROFILES_FILE`) |
+| `-config-dir` | platform default | Directory holding profiles, tokens, and other state (also `CLOUDSTIC_CONFIG_DIR`) |
 | `-tag` | | Tag to apply to the snapshot (repeatable) |
 | `-exclude` | | Exclude pattern using gitignore syntax (repeatable) |
 | `-exclude-file` | | Path to file containing exclude patterns, one per line |
@@ -1997,7 +2004,7 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 | `CLOUDSTIC_KMS_REGION` | `-kms-region` | AWS KMS region |
 | `CLOUDSTIC_KMS_ENDPOINT` | `-kms-endpoint` | Custom AWS KMS endpoint URL |
 | `CLOUDSTIC_PROFILES_FILE` | `-profiles-file` | Path to profiles YAML file |
-| `CLOUDSTIC_CONFIG_DIR` | — | Override config directory path |
+| `CLOUDSTIC_CONFIG_DIR` | `-config-dir` | Override config directory path |
 | `GOOGLE_APPLICATION_CREDENTIALS` | `-google-credentials` | Path to your own Google OAuth credentials file (optional, overrides built-in) |
 | `GOOGLE_CREDENTIALS_JSON` | `-google-credentials-json` | Inline Google credentials JSON (OAuth client or service account) |
 | `GOOGLE_TOKEN_FILE` | `-google-token-file` | Override Google OAuth token path |

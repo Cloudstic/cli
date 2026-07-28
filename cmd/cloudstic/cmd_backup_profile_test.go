@@ -336,7 +336,7 @@ func applyTestProfileStore(t *testing.T, s profile.Store, provided ...string) (c
 	for _, name := range provided {
 		set[name] = true
 	}
-	err := applyProfileStore(&cfg, s, func(name string) bool { return set[name] })
+	err := applyProfileStore(&cfg, s, "", func(name string) bool { return set[name] })
 	return cfg, err
 }
 
@@ -402,7 +402,7 @@ func TestApplyProfileStore_CLIFlagOverrides(t *testing.T) {
 		g.store = "local:/cli-store"
 		return g
 	}())
-	err := applyProfileStore(&cfg, profile.Store{URI: "s3:profile-bucket"},
+	err := applyProfileStore(&cfg, profile.Store{URI: "s3:profile-bucket"}, "",
 		func(name string) bool { return name == "store" })
 	if err != nil {
 		t.Fatalf("applyProfileStore: %v", err)

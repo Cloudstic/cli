@@ -67,6 +67,95 @@ func TestExplicitFlagBeatsEnv(t *testing.T) {
 	}
 }
 
+// A late default fills in only where the user chose nothing, so it sits below
+// both an explicit flag and an environment value in the same precedence order
+// every other default obeys.
+func TestLateDefaultRunsOnlyWhenNothingElseSuppliedAValue(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		args []string
+		want string
+	}{
+		{"nothing supplied", map[string]string{}, nil, "from-late-default"},
+		{"env wins", map[string]string{"CLOUDSTIC_TEST_VALUE": "from-env"}, nil, "from-env"},
+		{"flag wins", map[string]string{"CLOUDSTIC_TEST_VALUE": "from-env"}, []string{"-thing", "from-flag"}, "from-flag"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withFakeEnv(t, tc.env)
+
+			var target string
+			called := 0
+			spec := stringFlag(&target, "thing", "", "usage",
+				withEnv("CLOUDSTIC_TEST_VALUE"),
+				withLateDefault(func() (string, error) {
+					called++
+					return "from-late-default", nil
+				}))
+			fs := flag.NewFlagSet("t", flag.ContinueOnError)
+			bindFlags(fs, []flagSpec{spec})
+			b := commandFlags{set: fs, own: []flagSpec{spec}}
+			if err := b.parse(tc.args); err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if target != tc.want {
+				t.Errorf("target=%q want %q", target, tc.want)
+			}
+			// Not merely overridden afterwards: a late default that is not
+			// needed must never run, since computing it can touch the
+			// filesystem or fail.
+			if wantCalls := map[bool]int{true: 1, false: 0}[tc.want == "from-late-default"]; called != wantCalls {
+				t.Errorf("lateDefault called %d times, want %d", called, wantCalls)
+			}
+		})
+	}
+}
+
+// A late default that cannot be computed fails the command rather than
+// silently leaving the flag empty — an empty profiles path would read as "no
+// profiles configured" instead of an error.
+func TestLateDefaultErrorFailsParse(t *testing.T) {
+	withFakeEnv(t, map[string]string{})
+
+	var target string
+	spec := stringFlag(&target, "thing", "", "usage",
+		withLateDefault(func() (string, error) { return "", os.ErrPermission }))
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	bindFlags(fs, []flagSpec{spec})
+	b := commandFlags{set: fs, own: []flagSpec{spec}}
+	err := b.parse(nil)
+	if err == nil {
+		t.Fatal("parse succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "-thing") {
+		t.Errorf("error %q does not name the flag it came from", err)
+	}
+}
+
+// -profiles-file's default lives inside -config-dir, which is the whole reason
+// late defaults exist. Both orderings are exercised because the two flags are
+// declared in different groups.
+func TestProfilesFileDefaultFollowsConfigDirFlag(t *testing.T) {
+	for _, args := range [][]string{
+		{"-config-dir", "/tmp/cloudstic-late-default"},
+		{"-config-dir=/tmp/cloudstic-late-default"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			withFakeEnv(t, map[string]string{})
+
+			g := &globalFlags{}
+			cf := newCommandFlags("t", repoCommandGroups, g, commandInput{})
+			if err := cf.parse(args); err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			want := filepath.Join("/tmp/cloudstic-late-default", defaultProfilesFilename)
+			if g.profilesFile != want {
+				t.Errorf("profilesFile=%q want %q", g.profilesFile, want)
+			}
+		})
+	}
+}
+
 // TestBoolFlagAcceptsParseBoolSpellings documents that boolean environment
 // values go through strconv.ParseBool, so "TRUE"/"yes"-style values behave
 // predictably rather than silently reading as false.

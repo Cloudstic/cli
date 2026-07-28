@@ -306,7 +306,7 @@ func TestCheckOrInitStore_AlreadyInitialized(t *testing.T) {
 
 	// Initialize the store first.
 	s := profile.Store{URI: "local:" + storePath}
-	sc, err := clientConfigFromProfileStore(s)
+	sc, err := clientConfigFromProfileStore(s, "")
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
@@ -345,7 +345,7 @@ func TestCheckOrInitStore_InitializedEncrypted_ValidCredentials(t *testing.T) {
 	storePath := filepath.Join(tmpDir, "store")
 
 	s := profile.Store{URI: "local:" + storePath}
-	sc, err := clientConfigFromProfileStore(s)
+	sc, err := clientConfigFromProfileStore(s, "")
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
@@ -385,7 +385,7 @@ func TestCheckOrInitStore_InitializedEncrypted_InvalidCredentials(t *testing.T) 
 	storePath := filepath.Join(tmpDir, "store")
 
 	s := profile.Store{URI: "local:" + storePath}
-	sc, err := clientConfigFromProfileStore(s)
+	sc, err := clientConfigFromProfileStore(s, "")
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
@@ -430,7 +430,7 @@ func TestClientConfigFromProfileStore_ResolvesEnvVars(t *testing.T) {
 		KMSKeyARN:         "arn:aws:kms:us-east-1:123:key/abc",
 	}
 
-	sc, err := clientConfigFromProfileStore(s)
+	sc, err := clientConfigFromProfileStore(s, "")
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
@@ -462,7 +462,7 @@ func TestClientConfigFromProfileStore_ResolvesSecretRef(t *testing.T) {
 		S3AccessKeySecret: "env://SECRET_AK",
 	}
 
-	sc, err := clientConfigFromProfileStore(s)
+	sc, err := clientConfigFromProfileStore(s, "")
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
@@ -477,7 +477,7 @@ func TestClientConfigFromProfileStore_InvalidSecretRefReturnsError(t *testing.T)
 		PasswordSecret: "env:/bad-format",
 	}
 
-	_, err := clientConfigFromProfileStore(s)
+	_, err := clientConfigFromProfileStore(s, "")
 	if err == nil {
 		t.Fatal("expected error for invalid secret ref")
 	}
@@ -1255,7 +1255,7 @@ func TestConfigureStoreEncryptionSelection_KMSError(t *testing.T) {
 
 func TestPromptSecretReference_EnvInteractive(t *testing.T) {
 	t.Setenv("MY_ENV", "set-for-test")
-	if len(profileSecretResolver.WritableBackends()) > 0 {
+	if len(newSecretResolver("").WritableBackends()) > 0 {
 		setInteractiveStdinLines(t, "1", "MY_ENV")
 	} else {
 		setInteractiveStdinLines(t, "MY_ENV")
@@ -1264,7 +1264,7 @@ func TestPromptSecretReference_EnvInteractive(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	got, err := r.promptSecretReference(context.Background(), "prod", "repository password", "CLOUDSTIC_PASSWORD", "password")
+	got, err := r.promptSecretReference(context.Background(), "", "prod", "repository password", "CLOUDSTIC_PASSWORD", "password")
 	if err != nil {
 		t.Fatalf("promptSecretReference: %v", err)
 	}
@@ -1284,7 +1284,7 @@ func TestPromptEncryptionConfig_PasswordViaEnvRef(t *testing.T) {
 		},
 	}
 
-	if len(profileSecretResolver.WritableBackends()) > 0 {
+	if len(newSecretResolver("").WritableBackends()) > 0 {
 		setInteractiveStdinLines(t, "1", "1", "MY_BACKUP_PASSWORD")
 	} else {
 		setInteractiveStdinLines(t, "1", "MY_BACKUP_PASSWORD")
@@ -1293,7 +1293,7 @@ func TestPromptEncryptionConfig_PasswordViaEnvRef(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	r.promptEncryptionConfig(context.Background(), cfg, "prod", profilesPath)
+	r.promptEncryptionConfig(context.Background(), cfg, "prod", profilesPath, "")
 
 	s := cfg.Stores["prod"]
 	if s.PasswordSecret != "env://MY_BACKUP_PASSWORD" {
@@ -1416,7 +1416,7 @@ func TestClientConfigFromProfileStore_DefaultRegion(t *testing.T) {
 	s := profile.Store{
 		URI: "s3:some-bucket",
 	}
-	sc, err := clientConfigFromProfileStore(s)
+	sc, err := clientConfigFromProfileStore(s, "")
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
@@ -1431,7 +1431,7 @@ func TestClientConfigFromProfileStore_DefaultRegion(t *testing.T) {
 // applying the default at construction must not override a region the profile
 // actually names.
 func TestClientConfigFromProfileStore_ExplicitRegionWins(t *testing.T) {
-	sc, err := clientConfigFromProfileStore(profile.Store{URI: "s3:some-bucket", S3Region: "eu-west-3"})
+	sc, err := clientConfigFromProfileStore(profile.Store{URI: "s3:some-bucket", S3Region: "eu-west-3"}, "")
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
@@ -1446,7 +1446,7 @@ func TestClientConfigFromProfileStore_SFTPFields(t *testing.T) {
 		StoreSFTPPassword: "direct-pw",
 		StoreSFTPKey:      "/path/to/key",
 	}
-	sc, err := clientConfigFromProfileStore(s)
+	sc, err := clientConfigFromProfileStore(s, "")
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}

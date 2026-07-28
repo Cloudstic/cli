@@ -5,15 +5,16 @@ import (
 )
 
 type tuiArgs struct {
+	*globalFlags
 	profilesFile string
 }
 
-func declareTUIArgs(_ *globalFlags) (*tuiArgs, commandInput) {
-	// tui opts into no global groups; it reads only its own -profiles-file.
-	a := &tuiArgs{}
+func declareTUIArgs(g *globalFlags) (*tuiArgs, commandInput) {
+	// tui opts into no global *groups*; it reads only its own -profiles-file
+	// and the base flags every command gets, which is where -config-dir lives.
+	a := &tuiArgs{globalFlags: g}
 	return a, commandInput{flags: []flagSpec{
-		stringFlag(&a.profilesFile, "profiles-file", defaultProfilesPathNoCreate(), "Path to profiles YAML file",
-			withEnv("CLOUDSTIC_PROFILES_FILE"), withPlaceholder("<path>"), withCompleter("_files")),
+		profilesFileFlag(&a.profilesFile, g),
 	}}
 }
 
@@ -21,7 +22,7 @@ func runTUI(r *runner, ctx context.Context, args *tuiArgs) int {
 	if !r.canPrompt() {
 		return r.fail("cloudstic tui requires an interactive terminal")
 	}
-	return runTUIProgram(r, ctx, args.profilesFile)
+	return runTUIProgram(r, ctx, args.profilesFile, args.configDir)
 }
 
 // tuiCommand declares the `tui` command.

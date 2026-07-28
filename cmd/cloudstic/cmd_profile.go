@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/cloudstic/cli/pkg/config"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -16,8 +17,20 @@ import (
 
 const defaultProfilesFilename = "profiles.yaml"
 
-func defaultProfilesPath() (string, error) {
-	return paths.ProfilesPath(defaultProfilesFilename, true)
+// defaultProfilesPath returns where the profiles file lives when the user
+// names no path: inside the config directory, which configDir may override
+// (see paths.ConfigDir).
+//
+// CLOUDSTIC_PROFILES_FILE is deliberately not consulted here. It is bound to
+// the -profiles-file flag as an ordinary environment default, so it is already
+// applied — by the time this runs, it did not apply, which is precisely what
+// makes a default needed.
+func defaultProfilesPath(configDir string) (string, error) {
+	dir, err := paths.ConfigDir(configDir)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, defaultProfilesFilename), nil
 }
 
 type profileShowArgs struct {
@@ -25,10 +38,10 @@ type profileShowArgs struct {
 	name         string
 }
 
-func declareProfileShowArgs(_ *globalFlags) (*profileShowArgs, commandInput) {
+func declareProfileShowArgs(g *globalFlags) (*profileShowArgs, commandInput) {
 	a := &profileShowArgs{}
 	return a, commandInput{
-		flags:       []flagSpec{profilesFileFlag(&a.profilesFile)},
+		flags:       []flagSpec{profilesFileFlag(&a.profilesFile, g)},
 		positionals: []positionalSpec{optionalPositional(&a.name, "profile name", "", "_cloudstic_profile_names")},
 	}
 }
@@ -77,9 +90,9 @@ type profileListArgs struct {
 	profilesFile string
 }
 
-func declareProfileListArgs(_ *globalFlags) (*profileListArgs, commandInput) {
+func declareProfileListArgs(g *globalFlags) (*profileListArgs, commandInput) {
 	a := &profileListArgs{}
-	return a, commandInput{flags: []flagSpec{profilesFileFlag(&a.profilesFile)}}
+	return a, commandInput{flags: []flagSpec{profilesFileFlag(&a.profilesFile, g)}}
 }
 
 func runProfileList(r *runner, ctx context.Context, a *profileListArgs) int {
@@ -127,7 +140,7 @@ type profileNewArgs struct {
 func declareProfileNewArgs(g *globalFlags) (*profileNewArgs, commandInput) {
 	a := &profileNewArgs{globalFlags: g}
 	return a, commandInput{flags: []flagSpec{
-		profilesFileFlag(&a.profilesFile),
+		profilesFileFlag(&a.profilesFile, g),
 		stringFlag(&a.name, "name", "", "Profile name", withPlaceholder("<name>")),
 		stringFlag(&a.source, "source", "", "Source URI", withPlaceholder("<uri>"), withCompleter("_cloudstic_source_prefixes")),
 		stringFlag(&a.storeRef, "store-ref", "", "Store reference name from top-level stores map", withPlaceholder("<name>")),
@@ -250,9 +263,10 @@ func runProfileNew(r *runner, ctx context.Context, a *profileNewArgs) int {
 	if createdStore && r.canPrompt() {
 		s := cfg.Stores[a.storeRef]
 		if !storeHasExplicitEncryption(s) {
-			r.promptEncryptionConfig(ctx, cfg, a.storeRef, a.profilesFile)
+			r.promptEncryptionConfig(ctx, cfg, a.storeRef, a.profilesFile, a.configDir)
 		}
 		if err := checkOrInitStoreWithRecovery(r, ctx, cfg, a.storeRef, a.profilesFile, checkOrInitOptions{
+			configDir:            a.configDir,
 			allowMissingSecrets:  true,
 			warnOnMissingSecrets: true,
 			offerInit:            true,

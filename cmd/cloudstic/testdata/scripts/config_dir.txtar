@@ -1,0 +1,36 @@
+# -config-dir moves the config directory, and resolving where it would be
+# never creates it.
+#
+# The harness points CLOUDSTIC_CONFIG_DIR at $WORK/config, so this script also
+# covers the flag winning over the environment.
+
+# Asking where configuration lives must not create it. Help and shell
+# completion both build a command's flag set without running the command.
+exec cloudstic backup -h
+! exists $WORK/config
+exec cloudstic completion bash
+! exists $WORK/config
+exec cloudstic setup workstation -dry-run -no-prompt
+! exists $WORK/config
+
+# A command that writes puts the profiles file under -config-dir, not under the
+# directory the environment names.
+exec cloudstic store new -name s1 -uri local:$WORK/store -no-prompt -config-dir $WORK/flagdir
+stdout 'saved in '
+exists $WORK/flagdir/profiles.yaml
+! exists $WORK/config
+
+# Reads follow the same flag, so the store written above is visible.
+exec cloudstic store list -config-dir $WORK/flagdir
+stdout 's1'
+
+# Without the flag the environment applies, and the store written under the
+# flag's directory is not there.
+exec cloudstic store list
+! stdout 's1'
+
+# An explicit -profiles-file still beats the config directory.
+exec cloudstic store new -name s2 -uri local:$WORK/store -no-prompt -config-dir $WORK/flagdir -profiles-file $WORK/explicit.yaml
+exists $WORK/explicit.yaml
+exec cloudstic store list -config-dir $WORK/flagdir
+! stdout 's2'

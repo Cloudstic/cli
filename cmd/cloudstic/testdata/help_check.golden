@@ -11,6 +11,7 @@ OPTIONS
     -read-data                     Re-hash all chunk data for full byte-level verification
 
 GLOBAL OPTIONS (also settable via environment variables)
+    -config-dir <path>             Directory for profiles, tokens, and other state  [env: CLOUDSTIC_CONFIG_DIR]
     -no-prompt                     Disable interactive prompts (for scripts and CI)
     -store <uri>                   Storage backend URI: local:<path>, s3:<bucket>[/<prefix>], b2:<bucket>[/<prefix>], sftp://[user@]host[:port]/<path>  [env: CLOUDSTIC_STORE]
     -profile <name>                Profile name from profiles.yaml  [env: CLOUDSTIC_PROFILE]

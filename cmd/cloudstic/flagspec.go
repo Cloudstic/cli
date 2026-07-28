@@ -47,10 +47,16 @@ type flagSpec struct {
 	// Environment values are applied after parsing so that help output can
 	// never render a live environment value (see applyEnvDefaults).
 	bind func(fs *flag.FlagSet)
-	// applyEnv sets the flag's target from a raw environment value, returning
-	// an actionable error when the value cannot be parsed. Nil when the flag
-	// has no environment binding.
-	applyEnv func(raw string) error
+	// setValue sets the flag's target from a raw string, returning an
+	// actionable error when the value cannot be parsed. It serves both of the
+	// after-parsing resolution steps — environment values and late defaults —
+	// since both arrive as text and both need the same parse. Nil for a flag
+	// backed by a custom flag.Value, which owns its own parsing.
+	setValue func(raw string) error
+	// lateDefault computes the flag's default value after parsing, for a
+	// default that depends on another flag. Nil for the ordinary case of a
+	// constant default passed to bind. See withLateDefault.
+	lateDefault func() (string, error)
 }
 
 // flagOpt customises a flagSpec at construction time.
@@ -94,6 +100,21 @@ func withPlaceholder(name string) flagOpt {
 	return func(s *flagSpec) { s.placeholder = name }
 }
 
+// withLateDefault supplies a default computed after parsing, for a flag whose
+// default depends on another flag's resolved value — -profiles-file, which
+// lives inside whatever -config-dir names.
+//
+// It runs only when the flag was left at its built-in default: an explicit
+// flag and an environment value both still win, and neither pays for the
+// computation. Resolving late is also what keeps the computation off the paths
+// that merely *describe* the flag. Help and completion build a command's flag
+// set without parsing it, so a default computed at declaration time runs on
+// `-h` — which is how resolving the profiles path used to create the config
+// directory as a side effect of being asked for help.
+func withLateDefault(fn func() (string, error)) flagOpt {
+	return func(s *flagSpec) { s.lateDefault = fn }
+}
+
 func applyOpts(s *flagSpec, opts []flagOpt) *flagSpec {
 	for _, opt := range opts {
 		opt(s)
@@ -109,7 +130,7 @@ func stringFlag(target *string, name, def, usage string, opts ...flagOpt) flagSp
 	spec.bind = func(fs *flag.FlagSet) {
 		fs.StringVar(target, name, def, spec.bindUsage())
 	}
-	spec.applyEnv = func(raw string) error {
+	spec.setValue = func(raw string) error {
 		*target = raw
 		return nil
 	}
@@ -123,7 +144,7 @@ func boolFlag(target *bool, name string, def bool, usage string, opts ...flagOpt
 	spec.bind = func(fs *flag.FlagSet) {
 		fs.BoolVar(target, name, def, spec.bindUsage())
 	}
-	spec.applyEnv = func(raw string) error {
+	spec.setValue = func(raw string) error {
 		parsed, err := strconv.ParseBool(raw)
 		if err != nil {
 			return fmt.Errorf("invalid boolean value %q: use true or false", raw)
@@ -141,7 +162,7 @@ func intFlag(target *int, name string, def int, usage string, opts ...flagOpt) f
 	spec.bind = func(fs *flag.FlagSet) {
 		fs.IntVar(target, name, def, spec.bindUsage())
 	}
-	spec.applyEnv = func(raw string) error {
+	spec.setValue = func(raw string) error {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil {
 			return fmt.Errorf("invalid integer value %q", raw)
@@ -222,13 +243,13 @@ func applyEnvDefaults(fs *flag.FlagSet, specs []flagSpec) (map[string]flagOrigin
 		switch {
 		case explicit[s.name]:
 			origins[s.name] = originFlag
-		case s.env != "" && s.applyEnv != nil:
+		case s.env != "" && s.setValue != nil:
 			raw := lookupEnv(s.env)
 			if raw == "" {
 				origins[s.name] = originDefault
 				continue
 			}
-			if err := s.applyEnv(raw); err != nil {
+			if err := s.setValue(raw); err != nil {
 				return nil, fmt.Errorf("environment variable %s: %w", s.env, err)
 			}
 			origins[s.name] = originEnv
@@ -237,6 +258,33 @@ func applyEnvDefaults(fs *flag.FlagSet, specs []flagSpec) (map[string]flagOrigin
 		}
 	}
 	return origins, nil
+}
+
+// applyLateDefaults computes the default of every flag that declares one and
+// is still sitting at its built-in value.
+//
+// It runs as a separate pass after applyEnvDefaults rather than inside it,
+// because a late default reads other flags: -profiles-file's default is a path
+// inside -config-dir, which is only correct once every flag has taken its
+// final value. Folding the two together would make the result depend on the
+// order specs happen to be declared in.
+//
+// The origin stays originDefault, which is what it is — the user chose
+// nothing, so a profile is still free to override the value.
+func applyLateDefaults(specs []flagSpec, origins map[string]flagOrigin) error {
+	for _, s := range specs {
+		if s.lateDefault == nil || s.setValue == nil || origins[s.name] != originDefault {
+			continue
+		}
+		value, err := s.lateDefault()
+		if err != nil {
+			return fmt.Errorf("resolve default for -%s: %w", s.name, err)
+		}
+		if err := s.setValue(value); err != nil {
+			return fmt.Errorf("resolve default for -%s: %w", s.name, err)
+		}
+	}
+	return nil
 }
 
 // bindFlags registers every spec on fs, in declaration order.

@@ -16,6 +16,14 @@ import "github.com/cloudstic/cli/pkg/secretref"
 // Default returns a fresh map of the built-in backends, keyed by scheme. The
 // map is newly allocated on each call, so callers may add to or remove from it
 // without affecting anyone else.
+//
+// Replacing an entry is also how you reconfigure a built-in. The config-token
+// backend writes into Cloudstic's own config directory by default, which a
+// program embedding this package usually does not want:
+//
+//	b := backends.Default()
+//	b["config-token"] = backends.NewConfigTokenBackend(backends.WithConfigDir(myDir))
+//	resolver := secretref.NewResolver(b)
 func Default() map[string]secretref.Backend {
 	return map[string]secretref.Backend{
 		"env":            NewEnvBackend(nil),

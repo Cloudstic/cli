@@ -8,16 +8,16 @@ import (
 
 // storeURIParts holds the parsed components of a --store URI.
 type storeURIParts struct {
-	scheme string // "local", "s3", "b2", "sftp"
+	Scheme string // "local", "s3", "b2", "sftp"
 	// S3/B2 fields
-	bucket string
-	prefix string
+	Bucket string
+	Prefix string
 	// local field
-	path string
+	Path string
 	// SFTP fields
-	host string
-	port string
-	user string
+	Host string
+	Port string
+	User string
 }
 
 // parseStoreURI parses a --store flag value into its components.
@@ -42,11 +42,11 @@ func parseStoreURI(raw string) (*storeURIParts, error) {
 			user = u.User.Username()
 		}
 		return &storeURIParts{
-			scheme: "sftp",
-			host:   u.Hostname(),
-			port:   u.Port(),
-			user:   user,
-			path:   u.Path,
+			Scheme: "sftp",
+			Host:   u.Hostname(),
+			Port:   u.Port(),
+			User:   user,
+			Path:   u.Path,
 		}, nil
 	}
 
@@ -62,7 +62,7 @@ func parseStoreURI(raw string) (*storeURIParts, error) {
 		if rest == "" {
 			return nil, fmt.Errorf("invalid store URI %q: local path cannot be empty", raw)
 		}
-		return &storeURIParts{scheme: "local", path: rest}, nil
+		return &storeURIParts{Scheme: "local", Path: rest}, nil
 	case "s3", "b2":
 		if rest == "" {
 			return nil, fmt.Errorf("invalid store URI %q: bucket name cannot be empty", raw)
@@ -71,7 +71,7 @@ func parseStoreURI(raw string) (*storeURIParts, error) {
 		if bucket == "" {
 			return nil, fmt.Errorf("invalid store URI %q: bucket name cannot be empty", raw)
 		}
-		return &storeURIParts{scheme: scheme, bucket: bucket, prefix: prefix}, nil
+		return &storeURIParts{Scheme: scheme, Bucket: bucket, Prefix: prefix}, nil
 	default:
 		return nil, fmt.Errorf("unknown store scheme %q in %q: supported schemes are local, s3, b2, sftp", scheme, raw)
 	}
@@ -79,13 +79,13 @@ func parseStoreURI(raw string) (*storeURIParts, error) {
 
 // sourceURIParts holds the parsed components of a --source URI or keyword.
 type sourceURIParts struct {
-	scheme string // "local", "sftp", "gdrive", "gdrive-changes", "onedrive", "onedrive-changes"
+	Scheme string // "local", "sftp", "gdrive", "gdrive-changes", "onedrive", "onedrive-changes"
 	// local/sftp fields
-	path string
+	Path string
 	// sftp-specific fields
-	host string
-	port string
-	user string
+	Host string
+	Port string
+	User string
 }
 
 // parseSourceURI parses a --source flag value into its components.
@@ -112,11 +112,11 @@ func parseSourceURI(raw string) (*sourceURIParts, error) {
 			user = u.User.Username()
 		}
 		return &sourceURIParts{
-			scheme: "sftp",
-			host:   u.Hostname(),
-			port:   u.Port(),
-			user:   user,
-			path:   u.Path,
+			Scheme: "sftp",
+			Host:   u.Hostname(),
+			Port:   u.Port(),
+			User:   user,
+			Path:   u.Path,
 		}, nil
 	}
 
@@ -129,7 +129,7 @@ func parseSourceURI(raw string) (*sourceURIParts, error) {
 			if rest == "" {
 				return nil, fmt.Errorf("invalid source URI %q: local path cannot be empty", raw)
 			}
-			return &sourceURIParts{scheme: "local", path: rest}, nil
+			return &sourceURIParts{Scheme: "local", Path: rest}, nil
 		case "gdrive", "gdrive-changes", "onedrive", "onedrive-changes":
 			if strings.HasPrefix(rest, "//") {
 				// Format: scheme://Drive Name/path
@@ -143,9 +143,9 @@ func parseSourceURI(raw string) (*sourceURIParts, error) {
 				} else {
 					driveName = rest
 				}
-				return &sourceURIParts{scheme: scheme, host: driveName, path: path}, nil
+				return &sourceURIParts{Scheme: scheme, Host: driveName, Path: path}, nil
 			}
-			return &sourceURIParts{scheme: scheme, path: ensureLeadingSlash(rest)}, nil
+			return &sourceURIParts{Scheme: scheme, Path: ensureLeadingSlash(rest)}, nil
 		default:
 			return nil, fmt.Errorf("unknown source scheme %q in %q: supported URI formats are local:<path> and sftp://[user@]host[:port]/<path>", scheme, raw)
 		}
@@ -154,7 +154,7 @@ func parseSourceURI(raw string) (*sourceURIParts, error) {
 	// Bare keyword (cloud sources)
 	switch raw {
 	case "gdrive", "gdrive-changes", "onedrive", "onedrive-changes":
-		return &sourceURIParts{scheme: raw, path: "/"}, nil
+		return &sourceURIParts{Scheme: raw, Path: "/"}, nil
 	default:
 		return nil, fmt.Errorf("unknown source %q: supported values are local:<path>, sftp://[user@]host[:port]/<path>, gdrive[:<path>], gdrive-changes[:<path>], onedrive[:<path>], onedrive-changes[:<path>]", raw)
 	}

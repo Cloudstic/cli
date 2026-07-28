@@ -72,8 +72,8 @@ func prepareForgetArgs(a *forgetArgs) error {
 			if err != nil {
 				return fmt.Errorf("invalid -source filter: %w", err)
 			}
-			a.filterSource = parts.scheme
-			a.filterPath = parts.path
+			a.filterSource = parts.Scheme
+			a.filterPath = parts.Path
 		}
 	}
 	a.hasFilters = len(a.filterTags) > 0 || a.filterSource != "" || a.filterAccount != "" || a.filterPath != ""

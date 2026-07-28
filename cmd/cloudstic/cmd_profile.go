@@ -494,7 +494,7 @@ func profileProviderFromSource(sourceURI string) string {
 	if err != nil {
 		return ""
 	}
-	switch uri.scheme {
+	switch uri.Scheme {
 	case "gdrive", "gdrive-changes":
 		return "google"
 	case "onedrive", "onedrive-changes":

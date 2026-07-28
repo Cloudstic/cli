@@ -192,7 +192,7 @@ func ensureDefaultAuthRefForCloudBackup(a *backupArgs) error {
 		setToken             func(string)
 	)
 
-	switch uri.scheme {
+	switch uri.Scheme {
 	case "gdrive", "gdrive-changes":
 		provider = "google"
 		defaultAuthRef = "google-default"
@@ -420,7 +420,7 @@ func applyProfileAuthToBackupArgs(a *backupArgs, auth profile.Auth) error {
 	}
 
 	requiredProvider := ""
-	switch uri.scheme {
+	switch uri.Scheme {
 	case "gdrive", "gdrive-changes":
 		requiredProvider = "google"
 	case "onedrive", "onedrive-changes":
@@ -560,7 +560,7 @@ func initSource(ctx context.Context, opts initSourceOptions) (source.Source, err
 
 	resolver := secretrefbackends.NewDefaultResolver()
 
-	switch uri.scheme {
+	switch uri.Scheme {
 	case "local":
 		localOpts := []local.Option{local.WithExcludePatterns(opts.excludePatterns)}
 		if opts.volumeUUID != "" {
@@ -581,11 +581,11 @@ func initSource(ctx context.Context, opts initSourceOptions) (source.Source, err
 				localOpts = append(localOpts, local.WithXattrNamespaces(prefixes))
 			}
 		}
-		return local.New(uri.path, localOpts...), nil
+		return local.New(uri.Path, localOpts...), nil
 	case "sftp":
 		sftpOpts := sftpSourceOpts(opts.sourceSFTP, uri)
 		sftpOpts = append(sftpOpts, sftpsource.WithExcludePatterns(opts.excludePatterns))
-		return sftpsource.New(uri.host, sftpOpts...)
+		return sftpsource.New(uri.Host, sftpOpts...)
 	case "gdrive":
 		tokenPath, err := resolveTokenPath(opts.googleTokenFile, "google_token.json")
 		if err != nil {
@@ -598,8 +598,8 @@ func initSource(ctx context.Context, opts initSourceOptions) (source.Source, err
 			gdrive.WithCredsJSON([]byte(opts.googleCredsJSON)),
 			gdrive.WithTokenPath(tokenPath),
 			gdrive.WithTokenRef(opts.googleTokenRef),
-			gdrive.WithDriveName(uri.host),
-			gdrive.WithRootPath(uri.path),
+			gdrive.WithDriveName(uri.Host),
+			gdrive.WithRootPath(uri.Path),
 			gdrive.WithExcludePatterns(opts.excludePatterns),
 		}
 		if opts.skipNativeFiles {
@@ -618,8 +618,8 @@ func initSource(ctx context.Context, opts initSourceOptions) (source.Source, err
 			gdrive.WithCredsJSON([]byte(opts.googleCredsJSON)),
 			gdrive.WithTokenPath(tokenPath),
 			gdrive.WithTokenRef(opts.googleTokenRef),
-			gdrive.WithDriveName(uri.host),
-			gdrive.WithRootPath(uri.path),
+			gdrive.WithDriveName(uri.Host),
+			gdrive.WithRootPath(uri.Path),
 			gdrive.WithExcludePatterns(opts.excludePatterns),
 		}
 		if opts.skipNativeFiles {
@@ -636,8 +636,8 @@ func initSource(ctx context.Context, opts initSourceOptions) (source.Source, err
 			onedrive.WithClientID(opts.onedriveClientID),
 			onedrive.WithTokenPath(tokenPath),
 			onedrive.WithTokenRef(opts.onedriveTokenRef),
-			onedrive.WithDriveName(uri.host),
-			onedrive.WithRootPath(uri.path),
+			onedrive.WithDriveName(uri.Host),
+			onedrive.WithRootPath(uri.Path),
 			onedrive.WithExcludePatterns(opts.excludePatterns),
 		)
 	case "onedrive-changes":
@@ -650,24 +650,24 @@ func initSource(ctx context.Context, opts initSourceOptions) (source.Source, err
 			onedrive.WithClientID(opts.onedriveClientID),
 			onedrive.WithTokenPath(tokenPath),
 			onedrive.WithTokenRef(opts.onedriveTokenRef),
-			onedrive.WithDriveName(uri.host),
-			onedrive.WithRootPath(uri.path),
+			onedrive.WithDriveName(uri.Host),
+			onedrive.WithRootPath(uri.Path),
 			onedrive.WithExcludePatterns(opts.excludePatterns),
 		)
 	default:
-		return nil, fmt.Errorf("unsupported source: %s", uri.scheme)
+		return nil, fmt.Errorf("unsupported source: %s", uri.Scheme)
 	}
 }
 
 func sftpSourceOpts(cfg sftpConfig, uri *sourceURIParts) []sftpsource.Option {
 	opts := []sftpsource.Option{
-		sftpsource.WithBasePath(uri.path),
+		sftpsource.WithBasePath(uri.Path),
 	}
-	if uri.port != "" {
-		opts = append(opts, sftpsource.WithPort(uri.port))
+	if uri.Port != "" {
+		opts = append(opts, sftpsource.WithPort(uri.Port))
 	}
-	if uri.user != "" {
-		opts = append(opts, sftpsource.WithUser(uri.user))
+	if uri.User != "" {
+		opts = append(opts, sftpsource.WithUser(uri.User))
 	}
 	if cfg.Password != "" {
 		opts = append(opts, sftpsource.WithPassword(cfg.Password))

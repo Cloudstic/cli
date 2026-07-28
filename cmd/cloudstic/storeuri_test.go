@@ -11,26 +11,26 @@ func TestParseStoreURI(t *testing.T) {
 		wantErr bool
 	}{
 		// local
-		{raw: "local:./backup_store", want: storeURIParts{scheme: "local", path: "./backup_store"}},
-		{raw: "local:/abs/path", want: storeURIParts{scheme: "local", path: "/abs/path"}},
+		{raw: "local:./backup_store", want: storeURIParts{Scheme: "local", Path: "./backup_store"}},
+		{raw: "local:/abs/path", want: storeURIParts{Scheme: "local", Path: "/abs/path"}},
 		{raw: "local:", wantErr: true},
 
 		// s3
-		{raw: "s3:my-bucket", want: storeURIParts{scheme: "s3", bucket: "my-bucket"}},
-		{raw: "s3:my-bucket/prod", want: storeURIParts{scheme: "s3", bucket: "my-bucket", prefix: "prod"}},
-		{raw: "s3:my-bucket/nested/prefix", want: storeURIParts{scheme: "s3", bucket: "my-bucket", prefix: "nested/prefix"}},
+		{raw: "s3:my-bucket", want: storeURIParts{Scheme: "s3", Bucket: "my-bucket"}},
+		{raw: "s3:my-bucket/prod", want: storeURIParts{Scheme: "s3", Bucket: "my-bucket", Prefix: "prod"}},
+		{raw: "s3:my-bucket/nested/prefix", want: storeURIParts{Scheme: "s3", Bucket: "my-bucket", Prefix: "nested/prefix"}},
 		{raw: "s3:", wantErr: true},
 
 		// b2
-		{raw: "b2:my-bucket", want: storeURIParts{scheme: "b2", bucket: "my-bucket"}},
-		{raw: "b2:my-bucket/prod", want: storeURIParts{scheme: "b2", bucket: "my-bucket", prefix: "prod"}},
+		{raw: "b2:my-bucket", want: storeURIParts{Scheme: "b2", Bucket: "my-bucket"}},
+		{raw: "b2:my-bucket/prod", want: storeURIParts{Scheme: "b2", Bucket: "my-bucket", Prefix: "prod"}},
 		{raw: "b2:", wantErr: true},
 
 		// sftp
-		{raw: "sftp://host.example.com/backups", want: storeURIParts{scheme: "sftp", host: "host.example.com", path: "/backups"}},
-		{raw: "sftp://user@host.example.com/backups", want: storeURIParts{scheme: "sftp", host: "host.example.com", user: "user", path: "/backups"}},
-		{raw: "sftp://user@host.example.com:2222/backups", want: storeURIParts{scheme: "sftp", host: "host.example.com", port: "2222", user: "user", path: "/backups"}},
-		{raw: "sftp://host.example.com:22/backups", want: storeURIParts{scheme: "sftp", host: "host.example.com", port: "22", path: "/backups"}},
+		{raw: "sftp://host.example.com/backups", want: storeURIParts{Scheme: "sftp", Host: "host.example.com", Path: "/backups"}},
+		{raw: "sftp://user@host.example.com/backups", want: storeURIParts{Scheme: "sftp", Host: "host.example.com", User: "user", Path: "/backups"}},
+		{raw: "sftp://user@host.example.com:2222/backups", want: storeURIParts{Scheme: "sftp", Host: "host.example.com", Port: "2222", User: "user", Path: "/backups"}},
+		{raw: "sftp://host.example.com:22/backups", want: storeURIParts{Scheme: "sftp", Host: "host.example.com", Port: "22", Path: "/backups"}},
 		{raw: "sftp:///no-host", wantErr: true},
 
 		// invalid
@@ -64,28 +64,28 @@ func TestParseSourceURI(t *testing.T) {
 		wantErr bool
 	}{
 		// local
-		{raw: "local:./documents", want: sourceURIParts{scheme: "local", path: "./documents"}},
-		{raw: "local:/abs/path", want: sourceURIParts{scheme: "local", path: "/abs/path"}},
+		{raw: "local:./documents", want: sourceURIParts{Scheme: "local", Path: "./documents"}},
+		{raw: "local:/abs/path", want: sourceURIParts{Scheme: "local", Path: "/abs/path"}},
 		{raw: "local:", wantErr: true},
 
 		// sftp
-		{raw: "sftp://host.example.com/data", want: sourceURIParts{scheme: "sftp", host: "host.example.com", path: "/data"}},
-		{raw: "sftp://user@host.example.com/data", want: sourceURIParts{scheme: "sftp", host: "host.example.com", user: "user", path: "/data"}},
-		{raw: "sftp://user@host.example.com:2222/data", want: sourceURIParts{scheme: "sftp", host: "host.example.com", port: "2222", user: "user", path: "/data"}},
+		{raw: "sftp://host.example.com/data", want: sourceURIParts{Scheme: "sftp", Host: "host.example.com", Path: "/data"}},
+		{raw: "sftp://user@host.example.com/data", want: sourceURIParts{Scheme: "sftp", Host: "host.example.com", User: "user", Path: "/data"}},
+		{raw: "sftp://user@host.example.com:2222/data", want: sourceURIParts{Scheme: "sftp", Host: "host.example.com", Port: "2222", User: "user", Path: "/data"}},
 		{raw: "sftp:///no-host", wantErr: true},
 
 		// cloud keywords
-		{raw: "gdrive", want: sourceURIParts{scheme: "gdrive", path: "/"}},
-		{raw: "gdrive-changes", want: sourceURIParts{scheme: "gdrive-changes", path: "/"}},
-		{raw: "onedrive", want: sourceURIParts{scheme: "onedrive", path: "/"}},
-		{raw: "onedrive-changes", want: sourceURIParts{scheme: "onedrive-changes", path: "/"}},
-		{raw: "gdrive:/some/path", want: sourceURIParts{scheme: "gdrive", path: "/some/path"}},
-		{raw: "gdrive:some/path", want: sourceURIParts{scheme: "gdrive", path: "/some/path"}},
-		{raw: "onedrive:/documents", want: sourceURIParts{scheme: "onedrive", path: "/documents"}},
-		{raw: "gdrive://My Shared Drive/some/path", want: sourceURIParts{scheme: "gdrive", host: "My Shared Drive", path: "/some/path"}},
-		{raw: "gdrive-changes://Company Data/finance", want: sourceURIParts{scheme: "gdrive-changes", host: "Company Data", path: "/finance"}},
-		{raw: "onedrive://Personal/documents", want: sourceURIParts{scheme: "onedrive", host: "Personal", path: "/documents"}},
-		{raw: "onedrive-changes://Shared/photos", want: sourceURIParts{scheme: "onedrive-changes", host: "Shared", path: "/photos"}},
+		{raw: "gdrive", want: sourceURIParts{Scheme: "gdrive", Path: "/"}},
+		{raw: "gdrive-changes", want: sourceURIParts{Scheme: "gdrive-changes", Path: "/"}},
+		{raw: "onedrive", want: sourceURIParts{Scheme: "onedrive", Path: "/"}},
+		{raw: "onedrive-changes", want: sourceURIParts{Scheme: "onedrive-changes", Path: "/"}},
+		{raw: "gdrive:/some/path", want: sourceURIParts{Scheme: "gdrive", Path: "/some/path"}},
+		{raw: "gdrive:some/path", want: sourceURIParts{Scheme: "gdrive", Path: "/some/path"}},
+		{raw: "onedrive:/documents", want: sourceURIParts{Scheme: "onedrive", Path: "/documents"}},
+		{raw: "gdrive://My Shared Drive/some/path", want: sourceURIParts{Scheme: "gdrive", Host: "My Shared Drive", Path: "/some/path"}},
+		{raw: "gdrive-changes://Company Data/finance", want: sourceURIParts{Scheme: "gdrive-changes", Host: "Company Data", Path: "/finance"}},
+		{raw: "onedrive://Personal/documents", want: sourceURIParts{Scheme: "onedrive", Host: "Personal", Path: "/documents"}},
+		{raw: "onedrive-changes://Shared/photos", want: sourceURIParts{Scheme: "onedrive-changes", Host: "Shared", Path: "/photos"}},
 
 		// invalid
 		{raw: "sftp", wantErr: true},

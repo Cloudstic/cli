@@ -59,7 +59,7 @@ func sourceScheme(raw string) string {
 	if err != nil {
 		return "unknown"
 	}
-	return uri.scheme
+	return uri.Scheme
 }
 
 func storeScheme(raw string) string {
@@ -67,7 +67,7 @@ func storeScheme(raw string) string {
 	if err != nil {
 		return "unknown"
 	}
-	return uri.scheme
+	return uri.Scheme
 }
 
 func joinOrDash(values []string) string {

@@ -33,25 +33,25 @@ func newTUIStoreConfig(raw string) tuiStoreConfig {
 	if err != nil {
 		return tuiStoreConfig{Type: "local"}
 	}
-	switch parts.scheme {
+	switch parts.Scheme {
 	case "local":
-		return tuiStoreConfig{Type: "local", Value: parts.path}
+		return tuiStoreConfig{Type: "local", Value: parts.Path}
 	case "s3", "b2":
-		value := parts.bucket
-		if parts.prefix != "" {
-			value += "/" + parts.prefix
+		value := parts.Bucket
+		if parts.Prefix != "" {
+			value += "/" + parts.Prefix
 		}
-		return tuiStoreConfig{Type: parts.scheme, Value: value}
+		return tuiStoreConfig{Type: parts.Scheme, Value: value}
 	case "sftp":
 		target := ""
-		if parts.user != "" {
-			target += parts.user + "@"
+		if parts.User != "" {
+			target += parts.User + "@"
 		}
-		target += parts.host
-		if parts.port != "" {
-			target += ":" + parts.port
+		target += parts.Host
+		if parts.Port != "" {
+			target += ":" + parts.Port
 		}
-		target += parts.path
+		target += parts.Path
 		return tuiStoreConfig{Type: "sftp", Value: target}
 	default:
 		return tuiStoreConfig{Type: "local"}

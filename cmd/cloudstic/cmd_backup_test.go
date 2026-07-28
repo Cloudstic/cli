@@ -91,7 +91,7 @@ func TestInitSource_UnsupportedType(t *testing.T) {
 // sftpSourceOpts takes a resolved sftpConfig rather than reaching into
 // globalFlags, so it's exercised directly without dialing anything.
 func TestSFTPSourceOpts_TranslatesConfig(t *testing.T) {
-	uri := &sourceURIParts{host: "host.example.com", port: "2222", user: "backup", path: "/data"}
+	uri := &sourceURIParts{Host: "host.example.com", Port: "2222", User: "backup", Path: "/data"}
 
 	minimal := sftpSourceOpts(sftpConfig{}, uri)
 	if len(minimal) != 3 {

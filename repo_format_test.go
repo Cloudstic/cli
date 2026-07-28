@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/cloudstic/cli/internal/core"
-	"github.com/cloudstic/cli/pkg/source"
+	"github.com/cloudstic/cli/pkg/source/local"
 	"github.com/cloudstic/cli/pkg/store"
 )
 
@@ -131,6 +131,11 @@ func TestInitStampsCurrentFormatVersion(t *testing.T) {
 	}
 	if cfg == nil {
 		t.Fatal("expected a config after init")
+		// t.Fatal already ends the test. The explicit return is for
+		// staticcheck: on the linux/amd64 CI runner it does not model Fatal
+		// as terminating here and reports the dereference below as SA5011,
+		// though it does so on other platforms. Keep it.
+		return
 	}
 	if cfg.Version != core.RepoFormatVersion {
 		t.Errorf("init stamped version %d, want %d", cfg.Version, core.RepoFormatVersion)
@@ -269,7 +274,7 @@ func TestBackupThatSealsStampsTheFormat(t *testing.T) {
 	}
 
 	client := newPackfileClient(t, storeDir)
-	if _, err := client.Backup(ctx, source.NewLocalSource(sourceDir)); err != nil {
+	if _, err := client.Backup(ctx, local.New(sourceDir)); err != nil {
 		t.Fatalf("backup: %v", err)
 	}
 
@@ -307,7 +312,7 @@ func TestUnsealedRepositoryKeepsBaselineFormat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
-	if _, err := client.Backup(ctx, source.NewLocalSource(sourceDir)); err != nil {
+	if _, err := client.Backup(ctx, local.New(sourceDir)); err != nil {
 		t.Fatalf("backup: %v", err)
 	}
 
@@ -360,7 +365,7 @@ func TestWritesStampTheFormatButReadsDoNot(t *testing.T) {
 	}
 
 	// A write must raise it.
-	if _, err := client.Backup(ctx, source.NewLocalSource(sourceDir)); err != nil {
+	if _, err := client.Backup(ctx, local.New(sourceDir)); err != nil {
 		t.Fatalf("backup: %v", err)
 	}
 	cfg, err = LoadRepoConfig(ctx, base, nil)
@@ -478,7 +483,7 @@ func TestDryRunsDoNotStampTheFormat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Backup(ctx, source.NewLocalSource(sourceDir)); err != nil {
+	if _, err := client.Backup(ctx, local.New(sourceDir)); err != nil {
 		t.Fatalf("backup: %v", err)
 	}
 
@@ -527,7 +532,7 @@ func TestForgetPolicyStampsTheFormat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Backup(ctx, source.NewLocalSource(sourceDir)); err != nil {
+	if _, err := client.Backup(ctx, local.New(sourceDir)); err != nil {
 		t.Fatalf("backup: %v", err)
 	}
 	rewindConfigVersion(t, base, 1)

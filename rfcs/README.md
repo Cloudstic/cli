@@ -21,3 +21,4 @@
 - [RFC 0019: Repository File Search](0019-repository-file-search.md)
 - [RFC 0020: WORM Mode Backup](0020-worm-mode-backup.md)
 - [RFC 0021: Restore Destinations and Formats](0021-restore-destinations-and-formats.md)
+- [RFC 0022: Public Go API Boundaries](0022-public-go-api-boundaries.md)

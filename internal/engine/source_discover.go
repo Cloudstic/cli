@@ -2,19 +2,19 @@ package engine
 
 import (
 	"context"
-	"github.com/cloudstic/cli/internal/core"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
 
-	"github.com/cloudstic/cli/pkg/source"
+	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/pkg/source/local"
 )
 
 var (
 	discoverLocalCandidatesFunc = discoverLocalCandidates
 	discoverLocalSourceInfoFunc = func(mountPoint string) core.SourceInfo {
-		return source.NewLocalSource(mountPoint).Info()
+		return local.New(mountPoint).Info()
 	}
 )
 

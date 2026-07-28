@@ -9,7 +9,7 @@ import (
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/pkg/crypto"
-	"github.com/cloudstic/cli/pkg/source"
+	"github.com/cloudstic/cli/pkg/source/local"
 	"github.com/cloudstic/cli/pkg/store"
 )
 
@@ -127,7 +127,7 @@ func TestClient_PackfileBackupRestoreRoundTrip(t *testing.T) {
 
 	writeRepoConfig(t, storeDir)
 	client := newPackfileClient(t, storeDir)
-	if _, err := client.Backup(ctx, source.NewLocalSource(sourceDir)); err != nil {
+	if _, err := client.Backup(ctx, local.New(sourceDir)); err != nil {
 		t.Fatalf("backup: %v", err)
 	}
 

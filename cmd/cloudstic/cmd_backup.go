@@ -10,12 +10,19 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/crypto/ssh"
+
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/engine"
 	"github.com/cloudstic/cli/internal/paths"
 	"github.com/cloudstic/cli/internal/secretref"
 	"github.com/cloudstic/cli/pkg/source"
-	"golang.org/x/crypto/ssh"
+	"github.com/cloudstic/cli/pkg/source/gdrive"
+	"github.com/cloudstic/cli/pkg/source/local"
+	"github.com/cloudstic/cli/pkg/source/onedrive"
+	// Aliased to keep "sftp" free: this file also reaches SSH host-key types,
+	// and the store-side SFTP wiring lives alongside it.
+	sftpsource "github.com/cloudstic/cli/pkg/source/sftp"
 )
 
 type backupArgs struct {
@@ -552,124 +559,124 @@ func initSource(ctx context.Context, opts initSourceOptions) (source.Source, err
 
 	switch uri.scheme {
 	case "local":
-		localOpts := []source.LocalOption{source.WithLocalExcludePatterns(opts.excludePatterns)}
+		localOpts := []local.Option{local.WithExcludePatterns(opts.excludePatterns)}
 		if opts.volumeUUID != "" {
-			localOpts = append(localOpts, source.WithVolumeUUID(opts.volumeUUID))
+			localOpts = append(localOpts, local.WithVolumeUUID(opts.volumeUUID))
 		}
 		if opts.skipMode {
-			localOpts = append(localOpts, source.WithSkipMode())
+			localOpts = append(localOpts, local.WithSkipMode())
 		}
 		if opts.skipFlags {
-			localOpts = append(localOpts, source.WithSkipFlags())
+			localOpts = append(localOpts, local.WithSkipFlags())
 		}
 		if opts.skipXattrs {
-			localOpts = append(localOpts, source.WithSkipXattrs())
+			localOpts = append(localOpts, local.WithSkipXattrs())
 		}
 		if opts.xattrNamespaces != "" {
 			prefixes := parseXattrNamespacePrefixes(opts.xattrNamespaces)
 			if len(prefixes) > 0 {
-				localOpts = append(localOpts, source.WithXattrNamespaces(prefixes))
+				localOpts = append(localOpts, local.WithXattrNamespaces(prefixes))
 			}
 		}
-		return source.NewLocalSource(uri.path, localOpts...), nil
+		return local.New(uri.path, localOpts...), nil
 	case "sftp":
 		sftpOpts := sftpSourceOpts(opts.sourceSFTP, uri)
-		sftpOpts = append(sftpOpts, source.WithSFTPExcludePatterns(opts.excludePatterns))
-		return source.NewSFTPSource(uri.host, sftpOpts...)
+		sftpOpts = append(sftpOpts, sftpsource.WithExcludePatterns(opts.excludePatterns))
+		return sftpsource.New(uri.host, sftpOpts...)
 	case "gdrive":
 		tokenPath, err := resolveTokenPath(opts.googleTokenFile, "google_token.json")
 		if err != nil {
 			return nil, err
 		}
-		gdriveOpts := []source.GDriveOption{
-			source.WithResolver(resolver),
-			source.WithCredsPath(opts.googleCreds),
-			source.WithCredsRef(opts.googleCredsRef),
-			source.WithCredsJSON([]byte(opts.googleCredsJSON)),
-			source.WithTokenPath(tokenPath),
-			source.WithTokenRef(opts.googleTokenRef),
-			source.WithDriveName(uri.host),
-			source.WithRootPath(uri.path),
-			source.WithGDriveExcludePatterns(opts.excludePatterns),
+		gdriveOpts := []gdrive.Option{
+			gdrive.WithResolver(resolver),
+			gdrive.WithCredsPath(opts.googleCreds),
+			gdrive.WithCredsRef(opts.googleCredsRef),
+			gdrive.WithCredsJSON([]byte(opts.googleCredsJSON)),
+			gdrive.WithTokenPath(tokenPath),
+			gdrive.WithTokenRef(opts.googleTokenRef),
+			gdrive.WithDriveName(uri.host),
+			gdrive.WithRootPath(uri.path),
+			gdrive.WithExcludePatterns(opts.excludePatterns),
 		}
 		if opts.skipNativeFiles {
-			gdriveOpts = append(gdriveOpts, source.WithSkipNativeFiles())
+			gdriveOpts = append(gdriveOpts, gdrive.WithSkipNativeFiles())
 		}
-		return source.NewGDriveSource(ctx, gdriveOpts...)
+		return gdrive.New(ctx, gdriveOpts...)
 	case "gdrive-changes":
 		tokenPath, err := resolveTokenPath(opts.googleTokenFile, "google_token.json")
 		if err != nil {
 			return nil, err
 		}
-		gdriveOpts := []source.GDriveOption{
-			source.WithResolver(resolver),
-			source.WithCredsPath(opts.googleCreds),
-			source.WithCredsRef(opts.googleCredsRef),
-			source.WithCredsJSON([]byte(opts.googleCredsJSON)),
-			source.WithTokenPath(tokenPath),
-			source.WithTokenRef(opts.googleTokenRef),
-			source.WithDriveName(uri.host),
-			source.WithRootPath(uri.path),
-			source.WithGDriveExcludePatterns(opts.excludePatterns),
+		gdriveOpts := []gdrive.Option{
+			gdrive.WithResolver(resolver),
+			gdrive.WithCredsPath(opts.googleCreds),
+			gdrive.WithCredsRef(opts.googleCredsRef),
+			gdrive.WithCredsJSON([]byte(opts.googleCredsJSON)),
+			gdrive.WithTokenPath(tokenPath),
+			gdrive.WithTokenRef(opts.googleTokenRef),
+			gdrive.WithDriveName(uri.host),
+			gdrive.WithRootPath(uri.path),
+			gdrive.WithExcludePatterns(opts.excludePatterns),
 		}
 		if opts.skipNativeFiles {
-			gdriveOpts = append(gdriveOpts, source.WithSkipNativeFiles())
+			gdriveOpts = append(gdriveOpts, gdrive.WithSkipNativeFiles())
 		}
-		return source.NewGDriveChangeSource(ctx, gdriveOpts...)
+		return gdrive.NewChangeSource(ctx, gdriveOpts...)
 	case "onedrive":
 		tokenPath, err := resolveTokenPath(opts.onedriveTokenFile, "onedrive_token.json")
 		if err != nil {
 			return nil, err
 		}
-		return source.NewOneDriveSource(ctx,
-			source.WithOneDriveResolver(resolver),
-			source.WithOneDriveClientID(opts.onedriveClientID),
-			source.WithOneDriveTokenPath(tokenPath),
-			source.WithOneDriveTokenRef(opts.onedriveTokenRef),
-			source.WithOneDriveDriveName(uri.host),
-			source.WithOneDriveRootPath(uri.path),
-			source.WithOneDriveExcludePatterns(opts.excludePatterns),
+		return onedrive.New(ctx,
+			onedrive.WithResolver(resolver),
+			onedrive.WithClientID(opts.onedriveClientID),
+			onedrive.WithTokenPath(tokenPath),
+			onedrive.WithTokenRef(opts.onedriveTokenRef),
+			onedrive.WithDriveName(uri.host),
+			onedrive.WithRootPath(uri.path),
+			onedrive.WithExcludePatterns(opts.excludePatterns),
 		)
 	case "onedrive-changes":
 		tokenPath, err := resolveTokenPath(opts.onedriveTokenFile, "onedrive_token.json")
 		if err != nil {
 			return nil, err
 		}
-		return source.NewOneDriveChangeSource(ctx,
-			source.WithOneDriveResolver(resolver),
-			source.WithOneDriveClientID(opts.onedriveClientID),
-			source.WithOneDriveTokenPath(tokenPath),
-			source.WithOneDriveTokenRef(opts.onedriveTokenRef),
-			source.WithOneDriveDriveName(uri.host),
-			source.WithOneDriveRootPath(uri.path),
-			source.WithOneDriveExcludePatterns(opts.excludePatterns),
+		return onedrive.NewChangeSource(ctx,
+			onedrive.WithResolver(resolver),
+			onedrive.WithClientID(opts.onedriveClientID),
+			onedrive.WithTokenPath(tokenPath),
+			onedrive.WithTokenRef(opts.onedriveTokenRef),
+			onedrive.WithDriveName(uri.host),
+			onedrive.WithRootPath(uri.path),
+			onedrive.WithExcludePatterns(opts.excludePatterns),
 		)
 	default:
 		return nil, fmt.Errorf("unsupported source: %s", uri.scheme)
 	}
 }
 
-func sftpSourceOpts(cfg sftpConfig, uri *sourceURIParts) []source.SFTPOption {
-	opts := []source.SFTPOption{
-		source.WithSFTPSourceBasePath(uri.path),
+func sftpSourceOpts(cfg sftpConfig, uri *sourceURIParts) []sftpsource.Option {
+	opts := []sftpsource.Option{
+		sftpsource.WithBasePath(uri.path),
 	}
 	if uri.port != "" {
-		opts = append(opts, source.WithSFTPSourcePort(uri.port))
+		opts = append(opts, sftpsource.WithPort(uri.port))
 	}
 	if uri.user != "" {
-		opts = append(opts, source.WithSFTPSourceUser(uri.user))
+		opts = append(opts, sftpsource.WithUser(uri.user))
 	}
 	if cfg.password != "" {
-		opts = append(opts, source.WithSFTPSourcePassword(cfg.password))
+		opts = append(opts, sftpsource.WithPassword(cfg.password))
 	}
 	if cfg.key != "" {
-		opts = append(opts, source.WithSFTPSourceKey(cfg.key))
+		opts = append(opts, sftpsource.WithKey(cfg.key))
 	}
 	if cfg.insecure {
-		opts = append(opts, source.WithSFTPSourceHostKeyCallback(ssh.InsecureIgnoreHostKey())) //nolint:gosec // explicitly requested by user
+		opts = append(opts, sftpsource.WithHostKeyCallback(ssh.InsecureIgnoreHostKey())) //nolint:gosec // explicitly requested by user
 	}
 	if cfg.knownHosts != "" {
-		opts = append(opts, source.WithSFTPSourceKnownHosts(cfg.knownHosts))
+		opts = append(opts, sftpsource.WithKnownHosts(cfg.knownHosts))
 	}
 	return opts
 }

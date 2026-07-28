@@ -319,6 +319,27 @@ func LoadRepoConfig(
 // RepoConfig is the repository marker written by "init".
 type RepoConfig = core.RepoConfig
 
+// FileMeta represents immutable file metadata, as referenced by
+// pkg/source.Source implementations and by result types such as FileMatch
+// and LsSnapshotResult.
+type FileMeta = core.FileMeta
+
+// SourceInfo describes the origin of a backup snapshot, as referenced by
+// pkg/source.Source.Info and by result types such as FileMatch.
+type SourceInfo = core.SourceInfo
+
+// FileType is the generic type of a file (file or folder).
+type FileType = core.FileType
+
+// FileType values.
+const (
+	FileTypeFile   = core.FileTypeFile
+	FileTypeFolder = core.FileTypeFolder
+)
+
+// Snapshot represents a backup checkpoint, as referenced by LsSnapshotResult.
+type Snapshot = core.Snapshot
+
 // Reporter defines the interface for progress reporting.
 type Reporter = ui.Reporter
 
@@ -723,6 +744,17 @@ const (
 	SecretRefBackendUnavailable = secretref.KindBackendUnavailable
 )
 
+// SecretResolver resolves a scheme://path secret reference to its value, as
+// accepted by pkg/source/onedrive.WithResolver and pkg/source/gdrive.WithResolver.
+type SecretResolver = secretref.Resolver
+
+// SecretRef is a parsed scheme://path secret reference.
+type SecretRef = secretref.Ref
+
+// WritableSecretBackend is a secret backend that supports writing new values,
+// as returned by SecretResolver.WritableBackends.
+type WritableSecretBackend = secretref.WritableBackend
+
 // LoadProfilesFile parses a backup profiles YAML file.
 func LoadProfilesFile(path string) (*ProfilesConfig, error) {
 	return engine.LoadProfilesFile(path)
@@ -925,6 +957,20 @@ var (
 
 type PolicyResult = engine.PolicyResult
 
+// PolicyGroupResult holds the policy evaluation result for a single group of
+// snapshots, as returned in PolicyResult.Groups.
+type PolicyGroupResult = engine.PolicyGroupResult
+
+// GroupKey identifies a group of snapshots for policy application.
+type GroupKey = engine.GroupKey
+
+// KeepReason pairs a snapshot with the reasons it was kept.
+type KeepReason = engine.KeepReason
+
+// SnapshotEntry is a snapshot loaded for policy evaluation, as referenced by
+// KeepReason and by ListResult.Snapshots.
+type SnapshotEntry = engine.SnapshotEntry
+
 func (c *Client) Forget(ctx context.Context, snapshotID string, opts ...ForgetOption) (*ForgetResult, error) {
 	mgr := engine.NewForgetManager(c.store, c.reporter)
 	result, err := mgr.Run(ctx, snapshotID, opts...)
@@ -970,6 +1016,18 @@ func (c *Client) BreakLock(ctx context.Context) ([]*RepoLock, error) {
 
 type DiffOption = engine.DiffOption
 type DiffResult = engine.DiffResult
+
+// FileChange is one change reported by Diff, between two snapshots.
+type FileChange = engine.FileChange
+
+// ChangeType describes the kind of change a FileChange represents.
+type ChangeType = engine.ChangeType
+
+const (
+	ChangeAdded    = engine.ChangeAdded
+	ChangeRemoved  = engine.ChangeRemoved
+	ChangeModified = engine.ChangeModified
+)
 
 var WithDiffVerbose = engine.WithDiffVerbose
 

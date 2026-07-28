@@ -6,7 +6,7 @@ A **source** is the read-only origin of files during a backup. All sources imple
 
 ### Source
 
-Every source must implement the `Source` interface (`pkg/store/interface.go`):
+Every source must implement the `Source` interface (`pkg/source/interface.go`):
 
 ```go
 type Source interface {
@@ -106,7 +106,7 @@ type FileMeta struct {
 
 | | |
 |---|---|
-| **Struct** | `LocalSource` |
+| **Struct** | `local.Source` |
 | **Interface** | `Source` |
 | **FileID** | Relative path from root (e.g. `subdir/file.txt`) |
 | **Parents** | Parent directory's relative path |
@@ -123,7 +123,7 @@ Walks the directory tree using `filepath.Walk`. Symbolic links are not followed.
 
 | | |
 |---|---|
-| **Struct** | `SFTPSource` |
+| **Struct** | `sftp.Source` |
 | **Interface** | `Source` |
 | **FileID** | Relative path from root (e.g. `subdir/file.txt`) |
 | **Parents** | Parent directory's relative path |
@@ -140,7 +140,7 @@ Walks the remote directory tree via SFTP. Supports password, SSH private key, an
 
 | | |
 |---|---|
-| **Struct** | `GDriveSource` |
+| **Struct** | `gdrive.Source` |
 | **Interface** | `Source` |
 | **FileID** | Google Drive file ID (e.g. `1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgV`) |
 | **Parents** | Google Drive parent folder IDs |
@@ -157,7 +157,7 @@ Lists all files and folders via `files.list`, then topologically sorts folders s
 
 | | |
 |---|---|
-| **Struct** | `GDriveChangeSource` (embeds `GDriveSource`) |
+| **Struct** | `gdrive.ChangeSource` (embeds `gdrive.Source`) |
 | **Interface** | `IncrementalSource` |
 | **FileID** | Same as `gdrive` |
 | **Parents** | Same as `gdrive` |
@@ -169,7 +169,7 @@ Lists all files and folders via `files.list`, then topologically sorts folders s
 | **SourceInfo.Path** | Same as `gdrive` |
 | **Change token** | Google Drive Changes API start page token |
 
-This is the **recommended** source for Google Drive backups. Embeds `GDriveSource` and reuses its `Walk`, `GetFileStream`, and metadata conversion. On the first run (no previous token), the engine calls `GetStartPageToken` + full `Walk`. On subsequent runs, only `WalkChanges` is called, fetching the delta since the stored token.
+This is the **recommended** source for Google Drive backups. Embeds `gdrive.Source` and reuses its `Walk`, `GetFileStream`, and metadata conversion. On the first run (no previous token), the engine calls `GetStartPageToken` + full `Walk`. On subsequent runs, only `WalkChanges` is called, fetching the delta since the stored token.
 
 Folder changes are topologically sorted before file changes, ensuring parent references resolve correctly.
 
@@ -177,7 +177,7 @@ Folder changes are topologically sorted before file changes, ensuring parent ref
 
 | | |
 |---|---|
-| **Struct** | `OneDriveSource` |
+| **Struct** | `onedrive.Source` |
 | **Interface** | `Source` |
 | **FileID** | OneDrive item ID |
 | **Parents** | OneDrive parent item ID |
@@ -194,7 +194,7 @@ Walks the drive recursively starting from the root item via the Microsoft Graph 
 
 | | |
 |---|---|
-| **Struct** | `OneDriveChangeSource` (embeds `OneDriveSource`) |
+| **Struct** | `onedrive.ChangeSource` (embeds `onedrive.Source`) |
 | **Interface** | `IncrementalSource` |
 | **FileID** | Same as `onedrive` |
 | **Parents** | Same as `onedrive` |
@@ -206,7 +206,7 @@ Walks the drive recursively starting from the root item via the Microsoft Graph 
 | **SourceInfo.Path** | Same as `onedrive` |
 | **Change token** | Microsoft Graph delta link |
 
-Embeds `OneDriveSource` and reuses its `Walk`, `GetFileStream`, and metadata conversion. On the first run (no previous token), the engine calls `GetStartPageToken` + full `Walk`. On subsequent runs, only `WalkChanges` is called, fetching the delta since the stored token.
+Embeds `onedrive.Source` and reuses its `Walk`, `GetFileStream`, and metadata conversion. On the first run (no previous token), the engine calls `GetStartPageToken` + full `Walk`. On subsequent runs, only `WalkChanges` is called, fetching the delta since the stored token.
 
 ---
 
@@ -230,11 +230,67 @@ The backup engine (`internal/engine/backup.go`) interacts with sources as follow
 
 ## Implementing a new source
 
-To add a new source:
+A source can live **in its own Go module** — you do not need to fork or vendor
+Cloudstic. The `Source` contract lives in `pkg/source`, which depends on nothing
+outside the standard library, and the `FileMeta`/`SourceInfo` types it is
+written in are re-exported from the root `cloudstic` package as type aliases.
+Because a Go type alias denotes the identical type, a `FileMeta` you construct
+satisfies the interface exactly.
 
-1. Create a struct in `pkg/store/` that implements `Source` (or `IncrementalSource` for delta support)
-2. `Walk` must emit parents before children
-3. `FileID` must be a stable, unique identifier within the source — it's used as the HAMT key
-4. `GetFileStream` must return the raw file bytes for the given `FileID`
-5. `Info()` should return stable `Identity` + `PathID` values so lineage remains consistent over time
-6. Register the source type in `cmd/cloudstic/main.go` in the `initSource` function
+```go
+package mysource
+
+import (
+    "context"
+    "io"
+
+    cloudstic "github.com/cloudstic/cli"
+    "github.com/cloudstic/cli/pkg/source"
+)
+
+type Source struct{ /* ... */ }
+
+func (s *Source) Walk(ctx context.Context, cb func(cloudstic.FileMeta) error) error {
+    // Parents MUST be emitted before their children.
+    return cb(cloudstic.FileMeta{
+        FileID: "docs/report.pdf", // stable + unique: this is the HAMT key
+        Name:   "report.pdf",
+        Type:   cloudstic.FileTypeFile,
+        Size:   1234,
+    })
+}
+
+func (s *Source) GetFileStream(fileID string) (io.ReadCloser, error) { /* ... */ }
+
+func (s *Source) Info() cloudstic.SourceInfo {
+    return cloudstic.SourceInfo{
+        Type:     "com.example.mysource", // namespace third-party types
+        Identity: "stable-container-id",  // stable across runs: drives lineage
+        PathID:   "/selected/root",
+    }
+}
+
+func (s *Source) Size(ctx context.Context) (*source.SourceSize, error) { /* ... */ }
+```
+
+Pass it to any `Client` backup:
+
+```go
+client, err := cloudstic.NewClient(ctx, objectStore)
+res, err := client.Backup(ctx, &mysource.Source{})
+```
+
+Rules that the engine relies on:
+
+1. `Walk` must emit parents before children.
+2. `FileID` must be stable and unique within the source — it is the HAMT key,
+   so a changed `FileID` reads as a delete plus an add.
+3. `GetFileStream` must return the raw bytes for the given `FileID`.
+4. `Info()` must return stable `Identity` and `PathID` values, or snapshot
+   lineage breaks and retention policies regroup unexpectedly.
+5. Implement `IncrementalSource` as well if the backend has a change feed.
+
+Sources contributed **into this repository** additionally get their own
+subpackage under `pkg/source/` (`local`, `sftp`, `gdrive`, `onedrive`), so that
+importing the contract never pulls in a provider's SDK, and are registered in
+`initSource` in `cmd/cloudstic/cmd_backup.go`.

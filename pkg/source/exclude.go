@@ -228,9 +228,9 @@ func indexGlob(name, sub string) int {
 	return -1
 }
 
-// isUnderExcludedDir returns true if relPath falls under any of the excluded
+// IsUnderExcludedDir reports whether true if relPath falls under any of the excluded
 // directory prefixes. Each entry in excludedDirs must end with '/'.
-func isUnderExcludedDir(relPath string, excludedDirs []string) bool {
+func IsUnderExcludedDir(relPath string, excludedDirs []string) bool {
 	for _, prefix := range excludedDirs {
 		if strings.HasPrefix(relPath, prefix) {
 			return true

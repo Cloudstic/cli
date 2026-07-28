@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/cloudstic/cli/internal/core"
-	"github.com/cloudstic/cli/pkg/source"
+	"github.com/cloudstic/cli/pkg/source/local"
 	"github.com/cloudstic/cli/pkg/store"
 )
 
@@ -269,7 +269,7 @@ func TestBackupThatSealsStampsTheFormat(t *testing.T) {
 	}
 
 	client := newPackfileClient(t, storeDir)
-	if _, err := client.Backup(ctx, source.NewLocalSource(sourceDir)); err != nil {
+	if _, err := client.Backup(ctx, local.New(sourceDir)); err != nil {
 		t.Fatalf("backup: %v", err)
 	}
 
@@ -307,7 +307,7 @@ func TestUnsealedRepositoryKeepsBaselineFormat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
-	if _, err := client.Backup(ctx, source.NewLocalSource(sourceDir)); err != nil {
+	if _, err := client.Backup(ctx, local.New(sourceDir)); err != nil {
 		t.Fatalf("backup: %v", err)
 	}
 
@@ -360,7 +360,7 @@ func TestWritesStampTheFormatButReadsDoNot(t *testing.T) {
 	}
 
 	// A write must raise it.
-	if _, err := client.Backup(ctx, source.NewLocalSource(sourceDir)); err != nil {
+	if _, err := client.Backup(ctx, local.New(sourceDir)); err != nil {
 		t.Fatalf("backup: %v", err)
 	}
 	cfg, err = LoadRepoConfig(ctx, base, nil)
@@ -478,7 +478,7 @@ func TestDryRunsDoNotStampTheFormat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Backup(ctx, source.NewLocalSource(sourceDir)); err != nil {
+	if _, err := client.Backup(ctx, local.New(sourceDir)); err != nil {
 		t.Fatalf("backup: %v", err)
 	}
 
@@ -527,7 +527,7 @@ func TestForgetPolicyStampsTheFormat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Backup(ctx, source.NewLocalSource(sourceDir)); err != nil {
+	if _, err := client.Backup(ctx, local.New(sourceDir)); err != nil {
 		t.Fatalf("backup: %v", err)
 	}
 	rewindConfigVersion(t, base, 1)

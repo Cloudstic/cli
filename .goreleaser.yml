@@ -11,9 +11,13 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w
-      - -X github.com/cloudstic/cli/pkg/source.defaultGoogleClientID={{ .Env.GOOGLE_CLIENT_ID }}
-      - -X github.com/cloudstic/cli/pkg/source.defaultGoogleClientSecret={{ .Env.GOOGLE_CLIENT_SECRET }}
-      - -X github.com/cloudstic/cli/pkg/source.defaultOneDriveClientID={{ .Env.ONEDRIVE_CLIENT_ID }}
+      # These symbol paths are declared in internal/sourceoauth/defaults.go.
+      # The Go linker silently ignores -X for a symbol that does not exist, so
+      # if either side moves without the other, release binaries ship with
+      # empty client IDs and cloud auth fails only at runtime.
+      - -X github.com/cloudstic/cli/internal/sourceoauth.DefaultGoogleClientID={{ .Env.GOOGLE_CLIENT_ID }}
+      - -X github.com/cloudstic/cli/internal/sourceoauth.DefaultGoogleClientSecret={{ .Env.GOOGLE_CLIENT_SECRET }}
+      - -X github.com/cloudstic/cli/internal/sourceoauth.DefaultOneDriveClientID={{ .Env.ONEDRIVE_CLIENT_ID }}
     goos:
       - linux
       - windows

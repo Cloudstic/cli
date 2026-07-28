@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cloudstic/cli/pkg/source"
+	"github.com/cloudstic/cli/pkg/source/local"
 	"github.com/cloudstic/cli/pkg/store"
 )
 
@@ -39,7 +39,7 @@ func newPlaintextTestRepo(t *testing.T) (string, store.ObjectStore) {
 	writeSourceTree(t, sourceDir, map[string]string{"doc.txt": "real backed-up content"})
 
 	client := newPlaintextTestClient(t, base)
-	if _, err := client.Backup(ctx, source.NewLocalSource(sourceDir)); err != nil {
+	if _, err := client.Backup(ctx, local.New(sourceDir)); err != nil {
 		t.Fatalf("backup: %v", err)
 	}
 	return storeDir, base

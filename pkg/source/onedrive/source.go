@@ -1,0 +1,693 @@
+package onedrive
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/internal/paths"
+	"github.com/cloudstic/cli/internal/retry"
+	"github.com/cloudstic/cli/internal/secretref"
+	"github.com/cloudstic/cli/internal/sourceoauth"
+	"github.com/cloudstic/cli/pkg/source"
+
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/microsoft"
+)
+
+// oneDriveOptions holds configuration for a OneDrive source.
+type oneDriveOptions struct {
+	clientID        string
+	resolver        *secretref.Resolver
+	tokenPath       string
+	tokenRef        string
+	driveName       string
+	rootPath        string
+	excludePatterns []string
+}
+
+// Option configures a OneDrive source.
+type Option func(*oneDriveOptions)
+
+// WithClientID sets the OAuth client ID. If empty, uses the built-in default.
+func WithClientID(id string) Option {
+	return func(o *oneDriveOptions) {
+		o.clientID = id
+	}
+}
+
+// WithResolver sets the secret resolver for ref-based auth.
+func WithResolver(r *secretref.Resolver) Option {
+	return func(o *oneDriveOptions) {
+		o.resolver = r
+	}
+}
+
+// WithDriveName sets the shared drive name.
+func WithDriveName(name string) Option {
+	return func(o *oneDriveOptions) {
+		o.driveName = name
+	}
+}
+
+// WithRootPath sets the path to the root folder.
+func WithRootPath(path string) Option {
+	return func(o *oneDriveOptions) {
+		o.rootPath = path
+	}
+}
+
+// WithTokenPath sets the path where the OAuth token is cached.
+func WithTokenPath(path string) Option {
+	return func(o *oneDriveOptions) {
+		o.tokenPath = path
+	}
+}
+
+// WithTokenRef sets the secret reference where the OAuth token is cached.
+func WithTokenRef(ref string) Option {
+	return func(o *oneDriveOptions) {
+		o.tokenRef = ref
+	}
+}
+
+// WithExcludePatterns sets the patterns used to exclude files and folders.
+func WithExcludePatterns(patterns []string) Option {
+	return func(o *oneDriveOptions) {
+		o.excludePatterns = patterns
+	}
+}
+
+type Source struct {
+	client    *http.Client
+	accountID string // cached stable account identity; populated lazily by Info()
+	account   string // cached user principal name; populated lazily by Info()
+	driveID   string // The resolved Drive ID
+	driveName string // The Drive Name (from config)
+	rootPath  string // The string path the user specified, or "/"
+	rootID    string // stable selected root folder/item ID
+	exclude   *source.ExcludeMatcher
+}
+
+// New creates a new Source from the given config.
+func New(ctx context.Context, opts ...Option) (*Source, error) {
+	var cfg oneDriveOptions
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	clientID := cfg.clientID
+	if clientID == "" {
+		clientID = sourceoauth.DefaultOneDriveClientID
+	}
+
+	conf := &oauth2.Config{
+		ClientID: clientID,
+		Scopes:   []string{"Files.Read", "Files.Read.All", "User.Read", "offline_access"},
+		Endpoint: microsoft.AzureADEndpoint("common"),
+	}
+	if cfg.tokenRef != "" && cfg.resolver == nil {
+		return nil, fmt.Errorf("onedrive auth: token ref %q requires a resolver", cfg.tokenRef)
+	}
+
+	var token *oauth2.Token
+	var err error
+	if cfg.tokenRef != "" {
+		token, err = loadTokenRef(ctx, cfg.resolver, cfg.tokenRef)
+	} else {
+		token, err = loadToken(cfg.tokenPath)
+	}
+
+	if err != nil {
+		token, err = sourceoauth.ExchangeWithLocalServer(conf, oauth2.AccessTypeOffline)
+		if err != nil {
+			return nil, fmt.Errorf("onedrive auth: %w", err)
+		}
+		if cfg.tokenRef != "" {
+			_ = saveTokenRefJSON(ctx, cfg.resolver, cfg.tokenRef, token)
+		} else {
+			_ = saveTokenJSON(cfg.tokenPath, token)
+		}
+	}
+
+	// Use a persistent token source so that refreshes are saved.
+	ts := oauth2.ReuseTokenSource(token, conf.TokenSource(ctx, token))
+	pts := sourceoauth.NewPersistentTokenSource(ts, token, func(t *oauth2.Token) error {
+		if cfg.tokenRef != "" {
+			return saveTokenRefJSON(ctx, cfg.resolver, cfg.tokenRef, t)
+		}
+		if cfg.tokenPath != "" {
+			return saveTokenJSON(cfg.tokenPath, t)
+		}
+		return nil
+	})
+
+	client := oauth2.NewClient(ctx, pts)
+
+	rootPath := normalizeOneDriveRootPath(cfg.rootPath)
+	src := &Source{
+		client:    client,
+		driveName: cfg.driveName,
+		rootPath:  rootPath,
+		exclude:   source.NewExcludeMatcher(cfg.excludePatterns),
+	}
+
+	if src.driveName != "" {
+		err = src.resolveDriveName(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return src, nil
+}
+
+func (s *Source) resolveDriveName(ctx context.Context) error {
+	// Try fetching by ID first
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://graph.microsoft.com/v1.0/drives/"+s.driveName+"?$select=id,name", nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	respByID, err := s.client.Do(req)
+	if err == nil {
+		if respByID.StatusCode == http.StatusOK {
+			var drive struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			}
+			if decodeErr := json.NewDecoder(respByID.Body).Decode(&drive); decodeErr == nil {
+				_ = respByID.Body.Close()
+				s.driveID = drive.ID
+				s.driveName = drive.Name
+				return nil
+			}
+		}
+		_ = respByID.Body.Close()
+	}
+
+	// Fetch all drives and find by name
+	req, err = http.NewRequestWithContext(ctx, "GET", "https://graph.microsoft.com/v1.0/me/drives?$select=id,name", nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("list drives: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("list drives returned status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Value []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"value"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("decode drives: %w", err)
+	}
+
+	var matchedID string
+	var matchedName string
+	matches := 0
+	for _, d := range result.Value {
+		if d.Name == s.driveName {
+			matchedID = d.ID
+			matchedName = d.Name
+			matches++
+		}
+	}
+
+	if matches == 0 {
+		return fmt.Errorf("drive %q not found", s.driveName)
+	}
+	if matches > 1 {
+		return fmt.Errorf("ambiguous drive name: multiple drives named %q found", s.driveName)
+	}
+
+	s.driveID = matchedID
+	s.driveName = matchedName
+	return nil
+}
+
+func (s *Source) Info() core.SourceInfo {
+	if s.client != nil && (s.account == "" || s.accountID == "") {
+		id, upn := s.fetchAccountInfo()
+		if s.accountID == "" {
+			s.accountID = id
+		}
+		if s.account == "" {
+			s.account = upn
+		}
+	}
+	if s.client != nil && s.rootID == "" {
+		s.rootID = s.resolveRootID(context.Background())
+	}
+	info := core.SourceInfo{
+		Type:      "onedrive",
+		Account:   s.account,
+		Path:      s.rootPath,
+		PathID:    s.rootID,
+		DriveName: "My Drive",
+		FsType:    "onedrive",
+	}
+	if s.driveID != "" {
+		info.Identity = s.driveID
+		info.DriveName = s.driveName
+	} else if s.accountID != "" {
+		info.Identity = s.accountID
+	} else {
+		info.Identity = s.account
+	}
+	if info.PathID == "" {
+		info.PathID = s.rootPath
+	}
+	return info
+}
+
+func (s *Source) fetchAccountInfo() (id, upn string) {
+	req, err := http.NewRequestWithContext(context.Background(), "GET",
+		"https://graph.microsoft.com/v1.0/me?$select=id,userPrincipalName", nil)
+	if err != nil {
+		return "", ""
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return "", ""
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", ""
+	}
+	var me struct {
+		ID  string `json:"id"`
+		UPN string `json:"userPrincipalName"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&me); err != nil {
+		return "", ""
+	}
+	return me.ID, me.UPN
+}
+
+func (s *Source) resolveRootID(ctx context.Context) string {
+	rootURL := s.getRootURL()
+	req, err := http.NewRequestWithContext(ctx, "GET", rootURL, nil)
+	if err != nil {
+		return ""
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	var item struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&item); err != nil {
+		return ""
+	}
+	if item.ID == "" {
+		return ""
+	}
+	return item.ID
+}
+
+func loadToken(file string) (*oauth2.Token, error) {
+	f, err := os.Open(file)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	var tok oauth2.Token
+	err = json.NewDecoder(f).Decode(&tok)
+	return &tok, err
+}
+
+func loadTokenRef(ctx context.Context, r *secretref.Resolver, ref string) (*oauth2.Token, error) {
+	data, err := r.LoadBlob(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	var tok oauth2.Token
+	if err := json.Unmarshal(data, &tok); err != nil {
+		return nil, fmt.Errorf("decode token from ref: %w", err)
+	}
+	return &tok, nil
+}
+
+func saveTokenJSON(file string, token *oauth2.Token) error {
+	data, err := json.Marshal(token)
+	if err != nil {
+		return err
+	}
+	return paths.SaveAtomic(file, data)
+}
+
+func saveTokenRefJSON(ctx context.Context, r *secretref.Resolver, ref string, token *oauth2.Token) error {
+	data, err := json.Marshal(token)
+	if err != nil {
+		return err
+	}
+	return r.SaveBlob(ctx, ref, data)
+}
+
+// Graph API Models
+type graphItem struct {
+	ID                   string          `json:"id"`
+	Name                 string          `json:"name"`
+	Size                 int64           `json:"size"`
+	LastModifiedDateTime string          `json:"lastModifiedDateTime"`
+	File                 *graphFile      `json:"file"`
+	Folder               *graphFolder    `json:"folder"`
+	Deleted              *graphDeleted   `json:"deleted"`
+	ParentReference      *graphParentRef `json:"parentReference"`
+	Package              *graphPackage   `json:"package"`
+	DownloadURL          string          `json:"@microsoft.graph.downloadUrl"`
+}
+
+type graphDeleted struct {
+	State string `json:"state"`
+}
+
+type graphFile struct {
+	MimeType string `json:"mimeType"`
+}
+
+type graphFolder struct {
+	ChildCount int `json:"childCount"`
+}
+
+type graphParentRef struct {
+	ID   string `json:"id"`
+	Path string `json:"path"` // e.g. "/drive/root:/Documents/Reports"
+}
+
+type graphPackage struct {
+	Type string `json:"type"`
+}
+
+// isDownloadable returns true for regular files and folders.
+// Package items (e.g. OneNote notebooks/sections) are not downloadable via /content.
+func (item graphItem) isDownloadable() bool {
+	if item.Package != nil {
+		return false
+	}
+	return item.File != nil || item.Folder != nil
+}
+
+type graphListResponse struct {
+	Value    []graphItem `json:"value"`
+	NextLink string      `json:"@odata.nextLink"`
+}
+
+func (s *Source) toFileMeta(item graphItem) core.FileMeta {
+	mtime := int64(0)
+	t, err := time.Parse(time.RFC3339, item.LastModifiedDateTime)
+	if err == nil {
+		mtime = t.Unix()
+	}
+
+	fileType := core.FileTypeFile
+	if item.Folder != nil {
+		fileType = core.FileTypeFolder
+	}
+
+	parents := []string{}
+	if item.ParentReference != nil && item.ParentReference.ID != "" {
+		parents = append(parents, item.ParentReference.ID)
+	}
+
+	return core.FileMeta{
+		Version: 1,
+		FileID:  item.ID,
+		Name:    item.Name,
+		Type:    fileType,
+		Parents: parents,
+		Size:    item.Size,
+		Mtime:   mtime,
+		Extra:   map[string]interface{}{"downloadUrl": item.DownloadURL},
+	}
+}
+
+func (s *Source) getRootURL() string {
+	base := "https://graph.microsoft.com/v1.0/me/drive/root"
+	if s.driveID != "" {
+		base = fmt.Sprintf("https://graph.microsoft.com/v1.0/drives/%s/root", s.driveID)
+	}
+	encodedRootPath := encodeOneDriveRootPath(s.rootPath)
+	if encodedRootPath != "" {
+		return fmt.Sprintf("%s:/%s", base, encodedRootPath)
+	}
+	return base
+}
+
+func normalizeOneDriveRootPath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" || trimmed == "/" {
+		return "/"
+	}
+
+	if !strings.HasPrefix(trimmed, "/") {
+		trimmed = "/" + trimmed
+	}
+	trimmed = strings.TrimRight(trimmed, "/")
+	if trimmed == "" {
+		return "/"
+	}
+	return trimmed
+}
+
+func encodeOneDriveRootPath(path string) string {
+	normalized := normalizeOneDriveRootPath(path)
+	if normalized == "/" {
+		return ""
+	}
+	parts := strings.Split(strings.TrimPrefix(normalized, "/"), "/")
+	for i, p := range parts {
+		parts[i] = url.PathEscape(p)
+	}
+	return strings.Join(parts, "/")
+}
+
+func (s *Source) Walk(ctx context.Context, callback func(core.FileMeta) error) error {
+	rootURL := s.getRootURL()
+
+	var rootItem graphItem
+	err := retry.Do(ctx, retry.DefaultPolicy(), func() error {
+		req, err := http.NewRequestWithContext(ctx, "GET", rootURL, nil)
+		if err != nil {
+			return err
+		}
+		resp, err := s.client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		body, _ := io.ReadAll(resp.Body)
+		if apiErr := retry.ClassifyHTTPResponse(resp, body); apiErr != nil {
+			return apiErr
+		}
+		return json.Unmarshal(body, &rootItem)
+	})
+	if err != nil {
+		return err
+	}
+
+	// pathMap tracks itemID → full path for all emitted entries.
+	pathMap := make(map[string]string)
+	pathMap[rootItem.ID] = "" // Root folder has empty path relative to itself
+
+	// Iterative DFS using an explicit stack instead of recursion.
+	type stackEntry struct {
+		folderID string
+		url      string
+	}
+	childrenURL := fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/items/%s/children", rootItem.ID)
+	stack := []stackEntry{{folderID: rootItem.ID, url: childrenURL}}
+
+	for len(stack) > 0 {
+		top := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+
+		url := top.url
+		for {
+			listResp, err := s.fetchPage(ctx, url)
+			if err != nil {
+				return err
+			}
+
+			var childFolders []stackEntry
+			for _, item := range listResp.Value {
+				if !item.isDownloadable() {
+					continue
+				}
+				meta := s.toFileMeta(item)
+
+				// Compute full path from parent path map.
+				p := meta.Name
+				if item.ParentReference != nil && item.ParentReference.ID != "" {
+					if parentPath, ok := pathMap[item.ParentReference.ID]; ok {
+						if parentPath != "" {
+							p = parentPath + "/" + meta.Name
+						}
+					}
+				}
+				meta.Paths = []string{p}
+				pathMap[item.ID] = p
+
+				// Apply exclude patterns.
+				if !s.exclude.Empty() {
+					isDir := meta.Type == core.FileTypeFolder
+					if s.exclude.Excludes(p, isDir) {
+						continue // skip entry; excluded dirs won't be pushed onto stack
+					}
+				}
+
+				if err := callback(meta); err != nil {
+					return err
+				}
+
+				if meta.Type == core.FileTypeFolder {
+					childFolders = append(childFolders, stackEntry{
+						folderID: item.ID,
+						url:      fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/items/%s/children", item.ID),
+					})
+				}
+			}
+
+			// Push child folders onto the stack (reverse order for DFS consistency).
+			for i := len(childFolders) - 1; i >= 0; i-- {
+				stack = append(stack, childFolders[i])
+			}
+
+			if listResp.NextLink == "" {
+				break
+			}
+			url = listResp.NextLink
+		}
+	}
+	return nil
+}
+
+func (s *Source) fetchPage(ctx context.Context, url string) (*graphListResponse, error) {
+	var listResp graphListResponse
+	err := retry.Do(ctx, retry.DefaultPolicy(), func() error {
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return err
+		}
+
+		resp, err := s.client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		body, _ := io.ReadAll(resp.Body)
+		if apiErr := retry.ClassifyHTTPResponse(resp, body); apiErr != nil {
+			return apiErr
+		}
+		return json.Unmarshal(body, &listResp)
+	})
+	return &listResp, err
+}
+
+// Size returns the total storage usage for the OneDrive account by calling
+// the /me/drive endpoint which includes quota information.
+func (s *Source) Size(ctx context.Context) (*source.SourceSize, error) {
+	var result struct {
+		Quota struct {
+			Used      int64 `json:"used"`
+			Total     int64 `json:"total"`
+			FileCount int64 `json:"fileCount"`
+		} `json:"quota"`
+	}
+
+	err := retry.Do(ctx, retry.DefaultPolicy(), func() error {
+		req, err := http.NewRequestWithContext(ctx, "GET", "https://graph.microsoft.com/v1.0/me/drive?$select=quota", nil)
+		if err != nil {
+			return err
+		}
+		resp, err := s.client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		body, _ := io.ReadAll(resp.Body)
+		if apiErr := retry.ClassifyHTTPResponse(resp, body); apiErr != nil {
+			return apiErr
+		}
+		return json.Unmarshal(body, &result)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &source.SourceSize{Bytes: result.Quota.Used, Files: result.Quota.FileCount}, nil
+}
+
+func (s *Source) GetFileStream(fileID string) (io.ReadCloser, error) {
+	url := fmt.Sprintf("https://graph.microsoft.com/v1.0/me/drive/items/%s/content", fileID)
+
+	var body io.ReadCloser
+	err := retry.Do(context.Background(), retry.DefaultPolicy(), func() error {
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return err
+		}
+
+		// The /content endpoint returns a 302 redirect to a pre-authenticated
+		// download URL on a different domain. We must NOT follow the redirect with
+		// the oauth2 client, because it would forward the Graph API Bearer token to
+		// SharePoint, which rejects it with 401.
+		noFollow := *s.client
+		noFollow.CheckRedirect = func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+
+		resp, err := noFollow.Do(req)
+		if err != nil {
+			return err
+		}
+
+		if resp.StatusCode/100 == 3 {
+			location := resp.Header.Get("Location")
+			_ = resp.Body.Close()
+			if location == "" {
+				return fmt.Errorf("redirect without Location header")
+			}
+			resp, err = http.Get(location)
+			if err != nil {
+				return &retry.RetryableError{Err: err}
+			}
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			respBody, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			return retry.ClassifyHTTPResponse(resp, respBody)
+		}
+
+		body = resp.Body
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return body, nil
+}

@@ -210,25 +210,6 @@ func TestParseExcludeFile_NotFound(t *testing.T) {
 	}
 }
 
-func TestStripOneDriveRootPrefix(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"/drive/root:", ""},
-		{"/drive/root:/Documents", "Documents"},
-		{"/drive/root:/Documents/Reports", "Documents/Reports"},
-		{"/drive/root:/a/b/c", "a/b/c"},
-		{"", ""},
-	}
-	for _, tc := range tests {
-		got := stripOneDriveRootPrefix(tc.input)
-		if got != tc.want {
-			t.Errorf("stripOneDriveRootPrefix(%q) = %q, want %q", tc.input, got, tc.want)
-		}
-	}
-}
-
 func TestIsUnderExcludedDir(t *testing.T) {
 	dirs := []string{".git/", "node_modules/"}
 	tests := []struct {
@@ -242,9 +223,9 @@ func TestIsUnderExcludedDir(t *testing.T) {
 		{".gitignore", false},
 	}
 	for _, tc := range tests {
-		got := isUnderExcludedDir(tc.path, dirs)
+		got := IsUnderExcludedDir(tc.path, dirs)
 		if got != tc.want {
-			t.Errorf("isUnderExcludedDir(%q, %v) = %v, want %v", tc.path, dirs, got, tc.want)
+			t.Errorf("IsUnderExcludedDir(%q, %v) = %v, want %v", tc.path, dirs, got, tc.want)
 		}
 	}
 }

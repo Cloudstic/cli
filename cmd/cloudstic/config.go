@@ -106,7 +106,7 @@ func resolveClientConfig(g *globalFlags) (clientConfig, error) {
 	if s == nil {
 		return cfg, nil
 	}
-	if err := applyProfileStore(&cfg, *s, g.flagProvided); err != nil {
+	if err := applyProfileStore(&cfg, *s, g.configDir, g.flagProvided); err != nil {
 		return clientConfig{}, err
 	}
 	return cfg, nil
@@ -160,8 +160,8 @@ func lookupProfileStore(cfg *profile.Config, profileName string, p profile.Profi
 // applyExistingStoreDefaults (store_builder_helpers.go), which prefills
 // `store new`'s flags from an existing store entry for editing — an unrelated
 // concept despite the similar name.
-func clientConfigFromProfileStore(s profile.Store) (clientConfig, error) {
-	return config.FromProfileStore(context.Background(), s, profileSecretResolver)
+func clientConfigFromProfileStore(s profile.Store, configDir string) (clientConfig, error) {
+	return config.FromProfileStore(context.Background(), s, newSecretResolver(configDir))
 }
 
 // applyProfileStore folds a profile's store definition into cfg, with any flag
@@ -180,6 +180,6 @@ func clientConfigFromProfileStore(s profile.Store) (clientConfig, error) {
 // field types differ enough (bools, string slices, multi-field auth
 // resolution vs. plain strings here) that forcing a shared table would
 // obscure more than it clarifies.
-func applyProfileStore(cfg *clientConfig, s profile.Store, provided func(string) bool) error {
-	return config.ApplyProfileStore(context.Background(), cfg, s, profileSecretResolver, provided)
+func applyProfileStore(cfg *clientConfig, s profile.Store, configDir string, provided func(string) bool) error {
+	return config.ApplyProfileStore(context.Background(), cfg, s, newSecretResolver(configDir), provided)
 }

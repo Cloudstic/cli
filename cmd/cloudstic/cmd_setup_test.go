@@ -179,17 +179,35 @@ func TestReviewWorkstationPlan_RenameUpdate(t *testing.T) {
 	}
 }
 
-func TestDefaultProfilesPathNoCreate(t *testing.T) {
+func TestDefaultProfilesPath(t *testing.T) {
 	configRoot := filepath.Join(t.TempDir(), "config")
 	t.Setenv("CLOUDSTIC_CONFIG_DIR", configRoot)
 	t.Setenv("CLOUDSTIC_PROFILES_FILE", "")
 
-	got := defaultProfilesPathNoCreate()
+	got, err := defaultProfilesPath("")
+	if err != nil {
+		t.Fatalf("defaultProfilesPath: %v", err)
+	}
 	want := filepath.Join(configRoot, defaultProfilesFilename)
 	if got != want {
 		t.Fatalf("path = %q, want %q", got, want)
 	}
 	if _, err := os.Stat(configRoot); !os.IsNotExist(err) {
 		t.Fatalf("config dir should not be created, err=%v", err)
+	}
+}
+
+func TestDefaultProfilesPath_ConfigDirOverridesEnvironment(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("CLOUDSTIC_CONFIG_DIR", filepath.Join(tmp, "from-env"))
+	t.Setenv("CLOUDSTIC_PROFILES_FILE", "")
+
+	fromFlag := filepath.Join(tmp, "from-flag")
+	got, err := defaultProfilesPath(fromFlag)
+	if err != nil {
+		t.Fatalf("defaultProfilesPath: %v", err)
+	}
+	if want := filepath.Join(fromFlag, defaultProfilesFilename); got != want {
+		t.Fatalf("path = %q, want %q", got, want)
 	}
 }

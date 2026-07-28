@@ -203,8 +203,8 @@ func (p tuiReporterPhase) Error() {
 
 // tuiStoreConfig resolves a store definition into a client configuration for
 // the TUI, which addresses stores by name and never parses command-line flags.
-func tuiClientConfig(storeCfg profile.Store) (clientConfig, error) {
-	cfg, err := clientConfigFromProfileStore(storeCfg)
+func tuiClientConfig(storeCfg profile.Store, configDir string) (clientConfig, error) {
+	cfg, err := clientConfigFromProfileStore(storeCfg, configDir)
 	if err != nil {
 		return clientConfig{}, err
 	}

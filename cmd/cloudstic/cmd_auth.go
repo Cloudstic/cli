@@ -12,9 +12,9 @@ import (
 
 type authListArgs struct{ profilesFile string }
 
-func declareAuthListArgs(_ *globalFlags) (*authListArgs, commandInput) {
+func declareAuthListArgs(g *globalFlags) (*authListArgs, commandInput) {
 	a := &authListArgs{}
-	return a, commandInput{flags: []flagSpec{profilesFileFlag(&a.profilesFile)}}
+	return a, commandInput{flags: []flagSpec{profilesFileFlag(&a.profilesFile, g)}}
 }
 
 func runAuthList(r *runner, ctx context.Context, a *authListArgs) int {
@@ -35,10 +35,10 @@ type authShowArgs struct {
 	name         string
 }
 
-func declareAuthShowArgs(_ *globalFlags) (*authShowArgs, commandInput) {
+func declareAuthShowArgs(g *globalFlags) (*authShowArgs, commandInput) {
 	a := &authShowArgs{}
 	return a, commandInput{
-		flags:       []flagSpec{profilesFileFlag(&a.profilesFile)},
+		flags:       []flagSpec{profilesFileFlag(&a.profilesFile, g)},
 		positionals: []positionalSpec{optionalPositional(&a.name, "auth name", "", "_cloudstic_auth_names")},
 	}
 }
@@ -81,10 +81,10 @@ type authNewArgs struct {
 	onedriveTokenRef  string
 }
 
-func declareAuthNewArgs(_ *globalFlags) (*authNewArgs, commandInput) {
+func declareAuthNewArgs(g *globalFlags) (*authNewArgs, commandInput) {
 	a := &authNewArgs{}
 	return a, commandInput{flags: []flagSpec{
-		profilesFileFlag(&a.profilesFile),
+		profilesFileFlag(&a.profilesFile, g),
 		stringFlag(&a.name, "name", "", "Auth reference name", withPlaceholder("<name>")),
 		stringFlag(&a.provider, "provider", "", "Auth provider: google|onedrive", withPlaceholder("<google|onedrive>")),
 		stringFlag(&a.googleCreds, "google-credentials", "", "Path to Google service account credentials JSON file", withPlaceholder("<path>"), withCompleter("_files")),
@@ -193,15 +193,16 @@ func runAuthNew(r *runner, ctx context.Context, a *authNewArgs) int {
 }
 
 type authLoginArgs struct {
+	*globalFlags
 	profilesFile string
 	name         string
 }
 
-func declareAuthLoginArgs(_ *globalFlags) (*authLoginArgs, commandInput) {
-	a := &authLoginArgs{}
+func declareAuthLoginArgs(g *globalFlags) (*authLoginArgs, commandInput) {
+	a := &authLoginArgs{globalFlags: g}
 	return a, commandInput{
 		flags: []flagSpec{
-			profilesFileFlag(&a.profilesFile),
+			profilesFileFlag(&a.profilesFile, g),
 			stringFlag(&a.name, "name", "", "Auth reference name", withPlaceholder("<name>"), withCompleter("_cloudstic_auth_names")),
 		},
 		positionals: []positionalSpec{optionalPositional(&a.name, "auth name", "", "_cloudstic_auth_names")},
@@ -232,6 +233,7 @@ func runAuthLogin(r *runner, ctx context.Context, a *authLoginArgs) int {
 
 	src, err := initSource(ctx, initSourceOptions{
 		sourceURI:         auth.Provider + "://auth",
+		configDir:         a.configDir,
 		googleCreds:       auth.GoogleCreds,
 		googleCredsRef:    auth.GoogleCredsRef,
 		googleTokenFile:   auth.GoogleTokenFile,

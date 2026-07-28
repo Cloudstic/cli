@@ -14,6 +14,7 @@ const defaultS3Region = "us-east-1"
 
 type globalFlags struct {
 	store                             string
+	configDir                         string
 	profile, profilesFile             string
 	s3Endpoint, s3Region, s3Profile   string
 	s3AccessKey, s3SecretKey          string
@@ -42,10 +43,6 @@ type globalFlags struct {
 
 // repoFlagSpecs covers locating and addressing the repository itself.
 func repoFlagSpecs(g *globalFlags) []flagSpec {
-	defaultProfilesPath, err := defaultProfilesPath()
-	if err != nil {
-		defaultProfilesPath = defaultProfilesFilename
-	}
 	return []flagSpec{
 		stringFlag(&g.store, "store", "local:./backup_store",
 			"Storage backend URI: local:<path>, s3:<bucket>[/<prefix>], b2:<bucket>[/<prefix>], sftp://[user@]host[:port]/<path>",
@@ -53,8 +50,7 @@ func repoFlagSpecs(g *globalFlags) []flagSpec {
 			withShortUsage("Storage backend URI")),
 		stringFlag(&g.profile, "profile", "", "Profile name from profiles.yaml",
 			withEnv("CLOUDSTIC_PROFILE"), withPlaceholder("<name>"), withCompleter("_cloudstic_profile_names")),
-		stringFlag(&g.profilesFile, "profiles-file", defaultProfilesPath, "Path to profiles YAML file",
-			withEnv("CLOUDSTIC_PROFILES_FILE"), withPlaceholder("<path>"), withCompleter("_files")),
+		profilesFileFlag(&g.profilesFile, g),
 		stringFlag(&g.s3Endpoint, "s3-endpoint", "", "S3 compatible endpoint URL (for MinIO, R2, etc.)",
 			withEnv("CLOUDSTIC_S3_ENDPOINT"), withPlaceholder("<url>"),
 			withShortUsage("S3 compatible endpoint URL")),
@@ -140,8 +136,14 @@ func outputFlagSpecs(g *globalFlags) []flagSpec {
 }
 
 // baseFlagSpecs are accepted by every runnable command.
+//
+// -config-dir belongs here rather than in a narrower group because every
+// command can reach the config directory: it holds the profiles file, cached
+// OAuth tokens, and the config-token secret backend's managed store.
 func baseFlagSpecs(g *globalFlags) []flagSpec {
 	return []flagSpec{
+		stringFlag(&g.configDir, "config-dir", "", "Directory for profiles, tokens, and other state",
+			withEnv("CLOUDSTIC_CONFIG_DIR"), withPlaceholder("<path>"), withCompleter("_files")),
 		boolFlag(&g.noPrompt, "no-prompt", false, "Disable interactive prompts (for scripts and CI)"),
 	}
 }
@@ -210,6 +212,11 @@ func (c commandFlags) parse(args []string) error {
 	// flags still win and help output never sees them.
 	origins, err := applyEnvDefaults(fs, c.specs())
 	if err != nil {
+		return err
+	}
+	// Defaults that depend on another flag resolve last, once every flag has
+	// its final value — see applyLateDefaults.
+	if err := applyLateDefaults(c.specs(), origins); err != nil {
 		return err
 	}
 	// Recording provenance lets later stages (profile overrides) distinguish an

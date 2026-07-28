@@ -11,21 +11,12 @@ import (
 	"github.com/cloudstic/cli/internal/workstation"
 
 	"github.com/jedib0t/go-pretty/v6/table"
-
-	"github.com/cloudstic/cli/internal/paths"
 )
 
 var planWorkstationSetup = workstation.Plan
 
-func defaultProfilesPathNoCreate() string {
-	path, err := paths.ProfilesPath(defaultProfilesFilename, false)
-	if err != nil {
-		return defaultProfilesFilename
-	}
-	return path
-}
-
 type setupWorkstationArgs struct {
+	*globalFlags
 	dryRun       bool
 	yes          bool
 	jsonOutput   bool
@@ -33,14 +24,13 @@ type setupWorkstationArgs struct {
 	storeRef     string
 }
 
-func declareSetupWorkstationArgs(_ *globalFlags) (*setupWorkstationArgs, commandInput) {
-	a := &setupWorkstationArgs{}
+func declareSetupWorkstationArgs(g *globalFlags) (*setupWorkstationArgs, commandInput) {
+	a := &setupWorkstationArgs{globalFlags: g}
 	return a, commandInput{flags: []flagSpec{
 		boolFlag(&a.dryRun, "dry-run", false, "Preview generated profiles without writing configuration"),
 		boolFlag(&a.yes, "yes", false, "Accept default selections without prompting"),
 		boolFlag(&a.jsonOutput, "json", false, "Write onboarding plan as JSON"),
-		stringFlag(&a.profilesFile, "profiles-file", defaultProfilesPathNoCreate(), "Path to profiles YAML file",
-			withEnv("CLOUDSTIC_PROFILES_FILE"), withPlaceholder("<path>"), withCompleter("_files")),
+		profilesFileFlag(&a.profilesFile, g),
 		stringFlag(&a.storeRef, "store-ref", "", "Existing store reference to attach to generated profiles",
 			withPlaceholder("<name>")),
 	}}
@@ -67,9 +57,10 @@ func runSetupWorkstation(r *runner, ctx context.Context, args *setupWorkstationA
 			if created {
 				s := cfg.Stores[args.storeRef]
 				if !storeHasExplicitEncryption(s) {
-					r.promptEncryptionConfig(ctx, cfg, args.storeRef, args.profilesFile)
+					r.promptEncryptionConfig(ctx, cfg, args.storeRef, args.profilesFile, args.configDir)
 				}
 				if err := checkOrInitStoreWithRecovery(r, ctx, cfg, args.storeRef, args.profilesFile, checkOrInitOptions{
+					configDir:            args.configDir,
 					allowMissingSecrets:  true,
 					warnOnMissingSecrets: true,
 					offerInit:            true,

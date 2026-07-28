@@ -18,7 +18,6 @@ import (
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/engine"
 	"github.com/cloudstic/cli/internal/paths"
-	secretrefbackends "github.com/cloudstic/cli/pkg/secretref/backends"
 	"github.com/cloudstic/cli/pkg/source"
 	"github.com/cloudstic/cli/pkg/source/gdrive"
 	"github.com/cloudstic/cli/pkg/source/local"
@@ -141,6 +140,7 @@ func runSingleBackup(r *runner, ctx context.Context, a *backupArgs) int {
 
 	src, err := initSource(ctx, initSourceOptions{
 		sourceURI:         a.sourceURI,
+		configDir:         a.configDir,
 		skipNativeFiles:   a.skipNativeFiles,
 		volumeUUID:        a.volumeUUID,
 		googleCreds:       a.googleCreds,
@@ -222,7 +222,7 @@ func ensureDefaultAuthRefForCloudBackup(a *backupArgs) error {
 
 		tokenPath := getToken()
 		if tokenPath == "" {
-			resolved, resolveErr := resolveTokenPath("", defaultTokenFilename)
+			resolved, resolveErr := resolveTokenPath(a.configDir, "", defaultTokenFilename)
 			if resolveErr != nil {
 				return resolveErr
 			}
@@ -535,6 +535,7 @@ func printBackupSummary(out io.Writer, res *engine.RunResult) {
 
 type initSourceOptions struct {
 	sourceURI         string
+	configDir         string
 	skipNativeFiles   bool
 	volumeUUID        string
 	googleCreds       string
@@ -559,7 +560,7 @@ func initSource(ctx context.Context, opts initSourceOptions) (source.Source, err
 		return nil, err
 	}
 
-	resolver := secretrefbackends.NewDefaultResolver()
+	resolver := newSecretResolver(opts.configDir)
 
 	switch uri.Scheme {
 	case "local":
@@ -588,7 +589,7 @@ func initSource(ctx context.Context, opts initSourceOptions) (source.Source, err
 		sftpOpts = append(sftpOpts, sftpsource.WithExcludePatterns(opts.excludePatterns))
 		return sftpsource.New(uri.Host, sftpOpts...)
 	case "gdrive":
-		tokenPath, err := resolveTokenPath(opts.googleTokenFile, "google_token.json")
+		tokenPath, err := resolveTokenPath(opts.configDir, opts.googleTokenFile, "google_token.json")
 		if err != nil {
 			return nil, err
 		}
@@ -608,7 +609,7 @@ func initSource(ctx context.Context, opts initSourceOptions) (source.Source, err
 		}
 		return gdrive.New(ctx, gdriveOpts...)
 	case "gdrive-changes":
-		tokenPath, err := resolveTokenPath(opts.googleTokenFile, "google_token.json")
+		tokenPath, err := resolveTokenPath(opts.configDir, opts.googleTokenFile, "google_token.json")
 		if err != nil {
 			return nil, err
 		}
@@ -628,7 +629,7 @@ func initSource(ctx context.Context, opts initSourceOptions) (source.Source, err
 		}
 		return gdrive.NewChangeSource(ctx, gdriveOpts...)
 	case "onedrive":
-		tokenPath, err := resolveTokenPath(opts.onedriveTokenFile, "onedrive_token.json")
+		tokenPath, err := resolveTokenPath(opts.configDir, opts.onedriveTokenFile, "onedrive_token.json")
 		if err != nil {
 			return nil, err
 		}
@@ -642,7 +643,7 @@ func initSource(ctx context.Context, opts initSourceOptions) (source.Source, err
 			onedrive.WithExcludePatterns(opts.excludePatterns),
 		)
 	case "onedrive-changes":
-		tokenPath, err := resolveTokenPath(opts.onedriveTokenFile, "onedrive_token.json")
+		tokenPath, err := resolveTokenPath(opts.configDir, opts.onedriveTokenFile, "onedrive_token.json")
 		if err != nil {
 			return nil, err
 		}
@@ -699,12 +700,13 @@ func parseXattrNamespacePrefixes(raw string) []string {
 }
 
 // resolveTokenPath returns the token file path to use. If explicit is non-empty
-// it is used as-is; otherwise the filename is placed in the cloudstic config dir.
-func resolveTokenPath(explicit, defaultFilename string) (string, error) {
+// it is used as-is; otherwise the filename is placed in the cloudstic config
+// dir, which configDir may override (see paths.ConfigDir).
+func resolveTokenPath(configDir, explicit, defaultFilename string) (string, error) {
 	if explicit != "" {
 		return explicit, nil
 	}
-	return paths.TokenPath(defaultFilename)
+	return paths.TokenPath(configDir, defaultFilename)
 }
 
 // backupCommand declares the `backup` command.

@@ -95,7 +95,7 @@ func (b *tuiFormsBackend) SaveStore(name string, values map[string]string, editi
 	applyStoreConnectionValues(&store, values)
 	applyStoreEncryptionValues(&store, values)
 
-	if err := tuiServiceFactory(nil, b.profilesFile).SaveStore(b.profilesFile, name, store); err != nil {
+	if err := tuiServiceFactory(nil, b.profilesFile, b.configDir).SaveStore(b.profilesFile, name, store); err != nil {
 		return err
 	}
 	// Refresh the cache so the profile form's store selector immediately sees

@@ -16,11 +16,12 @@ import (
 type tuiFormsBackend struct {
 	r            *runner
 	profilesFile string
+	configDir    string
 	cfg          *profile.Config
 }
 
-func newTUIFormsBackend(r *runner, profilesFile string, cfg *profile.Config) *tuiFormsBackend {
-	return &tuiFormsBackend{r: r, profilesFile: profilesFile, cfg: cfg}
+func newTUIFormsBackend(r *runner, profilesFile, configDir string, cfg *profile.Config) *tuiFormsBackend {
+	return &tuiFormsBackend{r: r, profilesFile: profilesFile, configDir: configDir, cfg: cfg}
 }
 
 var _ tui.FormsBackend = (*tuiFormsBackend)(nil)
@@ -93,11 +94,11 @@ func (b *tuiFormsBackend) SaveProfile(name, sourceURI, storeRef, authRef string,
 	profile.Source = sourceURI
 	profile.Store = storeRef
 	profile.AuthRef = authRef
-	return tuiServiceFactory(nil, b.profilesFile).SaveProfile(b.profilesFile, name, profile)
+	return tuiServiceFactory(nil, b.profilesFile, b.configDir).SaveProfile(b.profilesFile, name, profile)
 }
 
 func (b *tuiFormsBackend) DeleteProfile(name string) error {
-	return tuiServiceFactory(nil, b.profilesFile).DeleteProfile(b.profilesFile, name)
+	return tuiServiceFactory(nil, b.profilesFile, b.configDir).DeleteProfile(b.profilesFile, name)
 }
 
 func (b *tuiFormsBackend) Reload() (*profile.Config, error) {

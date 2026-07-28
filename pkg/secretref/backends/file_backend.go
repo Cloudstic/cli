@@ -134,10 +134,7 @@ func NewConfigTokenBackend(opts ...ConfigTokenOption) *ConfigTokenBackend {
 // dir returns the managed directory, falling back to the process-wide default
 // when the caller did not choose one.
 func (b *ConfigTokenBackend) dir() (string, error) {
-	if b.configDir != "" {
-		return b.configDir, nil
-	}
-	return paths.ConfigDir()
+	return paths.ConfigDir(b.configDir)
 }
 
 func (b *ConfigTokenBackend) Resolve(ctx context.Context, ref secretref.Ref) (string, error) {

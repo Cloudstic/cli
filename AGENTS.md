@@ -118,9 +118,25 @@ All objects are addressed by `<type>/<sha256>`:
 
 ### Configuration & Profiles
 
-- **Config directory** — resolved by `internal/paths.ConfigDir()`: `CLOUDSTIC_CONFIG_DIR` if set, else `os.UserConfigDir()/cloudstic` (e.g. `~/.config/cloudstic`), created `0700`. Holds the profiles file, OAuth tokens, etc.
+- **Config directory** — resolved by `internal/paths.ConfigDir(override)`: the `-config-dir` flag if given, else `CLOUDSTIC_CONFIG_DIR`, else `os.UserConfigDir()/cloudstic` (e.g. `~/.config/cloudstic`). Holds the profiles file, OAuth tokens, and the `config-token` secret backend's managed store. Resolution does **no** filesystem access — the directory is created `0700` by whoever writes into it (`paths.SaveAtomic`, `profile.Save`), so help, completion and `setup -dry-run` can ask where configuration lives without creating it.
 - **Profiles** — a profile bundles a named source + store (+ secret refs) so users run `cloudstic backup -profile <name>` instead of re-specifying flags. Persisted via `profile.Load`/`profile.Save` (`pkg/profile`). Managed from the CLI (`cmd_profile.go`, `cmd_setup.go`) and the TUI. See RFC `rfcs/0010-backup-profiles.md`. The active profile / file come from `CLOUDSTIC_PROFILE` / `CLOUDSTIC_PROFILES_FILE`.
 - **Resolution precedence** — `resolveClientConfig` (`config.go`) resolves a command's store configuration as: explicit CLI flag > selected profile's store field > environment variable > built-in default. A profile is a named choice the user invoked with `-profile`, so once selected it overrides ambient environment variables the same way it overrides built-in defaults — only an explicit flag beats it. `applyProfileStore` decides this per field via `flagProvided`, which only recognizes `originFlag`; `originEnv` values are treated the same as `originDefault` and are eligible to be overridden. See `TestResolveClientConfig_ProfileOverridesEnvironment` (`config_test.go`).
+
+### Flag Defaults That Depend on Other Flags
+
+A flag whose default is computed from another flag declares it with
+`withLateDefault` (`flagspec.go`) instead of passing a value to `stringFlag`.
+Late defaults resolve in `applyLateDefaults`, a pass after `applyEnvDefaults`,
+and only for flags still at their built-in value — so an explicit flag and an
+environment value both still win, and the origin stays `originDefault` so a
+profile may still override it.
+
+`-profiles-file` is the case this exists for: its default is a path inside
+`-config-dir`, unknown until parsing finishes. Computing such a default at
+declaration time is wrong twice over — it reads a flag that has no value yet,
+and it runs on every path that merely *describes* a command, including `-h` and
+shell completion, which is how resolving the profiles path used to create the
+config directory as a side effect of asking for help.
 
 ### Secret References
 
@@ -144,7 +160,7 @@ Backends expose `Load`/`Save`/`Delete`; unsupported operations return a typed `s
 | `CLOUDSTIC_KMS_KEY_ARN` / `CLOUDSTIC_KMS_REGION` / `CLOUDSTIC_KMS_ENDPOINT` | AWS KMS envelope-encryption config for `kms-platform` slots. |
 | `CLOUDSTIC_STORE` / `CLOUDSTIC_SOURCE` | Default store / source URI when no flag is given. |
 | `CLOUDSTIC_PROFILE` / `CLOUDSTIC_PROFILES_FILE` | Active backup profile and override for the profiles file path. |
-| `CLOUDSTIC_CONFIG_DIR` | Override the config/state directory (default `~/.config/cloudstic`). |
+| `CLOUDSTIC_CONFIG_DIR` | Override the config/state directory (default `~/.config/cloudstic`); `-config-dir` beats it. |
 | `CLOUDSTIC_{STORE,SOURCE}_SFTP_{PASSWORD,KEY,KNOWN_HOSTS,INSECURE}` | SFTP auth/host-key config for the store and source backends. |
 | `CLOUDSTIC_DISABLE_PACKFILE` | Disable the `PackStore` small-object bundling layer. |
 | `CLOUDSTIC_VOLUME_UUID` | Override the volume UUID for a local source (cross-machine incremental backup for portable drives). |

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/cloudstic/cli/pkg/profile"
+	"github.com/cloudstic/cli/pkg/secretref"
 )
 
 // Store-form domain helpers shared by the dashboard's store and secret backends
@@ -27,7 +28,10 @@ const (
 	tuiStoreEncryptionKMS      tuiStoreEncryptionMode = "kms"
 )
 
-var tuiSecretResolver = profileSecretResolver
+// tuiSecretResolver overrides the resolver the TUI forms use. Nil — the
+// normal case — means "build one from the resolved -config-dir"; tests set it
+// to a fake so a form can be exercised without touching a real keychain.
+var tuiSecretResolver *secretref.Resolver
 
 func newTUIStoreConfig(raw string) tuiStoreConfig {
 	parts, err := config.ParseStoreURI(raw)

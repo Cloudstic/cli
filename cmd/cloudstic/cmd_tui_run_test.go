@@ -22,7 +22,7 @@ func TestRunTUIProgram_Success(t *testing.T) {
 	defer restoreCfg()
 
 	r := &runner{out: &strings.Builder{}, errOut: &strings.Builder{}}
-	if code := runTUIProgram(r, context.Background(), "profiles.yaml"); code != 0 {
+	if code := runTUIProgram(r, context.Background(), "profiles.yaml", ""); code != 0 {
 		t.Fatalf("exit code=%d want 0", code)
 	}
 }
@@ -39,7 +39,7 @@ func TestRunTUIProgram_ProgramError(t *testing.T) {
 
 	errOut := &strings.Builder{}
 	r := &runner{out: &strings.Builder{}, errOut: errOut}
-	if code := runTUIProgram(r, context.Background(), "profiles.yaml"); code == 0 {
+	if code := runTUIProgram(r, context.Background(), "profiles.yaml", ""); code == 0 {
 		t.Fatalf("exit code=0 want non-zero on error")
 	}
 	if !strings.Contains(errOut.String(), "boom") {
@@ -55,7 +55,7 @@ func TestRunTUIProgram_ConfigError(t *testing.T) {
 
 	errOut := &strings.Builder{}
 	r := &runner{out: &strings.Builder{}, errOut: errOut}
-	if code := runTUIProgram(r, context.Background(), "profiles.yaml"); code == 0 {
+	if code := runTUIProgram(r, context.Background(), "profiles.yaml", ""); code == 0 {
 		t.Fatalf("exit code=0 want non-zero on config error")
 	}
 	if !strings.Contains(errOut.String(), "bad config") {

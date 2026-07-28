@@ -134,7 +134,7 @@ func TestClientConfigZeroValueEnablesPackfiles(t *testing.T) {
 		t.Error("clientConfigFromFlags with no flags set must leave packfiles enabled")
 	}
 
-	fromProfile, err := clientConfigFromProfileStore(profile.Store{URI: "local:/tmp/x"})
+	fromProfile, err := clientConfigFromProfileStore(profile.Store{URI: "local:/tmp/x"}, "")
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}

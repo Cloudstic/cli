@@ -19,9 +19,9 @@ import (
 
 type storeListArgs struct{ profilesFile string }
 
-func declareStoreListArgs(_ *globalFlags) (*storeListArgs, commandInput) {
+func declareStoreListArgs(g *globalFlags) (*storeListArgs, commandInput) {
 	a := &storeListArgs{}
-	return a, commandInput{flags: []flagSpec{profilesFileFlag(&a.profilesFile)}}
+	return a, commandInput{flags: []flagSpec{profilesFileFlag(&a.profilesFile, g)}}
 }
 
 func runStoreList(r *runner, ctx context.Context, a *storeListArgs) int {
@@ -42,10 +42,10 @@ type storeShowArgs struct {
 	name         string
 }
 
-func declareStoreShowArgs(_ *globalFlags) (*storeShowArgs, commandInput) {
+func declareStoreShowArgs(g *globalFlags) (*storeShowArgs, commandInput) {
 	a := &storeShowArgs{}
 	return a, commandInput{
-		flags:       []flagSpec{profilesFileFlag(&a.profilesFile)},
+		flags:       []flagSpec{profilesFileFlag(&a.profilesFile, g)},
 		positionals: []positionalSpec{optionalPositional(&a.name, "store name", "")},
 	}
 }
@@ -93,7 +93,7 @@ type storeNewArgs struct {
 func declareStoreNewArgs(g *globalFlags) (*storeNewArgs, commandInput) {
 	a := &storeNewArgs{globalFlags: g}
 	return a, commandInput{flags: []flagSpec{
-		profilesFileFlag(&a.profilesFile),
+		profilesFileFlag(&a.profilesFile, g),
 		stringFlag(&a.name, "name", "", "Store reference name", withPlaceholder("<name>")),
 		stringFlag(&a.uri, "uri", "", "Store URI (e.g. s3:bucket/path, local:/path, sftp://host/path)", withPlaceholder("<uri>"), withCompleter("_cloudstic_store_prefixes")),
 		stringFlag(&a.s3Region, "s3-region", "", "S3 region", withPlaceholder("<region>")),
@@ -218,9 +218,10 @@ func runStoreNew(r *runner, ctx context.Context, a *storeNewArgs) int {
 			forcePromptEncryption = !keepCurrent
 		}
 		if forcePromptEncryption || !storeHasExplicitEncryption(s) {
-			r.promptEncryptionConfig(ctx, cfg, a.name, a.profilesFile)
+			r.promptEncryptionConfig(ctx, cfg, a.name, a.profilesFile, a.configDir)
 		}
 		if err := checkOrInitStoreWithRecovery(r, ctx, cfg, a.name, a.profilesFile, checkOrInitOptions{
+			configDir:            a.configDir,
 			allowMissingSecrets:  true,
 			warnOnMissingSecrets: !existedBefore,
 			offerInit:            true,
@@ -238,14 +239,15 @@ func runStoreNew(r *runner, ctx context.Context, a *storeNewArgs) int {
 // before calling this. Errors are printed but never cause a non-zero exit—
 // the store config has already been saved.
 type storeVerifyArgs struct {
+	*globalFlags
 	profilesFile string
 	name         string
 }
 
-func declareStoreVerifyArgs(_ *globalFlags) (*storeVerifyArgs, commandInput) {
-	a := &storeVerifyArgs{}
+func declareStoreVerifyArgs(g *globalFlags) (*storeVerifyArgs, commandInput) {
+	a := &storeVerifyArgs{globalFlags: g}
 	return a, commandInput{
-		flags:       []flagSpec{profilesFileFlag(&a.profilesFile)},
+		flags:       []flagSpec{profilesFileFlag(&a.profilesFile, g)},
 		positionals: []positionalSpec{optionalPositional(&a.name, "store name", "")},
 	}
 }
@@ -275,6 +277,7 @@ func runStoreVerify(r *runner, ctx context.Context, a *storeVerifyArgs) int {
 		return r.fail("Unknown store %q", a.name)
 	}
 	if err := checkOrInitStoreWithRecovery(r, ctx, cfg, a.name, a.profilesFile, checkOrInitOptions{
+		configDir:            a.configDir,
 		warnOnMissingSecrets: true,
 	}, false); err != nil {
 		return r.fail("%v", err)
@@ -283,16 +286,17 @@ func runStoreVerify(r *runner, ctx context.Context, a *storeVerifyArgs) int {
 }
 
 type storeInitArgs struct {
+	*globalFlags
 	profilesFile string
 	name         string
 	yes          bool
 }
 
-func declareStoreInitArgs(_ *globalFlags) (*storeInitArgs, commandInput) {
-	a := &storeInitArgs{}
+func declareStoreInitArgs(g *globalFlags) (*storeInitArgs, commandInput) {
+	a := &storeInitArgs{globalFlags: g}
 	return a, commandInput{
 		flags: []flagSpec{
-			profilesFileFlag(&a.profilesFile),
+			profilesFileFlag(&a.profilesFile, g),
 			boolFlag(&a.yes, "yes", false, "Initialize without confirmation prompt"),
 		},
 		positionals: []positionalSpec{optionalPositional(&a.name, "store name", "")},
@@ -324,6 +328,7 @@ func runStoreInit(r *runner, ctx context.Context, a *storeInitArgs) int {
 		return r.fail("Unknown store %q", a.name)
 	}
 	if err := checkOrInitStoreWithRecovery(r, ctx, cfg, a.name, a.profilesFile, checkOrInitOptions{
+		configDir:            a.configDir,
 		warnOnMissingSecrets: true,
 		offerInit:            true,
 		assumeYes:            a.yes,
@@ -334,6 +339,9 @@ func runStoreInit(r *runner, ctx context.Context, a *storeInitArgs) int {
 }
 
 type checkOrInitOptions struct {
+	// configDir is the resolved -config-dir, which the store's secret
+	// references are read relative to. See newSecretResolver.
+	configDir            string
 	allowMissingSecrets  bool
 	warnOnMissingSecrets bool
 	offerInit            bool
@@ -342,7 +350,7 @@ type checkOrInitOptions struct {
 
 func checkOrInitStore(r *runner, ctx context.Context, cfg *profile.Config, storeName, profilesFile string, opts checkOrInitOptions) error {
 	s := cfg.Stores[storeName]
-	resolved, err := clientConfigFromProfileStore(s)
+	resolved, err := clientConfigFromProfileStore(s, opts.configDir)
 	if err != nil {
 		if opts.allowMissingSecrets && isSecretNotFoundError(err) {
 			if opts.warnOnMissingSecrets {
@@ -467,7 +475,7 @@ func checkOrInitStoreWithRecovery(r *runner, ctx context.Context, cfg *profile.C
 // promptEncryptionConfig guides the user through encryption configuration
 // and saves the chosen settings to profiles.yaml. It does not build a keychain
 // or prompt for the actual password — that happens later during init.
-func (r *runner) promptEncryptionConfig(ctx context.Context, cfg *profile.Config, storeName, profilesFile string) {
+func (r *runner) promptEncryptionConfig(ctx context.Context, cfg *profile.Config, storeName, profilesFile, configDir string) {
 	_, _ = fmt.Fprintln(r.out)
 	_, _ = fmt.Fprintln(r.out, "No encryption is configured for this store.")
 
@@ -488,7 +496,9 @@ func (r *runner) promptEncryptionConfig(ctx context.Context, cfg *profile.Config
 		cfg.Stores[storeName],
 		storeName,
 		picked,
-		r.promptSecretReference,
+		func(ctx context.Context, storeName, secretLabel, defaultEnvName, defaultAccount string) (string, error) {
+			return r.promptSecretReference(ctx, configDir, storeName, secretLabel, defaultEnvName, defaultAccount)
+		},
 		r.promptLine,
 		r.out,
 	)
@@ -549,7 +559,7 @@ func configureStoreEncryptionSelection(
 	return s, nil
 }
 
-func (r *runner) promptSecretReference(ctx context.Context, storeName, secretLabel, defaultEnvName, defaultAccount string) (string, error) {
+func (r *runner) promptSecretReference(ctx context.Context, configDir, storeName, secretLabel, defaultEnvName, defaultAccount string) (string, error) {
 	return promptSecretReferenceWithFns(
 		ctx,
 		storeName,
@@ -560,7 +570,7 @@ func (r *runner) promptSecretReference(ctx context.Context, storeName, secretLab
 		func(ctx context.Context, l, d string) (string, error) { return r.promptLine(ctx, l, d) },
 		func(_ context.Context, s string) (string, error) { return r.promptSecret(ctx, s) },
 		os.LookupEnv,
-		profileSecretResolver,
+		newSecretResolver(configDir),
 	)
 }
 

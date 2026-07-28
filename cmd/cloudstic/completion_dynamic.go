@@ -77,15 +77,40 @@ func completionLoadProfilesConfig(path string) (*profile.Config, error) {
 	return cfg, nil
 }
 
+// completionProfilesPath finds the profiles file a completion request should
+// read, from the partial command line the shell passed along.
+//
+// It mirrors the real resolution — explicit -profiles-file, then
+// CLOUDSTIC_PROFILES_FILE, then a path inside the config directory that
+// -config-dir or CLOUDSTIC_CONFIG_DIR may move — but reimplements it over a
+// throwaway flag set rather than reusing the dispatcher, because the arguments
+// here are an incomplete command line that would not parse.
+//
+// A path that cannot be resolved yields "", which loads no profiles and offers
+// no candidates. Completion never reports errors: the shell has nowhere to
+// show them.
 func completionProfilesPath(args []string) string {
 	fs := flag.NewFlagSet("__complete", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	defaultPath := envDefault("CLOUDSTIC_PROFILES_FILE", defaultProfilesPathFallback())
-	profilesFile := fs.String("profiles-file", defaultPath, "")
+	profilesFile := fs.String("profiles-file", "", "")
+	configDir := fs.String("config-dir", "", "")
 	_ = fs.Parse(filterCompletionFlags(args, map[string]bool{
 		"profiles-file": true,
+		"config-dir":    true,
 	}))
-	return *profilesFile
+	if *profilesFile != "" {
+		return *profilesFile
+	}
+	if fromEnv := lookupEnv("CLOUDSTIC_PROFILES_FILE"); fromEnv != "" {
+		return fromEnv
+	}
+	// An empty -config-dir falls through to CLOUDSTIC_CONFIG_DIR inside
+	// paths.ConfigDir, so the flag still wins where it was given.
+	path, err := defaultProfilesPath(*configDir)
+	if err != nil {
+		return ""
+	}
+	return path
 }
 
 func filterCompletionFlags(args []string, specs map[string]bool) []string {

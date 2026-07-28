@@ -32,8 +32,8 @@ var tuiLoadConfig = func(profilesFile string) (*profile.Config, error) {
 
 var tuiServiceFactory = defaultTUIServiceFactory
 
-func defaultTUIServiceFactory(r *runner, profilesFile string) *app.TUIService {
-	return app.NewTUIService(tuiCLIBackend{r: r, profilesFile: profilesFile})
+func defaultTUIServiceFactory(r *runner, profilesFile, configDir string) *app.TUIService {
+	return app.NewTUIService(tuiCLIBackend{r: r, profilesFile: profilesFile, configDir: configDir})
 }
 
 // runTUIProgram launches the dashboard. It builds a probe-less dashboard
@@ -41,7 +41,7 @@ func defaultTUIServiceFactory(r *runner, profilesFile string) *app.TUIService {
 // serially before the first frame. Bubble Tea owns the terminal: raw mode, the
 // alternate screen, mouse tracking, and resize handling are all cross-platform
 // (issue #341).
-func runTUIProgram(r *runner, ctx context.Context, profilesFile string) int {
+func runTUIProgram(r *runner, ctx context.Context, profilesFile, configDir string) int {
 	cfg, err := tuiLoadConfig(profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
@@ -49,9 +49,9 @@ func runTUIProgram(r *runner, ctx context.Context, profilesFile string) int {
 
 	skeleton := tui.BuildDashboard(cfg, nil)
 	model := tui.NewModel(skeleton).
-		WithConfig(cfg, tuiStoreProber{r: r}).
-		WithRunner(tuiActionRunner{r: r, profilesFile: profilesFile}).
-		WithForms(newTUIFormsBackend(r, profilesFile, cfg))
+		WithConfig(cfg, tuiStoreProber{r: r, configDir: configDir}).
+		WithRunner(tuiActionRunner{r: r, profilesFile: profilesFile, configDir: configDir}).
+		WithForms(newTUIFormsBackend(r, profilesFile, configDir, cfg))
 
 	stdin := r.stdin
 	if stdin == nil {
@@ -74,10 +74,11 @@ func runTUIProgram(r *runner, ctx context.Context, profilesFile string) int {
 type tuiCLIBackend struct {
 	r            *runner
 	profilesFile string
+	configDir    string
 }
 
 func (b tuiCLIBackend) LoadStoreSnapshots(ctx context.Context, storeName string, storeCfg profile.Store) ([]engine.SnapshotEntry, error) {
-	cfg, err := tuiClientConfig(storeCfg)
+	cfg, err := tuiClientConfig(storeCfg, b.configDir)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", storeName, err)
 	}
@@ -97,7 +98,7 @@ func (b tuiCLIBackend) InitProfile(ctx context.Context, profilesFile, profileNam
 	if !ok {
 		return fmt.Errorf("profile %q references unknown store %q", profileName, profileCfg.Store)
 	}
-	resolved, err := tuiClientConfig(storeCfg)
+	resolved, err := tuiClientConfig(storeCfg, b.configDir)
 	if err != nil {
 		return err
 	}
@@ -109,7 +110,7 @@ func (b tuiCLIBackend) InitProfile(ctx context.Context, profilesFile, profileNam
 }
 
 func (b tuiCLIBackend) BackupProfile(ctx context.Context, profilesFile, profileName string, profileCfg profile.Profile, cfg *profile.Config, reporter cloudstic.Reporter) error {
-	g := &globalFlags{profile: profileName, profilesFile: profilesFile, quiet: true}
+	g := &globalFlags{profile: profileName, profilesFile: profilesFile, configDir: b.configDir, quiet: true}
 	base := &backupArgs{globalFlags: g}
 	effective, err := mergeProfileBackupArgs(base, profileName, profileCfg, cfg)
 	if err != nil {
@@ -136,7 +137,7 @@ func (b tuiCLIBackend) CheckProfile(ctx context.Context, profilesFile, profileNa
 	if !ok {
 		return fmt.Errorf("profile %q references unknown store %q", profileName, profileCfg.Store)
 	}
-	resolved, err := tuiClientConfig(storeCfg)
+	resolved, err := tuiClientConfig(storeCfg, b.configDir)
 	if err != nil {
 		return err
 	}
@@ -157,11 +158,12 @@ func (b tuiCLIBackend) CheckProfile(ctx context.Context, profilesFile, profileNa
 // tuiStoreProber probes a single store's health by listing its snapshots,
 // bounded by the per-store timeout the model applies.
 type tuiStoreProber struct {
-	r *runner
+	r         *runner
+	configDir string
 }
 
 func (p tuiStoreProber) Probe(ctx context.Context, name string, store profile.Store) tui.StoreProbe {
-	snapshots, err := (tuiCLIBackend{r: p.r}).LoadStoreSnapshots(ctx, name, store)
+	snapshots, err := (tuiCLIBackend{r: p.r, configDir: p.configDir}).LoadStoreSnapshots(ctx, name, store)
 	if err != nil {
 		return tui.StoreProbe{Status: "error", Error: err.Error()}
 	}
@@ -174,6 +176,7 @@ func (p tuiStoreProber) Probe(ctx context.Context, name string, store profile.St
 type tuiActionRunner struct {
 	r            *runner
 	profilesFile string
+	configDir    string
 }
 
 func (a tuiActionRunner) Start(ctx context.Context, profile tui.ProfileCard, kind tui.ActionKind) <-chan tui.ActionUpdate {
@@ -203,7 +206,7 @@ func (a tuiActionRunner) Start(ctx context.Context, profile tui.ProfileCard, kin
 			}
 		})
 
-		service := tuiServiceFactory(a.r, a.profilesFile)
+		service := tuiServiceFactory(a.r, a.profilesFile, a.configDir)
 		var err error
 		if kind == tui.ActionKindCheck {
 			err = service.RunProfileCheck(ctx, a.profilesFile, profile, log.Reporter())

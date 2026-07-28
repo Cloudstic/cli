@@ -60,6 +60,7 @@ GLOBAL OPTIONS (also settable via environment variables)
     -quiet                          Suppress progress bars (keeps final summary)
     -json                           Write command result as JSON to stdout
     -debug                          Log every store request (network calls, timing, sizes)
+    -config-dir <path>              Directory for profiles, tokens, and other state  [env: CLOUDSTIC_CONFIG_DIR]
     -no-prompt                      Disable interactive prompts (for scripts and CI)
 
   Store URI formats:

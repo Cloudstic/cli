@@ -72,7 +72,7 @@ func newTestFormsBackend(t *testing.T, cfg *profile.Config) (*tuiFormsBackend, s
 	if err != nil {
 		t.Fatalf("tuiLoadConfig: %v", err)
 	}
-	return newTUIFormsBackend(&runner{out: io.Discard, errOut: io.Discard}, path, loaded), path
+	return newTUIFormsBackend(&runner{out: io.Discard, errOut: io.Discard}, path, "", loaded), path
 }
 
 func TestInitialStoreValues_PopulatesExistingSecretFields(t *testing.T) {

@@ -17,17 +17,19 @@ func validateRefName(kind, name string) error {
 	return nil
 }
 
-func defaultProfilesPathFallback() string {
-	defaultPath, err := defaultProfilesPath()
-	if err != nil {
-		return defaultProfilesFilename
-	}
-	return defaultPath
-}
-
-func profilesFileFlag(target *string) flagSpec {
-	return stringFlag(target, "profiles-file", defaultProfilesPathFallback(), "Path to profiles YAML file",
-		withEnv("CLOUDSTIC_PROFILES_FILE"), withPlaceholder("<path>"), withCompleter("_files"))
+// profilesFileFlag declares -profiles-file, wherever it appears: as a global
+// flag on repository commands, and as its own flag on the commands that manage
+// the profiles file without opening a repository.
+//
+// The default is a path inside the config directory, so it can only be
+// computed once -config-dir has taken its final value — hence withLateDefault
+// rather than a default passed in here. That is also why the declaration takes
+// g: the two flags are resolved together, and this is the one place that
+// relationship is written down.
+func profilesFileFlag(target *string, g *globalFlags) flagSpec {
+	return stringFlag(target, "profiles-file", "", "Path to profiles YAML file",
+		withEnv("CLOUDSTIC_PROFILES_FILE"), withPlaceholder("<path>"), withCompleter("_files"),
+		withLateDefault(func() (string, error) { return defaultProfilesPath(g.configDir) }))
 }
 
 func loadProfilesOrInit(path string) (*profile.Config, error) {

@@ -7,59 +7,71 @@ import (
 	"testing"
 )
 
-func TestConfigDir_EnvVar(t *testing.T) {
+func TestConfigDir_OverrideBeatsEnvVar(t *testing.T) {
 	tmp := t.TempDir()
-	target := filepath.Join(tmp, "custom-config")
-	t.Setenv("CLOUDSTIC_CONFIG_DIR", target)
+	target := filepath.Join(tmp, "from-flag")
+	t.Setenv("CLOUDSTIC_CONFIG_DIR", filepath.Join(tmp, "from-env"))
 
-	dir, err := ConfigDir()
+	dir, err := ConfigDir(target)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if dir != target {
 		t.Errorf("got %q, want %q", dir, target)
 	}
-	// Dir should have been created.
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		t.Errorf("directory was not created")
+}
+
+func TestConfigDir_EnvVar(t *testing.T) {
+	tmp := t.TempDir()
+	target := filepath.Join(tmp, "custom-config")
+	t.Setenv("CLOUDSTIC_CONFIG_DIR", target)
+
+	dir, err := ConfigDir("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dir != target {
+		t.Errorf("got %q, want %q", dir, target)
 	}
 }
 
 func TestConfigDir_Default(t *testing.T) {
 	t.Setenv("CLOUDSTIC_CONFIG_DIR", "")
 
-	dir, err := ConfigDir()
+	dir, err := ConfigDir("")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if dir == "" {
-		t.Error("expected non-empty directory")
+	base, err := os.UserConfigDir()
+	if err != nil {
+		t.Skipf("no user config dir on this platform: %v", err)
 	}
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		t.Errorf("directory %q does not exist", dir)
+	if want := filepath.Join(base, appName); dir != want {
+		t.Errorf("got %q, want %q", dir, want)
 	}
 }
 
-func TestConfigDir_CreatesWithCorrectPermissions(t *testing.T) {
-	tmp := t.TempDir()
-	target := filepath.Join(tmp, "new-dir")
-	t.Setenv("CLOUDSTIC_CONFIG_DIR", target)
+// Resolving a path must not create anything. Help output, shell completion and
+// `setup -dry-run` all ask where configuration lives without intending to write
+// there, and creating the directory to answer would be a side effect of asking.
+func TestConfigDir_CreatesNothing(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "absent")
 
-	dir, err := ConfigDir()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	info, err := os.Stat(dir)
-	if err != nil {
-		t.Fatalf("stat failed: %v", err)
-	}
-	if !info.IsDir() {
-		t.Errorf("expected directory")
-	}
-	// On Unix, permissions should be 0700.
-	if perm := info.Mode().Perm(); perm != 0700 {
-		t.Errorf("expected 0700 permissions, got %o", perm)
+	for _, tc := range []struct {
+		name string
+		call func() (string, error)
+	}{
+		{"override", func() (string, error) { return ConfigDir(target) }},
+		{"token path", func() (string, error) { return TokenPath(target, "google_token.json") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := tc.call(); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if _, err := os.Stat(target); !os.IsNotExist(err) {
+				t.Errorf("directory %q was created, want untouched (stat err: %v)", target, err)
+			}
+		})
 	}
 }
 
@@ -67,7 +79,7 @@ func TestTokenPath(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("CLOUDSTIC_CONFIG_DIR", tmp)
 
-	path, err := TokenPath("google_token.json")
+	path, err := TokenPath("", "google_token.json")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -77,19 +89,27 @@ func TestTokenPath(t *testing.T) {
 	}
 }
 
-func TestTokenPath_ReturnsError(t *testing.T) {
-	// Force an error by providing an invalid path that cannot be created.
-	// We make the parent a file, not a directory.
-	tmp := t.TempDir()
-	file := filepath.Join(tmp, "notadir")
-	if err := os.WriteFile(file, []byte("x"), 0600); err != nil {
-		t.Fatal(err)
+// The config directory is created by whoever writes into it, at 0700, rather
+// than by resolving its path. This is the guarantee that moved out of
+// ConfigDir when resolution stopped touching the filesystem.
+func TestSaveAtomic_CreatesConfigDirWithCorrectPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits are not meaningful on Windows")
 	}
-	t.Setenv("CLOUDSTIC_CONFIG_DIR", filepath.Join(file, "subdir"))
+	dir := filepath.Join(t.TempDir(), "new-dir")
+	if err := SaveAtomic(filepath.Join(dir, "token.json"), []byte("x")); err != nil {
+		t.Fatalf("SaveAtomic failed: %v", err)
+	}
 
-	_, err := TokenPath("token.json")
-	if err == nil {
-		t.Error("expected error when config dir cannot be created")
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat failed: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("expected directory")
+	}
+	if perm := info.Mode().Perm(); perm != 0700 {
+		t.Errorf("expected 0700 permissions, got %o", perm)
 	}
 }
 

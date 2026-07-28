@@ -1,6 +1,8 @@
 # RFC 0022: Public Go API Boundaries
 
-- **Status:** Partially implemented — §1–§7 landed; §8 outstanding
+- **Status:** §1–§8 implemented. Outstanding: extending the external-module
+  fixture to *consume* the library, not only implement its contracts (see
+  Testing strategy)
 - **Date:** 2026-07-28
 - **Affects:** `client.go`, `pkg/source`, `pkg/store`, `pkg/crypto`, `pkg/config`,
   `pkg/open`, `internal/logger`, `internal/storelayer`, `cmd/cloudstic`, `docs/`
@@ -481,27 +483,16 @@ hits. So the global goes away rather than being published:
   also covers `internal/sourceoauth`.
 - `store.NewDebugStore(inner, w)` already takes a writer and needs nothing.
 - `pkg/secretref` resolvers gain a logger option.
-- `logger.Writer` stays as a fallback while call sites migrate, then is deleted.
+- `logger.Writer` is deleted once every call site is converted.
 
-The migration is per-component rather than all at once, which the fallback is
-what makes possible. Converted so far: the client itself, `internal/storelayer`
-(via `WithPackLogger`), `internal/hamt` (via a variadic `TreeOption`, so the
-six trees that never log keep their call sites), and `internal/engine`'s
-backup and init managers. Still on the fallback, and the reason the global
-cannot be deleted yet:
-
-- `internal/engine/snapshots.go` logs from *free functions*
-  (`LoadSnapshotCatalog`, `AppendSnapshotCatalog`,
-  `RemoveFromSnapshotCatalog`) rather than from a manager, so there is no
-  receiver to carry a sink. Giving them one means changing three exported
-  signatures and their callers — a different shape of change from the rest,
-  and worth its own commit.
-- `internal/sourceoauth` and `pkg/secretref/backends` are constructed
-  independently of a client, so a client-supplied sink cannot reach them. They
-  need an option on the source constructors and the resolver respectively.
-
-`InitRepo` is a package-level function with no client, so its single debug
-line also stays on the fallback.
+The migration ran per component, each by whatever mechanism its construction
+already had: a `PackOption` for `storelayer`, a variadic `TreeOption` for
+`hamt` (so the six trees that never log kept their call sites), a writer
+parameter for the engine managers, `WithLogger` on the `gdrive` and `onedrive`
+sources, and `WithConfigTokenLogger` for the secret backend. The awkward case
+was `engine/snapshots.go`, which logs from free functions with no receiver to
+carry a sink: those take a `*logger.Logger` explicitly, which is what forced
+the backup, forget, list and find managers to have one.
 
 **The injected value is an `io.Writer`, not a `*slog.Logger`.** The current
 output is colored `[component] message` human debug text, and preserving it
@@ -641,8 +632,15 @@ Stages 5–8 add three requirements:
 9. Logger injection (§8), per component: the logger infrastructure and the
    client, store, hamt and engine-manager call sites first; then the
    free-function and independently-constructed ones, after which the global
-   can be deleted.
+   is deleted. **Done.**
 10. Extend the external fixture to consume the library end to end.
+
+    Not done. `internal/apicheck/testdata/externalmod` still only implements
+    the contracts. The acceptance tests added with §8 exercise the consuming
+    path — resolve a configuration, open a client, run a backup, assert on the
+    debug output — but they live in-module, so they prove the API works
+    without proving it is reachable from outside. That distinction is the
+    whole point of the fixture, and it is what remains.
 
 Steps 1–3 made external custom sources and stores possible, which was the
 original goal. Steps 5–10 are what make the library usable by the consumer who

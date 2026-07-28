@@ -1,8 +1,9 @@
-package cloudstic
+package apicheck
 
 import (
 	"go/types"
 	"os"
+	"path/filepath"
 	"regexp"
 	"testing"
 
@@ -24,7 +25,7 @@ var ldflagXPattern = regexp.MustCompile(`-X\s+([\w./-]+)\.(\w+)=`)
 //
 // See internal/sourceoauth/defaults.go for the declarations.
 func TestGoreleaserLdflagsTargetRealSymbols(t *testing.T) {
-	data, err := os.ReadFile(".goreleaser.yml")
+	data, err := os.ReadFile(filepath.Join(moduleRoot(t), ".goreleaser.yml"))
 	if err != nil {
 		t.Fatalf("read .goreleaser.yml: %v", err)
 	}
@@ -85,5 +86,26 @@ func TestGoreleaserLdflagsTargetRealSymbols(t *testing.T) {
 					path, name, v.Type())
 			}
 		}
+	}
+}
+
+// moduleRoot walks up from the working directory to the directory holding
+// go.mod, so tests can reach repository-root files regardless of which
+// package directory `go test` runs them from.
+func moduleRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("no go.mod found walking up from the working directory")
+		}
+		dir = parent
 	}
 }

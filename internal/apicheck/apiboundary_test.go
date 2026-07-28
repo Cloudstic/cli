@@ -1,4 +1,4 @@
-package cloudstic
+package apicheck
 
 import (
 	"go/types"

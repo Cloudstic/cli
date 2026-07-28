@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cloudstic/cli/internal/storelayer"
 	"github.com/cloudstic/cli/internal/ui"
-	"github.com/cloudstic/cli/pkg/store"
 )
 
 func TestAcquireRepoLock_Success(t *testing.T) {
@@ -352,7 +352,7 @@ func TestPruneDryRun_NoLock(t *testing.T) {
 	ctx := context.Background()
 	s := NewMockStore()
 
-	metered := store.NewMeteredStore(s)
+	metered := storelayer.NewMeteredStore(s)
 	pm := NewPruneManager(metered, ui.NewNoOpReporter())
 	_, err := pm.Run(ctx, WithPruneDryRun())
 	if err != nil {

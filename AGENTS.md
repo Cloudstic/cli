@@ -4,7 +4,7 @@ This file provides guidance to agents when working with code in this repository.
 
 ## Project Overview
 
-Cloudstic CLI is a content-addressable, encrypted backup tool written in Go. It supports multiple data sources (local filesystem, Google Drive, OneDrive, SFTP) and multiple storage backends (local, S3/R2/MinIO, Backblaze B2, SFTP, hybrid PostgreSQL+B2). Backups are deduplicated via content-addressing, compressed with zstd, and encrypted with AES-256-GCM.
+Cloudstic CLI is a content-addressable, encrypted backup tool written in Go. It supports multiple data sources (local filesystem, Google Drive, OneDrive, SFTP) and multiple storage backends (local, S3/R2/MinIO, Backblaze B2, SFTP). Backups are deduplicated via content-addressing, compressed with zstd, and encrypted with AES-256-GCM.
 
 ## Build & Development Commands
 
@@ -51,7 +51,8 @@ Docker-based hermetic tests (MinIO store, SFTP source/store) are automatically s
 - `internal/engine/` — Business logic for each operation (backup, restore, prune, forget, diff, list). Each operation has a `*Manager` struct (e.g. `BackupManager`, `RestoreManager`) with a `Run(ctx)` method.
 - `internal/core/` — Domain types: `Snapshot`, `FileMeta`, `Content`, `HAMTNode`, `RepoConfig`, `SourceInfo`. Also contains `ComputeJSONHash` which is the canonical content-addressing function.
 - `internal/hamt/` — Persistent Merkle Hash Array Mapped Trie. Backed by the object store. Used to track file→filemeta mappings across snapshots. `TransactionalStore` buffers writes and flushes only reachable nodes.
-- `pkg/store/` — `ObjectStore` interface and all implementations. Also contains `Source` and `IncrementalSource` interfaces for backup data sources.
+- `pkg/store/` — The `ObjectStore` contract and its optional capability interfaces (`RangeGetter`, `ConcurrencyHinter`, `Unwrapper`), plus the order-independent wrappers `QuotaStore` and `DebugStore`. Depends on nothing outside the standard library, so implementing a custom backend pulls in no vendor SDK (RFC 0022). Backends live in their own subpackages: `pkg/store/{local,s3,b2,sftp}`, constructed as `local.New`, `s3.New`, … `pkg/store/storetest` holds shared test doubles (`MemStore`, `FaultStore`, `AssertRangeGetterConformance`); it deliberately redeclares the interfaces it needs rather than importing `pkg/store`, because `pkg/store`'s own internal tests import it.
+- `internal/storelayer/` — The repository-format decorator chain: `CompressedStore`, `EncryptedStore`, `MeteredStore`, `PackStore`, `KeyCacheStore`. Internal on purpose: their **composition order is a correctness and security invariant** (see Store Layering below), and nothing outside the module should assemble the chain. A caller who wants to wrap a store implements `store.ObjectStore` and passes it to `NewClient`, which layers this chain on top — exactly what `cmd/cloudstic` does with `DebugStore`.
 - `pkg/crypto/` — AES-256-GCM encryption/decryption, HKDF key derivation, BIP39 mnemonic recovery keys.
 - `internal/app/` — Orchestration layer shared by the CLI and TUI. `TUIService` sits on top of a `TUIBackend` interface (satisfied by the real client, stubbable in tests) and owns profile listing, health checks, and backup actions.
 - `internal/tui/` — Interactive terminal dashboard built on Bubble Tea. `dashboard.go` derives the view-model from the profiles config and store probes, `app.go` is the root `Model` (view + key handling), `summary.go` holds the pure label/badge/button derivation it renders, `styles.go` is the lipgloss theme, and `forms/` holds the `bubbles/textinput` form components. Bubble Tea owns the terminal — there is no hand-rolled renderer, input decoder, or resize handling (RFC 0012 Phase 2, issue #341). The `cmd_tui*.go` files in `cmd/cloudstic/` only wire it to `internal/app`; the widget/state logic lives here.
@@ -64,7 +65,13 @@ Docker-based hermetic tests (MinIO store, SFTP source/store) are automatically s
 
 ### Store Layering (Decorator Pattern)
 
-Stores are composed as a decorator chain. The order matters:
+Stores are composed as a decorator chain, assembled in `client.go` from
+`internal/storelayer`. **The order matters, and getting it wrong is silent** —
+`PackStore` sits below `EncryptedStore`, so its catalog and footers never pass
+through encryption and need a separately derived key. A chain built without
+`WithPackIndexKey` yields a repository whose pack index is plaintext, with no
+error at any layer. That is why these types are internal and why callers inject
+a backend into `NewClient` rather than composing the chain themselves (RFC 0022).
 
 ```
 CompressedStore → EncryptedStore → MeteredStore → [PackStore] → KeyCacheStore → <backend>
@@ -73,9 +80,9 @@ CompressedStore → EncryptedStore → MeteredStore → [PackStore] → KeyCache
 - `CompressedStore` — zstd compression on write, auto-detects zstd/gzip/raw on read.
 - `EncryptedStore` — AES-256-GCM. Passes through objects under `keys/` prefix unencrypted (key slots).
 - `MeteredStore` — Tracks bytes written for reporting.
-- `PackStore` (optional) — Bundles small objects (<512KB) into 8MB packfiles to reduce API calls. Only content-addressed prefixes (`filemeta/`, `node/`, `snapshot/`, `chunk/`, `content/`) are packed; mutable keys such as `index/latest` are never bundled. Each packfile ends with a self-describing footer (`pkg/store/packfooter.go`, RFC 0018) listing its contents, which makes the `index/packs` JSON catalog a rebuildable cache rather than the sole source of truth: a missing catalog is healed automatically from footers before any read is served, and `RebuildCatalog` exposes the same repair explicitly. Packs predating the footer cannot be recovered that way, so a rebuild reports how many it found instead of returning a partial catalog. A catalog that is *unreadable* (as opposed to absent) fails the calling operation instead of degrading to an empty one, and `Flush` refuses to overwrite a catalog it has not first merged with the stored copy. Footer reads use the optional `RangeGetter` interface (`pkg/store/interface.go`), implemented by `LocalStore`, `S3Store`, `B2Store`, `SFTPStore`, and forwarded by `DebugStore`, falling back to a full `Get` for any backend without it. All implementations are held to one shared contract by `assertRangeGetterConformance` (`pkg/store/rangegetter_test.go`), and `TestPackStore_UsesRangedReadsForFooters` asserts the ranged path is actually taken rather than silently degrading to whole-pack transfers. The catalog is stored as append-only shards under `index/packmap/` (`pkg/store/packshard.go`), one per flush, so concurrent writers cannot erase each other's entries the way a single read-modify-write object allowed; readers merge every shard plus the pre-shard `index/packs` if the repository still has one. Shards cannot express a deletion, so removing an entry is durable only once `CompactCatalog` rewrites the index — which is why `prune` compacts and why a flush following a delete does too. Compaction removes only index objects the store has itself absorbed, so it cannot delete a shard written concurrently but never read. Because `PackStore` sits below `EncryptedStore` and the index and footers never pass through it, both are sealed with a separate HKDF-derived key (`crypto.HKDFInfoPackIndexV1`, passed via `WithPackIndexKey`); plaintext indexes written before this — and those in unencrypted repositories — are still read, and are sealed on the next flush.
+- `PackStore` (optional) — Bundles small objects (<512KB) into 8MB packfiles to reduce API calls. Only content-addressed prefixes (`filemeta/`, `node/`, `snapshot/`, `chunk/`, `content/`) are packed; mutable keys such as `index/latest` are never bundled. Each packfile ends with a self-describing footer (`internal/storelayer/packfooter.go`, RFC 0018) listing its contents, which makes the `index/packs` JSON catalog a rebuildable cache rather than the sole source of truth: a missing catalog is healed automatically from footers before any read is served, and `RebuildCatalog` exposes the same repair explicitly. Packs predating the footer cannot be recovered that way, so a rebuild reports how many it found instead of returning a partial catalog. A catalog that is *unreadable* (as opposed to absent) fails the calling operation instead of degrading to an empty one, and `Flush` refuses to overwrite a catalog it has not first merged with the stored copy. Footer reads use the optional `RangeGetter` interface (`pkg/store/interface.go`), implemented by `local.Store`, `s3.Store`, `b2.Store`, `sftp.Store`, and forwarded by `DebugStore`, falling back to a full `Get` for any backend without it. All implementations are held to one shared contract by `storetest.AssertRangeGetterConformance`, which each backend package calls, and `TestPackStore_UsesRangedReadsForFooters` asserts the ranged path is actually taken rather than silently degrading to whole-pack transfers. The catalog is stored as append-only shards under `index/packmap/` (`internal/storelayer/packshard.go`), one per flush, so concurrent writers cannot erase each other's entries the way a single read-modify-write object allowed; readers merge every shard plus the pre-shard `index/packs` if the repository still has one. Shards cannot express a deletion, so removing an entry is durable only once `CompactCatalog` rewrites the index — which is why `prune` compacts and why a flush following a delete does too. Compaction removes only index objects the store has itself absorbed, so it cannot delete a shard written concurrently but never read. Because `PackStore` sits below `EncryptedStore` and the index and footers never pass through it, both are sealed with a separate HKDF-derived key (`crypto.HKDFInfoPackIndexV1`, passed via `WithPackIndexKey`); plaintext indexes written before this — and those in unencrypted repositories — are still read, and are sealed on the next flush.
 - `KeyCacheStore` — Caches key existence in a temporary bbolt database to avoid redundant `Exists`/`List` calls against remote backends. Uses `singleflight` to deduplicate concurrent writes for the same key.
-- Backend: `LocalStore`, `S3Store`, `B2Store`, `SFTPStore`, or `HybridStore` (PostgreSQL for metadata + B2 for chunks).
+- Backend: `local.Store`, `s3.Store`, `b2.Store`, or `sftp.Store`, each in its own subpackage under `pkg/store/`.
 
 ### Object Key Conventions
 
@@ -105,11 +112,7 @@ All objects are addressed by `<type>/<sha256>`:
 - On `init`, a random 32-byte master key is generated and wrapped into key slots (password-based via scrypt, platform key, KMS-wrapped platform key, or BIP39 recovery key).
 - Key slots are stored under `keys/` prefix, which the `EncryptedStore` passes through unencrypted.
 - An HMAC dedup key is derived from the encryption key via HKDF for content-addressing without exposing plaintext hashes.
-- `kms-platform` slots use AWS KMS envelope encryption (master key wrapped by a KMS CMK). The CLI supports these via `-kms-key-arn` flag or `CLOUDSTIC_KMS_KEY_ARN` env var. See `pkg/store/kms.go`.
-
-### HybridStore
-
-Routes metadata objects to PostgreSQL (with RLS tenant isolation via `SET LOCAL cloudstic.tenant_id`) and chunk data to B2. Metadata is also written through to B2 for disaster recovery.
+- `kms-platform` slots use AWS KMS envelope encryption (master key wrapped by a KMS CMK). The CLI supports these via `-kms-key-arn` flag or `CLOUDSTIC_KMS_KEY_ARN` env var. See `pkg/crypto/kms.go`.
 
 ### Configuration & Profiles
 

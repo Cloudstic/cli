@@ -6,10 +6,11 @@ import (
 	"io"
 	"strings"
 
+	"github.com/jedib0t/go-pretty/v6/table"
+
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/engine"
 	"github.com/cloudstic/cli/internal/paths"
-	"github.com/jedib0t/go-pretty/v6/table"
 )
 
 var planWorkstationSetup = cloudstic.PlanWorkstationSetup

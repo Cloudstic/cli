@@ -7,6 +7,7 @@ import (
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
+	"github.com/cloudstic/cli/internal/storelayer"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/store"
 )
@@ -37,14 +38,14 @@ var objectPrefixes = []string{"chunk/", "content/", "filemeta/", "node/", "snaps
 
 // PruneManager implements mark-and-sweep garbage collection over the object store.
 type PruneManager struct {
-	store     *store.MeteredStore
+	store     *storelayer.MeteredStore
 	tree      *hamt.Tree
 	reporter  ui.Reporter
 	metaCache map[string]core.FileMeta
 }
 
 func NewPruneManager(s store.ObjectStore, reporter ui.Reporter) *PruneManager {
-	meteredStore := store.NewMeteredStore(s)
+	meteredStore := storelayer.NewMeteredStore(s)
 	return &PruneManager{
 		store:    meteredStore,
 		tree:     hamt.NewTree(meteredStore),
@@ -82,10 +83,10 @@ func (pm *PruneManager) Run(ctx context.Context, opts ...PruneOption) (*PruneRes
 	if !cfg.dryRun {
 		// Attempt to repack fragmented packfiles.
 		// We walk down the store chain to find the PackStore if it is enabled.
-		var packStore *store.PackStore
+		var packStore *storelayer.PackStore
 		var current store.ObjectStore = pm.store
 		for current != nil {
-			if ps, ok := current.(*store.PackStore); ok {
+			if ps, ok := current.(*storelayer.PackStore); ok {
 				packStore = ps
 				break
 			}

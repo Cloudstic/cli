@@ -20,6 +20,7 @@ import (
 	"github.com/cloudstic/cli/pkg/source/gdrive"
 	"github.com/cloudstic/cli/pkg/source/local"
 	"github.com/cloudstic/cli/pkg/source/onedrive"
+
 	// Aliased to keep "sftp" free: this file also reaches SSH host-key types,
 	// and the store-side SFTP wiring lives alongside it.
 	sftpsource "github.com/cloudstic/cli/pkg/source/sftp"

@@ -6,8 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cloudstic/cli/internal/secretref"
 	"gopkg.in/yaml.v3"
+
+	"github.com/cloudstic/cli/internal/secretref"
 )
 
 // ProfilesConfig is the top-level YAML document for backup profiles.

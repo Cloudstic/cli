@@ -9,8 +9,8 @@ import (
 	"io"
 	"testing"
 
+	"github.com/cloudstic/cli/internal/storelayer"
 	"github.com/cloudstic/cli/internal/ui"
-	"github.com/cloudstic/cli/pkg/store"
 )
 
 // TestRestoreManager_WriteChunks_PreservesOrder verifies that fetching
@@ -122,7 +122,7 @@ func TestRestoreManager_MultiChunkFile_RoundTrips(t *testing.T) {
 		t.Fatalf("backup: %v", err)
 	}
 
-	tracker := &concurrencyTrackingStore{ObjectStore: store.NewCompressedStore(raw)}
+	tracker := &concurrencyTrackingStore{ObjectStore: storelayer.NewCompressedStore(raw)}
 	rsMgr := NewRestoreManager(tracker, ui.NewNoOpReporter())
 
 	var buf bytes.Buffer

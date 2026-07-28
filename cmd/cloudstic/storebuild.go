@@ -4,10 +4,15 @@ import (
 	"context"
 	"fmt"
 
+	"golang.org/x/crypto/ssh"
+
 	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/store"
-	"golang.org/x/crypto/ssh"
+	b2store "github.com/cloudstic/cli/pkg/store/b2"
+	localstore "github.com/cloudstic/cli/pkg/store/local"
+	s3store "github.com/cloudstic/cli/pkg/store/s3"
+	sftpstore "github.com/cloudstic/cli/pkg/store/sftp"
 )
 
 // This file builds an object store from resolved configuration. It takes a
@@ -50,24 +55,24 @@ func newObjectStore(ctx context.Context, cfg storeConfig) (store.ObjectStore, er
 	var inner store.ObjectStore
 	switch uri.scheme {
 	case "local":
-		inner, err = store.NewLocalStore(uri.path)
+		inner, err = localstore.New(uri.path)
 	case "b2":
 		if cfg.b2.keyID == "" || cfg.b2.appKey == "" {
 			return nil, fmt.Errorf("B2 credentials required: pass -b2-key-id/-b2-app-key (or set B2_KEY_ID/B2_APP_KEY)")
 		}
-		inner, err = store.NewB2Store(uri.bucket, store.WithCredentials(cfg.b2.keyID, cfg.b2.appKey), store.WithPrefix(uri.prefix))
+		inner, err = b2store.New(uri.bucket, b2store.WithCredentials(cfg.b2.keyID, cfg.b2.appKey), b2store.WithPrefix(uri.prefix))
 	case "s3":
-		inner, err = store.NewS3Store(
+		inner, err = s3store.New(
 			ctx,
 			uri.bucket,
-			store.WithS3Endpoint(cfg.s3.endpoint),
-			store.WithS3Region(cfg.s3.region),
-			store.WithS3Profile(cfg.s3.profile),
-			store.WithS3Credentials(cfg.s3.accessKey, cfg.s3.secretKey),
-			store.WithS3Prefix(uri.prefix),
+			s3store.WithEndpoint(cfg.s3.endpoint),
+			s3store.WithRegion(cfg.s3.region),
+			s3store.WithProfile(cfg.s3.profile),
+			s3store.WithCredentials(cfg.s3.accessKey, cfg.s3.secretKey),
+			s3store.WithPrefix(uri.prefix),
 		)
 	case "sftp":
-		inner, err = store.NewSFTPStore(uri.host, sftpStoreOpts(cfg.sftp, uri)...)
+		inner, err = sftpstore.New(uri.host, sftpStoreOpts(cfg.sftp, uri)...)
 	default:
 		return nil, fmt.Errorf("unsupported store type: %s", uri.scheme)
 	}
@@ -78,27 +83,27 @@ func newObjectStore(ctx context.Context, cfg storeConfig) (store.ObjectStore, er
 	return withCrashInjection(inner)
 }
 
-func sftpStoreOpts(cfg sftpConfig, uri *storeURIParts) []store.SFTPStoreOption {
-	opts := []store.SFTPStoreOption{
-		store.WithSFTPBasePath(uri.path),
+func sftpStoreOpts(cfg sftpConfig, uri *storeURIParts) []sftpstore.Option {
+	opts := []sftpstore.Option{
+		sftpstore.WithBasePath(uri.path),
 	}
 	if uri.port != "" {
-		opts = append(opts, store.WithSFTPPort(uri.port))
+		opts = append(opts, sftpstore.WithPort(uri.port))
 	}
 	if uri.user != "" {
-		opts = append(opts, store.WithSFTPUser(uri.user))
+		opts = append(opts, sftpstore.WithUser(uri.user))
 	}
 	if cfg.password != "" {
-		opts = append(opts, store.WithSFTPPassword(cfg.password))
+		opts = append(opts, sftpstore.WithPassword(cfg.password))
 	}
 	if cfg.key != "" {
-		opts = append(opts, store.WithSFTPKey(cfg.key))
+		opts = append(opts, sftpstore.WithKey(cfg.key))
 	}
 	if cfg.insecure {
-		opts = append(opts, store.WithSFTPHostKeyCallback(ssh.InsecureIgnoreHostKey())) //nolint:gosec // explicitly requested by user
+		opts = append(opts, sftpstore.WithHostKeyCallback(ssh.InsecureIgnoreHostKey())) //nolint:gosec // explicitly requested by user
 	}
 	if cfg.knownHosts != "" {
-		opts = append(opts, store.WithSFTPKnownHosts(cfg.knownHosts))
+		opts = append(opts, sftpstore.WithKnownHosts(cfg.knownHosts))
 	}
 	return opts
 }

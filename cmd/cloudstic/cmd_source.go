@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	cloudstic "github.com/cloudstic/cli"
 	"github.com/jedib0t/go-pretty/v6/table"
+
+	cloudstic "github.com/cloudstic/cli"
 )
 
 type sourceDiscoverArgs struct {

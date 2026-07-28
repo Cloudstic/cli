@@ -8,10 +8,11 @@ import (
 	"io"
 	"sync"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/pkg/crypto"
 	"github.com/cloudstic/cli/pkg/store"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/jotfs/fastcdc-go"
 )

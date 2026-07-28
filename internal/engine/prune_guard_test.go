@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudstic/cli/internal/storelayer"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/store"
 )
@@ -35,7 +36,7 @@ func TestPruneManager_AbortsWhenSnapshotsVanishButObjectsRemain(t *testing.T) {
 		t.Fatalf("put filemeta: %v", err)
 	}
 
-	metered := store.NewMeteredStore(&hiddenSnapshotStore{ObjectStore: mockStore})
+	metered := storelayer.NewMeteredStore(&hiddenSnapshotStore{ObjectStore: mockStore})
 	pm := NewPruneManager(metered, ui.NewNoOpReporter())
 
 	result, err := pm.Run(ctx)
@@ -55,7 +56,7 @@ func TestPruneManager_EmptyRepositorySucceeds(t *testing.T) {
 	ctx := context.Background()
 	mockStore := NewMockStore()
 
-	metered := store.NewMeteredStore(mockStore)
+	metered := storelayer.NewMeteredStore(mockStore)
 	pm := NewPruneManager(metered, ui.NewNoOpReporter())
 
 	result, err := pm.Run(ctx)

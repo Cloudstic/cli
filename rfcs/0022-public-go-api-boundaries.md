@@ -1,8 +1,8 @@
 # RFC 0022: Public Go API Boundaries
 
-- **Status:** Proposed
+- **Status:** Implemented (stages 1–3); stage 4 outstanding
 - **Date:** 2026-07-28
-- **Affects:** `client.go`, `pkg/source`, `pkg/store`, `docs/`
+- **Affects:** `client.go`, `pkg/source`, `pkg/store`, `internal/storelayer`, `docs/`
 
 ## Abstract
 
@@ -189,9 +189,15 @@ pkg/store/local/
 pkg/store/s3/                 # aws-sdk-go-v2
 pkg/store/b2/
 pkg/store/sftp/
-pkg/store/hybrid/             # PostgreSQL + B2
+pkg/store/internal/keyprefix/ # key-prefix helper shared by s3 + b2
+pkg/store/storetest/          # shared test doubles (MemStore, FaultStore,
+                              # AssertRangeGetterConformance)
 internal/storelayer/          # Compressed, Encrypted, Metered, Pack, KeyCache
 ```
+
+There is no `pkg/store/hybrid`: `HybridStore` was removed from the code some
+time ago (commit "remove hybrid store") but was still described in `AGENTS.md`,
+which this change corrects.
 
 `cmd/cloudstic/storebuild.go` updates its imports; `RangeGetter` conformance
 (`assertRangeGetterConformance`) and the packfile tests move with their
@@ -299,17 +305,14 @@ its own schedule.
    `internal/e2e/fixtures/customsource/`, itself *not* importing `internal/`
    despite its own path) so CI enforces the contract on every change, or be a
    one-time manual verification?
-2. `pkg/store/hybrid` depends on both `lib/pq`/`pgx` and the B2 client — does
-   it get its own subpackage, or is its dual dependency reason enough to leave
-   it out of the split's first pass?
-3. Does the API-boundary test need an allowlist mechanism for cases where an
+2. Does the API-boundary test need an allowlist mechanism for cases where an
    internal type is deliberately, temporarily exposed during a staged rollout,
    or should any leak simply fail the test until aliased?
-4. `withDebugStore` (`cmd/cloudstic/storebuild.go`) mutates the global
+3. `withDebugStore` (`cmd/cloudstic/storebuild.go`) mutates the global
    `logger.Writer` as a side effect of a function that reads as pure. Worth
    separating, but it is a standalone cleanup rather than part of this RFC —
    track it separately.
-5. **Root-package congestion.** `client.go` is ~1100 lines, but only 20 of its
+4. **Root-package congestion.** `client.go` is ~1100 lines, but only 20 of its
    declarations are `Client` methods and 8 are locally defined types; the other
    ~118 are pass-through re-exports (60 type aliases + 58 option vars). Most of
    that is the intended cost of the facade — it is what lets `internal/engine`
@@ -325,6 +328,33 @@ its own schedule.
      mirrored line. Inverting the dependency — defining the option types in a
      public package that `internal/engine` imports — would remove the mirroring
      entirely. That is a larger change than this RFC and deserves its own.
+
+## Implementation notes
+
+Details settled while implementing, that the plan above did not anticipate:
+
+- **`KeySlotPrefix` moved to `pkg/store`.** It lived beside the encryption
+  layer, but `pkg/keychain` — a public package — needs it, and it is a
+  repository key-namespace fact rather than decorator machinery.
+- **`httpRangeHeader` became `store.HTTPRangeHeader`.** Backends in their own
+  packages still need it to implement `RangeGetter`.
+- **`ErrPlaintextObject` is re-exported from `client.go`.** Moving
+  `EncryptedStore` internal would otherwise have made a user-facing sentinel
+  unreachable; callers need it to tell "never encrypted" from "wrong key".
+- **`pkg/store/storetest` grew `MemStore` and
+  `AssertRangeGetterConformance`.** The per-backend conformance suite could no
+  longer live in `pkg/store` once the backends moved out. `storetest`
+  redeclares the interfaces it needs instead of importing `pkg/store`, because
+  `pkg/store`'s own internal tests import `storetest` — importing back would
+  make the test binary import itself.
+- **Some `pkg/store` tests became `package store_test`.** Tests needing a real
+  backend cannot be internal to `pkg/store`, since `pkg/store/local` imports
+  `pkg/store`. The one test of an unexported helper (`fmtBytes`) stays internal
+  in its own file.
+- **Decorator type names were kept** (`CompressedStore`, not `Compressed`).
+  Unlike the provider renames in §3, these are internal, so there is no public
+  commitment to get right and renaming would be churn on an already-large
+  change.
 
 ## Resolved decisions
 

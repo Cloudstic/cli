@@ -7,8 +7,8 @@ import (
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
+	"github.com/cloudstic/cli/internal/storelayer"
 	"github.com/cloudstic/cli/internal/ui"
-	"github.com/cloudstic/cli/pkg/store"
 )
 
 func TestPruneManager_Run(t *testing.T) {
@@ -54,7 +54,7 @@ func TestPruneManager_Run(t *testing.T) {
 	_ = mockStore.Put(ctx, "content/garbage", []byte("{}"))
 
 	// 3. Run Prune
-	metered := store.NewMeteredStore(mockStore)
+	metered := storelayer.NewMeteredStore(mockStore)
 	pm := NewPruneManager(metered, ui.NewNoOpReporter())
 	result, err := pm.Run(ctx)
 	if err != nil {

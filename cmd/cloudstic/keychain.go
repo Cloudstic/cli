@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/moby/term"
+
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/crypto"
 	"github.com/cloudstic/cli/pkg/keychain"
-	"github.com/moby/term"
 )
 
 // buildKeychain assembles the credential chain that unlocks a repository, in

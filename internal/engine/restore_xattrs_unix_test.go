@@ -8,10 +8,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cloudstic/cli/internal/core"
-	"github.com/cloudstic/cli/internal/ui"
-	"github.com/cloudstic/cli/pkg/store"
 	"golang.org/x/sys/unix"
+
+	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/internal/storelayer"
+	"github.com/cloudstic/cli/internal/ui"
 )
 
 func TestApplyRestoreXattrs_SetsAllXattrs(t *testing.T) {
@@ -118,7 +119,7 @@ func TestRestoreManager_RunToDir_ReplaysXattrs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFSRestoreWriter: %v", err)
 	}
-	rsMgr := NewRestoreManager(store.NewCompressedStore(dest), ui.NewNoOpReporter())
+	rsMgr := NewRestoreManager(storelayer.NewCompressedStore(dest), ui.NewNoOpReporter())
 	if _, err := rsMgr.Run(t.Context(), writer, ""); err != nil {
 		t.Fatalf("Run: %v", err)
 	}

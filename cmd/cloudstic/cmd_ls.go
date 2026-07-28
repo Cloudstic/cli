@@ -7,10 +7,11 @@ import (
 	"sort"
 	"time"
 
+	"github.com/jedib0t/go-pretty/v6/list"
+
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/engine"
-	"github.com/jedib0t/go-pretty/v6/list"
 )
 
 type lsArgs struct {

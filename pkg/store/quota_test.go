@@ -12,7 +12,7 @@ func TestQuotaStore_UnderBudget(t *testing.T) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	defer cancel(nil)
 
-	qs := NewQuotaStore(newMemStore(), 1000, cancel)
+	qs := NewQuotaStore(storetest.NewMemStore(), 1000, cancel)
 
 	if err := qs.Put(ctx, "chunk/aaa", make([]byte, 500)); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -26,7 +26,7 @@ func TestQuotaStore_ExceedsBudget(t *testing.T) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	defer cancel(nil)
 
-	qs := NewQuotaStore(newMemStore(), 100, cancel)
+	qs := NewQuotaStore(storetest.NewMemStore(), 100, cancel)
 
 	if err := qs.Put(ctx, "chunk/aaa", make([]byte, 50)); err != nil {
 		t.Fatalf("Put 1: %v", err)
@@ -50,7 +50,7 @@ func TestQuotaStore_ExactBudget(t *testing.T) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	defer cancel(nil)
 
-	qs := NewQuotaStore(newMemStore(), 100, cancel)
+	qs := NewQuotaStore(storetest.NewMemStore(), 100, cancel)
 
 	if err := qs.Put(ctx, "chunk/aaa", make([]byte, 100)); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -64,7 +64,7 @@ func TestQuotaStore_MultiplePutsAccumulate(t *testing.T) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	defer cancel(nil)
 
-	qs := NewQuotaStore(newMemStore(), 100, cancel)
+	qs := NewQuotaStore(storetest.NewMemStore(), 100, cancel)
 
 	for i := range 10 {
 		if err := qs.Put(ctx, fmt.Sprintf("chunk/%d", i), make([]byte, 10)); err != nil {
@@ -87,7 +87,7 @@ func TestQuotaStore_PutErrorDoesNotCount(t *testing.T) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	defer cancel(nil)
 
-	failing := &storetest.FaultStore{ObjectStore: newMemStore(), FailPut: storetest.AlwaysFail(fmt.Errorf("disk full"))}
+	failing := &storetest.FaultStore{ObjectStore: storetest.NewMemStore(), FailPut: storetest.AlwaysFail(fmt.Errorf("disk full"))}
 	qs := NewQuotaStore(failing, 10, cancel)
 
 	if err := qs.Put(ctx, "chunk/aaa", make([]byte, 50)); err == nil {

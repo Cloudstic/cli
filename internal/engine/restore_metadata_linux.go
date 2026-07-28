@@ -10,8 +10,9 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/cloudstic/cli/internal/core"
 	"golang.org/x/sys/unix"
+
+	"github.com/cloudstic/cli/internal/core"
 )
 
 func applyRestoreTimes(path string, meta core.FileMeta, warn func(string, ...interface{})) error {

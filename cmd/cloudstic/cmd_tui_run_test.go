@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
 	cloudstic "github.com/cloudstic/cli"
 )
 

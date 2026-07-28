@@ -13,6 +13,7 @@ import (
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
 	"github.com/cloudstic/cli/internal/logger"
+	"github.com/cloudstic/cli/internal/storelayer"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/source"
 	"github.com/cloudstic/cli/pkg/store"
@@ -88,7 +89,7 @@ func WithExcludeHash(hash string) BackupOption {
 type BackupManager struct {
 	source     source.Source
 	store      store.ObjectStore
-	keyCache   *store.KeyCacheStore
+	keyCache   *storelayer.KeyCacheStore
 	tree       *hamt.Tree
 	txn        *hamt.Txn // working tree; opened by scanSource, written by Commit
 	chunker    *Chunker
@@ -115,7 +116,7 @@ func NewBackupManager(src source.Source, dest store.ObjectStore, reporter ui.Rep
 	}
 
 	sourceInfo := src.Info()
-	keyCache := store.NewKeyCacheStore(dest)
+	keyCache := storelayer.NewKeyCacheStore(dest)
 	return &BackupManager{
 		source:       src,
 		store:        keyCache,

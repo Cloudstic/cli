@@ -7,11 +7,12 @@ import (
 	"io"
 	"os"
 
+	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/moby/term"
+
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/keychain"
-	"github.com/jedib0t/go-pretty/v6/table"
-	"github.com/moby/term"
 )
 
 type keyListArgs struct {

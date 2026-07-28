@@ -1,6 +1,12 @@
 codecov:
   require_ci_to_pass: true
 
+# Test-support code. These packages exist to be consumed by *other* packages'
+# tests, so Go's per-package coverage cannot attribute their execution and
+# reports them as 0% however heavily they are used.
+ignore:
+  - "pkg/store/storetest/**"
+
 coverage:
   status:
     project:

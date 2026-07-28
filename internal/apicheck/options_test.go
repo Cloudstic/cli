@@ -43,13 +43,25 @@ func TestEveryEngineOptionIsReExported(t *testing.T) {
 		t.Fatal("found no exported With* constructors in internal/engine; the loader is wrong")
 	}
 
-	src, err := os.ReadFile(filepath.Join(moduleRoot(t), "client.go"))
+	// Scan every file in the root package, not just client.go: the facade is
+	// split across per-domain files (backup.go, retention.go, ...), and a test
+	// pinned to one filename silently stops checking the rest.
+	rootFiles, err := filepath.Glob(filepath.Join(moduleRoot(t), "*.go"))
 	if err != nil {
-		t.Fatalf("read client.go: %v", err)
+		t.Fatalf("glob root package: %v", err)
 	}
 	reExported := map[string]bool{}
-	for _, m := range rootReExport.FindAllStringSubmatch(string(src), -1) {
-		reExported[m[1]] = true
+	for _, path := range rootFiles {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		for _, m := range rootReExport.FindAllStringSubmatch(string(src), -1) {
+			reExported[m[1]] = true
+		}
 	}
 
 	var missing []string
@@ -67,7 +79,7 @@ func TestEveryEngineOptionIsReExported(t *testing.T) {
 	if len(missing) > 0 {
 		t.Errorf("internal/engine exports %d option constructor(s) the root package does not "+
 			"re-export, so external callers cannot pass them:\n  %s\n\n"+
-			"Add `%s = engine.%s` to the matching var block in client.go, or unexport the "+
+			"Add `%s = engine.%s` to the matching var block in the root package, or unexport the "+
 			"option if it is not meant for callers.",
 			len(missing), strings.Join(missing, "\n  "), missing[0], missing[0])
 	}

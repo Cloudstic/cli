@@ -131,6 +131,11 @@ func TestInitStampsCurrentFormatVersion(t *testing.T) {
 	}
 	if cfg == nil {
 		t.Fatal("expected a config after init")
+		// t.Fatal already ends the test. The explicit return is for
+		// staticcheck: on the linux/amd64 CI runner it does not model Fatal
+		// as terminating here and reports the dereference below as SA5011,
+		// though it does so on other platforms. Keep it.
+		return
 	}
 	if cfg.Version != core.RepoFormatVersion {
 		t.Errorf("init stamped version %d, want %d", cfg.Version, core.RepoFormatVersion)

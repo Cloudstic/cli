@@ -1,6 +1,6 @@
 //go:build windows
 
-package secretref
+package backends
 
 import (
 	"context"

@@ -8,7 +8,7 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"github.com/cloudstic/cli/internal/secretref"
+	secretrefbackends "github.com/cloudstic/cli/pkg/secretref/backends"
 )
 
 func TestOneDrive_TokenPersistence(t *testing.T) {
@@ -29,7 +29,7 @@ func TestOneDrive_TokenPersistence(t *testing.T) {
 	}
 
 	// 2. Save and Load from ref
-	resolver := secretref.NewDefaultResolver()
+	resolver := secretrefbackends.NewDefaultResolver()
 	refPath := filepath.Join(tmpDir, "od-ref-token.json")
 	ref := "file://" + refPath
 	ctx := context.Background()
@@ -47,7 +47,7 @@ func TestOneDrive_TokenPersistence(t *testing.T) {
 }
 
 func TestOneDrive_Options(t *testing.T) {
-	resolver := secretref.NewDefaultResolver()
+	resolver := secretrefbackends.NewDefaultResolver()
 	opts := []Option{
 		WithClientID("client-id"),
 		WithResolver(resolver),

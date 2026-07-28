@@ -1,10 +1,12 @@
-package secretref
+package backends
 
 import (
 	"context"
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/cloudstic/cli/pkg/secretref"
 )
 
 // countingBackend counts Resolve calls and can gate them so concurrent callers
@@ -16,7 +18,7 @@ type countingBackend struct {
 	entered chan struct{} // if non-nil, signaled once per Resolve entry
 }
 
-func (b *countingBackend) Resolve(_ context.Context, _ Ref) (string, error) {
+func (b *countingBackend) Resolve(_ context.Context, _ secretref.Ref) (string, error) {
 	b.calls.Add(1)
 	if b.entered != nil {
 		b.entered <- struct{}{}
@@ -29,7 +31,7 @@ func (b *countingBackend) Resolve(_ context.Context, _ Ref) (string, error) {
 
 func TestResolver_CachesNativeScheme(t *testing.T) {
 	b := &countingBackend{value: "sekret"}
-	r := NewResolver(map[string]Backend{"keychain": b})
+	r := secretref.NewResolver(map[string]secretref.Backend{"keychain": b})
 
 	for range 3 {
 		got, err := r.Resolve(context.Background(), "keychain://cloudstic/store/prod/password")
@@ -45,7 +47,7 @@ func TestResolver_CachesNativeScheme(t *testing.T) {
 func TestResolver_DoesNotCacheEnv(t *testing.T) {
 	values := map[string]string{"CLOUDSTIC_PASSWORD": "a"}
 	var lookups atomic.Int64
-	r := NewResolver(map[string]Backend{"env": NewEnvBackend(func(name string) (string, bool) {
+	r := secretref.NewResolver(map[string]secretref.Backend{"env": NewEnvBackend(func(name string) (string, bool) {
 		lookups.Add(1)
 		v, ok := values[name]
 		return v, ok
@@ -68,7 +70,7 @@ func TestResolver_ConcurrentResolveDeduplicates(t *testing.T) {
 		release: make(chan struct{}),
 		entered: make(chan struct{}, 1),
 	}
-	r := NewResolver(map[string]Backend{"keychain": b})
+	r := secretref.NewResolver(map[string]secretref.Backend{"keychain": b})
 
 	var wg sync.WaitGroup
 	errs := make(chan error, n)
@@ -100,7 +102,7 @@ func TestResolver_ConcurrentResolveDeduplicates(t *testing.T) {
 
 func TestResolver_StoreWriteThroughAvoidsResolve(t *testing.T) {
 	b := &writeThroughBackend{stored: map[string]string{}}
-	r := NewResolver(map[string]Backend{"keychain": b})
+	r := secretref.NewResolver(map[string]secretref.Backend{"keychain": b})
 
 	ref := "keychain://cloudstic/store/prod/password"
 	if err := r.Store(context.Background(), ref, "written"); err != nil {
@@ -121,23 +123,23 @@ type writeThroughBackend struct {
 	stored map[string]string
 }
 
-func (b *writeThroughBackend) Scheme() string      { return "keychain" }
-func (b *writeThroughBackend) DisplayName() string { return "Test Keychain" }
+func (b *writeThroughBackend) Scheme() string       { return "keychain" }
+func (b *writeThroughBackend) DisplayName() string  { return "Test Keychain" }
 func (b *writeThroughBackend) WriteSupported() bool { return true }
 func (b *writeThroughBackend) DefaultRef(string, string) string {
 	return "keychain://cloudstic/store/prod/password"
 }
-func (b *writeThroughBackend) Exists(_ context.Context, ref Ref) (bool, error) {
+func (b *writeThroughBackend) Exists(_ context.Context, ref secretref.Ref) (bool, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	_, ok := b.stored[ref.Raw]
 	return ok, nil
 }
-func (b *writeThroughBackend) Store(_ context.Context, ref Ref, value string) error {
+func (b *writeThroughBackend) Store(_ context.Context, ref secretref.Ref, value string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.stored[ref.Raw] = value
 	return nil
 }
 
-var errNonMatch = &Error{Kind: KindBackendUnavailable, Detail: "value mismatch"}
+var errNonMatch = &secretref.Error{Kind: secretref.KindBackendUnavailable, Detail: "value mismatch"}

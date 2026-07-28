@@ -11,11 +11,11 @@ import (
 	"github.com/cloudstic/cli/internal/engine"
 	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/internal/repoconfig"
-	"github.com/cloudstic/cli/internal/secretref"
 	"github.com/cloudstic/cli/internal/storelayer"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/crypto"
 	"github.com/cloudstic/cli/pkg/keychain"
+	"github.com/cloudstic/cli/pkg/secretref"
 	"github.com/cloudstic/cli/pkg/source"
 	"github.com/cloudstic/cli/pkg/store"
 )

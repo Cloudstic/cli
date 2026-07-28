@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	cloudstic "github.com/cloudstic/cli"
-	"github.com/cloudstic/cli/internal/secretref"
 	"github.com/cloudstic/cli/pkg/keychain"
+	"github.com/cloudstic/cli/pkg/secretref"
 )
 
 type writableBackendStub struct {

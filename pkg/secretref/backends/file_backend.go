@@ -1,4 +1,4 @@
-package secretref
+package backends
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/internal/paths"
 	"github.com/cloudstic/cli/pkg/crypto"
+	"github.com/cloudstic/cli/pkg/secretref"
 )
 
 // FileBackend handles file://<path> references.
@@ -21,7 +22,7 @@ func NewFileBackend() *FileBackend {
 	return &FileBackend{}
 }
 
-func (b *FileBackend) Resolve(ctx context.Context, ref Ref) (string, error) {
+func (b *FileBackend) Resolve(ctx context.Context, ref secretref.Ref) (string, error) {
 	data, err := b.LoadBlob(ctx, ref)
 	if err != nil {
 		return "", err
@@ -29,30 +30,30 @@ func (b *FileBackend) Resolve(ctx context.Context, ref Ref) (string, error) {
 	return string(data), nil
 }
 
-func (b *FileBackend) LoadBlob(_ context.Context, ref Ref) ([]byte, error) {
+func (b *FileBackend) LoadBlob(_ context.Context, ref secretref.Ref) ([]byte, error) {
 	path := filepath.Clean(ref.Path)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, errorf(KindNotFound, ref.Raw, "file does not exist", err)
+			return nil, secretref.NewError(secretref.KindNotFound, ref.Raw, "file does not exist", err)
 		}
-		return nil, errorf(KindBackendUnavailable, ref.Raw, "failed to read file", err)
+		return nil, secretref.NewError(secretref.KindBackendUnavailable, ref.Raw, "failed to read file", err)
 	}
 	return data, nil
 }
 
-func (b *FileBackend) SaveBlob(_ context.Context, ref Ref, data []byte) error {
+func (b *FileBackend) SaveBlob(_ context.Context, ref secretref.Ref, data []byte) error {
 	path := filepath.Clean(ref.Path)
 	if err := paths.SaveAtomic(path, data); err != nil {
-		return errorf(KindBackendUnavailable, ref.Raw, "failed to save file atomically", err)
+		return secretref.NewError(secretref.KindBackendUnavailable, ref.Raw, "failed to save file atomically", err)
 	}
 	return nil
 }
 
-func (b *FileBackend) DeleteBlob(_ context.Context, ref Ref) error {
+func (b *FileBackend) DeleteBlob(_ context.Context, ref secretref.Ref) error {
 	path := filepath.Clean(ref.Path)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return errorf(KindBackendUnavailable, ref.Raw, "failed to delete file", err)
+		return secretref.NewError(secretref.KindBackendUnavailable, ref.Raw, "failed to delete file", err)
 	}
 	return nil
 }
@@ -68,7 +69,7 @@ func (b *FileBackend) DefaultRef(name, account string) string {
 	return "file:///tmp/cloudstic-secret-" + name
 }
 
-func (b *FileBackend) Exists(_ context.Context, ref Ref) (bool, error) {
+func (b *FileBackend) Exists(_ context.Context, ref secretref.Ref) (bool, error) {
 	_, err := os.Stat(filepath.Clean(ref.Path))
 	if err == nil {
 		return true, nil
@@ -79,7 +80,7 @@ func (b *FileBackend) Exists(_ context.Context, ref Ref) (bool, error) {
 	return false, err
 }
 
-func (b *FileBackend) Store(ctx context.Context, ref Ref, value string) error {
+func (b *FileBackend) Store(ctx context.Context, ref secretref.Ref, value string) error {
 	return b.SaveBlob(ctx, ref, []byte(value))
 }
 
@@ -91,7 +92,7 @@ func NewConfigTokenBackend() *ConfigTokenBackend {
 	return &ConfigTokenBackend{}
 }
 
-func (b *ConfigTokenBackend) Resolve(ctx context.Context, ref Ref) (string, error) {
+func (b *ConfigTokenBackend) Resolve(ctx context.Context, ref secretref.Ref) (string, error) {
 	data, err := b.LoadBlob(ctx, ref)
 	if err != nil {
 		return "", err
@@ -99,7 +100,7 @@ func (b *ConfigTokenBackend) Resolve(ctx context.Context, ref Ref) (string, erro
 	return string(data), nil
 }
 
-func (b *ConfigTokenBackend) LoadBlob(_ context.Context, ref Ref) ([]byte, error) {
+func (b *ConfigTokenBackend) LoadBlob(_ context.Context, ref secretref.Ref) ([]byte, error) {
 	path, err := b.resolvePath(ref)
 	if err != nil {
 		return nil, err
@@ -107,14 +108,14 @@ func (b *ConfigTokenBackend) LoadBlob(_ context.Context, ref Ref) ([]byte, error
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, errorf(KindNotFound, ref.Raw, "managed token file does not exist", err)
+			return nil, secretref.NewError(secretref.KindNotFound, ref.Raw, "managed token file does not exist", err)
 		}
-		return nil, errorf(KindBackendUnavailable, ref.Raw, "failed to read managed token file", err)
+		return nil, secretref.NewError(secretref.KindBackendUnavailable, ref.Raw, "failed to read managed token file", err)
 	}
 
 	key, err := b.getEncryptionKey()
 	if err != nil {
-		return nil, errorf(KindBackendUnavailable, ref.Raw, "failed to derive encryption key", err)
+		return nil, secretref.NewError(secretref.KindBackendUnavailable, ref.Raw, "failed to derive encryption key", err)
 	}
 
 	decrypted, err := crypto.Decrypt(data, key)
@@ -124,12 +125,12 @@ func (b *ConfigTokenBackend) LoadBlob(_ context.Context, ref Ref) ([]byte, error
 			logger.Debugf("decryption failed for %q, but data is not encrypted; falling back to plaintext", ref.Raw)
 			return data, nil
 		}
-		return nil, errorf(KindBackendUnavailable, ref.Raw, "failed to decrypt managed token file", err)
+		return nil, secretref.NewError(secretref.KindBackendUnavailable, ref.Raw, "failed to decrypt managed token file", err)
 	}
 	return decrypted, nil
 }
 
-func (b *ConfigTokenBackend) SaveBlob(ctx context.Context, ref Ref, data []byte) error {
+func (b *ConfigTokenBackend) SaveBlob(ctx context.Context, ref secretref.Ref, data []byte) error {
 	path, err := b.resolvePath(ref)
 	if err != nil {
 		return err
@@ -137,27 +138,27 @@ func (b *ConfigTokenBackend) SaveBlob(ctx context.Context, ref Ref, data []byte)
 
 	key, err := b.getEncryptionKey()
 	if err != nil {
-		return errorf(KindBackendUnavailable, ref.Raw, "failed to derive encryption key", err)
+		return secretref.NewError(secretref.KindBackendUnavailable, ref.Raw, "failed to derive encryption key", err)
 	}
 
 	encrypted, err := crypto.Encrypt(data, key)
 	if err != nil {
-		return errorf(KindBackendUnavailable, ref.Raw, "failed to encrypt token", err)
+		return secretref.NewError(secretref.KindBackendUnavailable, ref.Raw, "failed to encrypt token", err)
 	}
 
 	if err := paths.SaveAtomic(path, encrypted); err != nil {
-		return errorf(KindBackendUnavailable, ref.Raw, "failed to save managed token file atomically", err)
+		return secretref.NewError(secretref.KindBackendUnavailable, ref.Raw, "failed to save managed token file atomically", err)
 	}
 	return nil
 }
 
-func (b *ConfigTokenBackend) DeleteBlob(ctx context.Context, ref Ref) error {
+func (b *ConfigTokenBackend) DeleteBlob(ctx context.Context, ref secretref.Ref) error {
 	path, err := b.resolvePath(ref)
 	if err != nil {
 		return err
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return errorf(KindBackendUnavailable, ref.Raw, "failed to delete managed token file", err)
+		return secretref.NewError(secretref.KindBackendUnavailable, ref.Raw, "failed to delete managed token file", err)
 	}
 	return nil
 }
@@ -176,7 +177,7 @@ func (b *ConfigTokenBackend) DefaultRef(name, account string) string {
 	return "config-token://" + provider + "/" + name
 }
 
-func (b *ConfigTokenBackend) Exists(ctx context.Context, ref Ref) (bool, error) {
+func (b *ConfigTokenBackend) Exists(ctx context.Context, ref secretref.Ref) (bool, error) {
 	path, err := b.resolvePath(ref)
 	if err != nil {
 		return false, err
@@ -191,7 +192,7 @@ func (b *ConfigTokenBackend) Exists(ctx context.Context, ref Ref) (bool, error) 
 	return false, err
 }
 
-func (b *ConfigTokenBackend) Store(ctx context.Context, ref Ref, value string) error {
+func (b *ConfigTokenBackend) Store(ctx context.Context, ref secretref.Ref, value string) error {
 	return b.SaveBlob(ctx, ref, []byte(value))
 }
 
@@ -226,43 +227,43 @@ func (b *ConfigTokenBackend) getEncryptionKey() ([]byte, error) {
 	return crypto.DeriveKey(salt, info)
 }
 
-func (b *ConfigTokenBackend) resolvePath(ref Ref) (string, error) {
+func (b *ConfigTokenBackend) resolvePath(ref secretref.Ref) (string, error) {
 	p := strings.TrimPrefix(ref.Path, "/")
 	if p == "" || pathpkg.IsAbs(p) {
-		return "", errorf(KindInvalidRef, ref.Raw, "invalid managed token path; expected <provider>/<name>", nil)
+		return "", secretref.NewError(secretref.KindInvalidRef, ref.Raw, "invalid managed token path; expected <provider>/<name>", nil)
 	}
 	cleaned := pathpkg.Clean(p)
 	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-		return "", errorf(KindInvalidRef, ref.Raw, "invalid managed token path; expected <provider>/<name>", nil)
+		return "", secretref.NewError(secretref.KindInvalidRef, ref.Raw, "invalid managed token path; expected <provider>/<name>", nil)
 	}
 	parts := strings.Split(cleaned, "/")
 	if len(parts) != 2 {
-		return "", errorf(KindInvalidRef, ref.Raw, "invalid managed token path; expected <provider>/<name>", nil)
+		return "", secretref.NewError(secretref.KindInvalidRef, ref.Raw, "invalid managed token path; expected <provider>/<name>", nil)
 	}
 	for _, part := range parts {
 		if part == "" || part == "." || part == ".." {
-			return "", errorf(KindInvalidRef, ref.Raw, "invalid managed token path; expected <provider>/<name>", nil)
+			return "", secretref.NewError(secretref.KindInvalidRef, ref.Raw, "invalid managed token path; expected <provider>/<name>", nil)
 		}
 	}
 
 	configDir, err := paths.ConfigDir()
 	if err != nil {
-		return "", errorf(KindBackendUnavailable, ref.Raw, "failed to determine config directory", err)
+		return "", secretref.NewError(secretref.KindBackendUnavailable, ref.Raw, "failed to determine config directory", err)
 	}
 
 	// We store tokens in a 'tokens' subdirectory for hygiene.
 	tokenDir := filepath.Join(configDir, "tokens")
 	if err := os.MkdirAll(tokenDir, 0700); err != nil {
-		return "", errorf(KindBackendUnavailable, ref.Raw, "failed to create tokens directory", err)
+		return "", secretref.NewError(secretref.KindBackendUnavailable, ref.Raw, "failed to create tokens directory", err)
 	}
 
 	resolved := filepath.Join(tokenDir, filepath.FromSlash(cleaned)+".json")
 	rel, err := filepath.Rel(tokenDir, resolved)
 	if err != nil {
-		return "", errorf(KindBackendUnavailable, ref.Raw, "failed to resolve managed token path", err)
+		return "", secretref.NewError(secretref.KindBackendUnavailable, ref.Raw, "failed to resolve managed token path", err)
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return "", errorf(KindInvalidRef, ref.Raw, "managed token path escapes token directory", nil)
+		return "", secretref.NewError(secretref.KindInvalidRef, ref.Raw, "managed token path escapes token directory", nil)
 	}
 	return resolved, nil
 }

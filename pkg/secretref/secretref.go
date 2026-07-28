@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -48,6 +47,14 @@ func (e *Error) Unwrap() error {
 
 func errorf(kind ErrorKind, ref, detail string, err error) *Error {
 	return &Error{Kind: kind, Ref: ref, Detail: detail, Err: err}
+}
+
+// NewError builds a typed secret-reference error. Backend implementations
+// outside this package use it to report failures in the same shape the
+// built-in backends do, so callers can branch on Kind regardless of which
+// backend produced the error.
+func NewError(kind ErrorKind, ref, detail string, err error) *Error {
+	return errorf(kind, ref, detail, err)
 }
 
 var schemeRe = regexp.MustCompile(`^[a-z][a-z0-9+.-]*$`)
@@ -169,19 +176,6 @@ func (r *Resolver) cacheInvalidate(key string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.cache, key)
-}
-
-// NewDefaultResolver builds the standard resolver with built-in env, file,
-// config-token, and platform-native secret backends.
-func NewDefaultResolver() *Resolver {
-	return NewResolver(map[string]Backend{
-		"env":            NewEnvBackend(nil),
-		"file":           NewFileBackend(),
-		"config-token":   NewConfigTokenBackend(),
-		"keychain":       NewKeychainBackend(),
-		"wincred":        NewWincredBackend(),
-		"secret-service": NewSecretServiceBackend(),
-	})
 }
 
 // Resolve parses and resolves a secret reference.
@@ -381,36 +375,4 @@ func (r *Resolver) lookupWritableBackend(raw string) (Ref, WritableBackend, erro
 		return Ref{}, nil, errorf(KindBackendUnavailable, parsed.Raw, fmt.Sprintf("scheme %q does not support writing secrets", parsed.Scheme), nil)
 	}
 	return parsed, writable, nil
-}
-
-type EnvLookup func(string) (string, bool)
-
-// EnvBackend resolves env://VAR references.
-type EnvBackend struct {
-	lookup EnvLookup
-}
-
-func NewEnvBackend(lookup EnvLookup) *EnvBackend {
-	if lookup == nil {
-		lookup = os.LookupEnv
-	}
-	return &EnvBackend{lookup: lookup}
-}
-
-var envNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-
-func (b *EnvBackend) Resolve(_ context.Context, ref Ref) (string, error) {
-	name := strings.TrimSpace(ref.Path)
-	if strings.HasPrefix(name, "/") {
-		name = strings.TrimLeft(name, "/")
-	}
-	if name == "" || !envNameRe.MatchString(name) {
-		return "", errorf(KindInvalidRef, ref.Raw, "invalid env variable name in env:// reference", nil)
-	}
-
-	value, ok := b.lookup(name)
-	if !ok {
-		return "", errorf(KindNotFound, ref.Raw, fmt.Sprintf("environment variable %q is not set", name), nil)
-	}
-	return value, nil
 }

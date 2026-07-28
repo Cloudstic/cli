@@ -1,6 +1,6 @@
 //go:build !linux
 
-package secretref
+package backends
 
 import (
 	"context"

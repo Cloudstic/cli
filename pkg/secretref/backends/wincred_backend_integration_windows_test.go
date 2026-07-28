@@ -1,6 +1,6 @@
 //go:build windows
 
-package secretref
+package backends
 
 import (
 	"context"
@@ -11,6 +11,8 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/cloudstic/cli/pkg/secretref"
 )
 
 var (
@@ -22,9 +24,9 @@ func TestWincredBackendIntegration(t *testing.T) {
 	secret := "cloudstic-test-secret"
 
 	b := NewWincredBackend()
-	if err := b.Store(context.Background(), Ref{Raw: "wincred://" + target, Scheme: "wincred", Path: target}, secret); err != nil {
-		var refErr *Error
-		if errors.As(err, &refErr) && refErr.Kind == KindBackendUnavailable {
+	if err := b.Store(context.Background(), secretref.Ref{Raw: "wincred://" + target, Scheme: "wincred", Path: target}, secret); err != nil {
+		var refErr *secretref.Error
+		if errors.As(err, &refErr) && refErr.Kind == secretref.KindBackendUnavailable {
 			t.Skipf("Credential Manager unavailable in this logon session: %v", err)
 		}
 		t.Fatalf("Store: %v", err)
@@ -33,14 +35,14 @@ func TestWincredBackendIntegration(t *testing.T) {
 		_ = deleteTestGenericCredential(target)
 	})
 
-	got, err := b.Resolve(context.Background(), Ref{
+	got, err := b.Resolve(context.Background(), secretref.Ref{
 		Raw:    "wincred://" + target,
 		Scheme: "wincred",
 		Path:   target,
 	})
 	if err != nil {
-		var refErr *Error
-		if errors.As(err, &refErr) && refErr.Kind == KindBackendUnavailable {
+		var refErr *secretref.Error
+		if errors.As(err, &refErr) && refErr.Kind == secretref.KindBackendUnavailable {
 			t.Skipf("wincred backend unavailable: %v", err)
 		}
 		t.Fatalf("Resolve: %v", err)

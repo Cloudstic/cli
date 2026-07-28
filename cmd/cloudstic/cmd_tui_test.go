@@ -9,8 +9,9 @@ import (
 	"testing"
 
 	cloudstic "github.com/cloudstic/cli"
-	"github.com/cloudstic/cli/internal/secretref"
 	"github.com/cloudstic/cli/internal/tui/forms"
+	"github.com/cloudstic/cli/pkg/secretref"
+	secretrefbackends "github.com/cloudstic/cli/pkg/secretref/backends"
 )
 
 type testWritableSecretBackend struct {
@@ -203,7 +204,7 @@ func TestStoreSecret_WritesThroughWritableBackend(t *testing.T) {
 	oldResolver := tuiSecretResolver
 	t.Cleanup(func() { tuiSecretResolver = oldResolver })
 	tuiSecretResolver = secretref.NewResolver(map[string]secretref.Backend{
-		"env":  secretref.NewEnvBackend(nil),
+		"env":  secretrefbackends.NewEnvBackend(nil),
 		"test": secretBackend,
 	})
 

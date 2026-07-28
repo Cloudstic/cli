@@ -1,6 +1,6 @@
 //go:build darwin && cgo
 
-package secretref
+package backends
 
 import (
 	"context"
@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/keybase/go-keychain"
+
+	"github.com/cloudstic/cli/pkg/secretref"
 )
 
 func TestKeychainBackend_Integration(t *testing.T) {
@@ -47,14 +49,14 @@ func TestKeychainBackend_Integration(t *testing.T) {
 	})
 
 	b := NewKeychainBackend()
-	got, err := b.Resolve(context.Background(), Ref{
+	got, err := b.Resolve(context.Background(), secretref.Ref{
 		Raw:    "keychain://" + service + "/" + account,
 		Scheme: "keychain",
 		Path:   service + "/" + account,
 	})
 	if err != nil {
-		var refErr *Error
-		if errors.As(err, &refErr) && refErr.Kind == KindBackendUnavailable {
+		var refErr *secretref.Error
+		if errors.As(err, &refErr) && refErr.Kind == secretref.KindBackendUnavailable {
 			t.Skipf("keychain backend unavailable: %v", err)
 		}
 		t.Fatalf("Resolve: %v", err)

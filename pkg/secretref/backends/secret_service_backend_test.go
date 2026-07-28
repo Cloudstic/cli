@@ -1,9 +1,11 @@
-package secretref
+package backends
 
 import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/cloudstic/cli/pkg/secretref"
 )
 
 func TestParseSecretServicePath(t *testing.T) {
@@ -47,7 +49,7 @@ func TestSecretServiceBackendResolve(t *testing.T) {
 		return "s3cr3t", nil
 	})
 
-	got, err := b.Resolve(context.Background(), Ref{Raw: "secret-service://cloudstic/prod/password", Scheme: "secret-service", Path: "cloudstic/prod/password"})
+	got, err := b.Resolve(context.Background(), secretref.Ref{Raw: "secret-service://cloudstic/prod/password", Scheme: "secret-service", Path: "cloudstic/prod/password"})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -59,13 +61,13 @@ func TestSecretServiceBackendResolve(t *testing.T) {
 func TestSecretServiceBackendResolveErrors(t *testing.T) {
 	tests := []struct {
 		name string
-		ref  Ref
+		ref  secretref.Ref
 		err  error
-		kind ErrorKind
+		kind secretref.ErrorKind
 	}{
-		{name: "invalid path", ref: Ref{Raw: "secret-service://cloudstic", Scheme: "secret-service", Path: "cloudstic"}, kind: KindInvalidRef},
-		{name: "not found", ref: Ref{Raw: "secret-service://cloudstic/prod/password", Scheme: "secret-service", Path: "cloudstic/prod/password"}, err: errSecretServiceNotFound, kind: KindNotFound},
-		{name: "unavailable", ref: Ref{Raw: "secret-service://cloudstic/prod/password", Scheme: "secret-service", Path: "cloudstic/prod/password"}, err: errSecretServiceUnavailable, kind: KindBackendUnavailable},
+		{name: "invalid path", ref: secretref.Ref{Raw: "secret-service://cloudstic", Scheme: "secret-service", Path: "cloudstic"}, kind: secretref.KindInvalidRef},
+		{name: "not found", ref: secretref.Ref{Raw: "secret-service://cloudstic/prod/password", Scheme: "secret-service", Path: "cloudstic/prod/password"}, err: errSecretServiceNotFound, kind: secretref.KindNotFound},
+		{name: "unavailable", ref: secretref.Ref{Raw: "secret-service://cloudstic/prod/password", Scheme: "secret-service", Path: "cloudstic/prod/password"}, err: errSecretServiceUnavailable, kind: secretref.KindBackendUnavailable},
 	}
 
 	for _, tc := range tests {
@@ -81,9 +83,9 @@ func TestSecretServiceBackendResolveErrors(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
-			var refErr *Error
+			var refErr *secretref.Error
 			if !errors.As(err, &refErr) {
-				t.Fatalf("expected *Error, got %T", err)
+				t.Fatalf("expected *secretref.Error, got %T", err)
 			}
 			if refErr.Kind != tc.kind {
 				t.Fatalf("kind=%s want=%s", refErr.Kind, tc.kind)
@@ -110,7 +112,7 @@ func TestSecretServiceBackend_Exists(t *testing.T) {
 		},
 		nil,
 	)
-	exists, err := b.Exists(context.Background(), Ref{Raw: "secret-service://cloudstic/prod/password", Scheme: "secret-service", Path: "cloudstic/prod/password"})
+	exists, err := b.Exists(context.Background(), secretref.Ref{Raw: "secret-service://cloudstic/prod/password", Scheme: "secret-service", Path: "cloudstic/prod/password"})
 	if err != nil {
 		t.Fatalf("Exists: %v", err)
 	}
@@ -130,7 +132,7 @@ func TestSecretServiceBackend_Store(t *testing.T) {
 			return nil
 		},
 	)
-	if err := b.Store(context.Background(), Ref{Raw: "secret-service://cloudstic/prod/password", Scheme: "secret-service", Path: "cloudstic/prod/password"}, "secret"); err != nil {
+	if err := b.Store(context.Background(), secretref.Ref{Raw: "secret-service://cloudstic/prod/password", Scheme: "secret-service", Path: "cloudstic/prod/password"}, "secret"); err != nil {
 		t.Fatalf("Store: %v", err)
 	}
 }

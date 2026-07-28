@@ -1,4 +1,4 @@
-package secretref
+package backends
 
 import (
 	"context"
@@ -7,12 +7,14 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/cloudstic/cli/pkg/secretref"
 )
 
 func TestFileBackend_BlobRoundTrip(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "secret.bin")
-	ref, _ := Parse("file://" + path)
+	ref, _ := secretref.Parse("file://" + path)
 	data := []byte("top secret blob")
 
 	backend := NewFileBackend()
@@ -108,7 +110,7 @@ func TestConfigTokenBackend_BlobRoundTrip(t *testing.T) {
 
 	backend := NewConfigTokenBackend()
 	ctx := context.Background()
-	ref, _ := Parse("config-token://google/test-token")
+	ref, _ := secretref.Parse("config-token://google/test-token")
 	data := []byte("{\"token\":\"fake\"}")
 
 	// 1. Save
@@ -193,7 +195,7 @@ func TestConfigTokenBackend_DecryptionFallback(t *testing.T) {
 
 	backend := NewConfigTokenBackend()
 	ctx := context.Background()
-	ref, _ := Parse("config-token://google/legacy")
+	ref, _ := secretref.Parse("config-token://google/legacy")
 
 	// Manually write unencrypted data
 	tokenDir := filepath.Join(tmpDir, "tokens", "google")
@@ -220,7 +222,7 @@ func TestConfigTokenBackend_InvalidRef(t *testing.T) {
 	backend := NewConfigTokenBackend()
 	ctx := context.Background()
 
-	ref, _ := Parse("config-token://") // Parse won't actually allow this but let's be sure
+	ref, _ := secretref.Parse("config-token://") // Parse won't actually allow this but let's be sure
 	ref.Path = ""
 
 	_, err := backend.LoadBlob(ctx, ref)
@@ -235,7 +237,7 @@ func TestConfigTokenBackend_RejectsPathTraversal(t *testing.T) {
 
 	backend := NewConfigTokenBackend()
 	ctx := context.Background()
-	ref, _ := Parse("config-token://google/../escape")
+	ref, _ := secretref.Parse("config-token://google/../escape")
 
 	if err := backend.SaveBlob(ctx, ref, []byte("secret")); err == nil {
 		t.Fatal("expected traversal ref to fail")

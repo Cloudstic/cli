@@ -1,10 +1,12 @@
-package secretref
+package backends
 
 import (
 	"context"
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/cloudstic/cli/pkg/secretref"
 )
 
 var (
@@ -59,21 +61,21 @@ func parseWincredTarget(path string) (string, error) {
 	return target, nil
 }
 
-func (b *WincredBackend) Resolve(ctx context.Context, ref Ref) (string, error) {
+func (b *WincredBackend) Resolve(ctx context.Context, ref secretref.Ref) (string, error) {
 	target, err := parseWincredTarget(ref.Path)
 	if err != nil {
-		return "", errorf(KindInvalidRef, ref.Raw, err.Error(), nil)
+		return "", secretref.NewError(secretref.KindInvalidRef, ref.Raw, err.Error(), nil)
 	}
 
 	value, err := b.lookup(ctx, target)
 	if err != nil {
 		switch {
 		case errors.Is(err, errWincredNotFound):
-			return "", errorf(KindNotFound, ref.Raw, fmt.Sprintf("windows credential %q not found", target), err)
+			return "", secretref.NewError(secretref.KindNotFound, ref.Raw, fmt.Sprintf("windows credential %q not found", target), err)
 		case errors.Is(err, errWincredUnavailable):
-			return "", errorf(KindBackendUnavailable, ref.Raw, err.Error(), err)
+			return "", secretref.NewError(secretref.KindBackendUnavailable, ref.Raw, err.Error(), err)
 		default:
-			return "", errorf(KindBackendUnavailable, ref.Raw, err.Error(), err)
+			return "", secretref.NewError(secretref.KindBackendUnavailable, ref.Raw, err.Error(), err)
 		}
 	}
 
@@ -90,27 +92,27 @@ func (b *WincredBackend) DefaultRef(storeName, account string) string {
 	return "wincred://cloudstic/store/" + storeName + "/" + account
 }
 
-func (b *WincredBackend) Exists(ctx context.Context, ref Ref) (bool, error) {
+func (b *WincredBackend) Exists(ctx context.Context, ref secretref.Ref) (bool, error) {
 	target, err := parseWincredTarget(ref.Path)
 	if err != nil {
-		return false, errorf(KindInvalidRef, ref.Raw, err.Error(), nil)
+		return false, secretref.NewError(secretref.KindInvalidRef, ref.Raw, err.Error(), nil)
 	}
 
 	exists, err := b.exists(ctx, target)
 	if err != nil {
-		return false, errorf(KindBackendUnavailable, ref.Raw, err.Error(), err)
+		return false, secretref.NewError(secretref.KindBackendUnavailable, ref.Raw, err.Error(), err)
 	}
 	return exists, nil
 }
 
-func (b *WincredBackend) Store(ctx context.Context, ref Ref, value string) error {
+func (b *WincredBackend) Store(ctx context.Context, ref secretref.Ref, value string) error {
 	target, err := parseWincredTarget(ref.Path)
 	if err != nil {
-		return errorf(KindInvalidRef, ref.Raw, err.Error(), nil)
+		return secretref.NewError(secretref.KindInvalidRef, ref.Raw, err.Error(), nil)
 	}
 
 	if err := b.store(ctx, target, value); err != nil {
-		return errorf(KindBackendUnavailable, ref.Raw, err.Error(), err)
+		return secretref.NewError(secretref.KindBackendUnavailable, ref.Raw, err.Error(), err)
 	}
 	return nil
 }

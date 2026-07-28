@@ -48,14 +48,30 @@ func TestParse(t *testing.T) {
 	}
 }
 
+// stubBackend is a minimal Backend for exercising the contract itself. The
+// real backends live in the backends subpackage, which imports this one — so
+// these tests cannot use them without an import cycle, and should not: what is
+// under test here is Resolver and Parse, not any particular backend.
+type stubBackend struct {
+	lookup func(string) (string, bool)
+}
+
+func (b stubBackend) Resolve(_ context.Context, ref Ref) (string, error) {
+	v, ok := b.lookup(ref.Path)
+	if !ok {
+		return "", NewError(KindNotFound, ref.Raw, "not set", nil)
+	}
+	return v, nil
+}
+
 func TestResolver_Env(t *testing.T) {
 	resolver := NewResolver(map[string]Backend{
-		"env": NewEnvBackend(func(k string) (string, bool) {
+		"env": stubBackend{lookup: func(k string) (string, bool) {
 			if k == "CLOUDSTIC_PASSWORD" {
 				return "super-secret", true
 			}
 			return "", false
-		}),
+		}},
 	})
 
 	got, err := resolver.Resolve(context.Background(), "env://CLOUDSTIC_PASSWORD")
@@ -69,7 +85,7 @@ func TestResolver_Env(t *testing.T) {
 
 func TestResolver_Errors(t *testing.T) {
 	resolver := NewResolver(map[string]Backend{
-		"env": NewEnvBackend(func(string) (string, bool) { return "", false }),
+		"env": stubBackend{lookup: func(string) (string, bool) { return "", false }},
 	})
 
 	tests := []struct {
@@ -80,7 +96,6 @@ func TestResolver_Errors(t *testing.T) {
 		{name: "invalid syntax", ref: "bad-ref", kind: KindInvalidRef},
 		{name: "unsupported scheme", ref: "wincred://service/account", kind: KindBackendUnavailable},
 		{name: "not found", ref: "env://MISSING", kind: KindNotFound},
-		{name: "invalid env name", ref: "env://bad-name", kind: KindInvalidRef},
 	}
 
 	for _, tc := range tests {

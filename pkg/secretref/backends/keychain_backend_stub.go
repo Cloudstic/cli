@@ -1,6 +1,6 @@
 //go:build !darwin || (darwin && !cgo)
 
-package secretref
+package backends
 
 import (
 	"context"

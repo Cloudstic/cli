@@ -1,10 +1,12 @@
-package secretref
+package backends
 
 import (
 	"context"
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/cloudstic/cli/pkg/secretref"
 )
 
 var (
@@ -63,21 +65,21 @@ func parseSecretServicePath(path string) (collection string, item string, err er
 	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), nil
 }
 
-func (b *SecretServiceBackend) Resolve(ctx context.Context, ref Ref) (string, error) {
+func (b *SecretServiceBackend) Resolve(ctx context.Context, ref secretref.Ref) (string, error) {
 	collection, item, err := parseSecretServicePath(ref.Path)
 	if err != nil {
-		return "", errorf(KindInvalidRef, ref.Raw, err.Error(), nil)
+		return "", secretref.NewError(secretref.KindInvalidRef, ref.Raw, err.Error(), nil)
 	}
 
 	value, err := b.lookup(ctx, collection, item)
 	if err != nil {
 		switch {
 		case errors.Is(err, errSecretServiceNotFound):
-			return "", errorf(KindNotFound, ref.Raw, fmt.Sprintf("secret service item %q/%q not found", collection, item), err)
+			return "", secretref.NewError(secretref.KindNotFound, ref.Raw, fmt.Sprintf("secret service item %q/%q not found", collection, item), err)
 		case errors.Is(err, errSecretServiceUnavailable):
-			return "", errorf(KindBackendUnavailable, ref.Raw, err.Error(), err)
+			return "", secretref.NewError(secretref.KindBackendUnavailable, ref.Raw, err.Error(), err)
 		default:
-			return "", errorf(KindBackendUnavailable, ref.Raw, err.Error(), err)
+			return "", secretref.NewError(secretref.KindBackendUnavailable, ref.Raw, err.Error(), err)
 		}
 	}
 
@@ -94,27 +96,27 @@ func (b *SecretServiceBackend) DefaultRef(storeName, account string) string {
 	return "secret-service://cloudstic/" + storeName + "/" + account
 }
 
-func (b *SecretServiceBackend) Exists(ctx context.Context, ref Ref) (bool, error) {
+func (b *SecretServiceBackend) Exists(ctx context.Context, ref secretref.Ref) (bool, error) {
 	collection, item, err := parseSecretServicePath(ref.Path)
 	if err != nil {
-		return false, errorf(KindInvalidRef, ref.Raw, err.Error(), nil)
+		return false, secretref.NewError(secretref.KindInvalidRef, ref.Raw, err.Error(), nil)
 	}
 
 	exists, err := b.exists(ctx, collection, item)
 	if err != nil {
-		return false, errorf(KindBackendUnavailable, ref.Raw, err.Error(), err)
+		return false, secretref.NewError(secretref.KindBackendUnavailable, ref.Raw, err.Error(), err)
 	}
 	return exists, nil
 }
 
-func (b *SecretServiceBackend) Store(ctx context.Context, ref Ref, value string) error {
+func (b *SecretServiceBackend) Store(ctx context.Context, ref secretref.Ref, value string) error {
 	collection, item, err := parseSecretServicePath(ref.Path)
 	if err != nil {
-		return errorf(KindInvalidRef, ref.Raw, err.Error(), nil)
+		return secretref.NewError(secretref.KindInvalidRef, ref.Raw, err.Error(), nil)
 	}
 
 	if err := b.store(ctx, collection, item, value); err != nil {
-		return errorf(KindBackendUnavailable, ref.Raw, err.Error(), err)
+		return secretref.NewError(secretref.KindBackendUnavailable, ref.Raw, err.Error(), err)
 	}
 	return nil
 }

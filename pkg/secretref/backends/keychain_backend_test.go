@@ -1,9 +1,11 @@
-package secretref
+package backends
 
 import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/cloudstic/cli/pkg/secretref"
 )
 
 func TestParseKeychainPath(t *testing.T) {
@@ -47,7 +49,7 @@ func TestKeychainBackend_Resolve(t *testing.T) {
 		return []byte("s3cr3t"), nil
 	})
 
-	got, err := b.Resolve(context.Background(), Ref{Raw: "keychain://cloudstic/prod/password", Scheme: "keychain", Path: "cloudstic/prod/password"})
+	got, err := b.Resolve(context.Background(), secretref.Ref{Raw: "keychain://cloudstic/prod/password", Scheme: "keychain", Path: "cloudstic/prod/password"})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -59,26 +61,26 @@ func TestKeychainBackend_Resolve(t *testing.T) {
 func TestKeychainBackend_ResolveErrors(t *testing.T) {
 	tests := []struct {
 		name string
-		ref  Ref
+		ref  secretref.Ref
 		err  error
-		kind ErrorKind
+		kind secretref.ErrorKind
 	}{
 		{
 			name: "invalid path",
-			ref:  Ref{Raw: "keychain://cloudstic", Scheme: "keychain", Path: "cloudstic"},
-			kind: KindInvalidRef,
+			ref:  secretref.Ref{Raw: "keychain://cloudstic", Scheme: "keychain", Path: "cloudstic"},
+			kind: secretref.KindInvalidRef,
 		},
 		{
 			name: "not found",
-			ref:  Ref{Raw: "keychain://cloudstic/prod/password", Scheme: "keychain", Path: "cloudstic/prod/password"},
+			ref:  secretref.Ref{Raw: "keychain://cloudstic/prod/password", Scheme: "keychain", Path: "cloudstic/prod/password"},
 			err:  errKeychainNotFound,
-			kind: KindNotFound,
+			kind: secretref.KindNotFound,
 		},
 		{
 			name: "unavailable",
-			ref:  Ref{Raw: "keychain://cloudstic/prod/password", Scheme: "keychain", Path: "cloudstic/prod/password"},
+			ref:  secretref.Ref{Raw: "keychain://cloudstic/prod/password", Scheme: "keychain", Path: "cloudstic/prod/password"},
 			err:  errKeychainUnavailable,
-			kind: KindBackendUnavailable,
+			kind: secretref.KindBackendUnavailable,
 		},
 	}
 
@@ -95,9 +97,9 @@ func TestKeychainBackend_ResolveErrors(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
-			var refErr *Error
+			var refErr *secretref.Error
 			if !errors.As(err, &refErr) {
-				t.Fatalf("expected *Error, got %T", err)
+				t.Fatalf("expected *secretref.Error, got %T", err)
 			}
 			if refErr.Kind != tc.kind {
 				t.Fatalf("kind=%s want=%s", refErr.Kind, tc.kind)
@@ -125,7 +127,7 @@ func TestKeychainBackend_Exists(t *testing.T) {
 		nil,
 		nil,
 	)
-	exists, err := b.Exists(context.Background(), Ref{Raw: "keychain://cloudstic/store/prod/password", Scheme: "keychain", Path: "cloudstic/store/prod/password"})
+	exists, err := b.Exists(context.Background(), secretref.Ref{Raw: "keychain://cloudstic/store/prod/password", Scheme: "keychain", Path: "cloudstic/store/prod/password"})
 	if err != nil {
 		t.Fatalf("Exists: %v", err)
 	}
@@ -146,7 +148,7 @@ func TestKeychainBackend_Store(t *testing.T) {
 		},
 		nil,
 	)
-	if err := b.Store(context.Background(), Ref{Raw: "keychain://cloudstic/store/prod/password", Scheme: "keychain", Path: "cloudstic/store/prod/password"}, "secret"); err != nil {
+	if err := b.Store(context.Background(), secretref.Ref{Raw: "keychain://cloudstic/store/prod/password", Scheme: "keychain", Path: "cloudstic/store/prod/password"}, "secret"); err != nil {
 		t.Fatalf("Store: %v", err)
 	}
 }
@@ -167,7 +169,7 @@ func TestKeychainBackend_BlobRoundTrip(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	ref := Ref{Raw: "keychain://cloudstic/token/gdrive", Scheme: "keychain", Path: "cloudstic/token/gdrive"}
+	ref := secretref.Ref{Raw: "keychain://cloudstic/token/gdrive", Scheme: "keychain", Path: "cloudstic/token/gdrive"}
 	data := []byte("binary-data")
 
 	if err := b.SaveBlob(ctx, ref, data); err != nil {

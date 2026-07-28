@@ -4,8 +4,8 @@ import (
 	"fmt"
 
 	cloudstic "github.com/cloudstic/cli"
-	"github.com/cloudstic/cli/internal/secretref"
 	"github.com/cloudstic/cli/internal/tui/forms"
+	"github.com/cloudstic/cli/pkg/secretref"
 )
 
 // Store form backend (tui/forms.StoreBackend), implemented by reusing the

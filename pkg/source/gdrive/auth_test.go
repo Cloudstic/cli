@@ -8,7 +8,7 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"github.com/cloudstic/cli/internal/secretref"
+	secretrefbackends "github.com/cloudstic/cli/pkg/secretref/backends"
 )
 
 func TestGDrive_TokenPersistence(t *testing.T) {
@@ -29,7 +29,7 @@ func TestGDrive_TokenPersistence(t *testing.T) {
 	}
 
 	// 2. Save and Load from ref
-	resolver := secretref.NewDefaultResolver()
+	resolver := secretrefbackends.NewDefaultResolver()
 	refPath := filepath.Join(tmpDir, "ref-token.json")
 	ref := "file://" + refPath
 	ctx := context.Background()
@@ -47,7 +47,7 @@ func TestGDrive_TokenPersistence(t *testing.T) {
 }
 
 func TestGDrive_Options(t *testing.T) {
-	resolver := secretref.NewDefaultResolver()
+	resolver := secretrefbackends.NewDefaultResolver()
 	opts := []Option{
 		WithResolver(resolver),
 		WithCredsRef("keychain://creds"),

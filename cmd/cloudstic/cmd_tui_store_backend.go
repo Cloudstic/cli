@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/cloudstic/cli/pkg/config"
 
 	"github.com/cloudstic/cli/pkg/profile"
 
@@ -26,7 +27,7 @@ func (b *tuiFormsBackend) ComposeStore(storeType, value string) (string, error) 
 	if uri == "" {
 		return "", nil
 	}
-	if _, err := parseStoreURI(uri); err != nil {
+	if _, err := config.ParseStoreURI(uri); err != nil {
 		return "", fmt.Errorf("invalid store: %v", err)
 	}
 	return uri, nil

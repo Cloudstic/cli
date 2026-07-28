@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/cloudstic/cli/pkg/config"
 	"slices"
 
 	"github.com/cloudstic/cli/pkg/profile"
@@ -31,43 +32,43 @@ func firstNonEmpty(values ...string) string {
 }
 
 func sourceTypeFromSource(raw string) string {
-	parts, err := parseSourceURI(raw)
+	parts, err := config.ParseSourceURI(raw)
 	if err != nil {
 		return ""
 	}
-	return parts.scheme
+	return parts.Scheme
 }
 
 func sourceValueFromSource(raw string) string {
-	parts, err := parseSourceURI(raw)
+	parts, err := config.ParseSourceURI(raw)
 	if err != nil {
 		return ""
 	}
-	switch parts.scheme {
+	switch parts.Scheme {
 	case "local":
-		return parts.path
+		return parts.Path
 	case "sftp":
 		target := ""
-		if parts.user != "" {
-			target += parts.user + "@"
+		if parts.User != "" {
+			target += parts.User + "@"
 		}
-		target += parts.host
-		if parts.port != "" {
-			target += ":" + parts.port
+		target += parts.Host
+		if parts.Port != "" {
+			target += ":" + parts.Port
 		}
-		target += parts.path
+		target += parts.Path
 		return target
 	case "gdrive", "gdrive-changes", "onedrive", "onedrive-changes":
-		if parts.host != "" {
-			if parts.path == "/" {
-				return parts.host
+		if parts.Host != "" {
+			if parts.Path == "/" {
+				return parts.Host
 			}
-			return parts.host + parts.path
+			return parts.Host + parts.Path
 		}
-		if parts.path == "/" {
+		if parts.Path == "/" {
 			return "/"
 		}
-		return parts.path
+		return parts.Path
 	default:
 		return raw
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/cloudstic/cli/pkg/config"
 	"io"
 	"sort"
 	"strings"
@@ -55,19 +56,19 @@ func statusLabel(kind string) string {
 }
 
 func sourceScheme(raw string) string {
-	uri, err := parseSourceURI(raw)
+	uri, err := config.ParseSourceURI(raw)
 	if err != nil {
 		return "unknown"
 	}
-	return uri.scheme
+	return uri.Scheme
 }
 
 func storeScheme(raw string) string {
-	uri, err := parseStoreURI(raw)
+	uri, err := config.ParseStoreURI(raw)
 	if err != nil {
 		return "unknown"
 	}
-	return uri.scheme
+	return uri.Scheme
 }
 
 func joinOrDash(values []string) string {
@@ -144,7 +145,7 @@ func storeHealth(s profile.Store) (string, []string) {
 	if s.URI == "" {
 		return "error", []string{"missing uri"}
 	}
-	if _, err := parseStoreURI(s.URI); err != nil {
+	if _, err := config.ParseStoreURI(s.URI); err != nil {
 		return "error", []string{"invalid uri"}
 	}
 	return "ready", nil

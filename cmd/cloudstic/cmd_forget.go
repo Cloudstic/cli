@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/cloudstic/cli/pkg/config"
 	"io"
 	"strings"
 
@@ -68,12 +69,12 @@ func prepareForgetArgs(a *forgetArgs) error {
 		case "local", "sftp", "gdrive", "gdrive-changes", "onedrive", "onedrive-changes":
 			a.filterSource = a.rawFilterSource
 		default:
-			parts, err := parseSourceURI(a.rawFilterSource)
+			parts, err := config.ParseSourceURI(a.rawFilterSource)
 			if err != nil {
 				return fmt.Errorf("invalid -source filter: %w", err)
 			}
-			a.filterSource = parts.scheme
-			a.filterPath = parts.path
+			a.filterSource = parts.Scheme
+			a.filterPath = parts.Path
 		}
 	}
 	a.hasFilters = len(a.filterTags) > 0 || a.filterSource != "" || a.filterAccount != "" || a.filterPath != ""

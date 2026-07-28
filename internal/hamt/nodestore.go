@@ -14,7 +14,7 @@ import (
 	"github.com/cloudstic/cli/pkg/store"
 )
 
-var log = logger.New("hamt", logger.ColorCyan)
+var defaultLog = logger.New("hamt", logger.ColorCyan)
 
 const (
 	nodeCacheSize       = 4096
@@ -31,12 +31,15 @@ const (
 type NodeStore struct {
 	store store.ObjectStore
 	cache *lru.Cache[string, *node]
+	// log is this node store's debug sink. It always points at a logger; an
+	// unbound one falls back to the process-wide writer.
+	log *logger.Logger
 }
 
 // NewNodeStore returns a NodeStore reading and writing through s.
 func NewNodeStore(s store.ObjectStore) *NodeStore {
 	c, _ := lru.New[string, *node](nodeCacheSize)
-	return &NodeStore{store: s, cache: c}
+	return &NodeStore{store: s, cache: c, log: defaultLog}
 }
 
 // load fetches and decodes the node identified by ref. The returned node is
@@ -87,7 +90,7 @@ func (ns *NodeStore) putAll(ctx context.Context, batch map[string][]byte) error 
 	for _, data := range batch {
 		totalBytes += len(data)
 	}
-	log.Debugf("commit: writing %d nodes (%d bytes total)", len(batch), totalBytes)
+	ns.log.Debugf("commit: writing %d nodes (%d bytes total)", len(batch), totalBytes)
 
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(min(store.GetConcurrencyHint(ns.store, defaultWriteWorkers), len(batch)))

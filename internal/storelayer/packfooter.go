@@ -274,7 +274,7 @@ func (s *PackStore) rebuildFromPacksLocked(ctx context.Context, packRefs []strin
 		info, err := s.readPackFooter(ctx, packRef)
 		if errors.Is(err, errNoPackFooter) {
 			footerless++
-			debugf("rebuild: pack %s has no footer, relying on the catalog", packRef)
+			s.debugf("rebuild: pack %s has no footer, relying on the catalog", packRef)
 			continue
 		}
 		if err != nil {
@@ -292,7 +292,7 @@ func (s *PackStore) rebuildFromPacksLocked(ctx context.Context, packRefs []strin
 		}
 	}
 
-	debugf("rebuild: recovered %d entries, %d packs without footers", recovered, footerless)
+	s.debugf("rebuild: recovered %d entries, %d packs without footers", recovered, footerless)
 	return recovered, footerless, nil
 }
 
@@ -308,7 +308,7 @@ func (s *PackStore) healMissingCatalogLocked(ctx context.Context) error {
 		return nil // Genuinely a fresh repository.
 	}
 
-	debugf("catalog %s is missing but %d packs exist; rebuilding from footers", indexPacksKey, len(packRefs))
+	s.debugf("catalog %s is missing but %d packs exist; rebuilding from footers", indexPacksKey, len(packRefs))
 	recovered, footerless, err := s.rebuildFromPacksLocked(ctx, packRefs)
 	if err != nil {
 		return fmt.Errorf("rebuild catalog from pack footers: %w", err)
@@ -320,6 +320,6 @@ func (s *PackStore) healMissingCatalogLocked(ctx context.Context) error {
 			indexPacksKey, footerless, len(packRefs), recovered,
 		)
 	}
-	debugf("rebuilt catalog with %d entries from pack footers", recovered)
+	s.debugf("rebuilt catalog with %d entries from pack footers", recovered)
 	return nil
 }

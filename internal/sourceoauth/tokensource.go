@@ -14,6 +14,9 @@ type persistentTokenSource struct {
 	save    func(*oauth2.Token) error
 	lastTok *oauth2.Token
 	mu      sync.Mutex
+	// log is the sink for the one diagnostic this type emits. A nil logger
+	// logs nothing, which is what a caller that supplied no sink gets.
+	log *logger.Logger
 }
 
 // NewPersistentTokenSource returns a TokenSource that delegates to ts and
@@ -23,8 +26,8 @@ type persistentTokenSource struct {
 //
 // lastTok is the token already on disk; pass it so the first call does not
 // re-save an unchanged token.
-func NewPersistentTokenSource(ts oauth2.TokenSource, lastTok *oauth2.Token, save func(*oauth2.Token) error) oauth2.TokenSource {
-	return &persistentTokenSource{ts: ts, lastTok: lastTok, save: save}
+func NewPersistentTokenSource(ts oauth2.TokenSource, lastTok *oauth2.Token, save func(*oauth2.Token) error, log *logger.Logger) oauth2.TokenSource {
+	return &persistentTokenSource{ts: ts, lastTok: lastTok, save: save, log: log}
 }
 
 func (pts *persistentTokenSource) Token() (*oauth2.Token, error) {
@@ -37,7 +40,7 @@ func (pts *persistentTokenSource) Token() (*oauth2.Token, error) {
 	if shouldSave {
 		if err := pts.save(tok); err != nil {
 			// Log error but don't fail, as the token is still valid for this session.
-			logger.Debugf("failed to persist refreshed OAuth token: %v", err)
+			pts.log.Debugf("failed to persist refreshed OAuth token: %v", err)
 		}
 		pts.lastTok = tok
 	}

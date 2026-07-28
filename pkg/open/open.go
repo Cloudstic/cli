@@ -49,6 +49,7 @@ type Option func(*options)
 
 type options struct {
 	debugWriter    io.Writer
+	logWriter      io.Writer
 	backendWrapper func(store.ObjectStore) (store.ObjectStore, error)
 	reporter       cloudstic.Reporter
 	promptResolve  func() (string, error)
@@ -70,6 +71,17 @@ func newOptions(opts []Option) *options {
 // interleave.
 func WithDebugWriter(w io.Writer) Option {
 	return func(o *options) { o.debugWriter = w }
+}
+
+// WithLogger sends the client's debug output — its own and that of the engine
+// and store layers it drives — to w.
+//
+// This is distinct from WithDebugWriter, which traces individual store
+// operations. A caller that wants both passes both; they are separate because
+// per-operation tracing is far noisier than the component diagnostics, and is
+// often wanted on its own.
+func WithLogger(w io.Writer) Option {
+	return func(o *options) { o.logWriter = w }
 }
 
 // WithBackendWrapper wraps the constructed backend before the repository
@@ -209,6 +221,9 @@ func Client(ctx context.Context, cfg config.Client, opts ...Option) (*cloudstic.
 	clientOpts := []cloudstic.ClientOption{
 		cloudstic.WithKeychain(kc),
 		cloudstic.WithPackfile(!cfg.DisablePackfile),
+	}
+	if o.logWriter != nil {
+		clientOpts = append(clientOpts, cloudstic.WithLogger(o.logWriter))
 	}
 	if o.reporter != nil {
 		clientOpts = append(clientOpts, cloudstic.WithReporter(o.reporter))

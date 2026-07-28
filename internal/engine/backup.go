@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,7 +20,7 @@ import (
 	"github.com/cloudstic/cli/pkg/store"
 )
 
-var backupLog = logger.New("backup", logger.ColorGreen)
+var defaultBackupLog = logger.New("backup", logger.ColorGreen)
 
 // backupStats holds atomic counters accumulated during a backup run.
 type backupStats struct {
@@ -87,6 +88,10 @@ func WithExcludeHash(hash string) BackupOption {
 // BackupManager orchestrates a backup: scanning a source for changes, uploading
 // new or modified files, and persisting a snapshot backed by a Merkle-HAMT.
 type BackupManager struct {
+	// log is this manager's debug sink, and snapLog the snapshot-catalog one
+	// it passes to the free functions in snapshots.go.
+	log        *logger.Logger
+	snapLog    *logger.Logger
 	source     source.Source
 	store      store.ObjectStore
 	keyCache   *storelayer.KeyCacheStore
@@ -106,7 +111,7 @@ type BackupManager struct {
 	hmacKey      []byte
 }
 
-func NewBackupManager(src source.Source, dest store.ObjectStore, reporter ui.Reporter, hmacKey []byte, opts ...BackupOption) *BackupManager {
+func NewBackupManager(src source.Source, dest store.ObjectStore, reporter ui.Reporter, hmacKey []byte, logWriter io.Writer, opts ...BackupOption) *BackupManager {
 	cfg := backupConfig{
 		generator: "cloudstic-cli",
 		meta:      map[string]string{},
@@ -118,10 +123,12 @@ func NewBackupManager(src source.Source, dest store.ObjectStore, reporter ui.Rep
 	sourceInfo := src.Info()
 	keyCache := storelayer.NewKeyCacheStore(dest)
 	return &BackupManager{
+		log:          defaultBackupLog.To(logWriter),
+		snapLog:      SnapshotLogger(logWriter),
 		source:       src,
 		store:        keyCache,
 		keyCache:     keyCache,
-		tree:         hamt.NewTree(keyCache),
+		tree:         hamt.NewTree(keyCache, hamt.WithLogger(logWriter)),
 		chunker:      NewChunker(keyCache, hmacKey),
 		reporter:     reporter,
 		sourceInfo:   sourceInfo,
@@ -210,13 +217,13 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 		oldHash := prevSnap.ExcludeHash
 		newHash := bm.cfg.excludeHash
 		if oldHash != newHash {
-			backupLog.Debugf("exclude patterns changed (old=%q new=%q), forcing full rescan", oldHash, newHash)
+			bm.log.Debugf("exclude patterns changed (old=%q new=%q), forcing full rescan", oldHash, newHash)
 			changeToken = ""
 		} else if newHash != "" {
-			backupLog.Debugf("exclude patterns unchanged (hash=%q), continuing incremental", newHash)
+			bm.log.Debugf("exclude patterns unchanged (hash=%q), continuing incremental", newHash)
 		}
 	} else if prevSnap == nil {
-		backupLog.Debugf("no previous snapshot found, running full scan")
+		bm.log.Debugf("no previous snapshot found, running full scan")
 	}
 
 	pending, totalBytes, newToken, usedFullScan, err := bm.scanSource(ctx, oldRoot, changeToken)
@@ -298,7 +305,7 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 	}
 
 	// Update snapshot catalog (best-effort).
-	AppendSnapshotCatalog(bm.store, snapshotToSummary(snapRef, snap))
+	AppendSnapshotCatalog(bm.store, snapshotToSummary(snapRef, snap), bm.snapLog)
 
 	r := bm.buildResult()
 	r.SnapshotHash = snapHash
@@ -337,7 +344,7 @@ func (bm *BackupManager) loadLatestSeq() (int, error) {
 // silently downgrade an incremental backup to a full rescan and reset the
 // sequence number.
 func (bm *BackupManager) findPreviousSnapshot(info core.SourceInfo) (*core.Snapshot, error) {
-	entries, err := LoadSnapshotCatalog(bm.store)
+	entries, err := LoadSnapshotCatalog(bm.store, bm.snapLog)
 	if err != nil {
 		return nil, err
 	}

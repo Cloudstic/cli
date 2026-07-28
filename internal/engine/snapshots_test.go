@@ -60,7 +60,7 @@ func TestLoadSnapshotCatalog_NoCatalog(t *testing.T) {
 	ref1 := putSnapshot(t, s, snap1)
 	ref2 := putSnapshot(t, s, snap2)
 
-	entries, err := LoadSnapshotCatalog(s)
+	entries, err := LoadSnapshotCatalog(s, nil)
 	if err != nil {
 		t.Fatalf("LoadSnapshotCatalog: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestLoadSnapshotCatalog_WithValidCatalog(t *testing.T) {
 		snapshotToSummary(ref1, *snap1),
 	})
 
-	entries, err := LoadSnapshotCatalog(s)
+	entries, err := LoadSnapshotCatalog(s, nil)
 	if err != nil {
 		t.Fatalf("LoadSnapshotCatalog: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestLoadSnapshotCatalog_ReconcilesMissingEntries(t *testing.T) {
 		snapshotToSummary(ref1, *snap1),
 	})
 
-	entries, err := LoadSnapshotCatalog(s)
+	entries, err := LoadSnapshotCatalog(s, nil)
 	if err != nil {
 		t.Fatalf("LoadSnapshotCatalog: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestLoadSnapshotCatalog_RemovesStaleEntries(t *testing.T) {
 		{Ref: "snapshot/deleted", Seq: 99, Created: now.Format(time.RFC3339), Root: "node/gone"},
 	})
 
-	entries, err := LoadSnapshotCatalog(s)
+	entries, err := LoadSnapshotCatalog(s, nil)
 	if err != nil {
 		t.Fatalf("LoadSnapshotCatalog: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestAppendSnapshotCatalog(t *testing.T) {
 	snap1 := &core.Snapshot{Seq: 1, Created: now.Format(time.RFC3339), Root: "node/a"}
 
 	// Start with empty catalog.
-	AppendSnapshotCatalog(s, snapshotToSummary("snapshot/abc", *snap1))
+	AppendSnapshotCatalog(s, snapshotToSummary("snapshot/abc", *snap1), nil)
 
 	catalog := readCatalog(t, s)
 	if len(catalog) != 1 {
@@ -192,7 +192,7 @@ func TestAppendSnapshotCatalog(t *testing.T) {
 
 	// Append a second.
 	snap2 := &core.Snapshot{Seq: 2, Created: now.Format(time.RFC3339), Root: "node/b"}
-	AppendSnapshotCatalog(s, snapshotToSummary("snapshot/def", *snap2))
+	AppendSnapshotCatalog(s, snapshotToSummary("snapshot/def", *snap2), nil)
 
 	catalog = readCatalog(t, s)
 	if len(catalog) != 2 {
@@ -210,7 +210,7 @@ func TestRemoveFromSnapshotCatalog(t *testing.T) {
 		{Ref: "snapshot/ccc", Seq: 3, Created: now.Format(time.RFC3339)},
 	})
 
-	RemoveFromSnapshotCatalog(s, "snapshot/aaa", "snapshot/ccc")
+	RemoveFromSnapshotCatalog(s, nil, "snapshot/aaa", "snapshot/ccc")
 
 	catalog := readCatalog(t, s)
 	if len(catalog) != 1 {
@@ -225,7 +225,7 @@ func TestRemoveFromSnapshotCatalog_NoCatalog(t *testing.T) {
 	s := NewMockStore()
 
 	// Should not panic when catalog doesn't exist.
-	RemoveFromSnapshotCatalog(s, "snapshot/xxx")
+	RemoveFromSnapshotCatalog(s, nil, "snapshot/xxx")
 }
 
 func TestSnapshotToSummary(t *testing.T) {
@@ -265,7 +265,7 @@ func TestSnapshotToSummary(t *testing.T) {
 func TestLoadSnapshotCatalog_EmptyRepo(t *testing.T) {
 	s := NewMockStore()
 
-	entries, err := LoadSnapshotCatalog(s)
+	entries, err := LoadSnapshotCatalog(s, nil)
 	if err != nil {
 		t.Fatalf("LoadSnapshotCatalog: %v", err)
 	}
@@ -349,7 +349,7 @@ func TestLoadSnapshotCatalog_PropagatesFetchError(t *testing.T) {
 	// No catalog yet, so LoadSnapshotCatalog must fetch ref individually.
 	s := newErrorOnGetStore(inner, backendErr, ref)
 
-	_, err := LoadSnapshotCatalog(s)
+	_, err := LoadSnapshotCatalog(s, nil)
 	if err == nil {
 		t.Fatal("expected LoadSnapshotCatalog to propagate a real fetch error")
 	}
@@ -369,7 +369,7 @@ func TestAppendSnapshotCatalog_DoesNotClobberOnReadError(t *testing.T) {
 	})
 	s := newErrorOnGetStore(inner, backendErr, snapshotCatalogKey)
 
-	AppendSnapshotCatalog(s, core.SnapshotSummary{Ref: "snapshot/new", Seq: 2})
+	AppendSnapshotCatalog(s, core.SnapshotSummary{Ref: "snapshot/new", Seq: 2}, nil)
 
 	catalog := readCatalog(t, inner)
 	if len(catalog) != 1 || catalog[0].Ref != "snapshot/existing" {
@@ -385,7 +385,7 @@ func TestRemoveFromSnapshotCatalog_DoesNotClobberOnReadError(t *testing.T) {
 	})
 	s := newErrorOnGetStore(inner, backendErr, snapshotCatalogKey)
 
-	RemoveFromSnapshotCatalog(s, "snapshot/existing")
+	RemoveFromSnapshotCatalog(s, nil, "snapshot/existing")
 
 	catalog := readCatalog(t, inner)
 	if len(catalog) != 1 || catalog[0].Ref != "snapshot/existing" {

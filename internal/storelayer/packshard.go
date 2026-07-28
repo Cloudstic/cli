@@ -54,7 +54,7 @@ func (s *PackStore) writeShard(ctx context.Context, entries map[string]PackEntry
 	if err := s.ObjectStore.Put(ctx, key, sealed); err != nil {
 		return fmt.Errorf("write pack index shard %s: %w", key, err)
 	}
-	debugf("pack: wrote shard %s with %d entries", key, len(entries))
+	s.debugf("pack: wrote shard %s with %d entries", key, len(entries))
 	return nil
 }
 
@@ -93,7 +93,7 @@ func (s *PackStore) loadShardsLocked(ctx context.Context) (int, error) {
 	}
 
 	if len(keys) > 0 {
-		debugf("pack: merged %d shards", len(keys))
+		s.debugf("pack: merged %d shards", len(keys))
 	}
 	return len(keys), nil
 }
@@ -160,7 +160,7 @@ func (s *PackStore) CompactCatalog(ctx context.Context) (int, error) {
 	s.mergedIndex = map[string]bool{consolidated: true}
 	s.mu.Unlock()
 
-	debugf("pack: compacted %d index objects into %s", removed, consolidated)
+	s.debugf("pack: compacted %d index objects into %s", removed, consolidated)
 	return removed, nil
 }
 

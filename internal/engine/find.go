@@ -1,8 +1,11 @@
 package engine
 
 import (
+	"io"
+
 	"context"
 	"fmt"
+	"github.com/cloudstic/cli/internal/logger"
 	"os"
 	"time"
 
@@ -326,13 +329,16 @@ func WithFindVerbose() FindOption {
 type FindManager struct {
 	store store.ObjectStore
 	tree  *hamt.Tree
+	// log is the snapshot-catalog sink this manager passes to the free
+	// functions in snapshots.go.
+	log *logger.Logger
 }
 
-func NewFindManager(s store.ObjectStore) *FindManager {
+func NewFindManager(s store.ObjectStore, logWriter io.Writer) *FindManager {
 	// One Tree serves every snapshot root and shares a single node cache
 	// between them, which is what makes the delta scan's structural sharing
 	// pay off rather than re-reading the same nodes per snapshot.
-	return &FindManager{store: s, tree: hamt.NewTree(s)}
+	return &FindManager{store: s, tree: hamt.NewTree(s), log: SnapshotLogger(logWriter)}
 }
 
 // QueryFromOptions resolves a set of options into the query they describe,
@@ -366,7 +372,7 @@ func (fm *FindManager) Run(ctx context.Context, opts ...FindOption) (*FindResult
 	if cfg.verbose {
 		fmt.Fprintf(os.Stderr, "Loading snapshot catalog...\n")
 	}
-	catalog, err := LoadSnapshotCatalog(fm.store)
+	catalog, err := LoadSnapshotCatalog(fm.store, fm.log)
 	if err != nil {
 		return nil, fmt.Errorf("load snapshot catalog: %w", err)
 	}

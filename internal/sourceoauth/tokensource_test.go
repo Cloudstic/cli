@@ -135,7 +135,7 @@ func TestNewPersistentTokenSource(t *testing.T) {
 	ts := NewPersistentTokenSource(mock, initial, func(tok *oauth2.Token) error {
 		saved = append(saved, tok.AccessToken)
 		return nil
-	})
+	}, nil)
 
 	// lastTok matches, so the token already on disk is not rewritten.
 	if _, err := ts.Token(); err != nil {
@@ -166,7 +166,7 @@ func TestNewPersistentTokenSource_SaveErrorIsNotFatal(t *testing.T) {
 	tok := &oauth2.Token{AccessToken: "fresh", Expiry: time.Now().Add(time.Hour)}
 	ts := NewPersistentTokenSource(&mockTokenSource{tok: tok}, nil, func(*oauth2.Token) error {
 		return errors.New("disk full")
-	})
+	}, nil)
 
 	got, err := ts.Token()
 	if err != nil {

@@ -72,7 +72,7 @@ type KeepReason = engine.KeepReason
 type SnapshotEntry = engine.SnapshotEntry
 
 func (c *Client) Forget(ctx context.Context, snapshotID string, opts ...ForgetOption) (*ForgetResult, error) {
-	mgr := engine.NewForgetManager(c.store, c.reporter)
+	mgr := engine.NewForgetManager(c.store, c.reporter, c.logWriter)
 	result, err := mgr.Run(ctx, snapshotID, opts...)
 	if err != nil {
 		return nil, err
@@ -84,7 +84,7 @@ func (c *Client) Forget(ctx context.Context, snapshotID string, opts ...ForgetOp
 }
 
 func (c *Client) ForgetPolicy(ctx context.Context, opts ...ForgetOption) (*PolicyResult, error) {
-	mgr := engine.NewForgetManager(c.store, c.reporter)
+	mgr := engine.NewForgetManager(c.store, c.reporter, c.logWriter)
 	result, err := mgr.RunPolicy(ctx, opts...)
 	if err != nil {
 		return nil, err

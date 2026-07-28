@@ -58,7 +58,7 @@ func TestListManager_Verbose(t *testing.T) {
 		{Ref: snap2Ref, Seq: snap2.Seq, Created: snap2.Created, Root: snap2.Root},
 	}))
 
-	mgr := NewListManager(s)
+	mgr := NewListManager(s, nil)
 
 	// Without verbose: no stderr output.
 	out := captureStderr(t, func() {
@@ -200,7 +200,7 @@ func TestForgetManager_Verbose(t *testing.T) {
 	_ = s.Put(ctx, "index/latest", createIndex(snap2Ref, 2))
 
 	// Without verbose: "Forgetting" should NOT be logged.
-	fm := NewForgetManager(s, ui.NewNoOpReporter())
+	fm := NewForgetManager(s, ui.NewNoOpReporter(), nil)
 	_, err := fm.Run(ctx, snap1Ref)
 	if err != nil {
 		t.Fatalf("Forget without verbose failed: %v", err)
@@ -213,7 +213,7 @@ func TestForgetManager_Verbose(t *testing.T) {
 
 	// With verbose: phase.Log should be called with the snapshot ref.
 	// Since NoOpReporter discards logs, we just verify it doesn't error.
-	fm2 := NewForgetManager(s, ui.NewNoOpReporter())
+	fm2 := NewForgetManager(s, ui.NewNoOpReporter(), nil)
 	_, err = fm2.Run(ctx, snap1Ref, WithForgetVerbose())
 	if err != nil {
 		t.Fatalf("Forget with verbose failed: %v", err)

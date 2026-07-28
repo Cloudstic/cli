@@ -3,6 +3,7 @@ package backends
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	pathpkg "path"
@@ -95,6 +96,18 @@ type ConfigTokenBackend struct {
 	// configDir overrides the managed directory. Empty means "ask
 	// paths.ConfigDir", i.e. CLOUDSTIC_CONFIG_DIR or the OS default.
 	configDir string
+	// log is where the plaintext-fallback diagnostic goes. A nil logger logs
+	// nothing, which is what a caller that supplied no sink gets. Backends are
+	// constructed independently of a client, so a client's sink cannot reach
+	// one; WithConfigTokenLogger is how a caller supplies it (RFC 0022 §8).
+	log *logger.Logger
+}
+
+// WithConfigTokenLogger sends this backend's debug output to w.
+func WithConfigTokenLogger(w io.Writer) ConfigTokenOption {
+	return func(b *ConfigTokenBackend) {
+		b.log = logger.New("secretref", logger.ColorCyan).To(w)
+	}
 }
 
 // ConfigTokenOption configures a ConfigTokenBackend.
@@ -157,7 +170,7 @@ func (b *ConfigTokenBackend) LoadBlob(_ context.Context, ref secretref.Ref) ([]b
 	if err != nil {
 		// Fallback for unencrypted files (compatibility with existing tokens before RFC 0016)
 		if !crypto.IsEncrypted(data) {
-			logger.Debugf("decryption failed for %q, but data is not encrypted; falling back to plaintext", ref.Raw)
+			b.log.Debugf("decryption failed for %q, but data is not encrypted; falling back to plaintext", ref.Raw)
 			return data, nil
 		}
 		return nil, secretref.NewError(secretref.KindBackendUnavailable, ref.Raw, "failed to decrypt managed token file", err)

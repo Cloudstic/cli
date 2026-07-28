@@ -84,7 +84,7 @@ func (c *Client) raiseRepoFormat(ctx context.Context) error {
 // unframed write corrupts permanently.
 func (c *Client) stampWriteFormat(ctx context.Context) {
 	if err := c.raiseRepoFormat(ctx); err != nil {
-		log.Debugf("could not stamp repository format: %v", err)
+		c.log.Debugf("could not stamp repository format: %v", err)
 	}
 }
 
@@ -108,7 +108,7 @@ func (c *Client) Backup(ctx context.Context, src source.Source, opts ...BackupOp
 	rawMeter := storelayer.NewMeteredStore(c.store)
 	c.storedMeter.Reset()
 
-	mgr := engine.NewBackupManager(src, rawMeter, c.reporter, c.hmacKey, opts...)
+	mgr := engine.NewBackupManager(src, rawMeter, c.reporter, c.hmacKey, c.logWriter, opts...)
 	result, err := mgr.Run(ctx)
 	if err != nil {
 		return nil, err

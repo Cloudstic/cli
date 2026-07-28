@@ -370,7 +370,7 @@ func TestBackupDryRun_NoLock(t *testing.T) {
 	s := NewMockStore()
 	src := NewMockSource()
 
-	bm := NewBackupManager(src, s, ui.NewNoOpReporter(), nil, WithBackupDryRun())
+	bm := NewBackupManager(src, s, ui.NewNoOpReporter(), nil, nil, WithBackupDryRun())
 	_, err := bm.Run(ctx)
 	if err != nil {
 		t.Fatalf("dry run should succeed: %v", err)

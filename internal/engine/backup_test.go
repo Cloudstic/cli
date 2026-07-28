@@ -53,7 +53,7 @@ func TestBackupManager_ResolvesPathsForOpaqueIDs(t *testing.T) {
 		Content: []byte("jpeg"),
 	}
 
-	mgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil)
+	mgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, nil)
 	result, err := mgr.Run(ctx)
 	if err != nil {
 		t.Fatalf("Backup failed: %v", err)
@@ -96,7 +96,7 @@ func TestBackupManager_Run(t *testing.T) {
 	src.AddFile("file1.txt", "id1", []byte("hello world"))
 	src.AddFile("file2.txt", "id2", []byte("another file"))
 
-	mgr := NewBackupManager(src, dest, reporter, nil, WithVerbose())
+	mgr := NewBackupManager(src, dest, reporter, nil, nil, WithVerbose())
 
 	// Read store wraps dest with CompressedStore so we can read back
 	// the compressed data written by the BackupManager.
@@ -231,7 +231,7 @@ func TestBackupManager_IgnoreEmptySnapshot(t *testing.T) {
 
 	src.AddFile("file1.txt", "id1", []byte("hello world"))
 
-	first := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil)
+	first := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, nil)
 	firstResult, err := first.Run(ctx)
 	if err != nil {
 		t.Fatalf("first backup failed: %v", err)
@@ -248,7 +248,7 @@ func TestBackupManager_IgnoreEmptySnapshot(t *testing.T) {
 	}
 	firstLatest := idx.LatestSnapshot
 
-	second := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, WithIgnoreEmptySnapshot())
+	second := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, nil, WithIgnoreEmptySnapshot())
 	result, err := second.Run(ctx)
 	if err != nil {
 		t.Fatalf("second backup failed: %v", err)
@@ -343,7 +343,7 @@ func TestFindPreviousSnapshot_Identity(t *testing.T) {
 	})
 
 	src := NewMockSource()
-	bm := NewBackupManager(src, s, ui.NewNoOpReporter(), nil)
+	bm := NewBackupManager(src, s, ui.NewNoOpReporter(), nil, nil)
 
 	// Search from the Mac with same identity and same selected-root path.
 	info := core.SourceInfo{
@@ -387,7 +387,7 @@ func TestFindPreviousSnapshot_LegacyFallback(t *testing.T) {
 	})
 
 	src := NewMockSource()
-	bm := NewBackupManager(src, s, ui.NewNoOpReporter(), nil)
+	bm := NewBackupManager(src, s, ui.NewNoOpReporter(), nil, nil)
 
 	// Search without VolumeUUID — should fall back to account+path.
 	info := core.SourceInfo{
@@ -446,7 +446,7 @@ func TestFindPreviousSnapshot_IdentityPreferredOverLegacy(t *testing.T) {
 	})
 
 	src := NewMockSource()
-	bm := NewBackupManager(src, s, ui.NewNoOpReporter(), nil)
+	bm := NewBackupManager(src, s, ui.NewNoOpReporter(), nil, nil)
 
 	// Search with identity — should find the identity-matched snapshot first.
 	info := core.SourceInfo{
@@ -491,7 +491,7 @@ func TestFindPreviousSnapshot_IdentityDifferentSubdirs(t *testing.T) {
 	})
 
 	src := NewMockSource()
-	bm := NewBackupManager(src, s, ui.NewNoOpReporter(), nil)
+	bm := NewBackupManager(src, s, ui.NewNoOpReporter(), nil, nil)
 
 	// Search for Documents on the same drive — should NOT match Photos.
 	info := core.SourceInfo{
@@ -522,7 +522,7 @@ func TestBackupManager_Run_PropagatesLatestIndexError(t *testing.T) {
 	src := NewMockSource()
 	src.AddFile("file1.txt", "id1", []byte("hello"))
 
-	mgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil)
+	mgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, nil)
 	_, err := mgr.Run(ctx)
 	if err == nil {
 		t.Fatal("expected Run to fail when index/latest cannot be read")
@@ -552,7 +552,7 @@ func TestBackupManager_Run_FlushesPacksBeforeUpdatingIndexLatest(t *testing.T) {
 	src := NewMockSource()
 	src.AddFile("file1.txt", "id1", []byte("hello world"))
 
-	mgr := NewBackupManager(src, packed, ui.NewNoOpReporter(), nil)
+	mgr := NewBackupManager(src, packed, ui.NewNoOpReporter(), nil, nil)
 	if _, err := mgr.Run(ctx); err != nil {
 		t.Fatalf("Run: %v", err)
 	}

@@ -1,7 +1,6 @@
 # RFC 0022: Public Go API Boundaries
 
-- **Status:** Partially implemented — §1–§6 landed; §7's `pkg/config` half
-  landed, its `pkg/open` half outstanding; §8 outstanding
+- **Status:** Partially implemented — §1–§7 landed; §8 outstanding
 - **Date:** 2026-07-28
 - **Affects:** `client.go`, `pkg/source`, `pkg/store`, `pkg/crypto`, `pkg/config`,
   `pkg/open`, `internal/logger`, `internal/storelayer`, `cmd/cloudstic`, `docs/`
@@ -606,8 +605,7 @@ Stages 5–8 add three requirements:
 7. Export the resolved config types' *fields* in place, still in
    `package main`; then move the types to `pkg/config` behind
    `type clientConfig = config.Client` aliases; then the URI parsers; then
-   profile resolution with the resolver injected. **Done** — this is §7's
-   `pkg/config` half; the `pkg/open` half is step 8.
+   profile resolution with the resolver injected. **Done.**
 
    The first of those was not in the original plan, which assumed the aliases
    made the move call-site-neutral on their own. They do not: an alias makes
@@ -619,7 +617,7 @@ Stages 5–8 add three requirements:
    with unrelated identifiers spelled the same way — makes the move that
    follows genuinely call-site-neutral.
 8. Add `pkg/open`; reduce `storebuild.go`, `clientbuild.go`, and `keychain.go`
-   to adapters.
+   to adapters. **Done.**
 9. Logger injection (§8).
 10. Extend the external fixture to consume the library end to end.
 

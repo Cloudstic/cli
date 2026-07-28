@@ -5,36 +5,29 @@ import (
 
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/ui"
+	"github.com/cloudstic/cli/pkg/open"
 )
 
-// This file layers a store, keychain, and reporter into a repository client,
-// from resolved configuration. See storebuild.go for the store layer alone.
+// Client construction lives in pkg/open. What stays here is choosing the
+// progress reporter, which is presentation rather than configuration, and so
+// belongs to the program doing the presenting (RFC 0022 §7).
 
 // openClient constructs the object store described by cfg and opens a
 // repository client on top of it. Passing a nil reporter selects one from the
 // configured output mode.
 func openClient(ctx context.Context, cfg clientConfig, reporterOverride cloudstic.Reporter) (*cloudstic.Client, error) {
-	raw, err := newObjectStore(ctx, cfg.Store)
-	if err != nil {
-		return nil, err
-	}
-	raw, debugLog := withDebugStore(raw, cfg.Store.Debug)
+	debugLog := newDebugLog(cfg.Store.Debug)
 
 	reporter := reporterOverride
 	if reporter == nil {
 		reporter = newReporter(cfg, debugLog)
 	}
 
-	kc, err := buildKeychain(ctx, cfg.Unlock)
-	if err != nil {
-		return nil, err
-	}
-
-	return cloudstic.NewClient(ctx, raw,
-		cloudstic.WithKeychain(kc),
-		cloudstic.WithReporter(reporter),
-		cloudstic.WithPackfile(!cfg.DisablePackfile),
+	opts := append(storeOptions(debugLog),
+		open.WithReporter(reporter),
+		open.WithPasswordPrompt(passwordPrompts()),
 	)
+	return open.Client(ctx, cfg, opts...)
 }
 
 func newReporter(cfg clientConfig, debugLog *ui.SafeLogWriter) cloudstic.Reporter {

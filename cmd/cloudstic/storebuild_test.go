@@ -9,81 +9,62 @@ import (
 	localstore "github.com/cloudstic/cli/pkg/store/local"
 )
 
-func newTestLocalStore(t *testing.T) *localstore.Store {
-	t.Helper()
-	s, err := localstore.New(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewLocalStore: %v", err)
-	}
-	return s
-}
+// Store construction itself is tested in pkg/open. What is left here is the
+// part that stayed behind because it is specific to being a terminal program:
+// creating the shared debug writer, and the global it still sets.
 
-func TestWithDebugStore_Disabled(t *testing.T) {
+func TestNewDebugLog_Disabled(t *testing.T) {
 	logger.Writer = nil
 
-	inner := newTestLocalStore(t)
-	result, log := withDebugStore(inner, false)
-
-	if result != inner {
-		t.Error("Expected withDebugStore to return the original store when debug is false")
-	}
-	if log != nil {
-		t.Error("Expected no log writer when debug is false")
+	if log := newDebugLog(false); log != nil {
+		t.Error("expected no log writer when debug is off")
 	}
 	if logger.Writer != nil {
-		t.Error("Expected logger.Writer to remain nil when debug is false")
+		t.Error("expected logger.Writer to remain nil when debug is off")
 	}
 }
 
-func TestWithDebugStore_Enabled(t *testing.T) {
+// TestNewDebugLog_Enabled pins the side effect as much as the return value.
+// newDebugLog sets the package-level logger.Writer, which is what lets the
+// engine and store layers log at all — and is the global RFC 0022 §8 removes.
+// Asserting on it here means that removal cannot happen silently.
+func TestNewDebugLog_Enabled(t *testing.T) {
 	logger.Writer = nil
 	defer func() { logger.Writer = nil }()
 
-	inner := newTestLocalStore(t)
-	result, log := withDebugStore(inner, true)
-
-	if _, ok := result.(*store.DebugStore); !ok {
-		t.Errorf("Expected result to be *store.DebugStore, got %T", result)
-	}
+	log := newDebugLog(true)
 	if log == nil {
-		t.Error("Expected a log writer when debug is true")
+		t.Fatal("expected a log writer when debug is on")
 	}
 	if logger.Writer == nil {
-		t.Error("Expected logger.Writer to be set when debug is true")
+		t.Error("expected logger.Writer to be set when debug is on")
 	}
 }
 
-// Store construction takes a config value, so it is exercised without going
-// through flag parsing at all.
-func TestNewObjectStore_FromConfigWithoutFlagParsing(t *testing.T) {
-	dir := t.TempDir()
-	s, err := newObjectStore(context.Background(), storeConfig{URI: "local:" + dir})
+// TestOpenStore_WrapsWhenDebugIsConfigured checks the adapter wires the debug
+// writer through to pkg/open, rather than creating one and dropping it.
+func TestOpenStore_WrapsWhenDebugIsConfigured(t *testing.T) {
+	logger.Writer = nil
+	defer func() { logger.Writer = nil }()
+
+	s, err := openStore(context.Background(), storeConfig{URI: "local:" + t.TempDir(), Debug: true})
 	if err != nil {
-		t.Fatalf("newObjectStore: %v", err)
+		t.Fatalf("openStore: %v", err)
+	}
+	if _, ok := s.(*store.DebugStore); !ok {
+		t.Errorf("expected a *store.DebugStore when Debug is set, got %T", s)
+	}
+}
+
+func TestOpenStore_UnwrappedByDefault(t *testing.T) {
+	s, err := openStore(context.Background(), storeConfig{URI: "local:" + t.TempDir()})
+	if err != nil {
+		t.Fatalf("openStore: %v", err)
+	}
+	if _, ok := s.(*store.DebugStore); ok {
+		t.Error("expected no debug wrapping when Debug is unset")
 	}
 	if _, ok := s.(*localstore.Store); !ok {
-		t.Fatalf("expected *localstore.Store, got %T", s)
-	}
-}
-
-func TestNewObjectStore_UnknownScheme(t *testing.T) {
-	if _, err := newObjectStore(context.Background(), storeConfig{URI: "nope:whatever"}); err == nil {
-		t.Fatal("expected error for unknown store scheme")
-	}
-}
-
-// B2 credentials come from the resolved b2Config, not from raw os.Getenv
-// calls, so a missing credential is caught before any network dial is
-// attempted.
-func TestNewObjectStore_B2_RequiresCredentials(t *testing.T) {
-	cases := []storeConfig{
-		{URI: "b2:my-bucket"},
-		{URI: "b2:my-bucket", B2: b2Config{KeyID: "id-only"}},
-		{URI: "b2:my-bucket", B2: b2Config{AppKey: "key-only"}},
-	}
-	for _, cfg := range cases {
-		if _, err := newObjectStore(context.Background(), cfg); err == nil {
-			t.Fatalf("expected error for incomplete B2 credentials: %+v", cfg.B2)
-		}
+		t.Errorf("expected the bare backend, got %T", s)
 	}
 }

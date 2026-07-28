@@ -149,18 +149,6 @@ func TestClientConfigZeroValueEnablesPackfiles(t *testing.T) {
 	}
 }
 
-// TestS3RegionDefault covers the other zero-value hazard: the region default
-// used to be pre-filled into one of the two config constructors, so a config
-// built any other way reached the S3 backend with an empty region.
-func TestS3RegionDefault(t *testing.T) {
-	if got := s3Region(""); got != defaultS3Region {
-		t.Errorf("s3Region(\"\") = %q, want %q", got, defaultS3Region)
-	}
-	if got := s3Region("eu-west-3"); got != "eu-west-3" {
-		t.Errorf("s3Region(%q) = %q, want it left alone", "eu-west-3", got)
-	}
-}
-
 // TestOpenClient_ReporterOverrideWins pins the parameter that lets the TUI and
 // tests supply their own reporter: when one is passed, the output mode does
 // not get to pick a different one.

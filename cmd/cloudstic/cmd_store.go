@@ -354,7 +354,7 @@ func checkOrInitStore(r *runner, ctx context.Context, cfg *profile.Config, store
 		return fmt.Errorf("could not resolve store credentials: %w", err)
 	}
 	resolved.Unlock.NoPrompt = r.noPrompt
-	raw, err := newObjectStore(ctx, resolved.Store)
+	raw, err := openStore(ctx, resolved.Store)
 	if err != nil {
 		return fmt.Errorf("could not connect to store: %w", err)
 	}

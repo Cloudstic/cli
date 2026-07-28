@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"sync"
@@ -16,7 +17,14 @@ import (
 	"github.com/cloudstic/cli/pkg/store"
 )
 
-var snapLog = logger.New("snapshots", logger.ColorCyan)
+// defaultSnapLog is the prefix and colour for snapshot-catalog diagnostics.
+// The functions below take a *logger.Logger rather than reading a package
+// variable, because they are free functions with no receiver to carry a sink
+// — see RFC 0022 §8. A nil logger is tolerated and simply logs nothing.
+var defaultSnapLog = logger.New("snapshots", logger.ColorCyan)
+
+// SnapshotLogger returns a snapshot-catalog logger writing to w.
+func SnapshotLogger(w io.Writer) *logger.Logger { return defaultSnapLog.To(w) }
 
 const snapshotCatalogKey = "index/snapshots"
 
@@ -36,7 +44,7 @@ var (
 // missing from the catalog. The catalog is automatically rebuilt/updated
 // whenever a mismatch with the live snapshot keys is detected.
 // Results are sorted newest-first by Created time.
-func LoadSnapshotCatalog(s store.ObjectStore) ([]SnapshotEntry, error) {
+func LoadSnapshotCatalog(s store.ObjectStore, log *logger.Logger) ([]SnapshotEntry, error) {
 	ctx := context.Background()
 
 	// 1. Load catalog (best-effort).
@@ -132,7 +140,7 @@ func LoadSnapshotCatalog(s store.ObjectStore) ([]SnapshotEntry, error) {
 	// 7. Persist rebuilt catalog (best-effort).
 	if needRebuild {
 		if err := SaveSnapshotCatalog(s, updatedCatalog); err != nil {
-			snapLog.Debugf("failed to persist snapshot catalog: %v", err)
+			log.Debugf("failed to persist snapshot catalog: %v", err)
 		}
 	}
 
@@ -170,24 +178,24 @@ func loadCatalogForUpdate(s store.ObjectStore) (catalog []core.SnapshotSummary, 
 
 // AppendSnapshotCatalog loads the current catalog, appends a new summary, and
 // persists it. This is best-effort; errors are logged but not propagated.
-func AppendSnapshotCatalog(s store.ObjectStore, summary core.SnapshotSummary) {
+func AppendSnapshotCatalog(s store.ObjectStore, summary core.SnapshotSummary, log *logger.Logger) {
 	catalog, ok := loadCatalogForUpdate(s)
 	if !ok {
-		snapLog.Debugf("failed to append snapshot catalog: could not read existing catalog")
+		log.Debugf("failed to append snapshot catalog: could not read existing catalog")
 		return
 	}
 	catalog = append(catalog, summary)
 	if err := SaveSnapshotCatalog(s, catalog); err != nil {
-		snapLog.Debugf("failed to append snapshot catalog: %v", err)
+		log.Debugf("failed to append snapshot catalog: %v", err)
 	}
 }
 
 // RemoveFromSnapshotCatalog loads the current catalog, removes entries whose
 // refs match, and persists the result. This is best-effort.
-func RemoveFromSnapshotCatalog(s store.ObjectStore, refs ...string) {
+func RemoveFromSnapshotCatalog(s store.ObjectStore, log *logger.Logger, refs ...string) {
 	catalog, ok := loadCatalogForUpdate(s)
 	if !ok {
-		snapLog.Debugf("failed to update snapshot catalog after removal: could not read existing catalog")
+		log.Debugf("failed to update snapshot catalog after removal: could not read existing catalog")
 		return
 	}
 	if len(catalog) == 0 {
@@ -204,7 +212,7 @@ func RemoveFromSnapshotCatalog(s store.ObjectStore, refs ...string) {
 		}
 	}
 	if err := SaveSnapshotCatalog(s, filtered); err != nil {
-		snapLog.Debugf("failed to update snapshot catalog after removal: %v", err)
+		log.Debugf("failed to update snapshot catalog after removal: %v", err)
 	}
 }
 

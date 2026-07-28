@@ -1,8 +1,11 @@
 package engine
 
 import (
+	"io"
+
 	"context"
 	"fmt"
+	"github.com/cloudstic/cli/internal/logger"
 	"sort"
 	"strings"
 
@@ -111,12 +114,16 @@ type ForgetManager struct {
 	store    store.ObjectStore
 	reporter ui.Reporter
 	pruner   *PruneManager
+	// log is the snapshot-catalog sink this manager passes to the free
+	// functions in snapshots.go.
+	log *logger.Logger
 }
 
-func NewForgetManager(s store.ObjectStore, reporter ui.Reporter) *ForgetManager {
+func NewForgetManager(s store.ObjectStore, reporter ui.Reporter, logWriter io.Writer) *ForgetManager {
 	return &ForgetManager{
 		store:    s,
 		reporter: reporter,
+		log:      SnapshotLogger(logWriter),
 		pruner:   NewPruneManager(storelayer.NewMeteredStore(s), reporter),
 	}
 }
@@ -155,7 +162,7 @@ func (fm *ForgetManager) Run(ctx context.Context, snapshotID string, opts ...For
 	}
 
 	// Update snapshot catalog (best-effort).
-	RemoveFromSnapshotCatalog(fm.store, targetRef)
+	RemoveFromSnapshotCatalog(fm.store, fm.log, targetRef)
 
 	if err := fm.fixupLatest(targetRef); err != nil {
 		phase.Error()
@@ -217,7 +224,7 @@ func (fm *ForgetManager) fixupLatest(deletedRef string) error {
 		return nil
 	}
 
-	entries, err := LoadSnapshotCatalog(fm.store)
+	entries, err := LoadSnapshotCatalog(fm.store, fm.log)
 	if err != nil {
 		return err
 	}
@@ -267,7 +274,7 @@ func (fm *ForgetManager) RunPolicy(ctx context.Context, opts ...ForgetOption) (*
 		return nil, fmt.Errorf("empty policy: specify at least one -keep-* option or a tag/source/account/path filter")
 	}
 
-	entries, err := LoadSnapshotCatalog(fm.store)
+	entries, err := LoadSnapshotCatalog(fm.store, fm.log)
 	if err != nil {
 		return nil, err
 	}
@@ -348,10 +355,10 @@ func (fm *ForgetManager) forgetBatch(ctx context.Context, entries []SnapshotEntr
 	}
 
 	// Update snapshot catalog (best-effort).
-	RemoveFromSnapshotCatalog(fm.store, removedRefs...)
+	RemoveFromSnapshotCatalog(fm.store, fm.log, removedRefs...)
 
 	// Elect new latest from the remaining snapshots.
-	remaining, err := LoadSnapshotCatalog(fm.store)
+	remaining, err := LoadSnapshotCatalog(fm.store, fm.log)
 	if err != nil {
 		return err
 	}

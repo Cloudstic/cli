@@ -27,6 +27,9 @@ func openClient(ctx context.Context, cfg clientConfig, reporterOverride cloudsti
 		open.WithReporter(reporter),
 		open.WithPasswordPrompt(passwordPrompts()),
 	)
+	if debugLog != nil {
+		opts = append(opts, open.WithLogger(debugLog))
+	}
 	return open.Client(ctx, cfg, opts...)
 }
 

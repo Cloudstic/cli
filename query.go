@@ -17,7 +17,7 @@ type ListResult = engine.ListResult
 var WithListVerbose = engine.WithListVerbose
 
 func (c *Client) List(ctx context.Context, opts ...ListOption) (*ListResult, error) {
-	mgr := engine.NewListManager(c.store)
+	mgr := engine.NewListManager(c.store, c.logWriter)
 	return mgr.Run(ctx, opts...)
 }
 
@@ -94,7 +94,7 @@ var (
 // It is a pure read path — no lock is taken, nothing is written, and the
 // repository format is not stamped.
 func (c *Client) Find(ctx context.Context, opts ...FindOption) (*FindResult, error) {
-	mgr := engine.NewFindManager(c.store)
+	mgr := engine.NewFindManager(c.store, c.logWriter)
 	return mgr.Run(ctx, opts...)
 }
 

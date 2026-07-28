@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/pkg/store"
 	localstore "github.com/cloudstic/cli/pkg/store/local"
 )
@@ -14,39 +13,24 @@ import (
 // creating the shared debug writer, and the global it still sets.
 
 func TestNewDebugLog_Disabled(t *testing.T) {
-	logger.Writer = nil
-
 	if log := newDebugLog(false); log != nil {
 		t.Error("expected no log writer when debug is off")
 	}
-	if logger.Writer != nil {
-		t.Error("expected logger.Writer to remain nil when debug is off")
-	}
 }
 
-// TestNewDebugLog_Enabled pins the side effect as much as the return value.
-// newDebugLog sets the package-level logger.Writer, which is what lets the
-// engine and store layers log at all — and is the global RFC 0022 §8 removes.
-// Asserting on it here means that removal cannot happen silently.
+// TestNewDebugLog_Enabled asserts what replaced the side effect. newDebugLog
+// used to set a package-level writer; now it only returns one, and the callers
+// hand it to whatever needs it. A writer that is created and dropped would
+// leave -debug silently producing nothing, which is what this guards.
 func TestNewDebugLog_Enabled(t *testing.T) {
-	logger.Writer = nil
-	defer func() { logger.Writer = nil }()
-
-	log := newDebugLog(true)
-	if log == nil {
+	if log := newDebugLog(true); log == nil {
 		t.Fatal("expected a log writer when debug is on")
-	}
-	if logger.Writer == nil {
-		t.Error("expected logger.Writer to be set when debug is on")
 	}
 }
 
 // TestOpenStore_WrapsWhenDebugIsConfigured checks the adapter wires the debug
 // writer through to pkg/open, rather than creating one and dropping it.
 func TestOpenStore_WrapsWhenDebugIsConfigured(t *testing.T) {
-	logger.Writer = nil
-	defer func() { logger.Writer = nil }()
-
 	s, err := openStore(context.Background(), storeConfig{URI: "local:" + t.TempDir(), Debug: true})
 	if err != nil {
 		t.Fatalf("openStore: %v", err)

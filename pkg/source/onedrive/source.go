@@ -23,6 +23,8 @@ import (
 
 // oneDriveOptions holds configuration for a OneDrive source.
 type oneDriveOptions struct {
+	// logWriter is where this source sends its debug output; nil means none.
+	logWriter       io.Writer
 	clientID        string
 	resolver        *secretref.Resolver
 	tokenPath       string
@@ -34,6 +36,14 @@ type oneDriveOptions struct {
 
 // Option configures a OneDrive source.
 type Option func(*oneDriveOptions)
+
+// WithLogger sends this source's debug output to w.
+//
+// Sources are constructed independently of a client, so a client's sink
+// cannot reach them; this is how a caller supplies one (RFC 0022 §8).
+func WithLogger(w io.Writer) Option {
+	return func(o *oneDriveOptions) { o.logWriter = w }
+}
 
 // WithClientID sets the OAuth client ID. If empty, uses the built-in default.
 func WithClientID(id string) Option {
@@ -146,7 +156,7 @@ func New(ctx context.Context, opts ...Option) (*Source, error) {
 			return saveTokenJSON(cfg.tokenPath, t)
 		}
 		return nil
-	})
+	}, oauthLogger(cfg.logWriter))
 
 	client := oauth2.NewClient(ctx, pts)
 

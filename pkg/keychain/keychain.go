@@ -362,60 +362,10 @@ func (c kmsClientCred) Wrap(ctx context.Context, masterKey []byte) (KeySlot, err
 	}, nil
 }
 
-type kmsARNCred struct {
-	arn string
-}
-
-// WithKMSARN returns a credential using an AWS KMS key ARN, initializing the client on demand.
-func WithKMSARN(arn string) Credential {
-	return kmsARNCred{arn: arn}
-}
-
-func (c kmsARNCred) Resolve(ctx context.Context, slots []KeySlot) ([]byte, error) {
-	if c.arn == "" {
-		return nil, fmt.Errorf("empty KMS ARN")
-	}
-	client, err := crypto.NewAWSKMSClient(ctx, c.arn)
-	if err != nil {
-		return nil, fmt.Errorf("init kms client: %w", err)
-	}
-	var errs []error
-	for _, slot := range slots {
-		if slot.SlotType != "kms-platform" {
-			continue
-		}
-		wrapped, err := base64.StdEncoding.DecodeString(slot.WrappedKey)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("slot %q: decode wrapped key: %w", slot.Label, err))
-			continue
-		}
-		mk, err := client.Decrypt(ctx, wrapped)
-		if err == nil {
-			return mk, nil
-		}
-		errs = append(errs, fmt.Errorf("slot %q: %w", slot.Label, err))
-	}
-	return nil, noMatchingSlotErr("kms-platform", errs)
-}
-
-func (c kmsARNCred) Wrap(ctx context.Context, masterKey []byte) (KeySlot, error) {
-	if c.arn == "" {
-		return KeySlot{}, fmt.Errorf("empty KMS ARN")
-	}
-	client, err := crypto.NewAWSKMSClient(ctx, c.arn)
-	if err != nil {
-		return KeySlot{}, fmt.Errorf("init kms client: %w", err)
-	}
-	ciphertext, err := client.Encrypt(ctx, masterKey)
-	if err != nil {
-		return KeySlot{}, fmt.Errorf("kms encrypt master key: %w", err)
-	}
-	return KeySlot{
-		SlotType:   "kms-platform",
-		Label:      DefaultSlotLabel,
-		WrappedKey: base64.StdEncoding.EncodeToString(ciphertext),
-	}, nil
-}
+// The ARN-based counterpart to WithKMSClient — which constructs an AWS client
+// on demand rather than taking one — lives in pkg/keychain/kms. Keeping it out
+// of this package is what lets pkg/keychain be imported without the AWS SDK
+// (RFC 0022 §6).
 
 type promptCred struct {
 	resolve func() (string, error)

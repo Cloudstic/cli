@@ -10,6 +10,7 @@ import (
 
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/crypto"
+	"github.com/cloudstic/cli/pkg/crypto/kms"
 	"github.com/cloudstic/cli/pkg/keychain"
 )
 
@@ -51,20 +52,19 @@ func buildKeychain(ctx context.Context, cfg unlockConfig) (keychain.Chain, error
 }
 
 // buildKMSClient creates an AWS KMS client if a key ARN is configured,
-// otherwise returns nil. The returned client implements both KMSEncrypter and
-// KMSDecrypter.
+// otherwise returns nil.
 func buildKMSClient(ctx context.Context, cfg kmsConfig) (crypto.KMSClient, error) {
 	if cfg.keyARN == "" {
 		return nil, nil
 	}
-	var opts []crypto.KMSClientOption
+	var opts []kms.Option
 	if cfg.region != "" {
-		opts = append(opts, crypto.WithKMSRegion(cfg.region))
+		opts = append(opts, kms.WithRegion(cfg.region))
 	}
 	if cfg.endpoint != "" {
-		opts = append(opts, crypto.WithKMSEndpoint(cfg.endpoint))
+		opts = append(opts, kms.WithEndpoint(cfg.endpoint))
 	}
-	client, err := crypto.NewAWSKMSClient(ctx, cfg.keyARN, opts...)
+	client, err := kms.New(ctx, cfg.keyARN, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("init KMS client: %w", err)
 	}

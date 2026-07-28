@@ -1,16 +1,22 @@
 # RFC 0022: Public Go API Boundaries
 
-- **Status:** Implemented (stages 1–3); stage 4 outstanding
+- **Status:** Partially implemented — §1–§6 landed; §7 and §8 outstanding
 - **Date:** 2026-07-28
-- **Affects:** `client.go`, `pkg/source`, `pkg/store`, `internal/storelayer`, `docs/`
+- **Affects:** `client.go`, `pkg/source`, `pkg/store`, `pkg/crypto`, `pkg/config`,
+  `pkg/open`, `internal/logger`, `internal/storelayer`, `cmd/cloudstic`, `docs/`
 
 ## Abstract
 
-This RFC makes it possible to implement a custom `Source` or `ObjectStore`
-from a separate Go module, and to name and construct every `Client` result
-type, without introducing a breaking API or a `/v2` module.
+This RFC makes it possible to *implement* a custom `Source` or `ObjectStore`
+from a separate Go module, to *name and construct* every `Client` result type,
+and to *use* the library the way `cmd/cloudstic` uses it — all without
+introducing a breaking API or a `/v2` module.
 
-Two problems block this today:
+Five problems block this today. The first two are about *implementing* the
+contracts and were addressed by §1–§4a. The last three were found while
+reviewing that work: one is the same dependency-bundling problem in a package
+the original survey cleared on the wrong criterion, and two are about
+*consuming* the library rather than extending it.
 
 1. `pkg/source.Source` and several `Client` result types (`FindResult`,
    `FileMatch`, `LsSnapshotResult`, `DiffResult`, ...) reference
@@ -26,14 +32,36 @@ Two problems block this today:
    client, gRPC, protobuf, and OAuth2 stacks (100+ packages); `pkg/store` drags
    in the full AWS SDK. Both regardless of which, if any, of those providers
    the consumer actually wants.
+3. `pkg/crypto` has the same bundling problem, and it was missed because the
+   original survey asked the wrong question of it (see Context). One file,
+   `pkg/crypto/kms.go`, holds both the `KMSClient` *interface* and the AWS SDK
+   client that implements it, so `pkg/crypto`, `pkg/keychain`,
+   `pkg/secretref/backends`, and the root package all carry the AWS SDK
+   whether or not the consumer uses KMS.
+4. Turning user-facing configuration into live objects — a `scheme:` URI into
+   a store, a profile entry into credentials, a credential set into a
+   keychain, all of it into a `Client` — lives entirely in `package main`.
+   `pkg/profile` parses and validates the YAML but stops there. A consumer can
+   read a profiles file and do nothing with it; to act on one they must
+   re-derive the URI grammar, the secret-reference precedence, the auth-ref
+   provider rules, and the keychain ordering, each an opportunity to disagree
+   silently with the CLI.
+5. Debug logging is a mutable package-level `io.Writer` in `internal/logger`,
+   set as a side effect of `cmd/cloudstic`'s `withDebugStore`. Twelve non-test
+   files log through it, including the public `pkg/store` and
+   `pkg/secretref/backends`. No expression available to an external consumer
+   turns any of it on.
 
-Both are fixable inside the current `v1` module: (1) by extending the
+All five are fixable inside the current `v1` module: (1) by extending the
 type-alias re-export pattern `client.go` already uses (`RepoConfig =
 core.RepoConfig`, `SecretRefError = secretref.Error`, `ErrRepoLocked =
 engine.ErrRepoLocked`) to cover every internal type that appears in a public
-signature, and (2) by splitting each of `pkg/source` and `pkg/store` into a
-small contract package plus one subpackage per built-in implementation. Neither
-change breaks an existing caller or the repository format.
+signature, (2) and (3) by splitting each of `pkg/source`, `pkg/store`, and
+`pkg/crypto` into a small contract package plus one subpackage per built-in
+implementation, (4) by moving configuration resolution and construction out of
+`package main` into `pkg/config` and `pkg/open`, and (5) by making the debug
+sink an injected value rather than a global. None of these changes the
+repository format.
 
 ## Context
 
@@ -54,6 +82,28 @@ just `pkg/source`:
   change needed to the interface itself.
 - `pkg/crypto` and `pkg/keychain` have zero references to `internal/core` or
   `internal/engine` anywhere. Already fully self-contained and importable.
+  **This is true but was the wrong question to stop at.** It tested for
+  internal-type leaks — problem (1) — and the bundling test of problem (2) was
+  only ever run against `pkg/source` and `pkg/store`. Running it against every
+  public package (`go list -deps`, counting `aws-sdk-go`,
+  `google.golang.org/api`, and `golang.org/x/oauth2` packages) shows
+  `pkg/crypto` has exactly the bundling problem the RFC was written to fix:
+
+  | package | total deps | vendor SDK deps |
+  | --- | ---: | ---: |
+  | `.` (root) | 322 | 57 |
+  | `pkg/crypto` | 285 | 57 |
+  | `pkg/keychain` | 288 | 57 |
+  | `pkg/secretref/backends` | 293 | 57 |
+  | `pkg/store` | 62 | 0 |
+  | `pkg/source` | 60 | 0 |
+  | `pkg/profile` | 73 | 0 |
+  | `pkg/secretref` | 68 | 0 |
+
+  One non-test file is responsible: `pkg/crypto/kms.go`. Everything else in
+  `pkg/crypto` is AES-GCM, HKDF, and BIP39, which need no SDK. `pkg/keychain`
+  inherits it by importing `pkg/crypto`, `pkg/secretref/backends` by importing
+  `pkg/keychain`, and the root package by importing all three. See §6.
 - `pkg/source.Source`/`IncrementalSource` (`pkg/source/interface.go:19-24`)
   reference exactly two `internal/core` types in their method signatures:
   `core.FileMeta` and `core.SourceInfo`.
@@ -85,6 +135,13 @@ recent `RepoConfig`, `SecretRefError`, and `ErrRepoLocked` exports from
   nameable and constructible from outside the module.
 - Importing the `Source`/`ObjectStore` contract does not pull in a specific
   provider's SDK.
+- Importing the repository client does not pull in a cloud SDK the consumer
+  does not use.
+- A consumer can go from a profiles file to a completed backup using only
+  public packages, with the same URI grammar, secret-reference precedence, and
+  keychain ordering the CLI applies — without reimplementing any of it.
+- Debug output from the client, engine, and store layers is reachable from
+  outside the module, per-client rather than per-process.
 - No existing caller (`cmd/cloudstic`, `internal/tui`, `internal/app`, or an
   external consumer of today's `Client` API) breaks.
 - No repository format change; `core.RepoFormatVersion` is untouched.
@@ -107,7 +164,16 @@ recent `RepoConfig`, `SecretRefError`, and `ErrRepoLocked` exports from
 - Changing which types `internal/engine` or `internal/hamt` use internally.
   `internal/core` remains the single source of truth for the domain model;
   only the subset already reachable from a public signature gets a root alias.
-- Moving `pkg/crypto` or `pkg/keychain` — they have no leak to fix.
+- Adopting `log/slog`. §8 makes the debug sink injectable while preserving its
+  current `[component] message` format exactly — a purely structural change.
+  Replacing that format with structured logging is a behavioral change with
+  its own migration and its own golden-file churn; it deserves a separate RFC,
+  and §8 is a precondition for it rather than a substitute.
+- Moving flag parsing, help generation, or command dispatch out of
+  `cmd/cloudstic`. §7 moves *resolution and construction*; deciding what the
+  user typed stays a CLI concern (see §7's precedence note).
+- A `pkg/` home for the TUI (`internal/tui`, `internal/app`) or the onboarding
+  wizard (`internal/workstation`). They are CLI surfaces, correctly internal.
 
 ## Proposal
 
@@ -248,6 +314,167 @@ implementation of `Source` using only `github.com/cloudstic/cli` (root) and
 into a caller via the `Client` API. Update `docs/storage-model.md` similarly
 for `ObjectStore`.
 
+### 6. Split the AWS KMS client out of `pkg/crypto`
+
+Apply §3–§4's contract/implementation split to `pkg/crypto`, the package the
+original survey cleared on the wrong criterion:
+
+```text
+pkg/crypto/                  # AES-256-GCM, HKDF, Argon2, BIP39,
+                             # KMSClient interface (kmsclient.go)
+pkg/crypto/kms/              # Client, New, Option,
+                             # WithRegion/WithEndpoint/WithConfig
+pkg/keychain/kms/            # WithARN
+```
+
+The split is unusually clean because the seam already exists in the file.
+`crypto.KMSClient` (`pkg/crypto/kms.go:13`) is a pure interface over
+`Encrypt`/`Decrypt`; `AWSKMSClient` is the concrete type, and
+`WithKMSConfig(aws.Config)` is the only exported symbol whose *signature*
+names an SDK type. Interfaces stay, implementation moves. Symbols are renamed
+to drop the now-redundant prefix on the way out, per §3's resolved decision:
+`kms.New`, `kms.Client`, `kms.Option`, `kms.WithRegion`.
+
+`pkg/keychain` needs a third package to reach the target. `WithKMSClient` takes
+an already-built `crypto.KMSClient` and is SDK-free, but `WithKMSARN`
+constructs one on demand and is the sole reason `pkg/keychain` links the AWS
+SDK. It moves to `pkg/keychain/kms.WithARN`. It has no callers anywhere in the
+tree — deleting it was considered and rejected, since moving preserves the
+capability at the same cost.
+
+Measured after the change (`go list -deps`, same method as the Context table):
+
+| package | before | after | SDK before | SDK after |
+| --- | ---: | ---: | ---: | ---: |
+| `.` (root) | 322 | 168 | 57 | 0 |
+| `pkg/crypto` | 285 | 115 | 57 | 0 |
+| `pkg/keychain` | 288 | 122 | 57 | 0 |
+| `pkg/secretref/backends` | 293 | 129 | 57 | 0 |
+
+The AWS SDK is now reachable only through `pkg/crypto/kms` and
+`pkg/keychain/kms`. The root package's `type KMSClient = crypto.KMSClient`
+alias (`aliases.go:50`) is unaffected — it aliases the interface, so root keeps
+naming KMS without importing the SDK.
+
+This stage is fully independent of §7 and §8 and can land first.
+
+### 7. The configuration-resolution boundary
+
+Everything between "what the user configured" and "a live object" is currently
+in `package main`: `applyProfileStore` and `resolveProfileStoreValue`
+(`config.go`, `profile_secret.go`), `parseStoreURI`/`parseSourceURI`
+(`storeuri.go`), `newObjectStore`/`openStore` (`storebuild.go`),
+`buildKeychain`/`buildKMSClient` (`keychain.go`), `openClient`
+(`clientbuild.go`), and `initSource` (`cmd_backup.go`). `cmd/cloudstic`'s own
+`config.go` header already states the design — resolution is explicit and
+non-mutating, and construction consumes resolved values and never sees
+`globalFlags`. The remaining problem is only that both halves live in `main`.
+
+Move them into two packages, split on dependency weight:
+
+```text
+pkg/config/                  # Store, Source, Unlock, Client value types;
+                             # URI parsing; profile -> config resolution.
+                             # Imports pkg/profile + pkg/secretref only.
+pkg/open/                    # Store(), Source(), Keychain(), Client().
+                             # Imports the backends, providers, and KMS.
+```
+
+Four decisions this encodes, and why:
+
+- **Two packages, not one.** `pkg/config` stays at roughly `pkg/profile`'s
+  weight (~73 deps) because it resolves configuration without connecting
+  anything; `pkg/open` carries the S3, Google, and KMS SDKs because
+  constructing a backend requires them. Collapsing them puts every SDK behind
+  "I want to read a profile and see which store it names" — the exact cost §3
+  and §4 were written to remove. This is a judgment call about a consumer that
+  resolves without connecting (a control plane, a validator, `store verify`);
+  the split is cheap enough to make now and expensive to retrofit.
+- **`pkg/config` imports `pkg/profile`, never the reverse.** Config is the
+  general concept and a profile is one source of it, so the conversion is
+  `config.FromProfileStore(profile.Store, *secretref.Resolver)`. There is no
+  cycle in either direction, but only one direction keeps `pkg/profile` the
+  pure YAML data package it is today.
+- **Value structs, not functional options.** §3–§4's constructors take
+  functional options and should keep them. Configuration is different: it
+  arrives from YAML and flags, and has to be inspectable, comparable, and
+  round-trippable. Options cannot be unmarshalled or diffed. Structs for the
+  data, options for the behavior knobs on `NewClient`.
+- **The secret resolver is a parameter, not a default.**
+  `cmd/cloudstic`'s `profileSecretResolver` is a package-level var bound to
+  `backends.NewDefaultResolver()`. Passing a `*secretref.Resolver` in is what
+  keeps `pkg/config` off the 293-dep `backends` package, makes resolution
+  testable without a real keychain, and lets a consumer register Vault —
+  which `pkg/secretref/backends.Default()` was already designed to allow.
+
+**Precedence stays in the CLI, and the direction inverts.** `applyProfileStore`
+takes a `provided func(string) bool` so an explicit flag beats a profile value.
+That callback is meaningless outside a flag parser. `pkg/config` therefore
+resolves a profile into a *complete* configuration, and `cmd/cloudstic` keeps a
+thin overlay applying flag overrides on top. Same precedence rule as documented
+in `AGENTS.md`; the profile is no longer folded into flags, flags are folded
+onto the resolved config.
+
+**Two zero-value defects must be fixed before these structs are published, not
+after.** `clientConfig.packfile` is `true`-by-default in meaning but `false` in
+its zero value, and `clientbuild.go:36` passes it to `WithPackfile`
+unconditionally — overriding `NewClient`'s own `enablePackfile: true` default.
+The codebase compensates twice, in opposite directions (`config.go:121`
+`!g.disablePackfile`, `config.go:207` `clientConfig{packfile: true}`).
+`s3.region` has the same shape, compensated once at `config.go:208`. Exported
+as-is, a consumer writing `config.Client{Store: …}` silently gets packfile
+disabled and no region — a repository written with a different physical layout,
+with no error at any layer. The field becomes `DisablePackfile bool` so the zero
+value is the safe default (matching the `-disable-packfile` flag it comes from),
+and the region default resolves inside `open.Store` rather than at one of two
+call sites.
+
+**`open.Client` is a convenience over public parts, not a funnel.** A composition
+root in a library is a fair thing to object to. The answer is that
+`open.Store`, `open.Source`, and `open.Keychain` are independently useful and
+independently exported, and `NewClient(ctx, base, opts...)` keeps taking a raw
+`store.ObjectStore` exactly as it does today. `open.Client` is the shortcut
+`cmd/cloudstic` happens to want; a consumer who wants to wire it differently
+still can.
+
+### 8. Debug logging becomes injectable
+
+`internal/logger.Writer` is a mutable package-level `io.Writer`, set by
+`cmd/cloudstic`'s `withDebugStore` as a side effect (the concern already
+recorded as open question 3). It is read from goroutines throughout a
+concurrent backup, and written once at startup — benign in the CLI, because
+nothing sets it after work begins.
+
+Exporting a setter for it would not be. It would make the global writable at
+any time from any goroutine, turning a benign startup-ordering property into a
+racy public API, and it would still leave two `Client`s in one process unable
+to have different debug settings — which is the first thing a library consumer
+hits. So the global goes away rather than being published:
+
+- `logger.New(component, color)` already returns a `*Logger`. Give it a writer
+  field instead of reading the package var, and have each construction site
+  take its writer from its owner.
+- `NewClient` gains `WithLogger(io.Writer)`, threading through
+  `internal/engine`, `internal/hamt`, and `internal/storelayer`.
+- Source constructors gain `WithLogger` in their existing option sets, which
+  also covers `internal/sourceoauth`.
+- `store.NewDebugStore(inner, w)` already takes a writer and needs nothing.
+- `pkg/secretref` resolvers gain a logger option.
+- `logger.Writer` stays as a fallback while call sites migrate, then is deleted.
+
+**The injected value is an `io.Writer`, not a `*slog.Logger`.** The current
+output is colored `[component] message` human debug text, and preserving it
+byte-for-byte makes this stage purely structural — no golden-file churn, no
+behavioral review. Structured logging is the separate proposal named in
+Non-goals.
+
+This supersedes §4a's rejection of a `WithDebug` client option, which does not
+apply here: that rejection was about *`DebugStore` wrapping* — the
+`*ui.SafeLogWriter` it produces feeds the reporter, which is passed *into*
+`NewClient`, and `init`/`key` operate on a raw store with no Client at all. A
+logger sink has neither property. `DebugStore` construction stays exactly where
+§4a put it.
+
 ## Compatibility
 
 - **Repository format:** untouched. This is a Go package/API reorganization,
@@ -270,6 +497,26 @@ for `ObjectStore`.
 - **Release tooling:** `.goreleaser.yml`'s `-X` paths move with the OAuth
   variables in the same change. See the hazard note in §3 — a stale `-X` path
   fails silently.
+- **External importers of `pkg/crypto`'s KMS implementation**
+  (`crypto.AWSKMSClient`, `crypto.NewAWSKMSClient`, `crypto.KMSClientOption`,
+  `crypto.WithKMSRegion`/`WithKMSEndpoint`/`WithKMSConfig`): these move to
+  `pkg/crypto/kms` under §6. Accepted on the same grounds as §3–§4, and with
+  the same mitigation — the interfaces every consumer actually names
+  (`KMSClient`, `KMSEncrypter`, `KMSDecrypter`) do not move, and the root
+  package's `KMSClient` alias is unchanged.
+- **Nothing in this RFC has shipped.** Its implementation commits post-date
+  `v1.17.0`, so §6–§8 revise work no release has exposed. The §3–§4 breakage
+  assessment stands as written; §6–§8 add no breakage beyond the
+  `pkg/crypto/kms` move, since §7's packages are new and §8's global is
+  internal.
+- **`internal/logger.Writer`** is internal, so its removal in §8 is invisible
+  outside the module. Debug *output* is unchanged byte-for-byte; only the way
+  the sink is supplied changes.
+- **`cmd/cloudstic` behavior** is unchanged throughout §6–§8. `storebuild.go`,
+  `clientbuild.go`, `keychain.go`, `storeuri.go`, and `config.go` become thin
+  adapters over `pkg/config` and `pkg/open`; the golden help files, testscript
+  suites, and e2e tests must pass untouched, which is the primary evidence
+  that §7 preserved behavior.
 
 ## Testing strategy
 
@@ -286,32 +533,86 @@ for `ObjectStore`.
 - `go build ./...` and the existing hermetic e2e suite after the `pkg/source`
   / `pkg/store` split, to confirm no internal caller was missed.
 
+Stages 5–8 add three requirements:
+
+- **Characterization tests before the §7 move, not after.** Grepping the blast
+  radius against `cmd/cloudstic/*_test.go` shows the unlock path has no direct
+  unit tests at all: `buildKeychain`, `buildKMSClient`, `parsePlatformKey`,
+  `openClient`, `openStore`, `newReporter`, and `resolveProfileStoreValue` are
+  referenced by zero test files. `buildKeychain` is the one that matters most —
+  it fixes credential precedence (KMS, then platform key, then password, then
+  recovery key, then interactive prompt), an ordering that exists today only as
+  code and becomes a public promise the moment it moves. Pin it with tests in
+  `package main` first, then move the tested code.
+- **A dependency-weight sweep, not a hand-listed few.** The original
+  `TestExternalContractsPullNoVendorSDK` asserted the property of exactly two
+  packages, `pkg/source` and `pkg/store` — so it held everywhere anyone had
+  thought to look, and `pkg/crypto` bundled the AWS SDK through three stages of
+  the RFC written to prevent it. It is replaced by
+  `TestPublicPackagesPullNoVendorSDK`, which enumerates every public package
+  from `go list . ./pkg/...` and fails on any SDK dependency, with the
+  SDK-bearing set (`pkg/crypto/kms`, `pkg/keychain/kms`, `pkg/source/gdrive`,
+  `pkg/source/onedrive`, `pkg/store/s3`, and later `pkg/open`) named in an
+  explicit allowlist so joining it is a reviewed decision. A companion test
+  fails on a stale allowlist entry, since one left behind after a rename
+  silently exempts whatever takes that import path next. Enumerating means a
+  package added tomorrow is covered the day it is created.
+- **The external fixture must consume, not only implement.**
+  `internal/apicheck/testdata/externalmod` proves `Source`, `ObjectStore`, and
+  a secret backend can be implemented from outside. It does not prove the
+  library can be *used* from outside, which is problems (4) and (5). Extend it
+  to load a profiles file, resolve it through `pkg/config`, open a client
+  through `pkg/open`, run a backup with a `WithLogger` sink attached, and
+  assert on the debug output — importing no `internal/` package. That test
+  failing is the definition of a regression in this RFC's goal.
+
 ## Rollout plan
 
 1. Alias sweep (§1) + API-boundary regression test (§2). Small, additive,
-   immediately unblocks naming every `Client` result type.
+   immediately unblocks naming every `Client` result type. **Done.**
 2. Split `pkg/source` into contract + provider subpackages (§3), update
-   `cmd/cloudstic` wiring, shell-completion generators, and tests.
+   `cmd/cloudstic` wiring, shell-completion generators, and tests. **Done.**
 3. Split `pkg/store` the same way (§4), update `storebuild.go` and tests.
+   **Done.**
 4. Documentation (§5) and the external-module fixture (Testing strategy).
+   **Done.**
+5. Split the AWS KMS client out of `pkg/crypto` (§6), and add the
+   dependency-weight sweep that would have caught it. **Done.**
+6. Characterization tests over the §7 blast radius, in `package main`, before
+   anything moves. Then fix the `packfile` and `s3.region` zero values as a
+   separate, behavioral commit.
+7. Move config types to `pkg/config` behind `type clientConfig = config.Client`
+   aliases in `cmd/cloudstic`, then the URI parsers, then profile resolution
+   with the resolver injected — three commits, no call-site churn.
+8. Add `pkg/open`; reduce `storebuild.go`, `clientbuild.go`, and `keychain.go`
+   to adapters.
+9. Logger injection (§8).
+10. Extend the external fixture to consume the library end to end.
 
-Steps 1–2 alone already make external custom sources possible; 3 is
-independently valuable for the same reason applied to stores, and can ship on
-its own schedule.
+Steps 1–3 made external custom sources and stores possible, which was the
+original goal. Steps 5–10 are what make the library usable by the consumer who
+does *not* want to extend it, and each remains independently valuable.
+
+Step 5 is independent of everything after it and is the largest single
+improvement per line changed — it should not wait on the rest. Steps 6–8 are
+strictly ordered: the tests gate the move, and per this repo's refactoring
+practice the behavioral zero-value fix must not share a commit with the
+structural move. Step 7's type aliases are what keep each commit small enough
+to review, since no call site changes until the alias is removed.
 
 ## Open questions
 
-1. Should the external-module fixture live permanently in-tree (e.g.
-   `internal/e2e/fixtures/customsource/`, itself *not* importing `internal/`
-   despite its own path) so CI enforces the contract on every change, or be a
-   one-time manual verification?
+1. ~~Should the external-module fixture live permanently in-tree…~~
+   **Resolved:** in-tree, at `internal/apicheck/testdata/externalmod`, enforced
+   on every change. Stage 10 extends it from implementing the contracts to
+   consuming the library.
 2. Does the API-boundary test need an allowlist mechanism for cases where an
    internal type is deliberately, temporarily exposed during a staged rollout,
    or should any leak simply fail the test until aliased?
-3. `withDebugStore` (`cmd/cloudstic/storebuild.go`) mutates the global
-   `logger.Writer` as a side effect of a function that reads as pure. Worth
-   separating, but it is a standalone cleanup rather than part of this RFC —
-   track it separately.
+3. ~~`withDebugStore` mutates the global `logger.Writer`…~~ **Resolved:** it is
+   not a standalone cleanup after all. The same global is what makes debug
+   output unreachable from outside the module (problem 5), so it is now §8 of
+   this RFC rather than a separate track.
 4. **Root-package congestion.** `client.go` is ~1100 lines, but only 20 of its
    declarations are `Client` methods and 8 are locally defined types; the other
    ~118 are pass-through re-exports (60 type aliases + 58 option vars). Most of

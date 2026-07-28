@@ -109,7 +109,7 @@ func TestRestoreManager_RunToDir_ReplaysXattrs(t *testing.T) {
 		Meta:    core.FileMeta{FileID: "id_file", Name: "file.txt", Parents: []string{"id_dir"}, Xattrs: map[string][]byte{"user.file": []byte("f")}},
 		Content: []byte("content"),
 	}
-	bkMgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil)
+	bkMgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, nil)
 	if _, err := bkMgr.Run(t.Context()); err != nil {
 		t.Fatalf("backup setup failed: %v", err)
 	}

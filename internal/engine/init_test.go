@@ -39,7 +39,7 @@ var _ crypto.KMSClient = (*mockKMS)(nil)
 
 func TestInitManager_UnencryptedRepo(t *testing.T) {
 	s := NewMockStore()
-	mgr := NewInitManager(s)
+	mgr := NewInitManager(s, nil)
 
 	result, err := mgr.Run(context.Background(), WithInitNoEncryption())
 	if err != nil {
@@ -68,7 +68,7 @@ func TestInitManager_UnencryptedRepo(t *testing.T) {
 
 func TestInitManager_EncryptedWithPassword(t *testing.T) {
 	s := NewMockStore()
-	mgr := NewInitManager(s)
+	mgr := NewInitManager(s, nil)
 
 	result, err := mgr.Run(context.Background(), WithInitCredentials(keychain.Chain{keychain.WithPassword("test-password")}))
 	if err != nil {
@@ -107,7 +107,7 @@ func TestInitManager_EncryptedWithPassword(t *testing.T) {
 
 func TestInitManager_EncryptedWithPlatformKey(t *testing.T) {
 	s := NewMockStore()
-	mgr := NewInitManager(s)
+	mgr := NewInitManager(s, nil)
 
 	platformKey := make([]byte, 32)
 	for i := range platformKey {
@@ -133,7 +133,7 @@ func TestInitManager_EncryptedWithPlatformKey(t *testing.T) {
 
 func TestInitManager_AlreadyInitialized(t *testing.T) {
 	s := NewMockStore()
-	mgr := NewInitManager(s)
+	mgr := NewInitManager(s, nil)
 
 	// First init.
 	if _, err := mgr.Run(context.Background(), WithInitNoEncryption()); err != nil {
@@ -154,7 +154,7 @@ func TestInitManager_AlreadyInitialized(t *testing.T) {
 func TestInitManager_Run_PropagatesConfigCheckError(t *testing.T) {
 	backendErr := errors.New("simulated network error")
 	s := newErrorOnGetStore(NewMockStore(), backendErr, configKey)
-	mgr := NewInitManager(s)
+	mgr := NewInitManager(s, nil)
 
 	_, err := mgr.Run(context.Background(), WithInitNoEncryption())
 	if err == nil {
@@ -171,7 +171,7 @@ func TestInitManager_Run_PropagatesConfigCheckError(t *testing.T) {
 func TestInitManager_WriteRepoConfig_PropagatesReadError(t *testing.T) {
 	backendErr := errors.New("simulated network error")
 	s := newErrorOnGetStore(NewMockStore(), backendErr, configKey)
-	mgr := NewInitManager(s)
+	mgr := NewInitManager(s, nil)
 
 	err := mgr.writeRepoConfig(context.Background(), false, nil)
 	if err == nil {
@@ -194,7 +194,7 @@ func TestInitManager_AdoptsExistingSlots(t *testing.T) {
 	slot, _ := keychain.CreatePlatformSlot(masterKey, platformKey)
 	_ = keychain.WriteKeySlot(context.Background(), s, slot)
 
-	mgr := NewInitManager(s)
+	mgr := NewInitManager(s, nil)
 	result, err := mgr.Run(context.Background(), WithInitCredentials(keychain.Chain{keychain.WithPlatformKey(platformKey)}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -222,7 +222,7 @@ func TestInitManager_AdoptExistingSlots_WrongCredential(t *testing.T) {
 		wrongKey[i] = byte(i + 100)
 	}
 
-	mgr := NewInitManager(s)
+	mgr := NewInitManager(s, nil)
 	_, err := mgr.Run(context.Background(), WithInitCredentials(keychain.Chain{keychain.WithPlatformKey(wrongKey)}))
 	if err == nil {
 		t.Fatal("expected error when adopting slots with wrong key")
@@ -231,7 +231,7 @@ func TestInitManager_AdoptExistingSlots_WrongCredential(t *testing.T) {
 
 func TestInitManager_WithRecoveryKey(t *testing.T) {
 	s := NewMockStore()
-	mgr := NewInitManager(s)
+	mgr := NewInitManager(s, nil)
 
 	result, err := mgr.Run(context.Background(),
 		WithInitCredentials(keychain.Chain{keychain.WithPassword("test-password")}),
@@ -274,7 +274,7 @@ func TestInitManager_WithRecoveryKey(t *testing.T) {
 
 func TestInitManager_EncryptedWithKMS(t *testing.T) {
 	s := NewMockStore()
-	mgr := NewInitManager(s)
+	mgr := NewInitManager(s, nil)
 	kms := &mockKMS{xorByte: 0x42}
 
 	result, err := mgr.Run(context.Background(),
@@ -324,7 +324,7 @@ func TestInitManager_EncryptedWithKMS(t *testing.T) {
 
 func TestInitManager_KMSWithPasswordSlots(t *testing.T) {
 	s := NewMockStore()
-	mgr := NewInitManager(s)
+	mgr := NewInitManager(s, nil)
 	kms := &mockKMS{xorByte: 0x42}
 
 	// Init with both KMS and password — should create both slot types.
@@ -373,7 +373,7 @@ func TestInitManager_KMSWithPasswordSlots(t *testing.T) {
 
 func TestInitManager_KMSWithRecovery(t *testing.T) {
 	s := NewMockStore()
-	mgr := NewInitManager(s)
+	mgr := NewInitManager(s, nil)
 	kms := &mockKMS{xorByte: 0x42}
 
 	result, err := mgr.Run(context.Background(),
@@ -404,7 +404,7 @@ func TestInitManager_KMSWithRecovery(t *testing.T) {
 
 func TestInitManager_NoEncryptionOverridesCreds(t *testing.T) {
 	s := NewMockStore()
-	mgr := NewInitManager(s)
+	mgr := NewInitManager(s, nil)
 
 	// Passing both a password and --no-encryption should result in unencrypted repo.
 	result, err := mgr.Run(context.Background(),
@@ -429,7 +429,7 @@ func TestInitManager_NoEncryptionOverridesCreds(t *testing.T) {
 }
 func TestInitManager_AdoptAddsNewSlots(t *testing.T) {
 	s := NewMockStore()
-	mgr := NewInitManager(s)
+	mgr := NewInitManager(s, nil)
 	ctx := context.Background()
 
 	// 1. Pre-create a password slot
@@ -511,7 +511,7 @@ func TestInitManager_AdoptRefusesEncryptingPopulatedRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mgr := NewInitManager(s)
+	mgr := NewInitManager(s, nil)
 	_, err = mgr.Run(ctx,
 		WithInitCredentials(keychain.Chain{keychain.WithPassword("newpw")}),
 		WithInitAdoptSlots(),
@@ -550,7 +550,7 @@ func TestInitManager_AdoptAllowsEncryptingEmptyRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mgr := NewInitManager(s)
+	mgr := NewInitManager(s, nil)
 	result, err := mgr.Run(ctx,
 		WithInitCredentials(keychain.Chain{keychain.WithPassword("newpw")}),
 		WithInitAdoptSlots(),
@@ -593,7 +593,7 @@ func TestInitManager_AdoptEncryptedRepoUnaffectedByGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mgr := NewInitManager(s)
+	mgr := NewInitManager(s, nil)
 	result, err := mgr.Run(ctx,
 		WithInitCredentials(keychain.Chain{keychain.WithPassword("p1")}),
 		WithInitAdoptSlots(),

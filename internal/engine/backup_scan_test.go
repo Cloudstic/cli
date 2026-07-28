@@ -57,7 +57,7 @@ func TestDetectChange_NativeFileFastPath(t *testing.T) {
 		Content: []byte("exported docx content"),
 	}
 
-	mgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil)
+	mgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, nil)
 	result1, err := mgr.Run(ctx)
 	if err != nil {
 		t.Fatalf("First backup failed: %v", err)
@@ -72,7 +72,7 @@ func TestDetectChange_NativeFileFastPath(t *testing.T) {
 	}
 
 	// Second backup: same headRevisionId → should detect as unchanged.
-	mgr2 := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil)
+	mgr2 := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, nil)
 	result2, err := mgr2.Run(ctx)
 	if err != nil {
 		t.Fatalf("Second backup failed: %v", err)
@@ -102,7 +102,7 @@ func TestDetectChange_NativeFileFastPath(t *testing.T) {
 		Content: []byte("new exported docx content"),
 	}
 
-	mgr3 := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil)
+	mgr3 := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, nil)
 	result3, err := mgr3.Run(ctx)
 	if err != nil {
 		t.Fatalf("Third backup failed: %v", err)
@@ -143,7 +143,7 @@ func TestDetectChange_NativeFileEmptyRevID(t *testing.T) {
 		Content: []byte("exported docx content"),
 	}
 
-	mgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil)
+	mgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, nil)
 	result1, err := mgr.Run(ctx)
 	if err != nil {
 		t.Fatalf("First backup failed: %v", err)
@@ -153,7 +153,7 @@ func TestDetectChange_NativeFileEmptyRevID(t *testing.T) {
 	}
 
 	// Second backup: still no headRevisionId → should be treated as changed.
-	mgr2 := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil)
+	mgr2 := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, nil)
 	result2, err := mgr2.Run(ctx)
 	if err != nil {
 		t.Fatalf("Second backup failed: %v", err)
@@ -182,7 +182,7 @@ func TestDetectChange_NativeFileCarriesForwardMetadata(t *testing.T) {
 		Content: []byte("content"),
 	}
 
-	mgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil)
+	mgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, nil)
 	result1, err := mgr.Run(ctx)
 	if err != nil {
 		t.Fatalf("First backup failed: %v", err)
@@ -211,7 +211,7 @@ func TestDetectChange_NativeFileCarriesForwardMetadata(t *testing.T) {
 
 	// Second backup with same revID: the unchanged path should carry forward
 	// ContentHash and Size from the first backup.
-	mgr2 := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil)
+	mgr2 := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, nil)
 	result2, err := mgr2.Run(ctx)
 	if err != nil {
 		t.Fatalf("Second backup failed: %v", err)
@@ -272,7 +272,7 @@ func TestScanIncremental_DeleteWithoutParentUsesExistingMetadataParent(t *testin
 	}
 
 	dest := NewMockStore()
-	mgr := NewBackupManager(inc, dest, ui.NewNoOpReporter(), nil)
+	mgr := NewBackupManager(inc, dest, ui.NewNoOpReporter(), nil, nil)
 	_, err := mgr.Run(ctx)
 	if err != nil {
 		t.Fatalf("first backup failed: %v", err)
@@ -285,7 +285,7 @@ func TestScanIncremental_DeleteWithoutParentUsesExistingMetadataParent(t *testin
 	inc.changes = deleteOnly
 	delete(base.Files, "FILE_1")
 
-	mgr2 := NewBackupManager(inc, dest, ui.NewNoOpReporter(), nil)
+	mgr2 := NewBackupManager(inc, dest, ui.NewNoOpReporter(), nil, nil)
 	second, err := mgr2.Run(ctx)
 	if err != nil {
 		t.Fatalf("second backup failed: %v", err)

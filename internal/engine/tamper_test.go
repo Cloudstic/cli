@@ -171,7 +171,7 @@ func TestCheckReportsTamperedInlineContent(t *testing.T) {
 	dest := NewMockStore()
 	src.AddFile("small.txt", "id1", []byte("small enough to store inline"))
 
-	bm := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil)
+	bm := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, nil)
 	if _, err := bm.Run(context.Background()); err != nil {
 		t.Fatalf("backup: %v", err)
 	}

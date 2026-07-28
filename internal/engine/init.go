@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/cloudstic/cli/internal/core"
@@ -15,7 +16,7 @@ import (
 	"github.com/cloudstic/cli/pkg/store"
 )
 
-var initLog = logger.New("init", logger.ColorYellow)
+var defaultInitLog = logger.New("init", logger.ColorYellow)
 
 // ---------------------------------------------------------------------------
 // Options
@@ -55,12 +56,15 @@ type InitResult struct {
 // writes the "config" marker.
 type InitManager struct {
 	store store.ObjectStore
+	// log is this manager's debug sink; an unbound logger falls back to the
+	// process-wide writer.
+	log *logger.Logger
 }
 
 // NewInitManager creates an InitManager that operates on the raw (undecorated)
 // object store.
-func NewInitManager(s store.ObjectStore) *InitManager {
-	return &InitManager{store: s}
+func NewInitManager(s store.ObjectStore, logWriter io.Writer) *InitManager {
+	return &InitManager{store: s, log: defaultInitLog.To(logWriter)}
 }
 
 const configKey = "config"
@@ -71,7 +75,7 @@ func (m *InitManager) Run(ctx context.Context, opts ...InitOption) (*InitResult,
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	initLog.Debugf("InitRepo: encrypted=%v, noEncryption=%v, adoptSlots=%v, hasChain=%v, recovery=%v",
+	m.log.Debugf("InitRepo: encrypted=%v, noEncryption=%v, adoptSlots=%v, hasChain=%v, recovery=%v",
 		!cfg.noEncryption && len(cfg.chain) > 0, cfg.noEncryption, cfg.adoptSlots, len(cfg.chain) > 0, cfg.recovery)
 
 	// Check if already initialized. A read failure that is not "no config yet"

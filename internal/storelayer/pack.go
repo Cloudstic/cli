@@ -12,6 +12,7 @@ import (
 	lru "github.com/hashicorp/golang-lru/v2"
 
 	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/pkg/crypto"
 	"github.com/cloudstic/cli/pkg/store"
 )
@@ -28,6 +29,10 @@ const (
 // contains which object.
 type PackStore struct {
 	store.ObjectStore
+
+	// log is this store's debug sink, or nil to use the process-wide
+	// fallback. Set with WithPackLogger.
+	log *logger.Logger
 
 	mu sync.RWMutex
 
@@ -88,7 +93,6 @@ func WithPackIndexKey(key []byte) PackOption {
 
 // NewPackStore initializes a new MicroPackStore over an existing store.ObjectStore.
 func NewPackStore(inner store.ObjectStore, opts ...PackOption) (*PackStore, error) {
-	debugf("init packstore: LRU size=%d", 4)
 	// Keep up to 30 MB of packfiles in memory (around 4 packs) to speed up reads
 	cache, err := lru.New[string, []byte](4)
 	if err != nil {
@@ -107,6 +111,9 @@ func NewPackStore(inner store.ObjectStore, opts ...PackOption) (*PackStore, erro
 	for _, opt := range opts {
 		opt(s)
 	}
+	// Logged after the options are applied so it reaches the sink the caller
+	// asked for rather than the process-wide fallback.
+	s.debugf("init packstore: LRU size=%d", 4)
 	return s, nil
 }
 
@@ -144,7 +151,7 @@ func (s *PackStore) Put(ctx context.Context, key string, data []byte) error {
 		return s.ObjectStore.Put(ctx, key, data)
 	}
 
-	debugf("pack: buffering %s (%d bytes)", key, len(data))
+	s.debugf("pack: buffering %s (%d bytes)", key, len(data))
 
 	s.mu.Lock()
 
@@ -214,7 +221,7 @@ func (s *PackStore) discardPack(packRef string) {
 		}
 	}
 	s.packCache.Remove(packRef)
-	debugf("pack: discarded catalog entries for unwritten pack %s", packRef)
+	s.debugf("pack: discarded catalog entries for unwritten pack %s", packRef)
 }
 
 // packablePrefixes are the content-addressed namespaces safe to bundle into a
@@ -271,7 +278,7 @@ func (s *PackStore) prepareFlushLocked() (string, []byte, error) {
 
 	packHash := core.ComputeHash(packData)
 	packRef := packPrefix + packHash
-	debugf("preparing packfile %s with %d objects (%d bytes + %d footer)",
+	s.debugf("preparing packfile %s with %d objects (%d bytes + %d footer)",
 		packRef, len(s.packKeys), s.packBuffer.Len(), len(footer))
 
 	// Cache it immediately since we just wrote it, will speed up following Reads
@@ -300,7 +307,7 @@ func (s *PackStore) Get(ctx context.Context, key string) ([]byte, error) {
 		data := make([]byte, entry.Length)
 		copy(data, s.packBuffer.Bytes()[entry.Offset:entry.Offset+entry.Length])
 		s.mu.RUnlock()
-		debugf("get %s: hit active buffer (len=%d)", key, entry.Length)
+		s.debugf("get %s: hit active buffer (len=%d)", key, entry.Length)
 		return data, nil
 	}
 
@@ -333,11 +340,11 @@ func (s *PackStore) Get(ctx context.Context, key string) ([]byte, error) {
 		}
 		data := make([]byte, entry.Length)
 		copy(data, packData[entry.Offset:entry.Offset+entry.Length])
-		debugf("get %s: hit lru pack cache %s (len=%d)", key, entry.PackRef, entry.Length)
+		s.debugf("get %s: hit lru pack cache %s (len=%d)", key, entry.PackRef, entry.Length)
 		return data, nil
 	}
 
-	debugf("get %s: downloading pack %s", key, entry.PackRef)
+	s.debugf("get %s: downloading pack %s", key, entry.PackRef)
 	// 4. Download the entire packfile, cache it, and return the slice
 	packData, err := s.ObjectStore.Get(ctx, entry.PackRef)
 	if err != nil {
@@ -473,7 +480,7 @@ func (s *PackStore) Flush(ctx context.Context) error {
 			s.mu.Unlock()
 			return err
 		}
-		debugf("pack: flushed %d new entries (%d total)", len(pending), totalEntries)
+		s.debugf("pack: flushed %d new entries (%d total)", len(pending), totalEntries)
 	}
 
 	// Shards are append-only, so a removal is durable only once the index is
@@ -508,7 +515,7 @@ func (s *PackStore) loadCatalogLocked(ctx context.Context) error {
 		return nil
 	}
 
-	debugf("loading pack catalog")
+	s.debugf("loading pack catalog")
 
 	// The monolithic catalog is the pre-shard layout. It is still read so that
 	// repositories written before sharding stay readable, but nothing writes it
@@ -529,7 +536,7 @@ func (s *PackStore) loadCatalogLocked(ctx context.Context) error {
 		return s.healMissingCatalogLocked(ctx)
 	}
 
-	debugf("loaded %d entries into the pack catalog", len(s.catalog))
+	s.debugf("loaded %d entries into the pack catalog", len(s.catalog))
 	return nil
 }
 
@@ -569,7 +576,7 @@ func (s *PackStore) loadLegacyCatalogLocked(ctx context.Context) error {
 		return fmt.Errorf("unmarshal packs catalog: %w", err)
 	}
 	s.mergedIndex[indexPacksKey] = true
-	debugf("merged %d entries from the legacy catalog", len(s.catalog))
+	s.debugf("merged %d entries from the legacy catalog", len(s.catalog))
 	return nil
 }
 
@@ -693,7 +700,7 @@ func (s *PackStore) Repack(ctx context.Context, maxWastedRatio float64) (int64, 
 
 		// 1. Orphaned pack (100% wasted)
 		if activeSize == 0 {
-			debugf("repack: deleting orphaned pack %s", packRef)
+			s.debugf("repack: deleting orphaned pack %s", packRef)
 			physicalSize, err := s.ObjectStore.Size(ctx, packRef)
 			if err == nil {
 				bytesReclaimed += physicalSize
@@ -709,7 +716,7 @@ func (s *PackStore) Repack(ctx context.Context, maxWastedRatio float64) (int64, 
 		// 2. Check fragmentation
 		physicalSize, err := s.ObjectStore.Size(ctx, packRef)
 		if err != nil {
-			debugf("repack: failed to get size for pack %s: %v", packRef, err)
+			s.debugf("repack: failed to get size for pack %s: %v", packRef, err)
 			continue
 		}
 
@@ -727,7 +734,7 @@ func (s *PackStore) Repack(ctx context.Context, maxWastedRatio float64) (int64, 
 				physicalSize = info.objectRegionLen
 				wasted = physicalSize - activeSize
 			} else if !errors.Is(ferr, errNoPackFooter) {
-				debugf("repack: failed to read footer of %s: %v", packRef, ferr)
+				s.debugf("repack: failed to read footer of %s: %v", packRef, ferr)
 			}
 		}
 		if wasted <= 0 {
@@ -736,7 +743,7 @@ func (s *PackStore) Repack(ctx context.Context, maxWastedRatio float64) (int64, 
 
 		wastedRatio := float64(wasted) / float64(physicalSize)
 		if wastedRatio > maxWastedRatio {
-			debugf("repack: repacking %s (wasted: %.2f%%, %d bytes)", packRef, wastedRatio*100, wasted)
+			s.debugf("repack: repacking %s (wasted: %.2f%%, %d bytes)", packRef, wastedRatio*100, wasted)
 
 			// Download the packfile
 			packData, err := s.ObjectStore.Get(ctx, packRef)
@@ -788,7 +795,7 @@ func (s *PackStore) Repack(ctx context.Context, maxWastedRatio float64) (int64, 
 		// would delete the very pack the catalog now points at. Deleting a pack
 		// is only safe once nothing references it.
 		if s.packIsReferenced(pack.ref) {
-			debugf("repack: keeping %s, still referenced after rewrite", pack.ref)
+			s.debugf("repack: keeping %s, still referenced after rewrite", pack.ref)
 			continue
 		}
 		if err := s.ObjectStore.Delete(ctx, pack.ref); err != nil {

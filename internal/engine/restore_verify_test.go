@@ -28,7 +28,7 @@ func setupBackupForRestoreLarge(t *testing.T) *MockStore {
 	}
 	src.AddFile("big.txt", "id_big", content)
 
-	bkMgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil)
+	bkMgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, nil)
 	if _, err := bkMgr.Run(context.Background()); err != nil {
 		t.Fatalf("Backup setup failed: %v", err)
 	}

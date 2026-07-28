@@ -117,7 +117,7 @@ func TestRestoreManager_MultiChunkFile_RoundTrips(t *testing.T) {
 	src.AddFile("big.bin", "id1", content)
 
 	raw := NewMockStore()
-	bkMgr := NewBackupManager(src, raw, ui.NewNoOpReporter(), nil)
+	bkMgr := NewBackupManager(src, raw, ui.NewNoOpReporter(), nil, nil)
 	if _, err := bkMgr.Run(ctx); err != nil {
 		t.Fatalf("backup: %v", err)
 	}

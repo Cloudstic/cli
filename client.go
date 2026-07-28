@@ -3,6 +3,7 @@ package cloudstic
 import (
 	"context"
 	"fmt"
+	"io"
 	"sync/atomic"
 
 	"github.com/cloudstic/cli/internal/core"
@@ -15,7 +16,7 @@ import (
 	"github.com/cloudstic/cli/pkg/store"
 )
 
-var log = logger.New("client", logger.ColorCyan)
+var defaultLog = logger.New("client", logger.ColorCyan)
 
 // ---------------------------------------------------------------------------
 // client
@@ -46,6 +47,21 @@ func WithKeychain(kc keychain.Chain) ClientOption {
 	return func(c *Client) { c.keychain = kc }
 }
 
+// WithLogger sends this client's debug output to w, along with that of the
+// engine and store layers it drives.
+//
+// Debug output was previously reachable only by setting a package-level
+// writer inside the module, so a library caller could not turn it on at all.
+// A sink given here belongs to this client alone: two clients in one process
+// can log to different places, or one can log while the other stays silent
+// (RFC 0022 §8).
+func WithLogger(w io.Writer) ClientOption {
+	return func(c *Client) {
+		c.logWriter = w
+		c.log = defaultLog.To(w)
+	}
+}
+
 // WithPackfile enables bundling small objects into 8MB packs to save API calls.
 func WithPackfile(enable bool) ClientOption {
 	return func(c *Client) { c.enablePackfile = enable }
@@ -73,11 +89,17 @@ type Client struct {
 	keychain       keychain.Chain
 	enablePackfile bool
 	reporter       ui.Reporter
+	// log is this client's debug sink, and logWriter the writer behind it,
+	// kept so the engine and store layers it constructs can be given the same
+	// one. An unbound logger falls back to the process-wide writer.
+	log       *logger.Logger
+	logWriter io.Writer
 }
 
 func NewClient(ctx context.Context, base store.ObjectStore, opts ...ClientOption) (*Client, error) {
 	c := &Client{
 		base:           base,
+		log:            defaultLog,
 		enablePackfile: true, // Packfile is enabled by default
 		reporter:       ui.NewNoOpReporter(),
 	}
@@ -108,12 +130,12 @@ func NewClient(ctx context.Context, base store.ObjectStore, opts ...ClientOption
 
 	inner := base
 
-	log.Debugf("packfile enabled: %v", c.enablePackfile)
+	c.log.Debugf("packfile enabled: %v", c.enablePackfile)
 	if c.enablePackfile {
 		// PackStore sits below the encryption layer, so the catalog and pack
 		// footers it writes never pass through EncryptedStore. Give it its own
 		// derived key so they are not left in plaintext.
-		var packOpts []storelayer.PackOption
+		packOpts := []storelayer.PackOption{storelayer.WithPackLogger(c.logWriter)}
 		if len(c.encryptionKey) > 0 {
 			indexKey, err := crypto.DeriveKey(c.encryptionKey, crypto.HKDFInfoPackIndexV1)
 			if err != nil {

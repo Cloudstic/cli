@@ -3,6 +3,7 @@ package hamt
 import (
 	"context"
 	"fmt"
+	"io"
 	"math/bits"
 	"slices"
 	"sort"
@@ -60,8 +61,23 @@ type Tree struct {
 }
 
 // NewTree creates a Tree backed by the given object store.
-func NewTree(s store.ObjectStore) *Tree {
-	return &Tree{nodes: NewNodeStore(s)}
+func NewTree(s store.ObjectStore, opts ...TreeOption) *Tree {
+	ns := NewNodeStore(s)
+	for _, opt := range opts {
+		opt(ns)
+	}
+	return &Tree{nodes: ns}
+}
+
+// TreeOption configures the node store behind a Tree.
+//
+// It is variadic so that the trees which never log — diff, restore, find, ls,
+// prune, check — keep their existing call sites unchanged.
+type TreeOption func(*NodeStore)
+
+// WithLogger sends the node store's debug output to w.
+func WithLogger(w io.Writer) TreeOption {
+	return func(ns *NodeStore) { ns.log = ns.log.To(w) }
 }
 
 // NewTreeWithNodes creates a Tree over an existing NodeStore, so several trees

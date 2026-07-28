@@ -483,6 +483,26 @@ hits. So the global goes away rather than being published:
 - `pkg/secretref` resolvers gain a logger option.
 - `logger.Writer` stays as a fallback while call sites migrate, then is deleted.
 
+The migration is per-component rather than all at once, which the fallback is
+what makes possible. Converted so far: the client itself, `internal/storelayer`
+(via `WithPackLogger`), `internal/hamt` (via a variadic `TreeOption`, so the
+six trees that never log keep their call sites), and `internal/engine`'s
+backup and init managers. Still on the fallback, and the reason the global
+cannot be deleted yet:
+
+- `internal/engine/snapshots.go` logs from *free functions*
+  (`LoadSnapshotCatalog`, `AppendSnapshotCatalog`,
+  `RemoveFromSnapshotCatalog`) rather than from a manager, so there is no
+  receiver to carry a sink. Giving them one means changing three exported
+  signatures and their callers — a different shape of change from the rest,
+  and worth its own commit.
+- `internal/sourceoauth` and `pkg/secretref/backends` are constructed
+  independently of a client, so a client-supplied sink cannot reach them. They
+  need an option on the source constructors and the resolver respectively.
+
+`InitRepo` is a package-level function with no client, so its single debug
+line also stays on the fallback.
+
 **The injected value is an `io.Writer`, not a `*slog.Logger`.** The current
 output is colored `[component] message` human debug text, and preserving it
 byte-for-byte makes this stage purely structural — no golden-file churn, no
@@ -618,7 +638,10 @@ Stages 5–8 add three requirements:
    follows genuinely call-site-neutral.
 8. Add `pkg/open`; reduce `storebuild.go`, `clientbuild.go`, and `keychain.go`
    to adapters. **Done.**
-9. Logger injection (§8).
+9. Logger injection (§8), per component: the logger infrastructure and the
+   client, store, hamt and engine-manager call sites first; then the
+   free-function and independently-constructed ones, after which the global
+   can be deleted.
 10. Extend the external fixture to consume the library end to end.
 
 Steps 1–3 made external custom sources and stores possible, which was the

@@ -30,7 +30,9 @@ var (
 // This is a package-level function because init runs before the full
 // Client decorator chain (encryption, compression, packfiles) is set up.
 func InitRepo(ctx context.Context, rawStore store.ObjectStore, opts ...InitOption) (*InitResult, error) {
-	mgr := engine.NewInitManager(rawStore)
+	// No client exists here to carry a sink, so init's one debug line goes to
+	// the process-wide fallback. See RFC 0022 §8.
+	mgr := engine.NewInitManager(rawStore, nil)
 	return mgr.Run(ctx, opts...)
 }
 

@@ -588,9 +588,20 @@ Stages 5–8 add three requirements:
 6. Characterization tests over the §7 blast radius, in `package main`, before
    anything moves. Then fix the `packfile` and `s3.region` zero values as a
    separate, behavioral commit. **Done.**
-7. Move config types to `pkg/config` behind `type clientConfig = config.Client`
-   aliases in `cmd/cloudstic`, then the URI parsers, then profile resolution
-   with the resolver injected — three commits, no call-site churn.
+7. Export the resolved config types' *fields* in place, still in
+   `package main`; then move the types to `pkg/config` behind
+   `type clientConfig = config.Client` aliases; then the URI parsers; then
+   profile resolution with the resolver injected.
+
+   The first of those was not in the original plan, which assumed the aliases
+   made the move call-site-neutral on their own. They do not: an alias makes
+   the type *name* spellable from `package main` (93 mentions), but it cannot
+   make unexported fields reachable from another package, and field accesses
+   are 100 sites across 8 files. Exporting the fields first — a pure rename,
+   one package, verified by the compiler and applied with `gopls rename` so
+   that fields named `key`, `region`, `password` and `profile` cannot collide
+   with unrelated identifiers spelled the same way — makes the move that
+   follows genuinely call-site-neutral.
 8. Add `pkg/open`; reduce `storebuild.go`, `clientbuild.go`, and `keychain.go`
    to adapters.
 9. Logger injection (§8).
@@ -605,7 +616,8 @@ improvement per line changed — it should not wait on the rest. Steps 6–8 are
 strictly ordered: the tests gate the move, and per this repo's refactoring
 practice the behavioral zero-value fix must not share a commit with the
 structural move. Step 7's type aliases are what keep each commit small enough
-to review, since no call site changes until the alias is removed.
+to review — but only once its field-export commit has run first, since until
+then the aliases cover the type names and nothing else.
 
 ## Open questions
 

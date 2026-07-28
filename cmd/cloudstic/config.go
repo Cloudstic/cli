@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/cloudstic/cli/pkg/config"
@@ -160,18 +161,16 @@ func lookupProfileStore(cfg *profile.Config, profileName string, p profile.Profi
 // `store new`'s flags from an existing store entry for editing — an unrelated
 // concept despite the similar name.
 func clientConfigFromProfileStore(s profile.Store) (clientConfig, error) {
-	var cfg clientConfig
-	if err := applyProfileStore(&cfg, s, func(string) bool { return false }); err != nil {
-		return clientConfig{}, err
-	}
-	return cfg, nil
+	return config.FromProfileStore(context.Background(), s, profileSecretResolver)
 }
 
-// applyProfileStore folds a profile's store definition into cfg. provided
-// reports whether a flag was passed explicitly on the command line; those
-// values win over the profile. Secret references are resolved here, so a
-// missing secret surfaces as an error at resolution time rather than as an
-// empty credential at connect time.
+// applyProfileStore folds a profile's store definition into cfg, with any flag
+// the user passed explicitly winning over the profile's value.
+//
+// The fold itself lives in pkg/config so that a caller outside this module
+// applies the same rules; all this adds is what "explicitly passed" means
+// here, which is a flag-parser concept and stays on this side of the boundary
+// (RFC 0022 §7).
 //
 // This only covers store fields. Backup-specific profile fields that aren't
 // part of a store — source, tags, excludes, native-source credentials, auth —
@@ -182,55 +181,5 @@ func clientConfigFromProfileStore(s profile.Store) (clientConfig, error) {
 // resolution vs. plain strings here) that forcing a shared table would
 // obscure more than it clarifies.
 func applyProfileStore(cfg *clientConfig, s profile.Store, provided func(string) bool) error {
-	if !provided("store") && s.URI != "" {
-		cfg.Store.URI = s.URI
-	}
-	if !provided("s3-endpoint") && s.S3Endpoint != "" {
-		cfg.Store.S3.Endpoint = s.S3Endpoint
-	}
-	if !provided("s3-region") && s.S3Region != "" {
-		cfg.Store.S3.Region = s.S3Region
-	}
-	if !provided("kms-key-arn") && s.KMSKeyARN != "" {
-		cfg.Unlock.KMS.KeyARN = s.KMSKeyARN
-	}
-	if !provided("kms-region") && s.KMSRegion != "" {
-		cfg.Unlock.KMS.Region = s.KMSRegion
-	}
-	if !provided("kms-endpoint") && s.KMSEndpoint != "" {
-		cfg.Unlock.KMS.Endpoint = s.KMSEndpoint
-	}
-
-	// Values that may be given inline or as a secret reference. Unlike the
-	// fields above, these are assigned unconditionally once the flag was not
-	// passed, which matches the behaviour these paths have always had.
-	refs := []struct {
-		flag   string
-		field  string
-		inline string
-		secret string
-		dest   *string
-	}{
-		{"s3-profile", "s3_profile", s.S3Profile, "", &cfg.Store.S3.Profile},
-		{"s3-access-key", "s3_access_key", s.S3AccessKey, s.S3AccessKeySecret, &cfg.Store.S3.AccessKey},
-		{"s3-secret-key", "s3_secret_key", s.S3SecretKey, s.S3SecretKeySecret, &cfg.Store.S3.SecretKey},
-		{"b2-key-id", "b2_key_id", s.B2KeyID, s.B2KeyIDSecret, &cfg.Store.B2.KeyID},
-		{"b2-app-key", "b2_app_key", s.B2AppKey, s.B2AppKeySecret, &cfg.Store.B2.AppKey},
-		{"store-sftp-password", "store_sftp_password", s.StoreSFTPPassword, s.StoreSFTPPasswordSecret, &cfg.Store.SFTP.Password},
-		{"store-sftp-key", "store_sftp_key", s.StoreSFTPKey, s.StoreSFTPKeySecret, &cfg.Store.SFTP.Key},
-		{"password", "password", "", s.PasswordSecret, &cfg.Unlock.Password},
-		{"encryption-key", "encryption_key", "", s.EncryptionKeySecret, &cfg.Unlock.EncryptionKey},
-		{"recovery-key", "recovery_key", "", s.RecoveryKeySecret, &cfg.Unlock.RecoveryKey},
-	}
-	for _, r := range refs {
-		if provided(r.flag) {
-			continue
-		}
-		v, err := resolveProfileStoreValue(r.field, r.inline, r.secret)
-		if err != nil {
-			return err
-		}
-		*r.dest = v
-	}
-	return nil
+	return config.ApplyProfileStore(context.Background(), cfg, s, profileSecretResolver, provided)
 }

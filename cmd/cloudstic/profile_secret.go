@@ -1,24 +1,12 @@
 package main
 
-import (
-	"context"
-	"fmt"
+import secretrefbackends "github.com/cloudstic/cli/pkg/secretref/backends"
 
-	secretrefbackends "github.com/cloudstic/cli/pkg/secretref/backends"
-)
-
+// profileSecretResolver is the set of secret-reference schemes this CLI
+// understands. pkg/config takes a resolver as a parameter rather than
+// defaulting to one, so choosing it is the composition root's job — which for
+// this binary means here.
+//
+// Default() returns a fresh map, so a build that wanted an extra scheme would
+// add to it here rather than this being the only set anyone can have.
 var profileSecretResolver = secretrefbackends.NewDefaultResolver()
-
-func resolveProfileStoreValue(fieldName, direct, secretRef string) (string, error) {
-	if direct != "" {
-		return direct, nil
-	}
-	if secretRef != "" {
-		v, err := profileSecretResolver.Resolve(context.Background(), secretRef)
-		if err != nil {
-			return "", fmt.Errorf("resolve profile store field %q from %q: %w", fieldName, secretRef, err)
-		}
-		return v, nil
-	}
-	return "", nil
-}

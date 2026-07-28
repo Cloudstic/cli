@@ -27,7 +27,7 @@ func openStore(ctx context.Context, cfg storeConfig) (store.ObjectStore, error) 
 	if err != nil {
 		return nil, err
 	}
-	s, _ := withDebugStore(raw, cfg.debug)
+	s, _ := withDebugStore(raw, cfg.Debug)
 	return s, nil
 }
 
@@ -47,7 +47,7 @@ func withDebugStore(s store.ObjectStore, debug bool) (store.ObjectStore, *ui.Saf
 // newObjectStore constructs the backend store named by the configured URI,
 // without any decorator layers.
 func newObjectStore(ctx context.Context, cfg storeConfig) (store.ObjectStore, error) {
-	uri, err := parseStoreURI(cfg.uri)
+	uri, err := parseStoreURI(cfg.URI)
 	if err != nil {
 		return nil, err
 	}
@@ -57,22 +57,22 @@ func newObjectStore(ctx context.Context, cfg storeConfig) (store.ObjectStore, er
 	case "local":
 		inner, err = localstore.New(uri.path)
 	case "b2":
-		if cfg.b2.keyID == "" || cfg.b2.appKey == "" {
+		if cfg.B2.KeyID == "" || cfg.B2.AppKey == "" {
 			return nil, fmt.Errorf("B2 credentials required: pass -b2-key-id/-b2-app-key (or set B2_KEY_ID/B2_APP_KEY)")
 		}
-		inner, err = b2store.New(uri.bucket, b2store.WithCredentials(cfg.b2.keyID, cfg.b2.appKey), b2store.WithPrefix(uri.prefix))
+		inner, err = b2store.New(uri.bucket, b2store.WithCredentials(cfg.B2.KeyID, cfg.B2.AppKey), b2store.WithPrefix(uri.prefix))
 	case "s3":
 		inner, err = s3store.New(
 			ctx,
 			uri.bucket,
-			s3store.WithEndpoint(cfg.s3.endpoint),
-			s3store.WithRegion(s3Region(cfg.s3.region)),
-			s3store.WithProfile(cfg.s3.profile),
-			s3store.WithCredentials(cfg.s3.accessKey, cfg.s3.secretKey),
+			s3store.WithEndpoint(cfg.S3.Endpoint),
+			s3store.WithRegion(s3Region(cfg.S3.Region)),
+			s3store.WithProfile(cfg.S3.Profile),
+			s3store.WithCredentials(cfg.S3.AccessKey, cfg.S3.SecretKey),
 			s3store.WithPrefix(uri.prefix),
 		)
 	case "sftp":
-		inner, err = sftpstore.New(uri.host, sftpStoreOpts(cfg.sftp, uri)...)
+		inner, err = sftpstore.New(uri.host, sftpStoreOpts(cfg.SFTP, uri)...)
 	default:
 		return nil, fmt.Errorf("unsupported store type: %s", uri.scheme)
 	}
@@ -105,17 +105,17 @@ func sftpStoreOpts(cfg sftpConfig, uri *storeURIParts) []sftpstore.Option {
 	if uri.user != "" {
 		opts = append(opts, sftpstore.WithUser(uri.user))
 	}
-	if cfg.password != "" {
-		opts = append(opts, sftpstore.WithPassword(cfg.password))
+	if cfg.Password != "" {
+		opts = append(opts, sftpstore.WithPassword(cfg.Password))
 	}
-	if cfg.key != "" {
-		opts = append(opts, sftpstore.WithKey(cfg.key))
+	if cfg.Key != "" {
+		opts = append(opts, sftpstore.WithKey(cfg.Key))
 	}
-	if cfg.insecure {
+	if cfg.Insecure {
 		opts = append(opts, sftpstore.WithHostKeyCallback(ssh.InsecureIgnoreHostKey())) //nolint:gosec // explicitly requested by user
 	}
-	if cfg.knownHosts != "" {
-		opts = append(opts, sftpstore.WithKnownHosts(cfg.knownHosts))
+	if cfg.KnownHosts != "" {
+		opts = append(opts, sftpstore.WithKnownHosts(cfg.KnownHosts))
 	}
 	return opts
 }

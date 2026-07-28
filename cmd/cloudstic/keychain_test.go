@@ -63,42 +63,42 @@ func TestBuildKeychain_ChainComposition(t *testing.T) {
 		},
 		{
 			name: "password only",
-			cfg:  unlockConfig{password: "hunter2"},
+			cfg:  unlockConfig{Password: "hunter2"},
 			want: []string{"passwordCred"},
 		},
 		{
 			name: "encryption key only",
-			cfg:  unlockConfig{encryptionKey: validHexKey},
+			cfg:  unlockConfig{EncryptionKey: validHexKey},
 			want: []string{"platformKeyCred"},
 		},
 		{
 			name: "recovery key only",
-			cfg:  unlockConfig{recoveryKey: "abandon abandon ability"},
+			cfg:  unlockConfig{RecoveryKey: "abandon abandon ability"},
 			want: []string{"recoveryCred"},
 		},
 		{
 			name: "kms only",
-			cfg:  unlockConfig{kms: kmsConfig{keyARN: "arn:aws:kms:us-east-1:1:key/x", region: "us-east-1"}},
+			cfg:  unlockConfig{KMS: kmsConfig{KeyARN: "arn:aws:kms:us-east-1:1:key/x", Region: "us-east-1"}},
 			want: []string{"kmsClientCred"},
 		},
 		{
 			name: "every credential, in precedence order",
 			cfg: unlockConfig{
-				encryptionKey: validHexKey,
-				password:      "hunter2",
-				recoveryKey:   "abandon abandon ability",
-				kms:           kmsConfig{keyARN: "arn:aws:kms:us-east-1:1:key/x", region: "us-east-1"},
+				EncryptionKey: validHexKey,
+				Password:      "hunter2",
+				RecoveryKey:   "abandon abandon ability",
+				KMS:           kmsConfig{KeyARN: "arn:aws:kms:us-east-1:1:key/x", Region: "us-east-1"},
 			},
 			want: []string{"kmsClientCred", "platformKeyCred", "passwordCred", "recoveryCred"},
 		},
 		{
 			name: "prompt:true does not add a credential without a terminal",
-			cfg:  unlockConfig{password: "hunter2", prompt: true},
+			cfg:  unlockConfig{Password: "hunter2", Prompt: true},
 			want: []string{"passwordCred"},
 		},
 		{
 			name: "noPrompt suppresses nothing else",
-			cfg:  unlockConfig{password: "hunter2", noPrompt: true},
+			cfg:  unlockConfig{Password: "hunter2", NoPrompt: true},
 			want: []string{"passwordCred"},
 		},
 	}
@@ -152,7 +152,7 @@ func TestBuildKeychain_PromptRequiresATerminal(t *testing.T) {
 }
 
 func TestBuildKeychain_PropagatesPlatformKeyError(t *testing.T) {
-	_, err := buildKeychain(context.Background(), unlockConfig{encryptionKey: "not-hex"})
+	_, err := buildKeychain(context.Background(), unlockConfig{EncryptionKey: "not-hex"})
 	if err == nil {
 		t.Fatal("expected an error for a non-hex encryption key, got nil")
 	}
@@ -213,7 +213,7 @@ func TestBuildKMSClient_NoARNIsNotAnError(t *testing.T) {
 	}
 
 	// A region or endpoint without an ARN still means "no KMS".
-	client, err = buildKMSClient(context.Background(), kmsConfig{region: "us-east-1", endpoint: "http://localhost:4566"})
+	client, err = buildKMSClient(context.Background(), kmsConfig{Region: "us-east-1", Endpoint: "http://localhost:4566"})
 	if err != nil {
 		t.Fatalf("buildKMSClient with region but no ARN: %v", err)
 	}
@@ -228,8 +228,8 @@ func TestBuildKMSClient_NoARNIsNotAnError(t *testing.T) {
 // reaching the network it would add latency to each one.
 func TestBuildKMSClient_ARNBuildsOffline(t *testing.T) {
 	client, err := buildKMSClient(context.Background(), kmsConfig{
-		keyARN: "arn:aws:kms:us-east-1:123456789012:key/1234abcd",
-		region: "us-east-1",
+		KeyARN: "arn:aws:kms:us-east-1:123456789012:key/1234abcd",
+		Region: "us-east-1",
 	})
 	if err != nil {
 		t.Fatalf("buildKMSClient: %v", err)

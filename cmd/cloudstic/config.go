@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	"github.com/cloudstic/cli/pkg/config"
 	"github.com/cloudstic/cli/pkg/profile"
 )
 
@@ -20,116 +21,62 @@ import (
 // and never sees globalFlags, which is what makes it unit-testable without
 // going through flag parsing.
 
-// s3Config holds the credentials and endpoint settings for an S3 store.
-type s3Config struct {
-	endpoint  string
-	region    string
-	profile   string
-	accessKey string
-	secretKey string
-}
-
-// b2Config holds Backblaze B2 application key credentials.
-type b2Config struct {
-	keyID  string
-	appKey string
-}
-
-// sftpConfig holds SFTP authentication and host-key settings. The same shape
-// serves both a store and a backup source, which are configured independently.
-type sftpConfig struct {
-	password   string
-	key        string
-	knownHosts string
-	insecure   bool
-}
-
-// kmsConfig holds AWS KMS settings for kms-platform key slots.
-type kmsConfig struct {
-	keyARN   string
-	region   string
-	endpoint string
-}
-
-// storeConfig is everything needed to construct an object store.
-type storeConfig struct {
-	uri   string
-	s3    s3Config
-	b2    b2Config
-	sftp  sftpConfig
-	debug bool
-}
-
-// unlockConfig is everything needed to build the keychain that unlocks a
-// repository.
-type unlockConfig struct {
-	password      string
-	encryptionKey string
-	recoveryKey   string
-	kms           kmsConfig
-	prompt        bool
-	noPrompt      bool
-}
-
-// clientConfig is the resolved configuration for opening a repository client.
-//
-// Fields are oriented so the zero value is the correct default, because
-// RFC 0022 §7 makes these types public and a consumer writing
-// clientConfig{store: …} must get the same behaviour the CLI gets. That is why
-// packfiles are expressed as disablePackfile rather than packfile: NewClient
-// enables them by default, so a `packfile bool` zero value would silently turn
-// them off and write a repository with a different physical layout, with no
-// error at any layer. The negative field also matches the -disable-packfile
-// flag it comes from.
-type clientConfig struct {
-	store           storeConfig
-	unlock          unlockConfig
-	disablePackfile bool
-	quiet           bool
-	json            bool
-}
+// The resolved configuration types now live in pkg/config, so that a caller
+// outside this module can build the same values the CLI does. They are aliased
+// rather than renamed at every use site: an alias is the same type, so these
+// spellings and pkg/config's stay interchangeable while the remaining
+// resolution logic in this file moves across (RFC 0022 §7).
+type (
+	s3Config     = config.S3
+	b2Config     = config.B2
+	sftpConfig   = config.SFTP
+	kmsConfig    = config.KMS
+	storeConfig  = config.Store
+	unlockConfig = config.Unlock
+	clientConfig = config.Client
+)
 
 // clientConfigFromFlags projects parsed flags into a resolved configuration,
 // without consulting any profile. It is a pure translation: no I/O, no
 // mutation of g.
 func clientConfigFromFlags(g *globalFlags) clientConfig {
 	return clientConfig{
-		store: storeConfig{
-			uri: g.store,
-			s3: s3Config{
-				endpoint:  g.s3Endpoint,
-				region:    g.s3Region,
-				profile:   g.s3Profile,
-				accessKey: g.s3AccessKey,
-				secretKey: g.s3SecretKey,
+		Store: storeConfig{
+			URI: g.store,
+			S3: s3Config{
+				Endpoint:  g.s3Endpoint,
+				Region:    g.s3Region,
+				Profile:   g.s3Profile,
+				AccessKey: g.s3AccessKey,
+				SecretKey: g.s3SecretKey,
 			},
-			b2: b2Config{
-				keyID:  g.b2KeyID,
-				appKey: g.b2AppKey,
+			B2: b2Config{
+				KeyID:  g.b2KeyID,
+				AppKey: g.b2AppKey,
 			},
-			sftp: sftpConfig{
-				password:   g.storeSFTPPassword,
-				key:        g.storeSFTPKey,
-				knownHosts: g.storeSFTPKnownHosts,
-				insecure:   g.storeSFTPInsecure,
+			SFTP: sftpConfig{
+				Password:   g.storeSFTPPassword,
+				Key:        g.storeSFTPKey,
+				KnownHosts: g.storeSFTPKnownHosts,
+				Insecure:   g.storeSFTPInsecure,
 			},
-			debug: g.debug,
+			Debug: g.debug,
 		},
-		unlock: unlockConfig{
-			password:      g.password,
-			encryptionKey: g.encryptionKey,
-			recoveryKey:   g.recoveryKey,
-			kms: kmsConfig{
-				keyARN:   g.kmsKeyARN,
-				region:   g.kmsRegion,
-				endpoint: g.kmsEndpoint,
+		Unlock: unlockConfig{
+			Password:      g.password,
+			EncryptionKey: g.encryptionKey,
+			RecoveryKey:   g.recoveryKey,
+			KMS: kmsConfig{
+				KeyARN:   g.kmsKeyARN,
+				Region:   g.kmsRegion,
+				Endpoint: g.kmsEndpoint,
 			},
-			prompt:   g.prompt,
-			noPrompt: g.noPrompt,
+			Prompt:   g.prompt,
+			NoPrompt: g.noPrompt,
 		},
-		disablePackfile: g.disablePackfile,
-		quiet:           g.quiet,
-		json:            g.json,
+		DisablePackfile: g.disablePackfile,
+		Quiet:           g.quiet,
+		JSON:            g.json,
 	}
 }
 
@@ -138,10 +85,10 @@ func clientConfigFromFlags(g *globalFlags) clientConfig {
 // only backup reads one.
 func sourceSFTPConfigFromFlags(g *globalFlags) sftpConfig {
 	return sftpConfig{
-		password:   g.sourceSFTPPassword,
-		key:        g.sourceSFTPKey,
-		knownHosts: g.sourceSFTPKnownHosts,
-		insecure:   g.sourceSFTPInsecure,
+		Password:   g.sourceSFTPPassword,
+		Key:        g.sourceSFTPKey,
+		KnownHosts: g.sourceSFTPKnownHosts,
+		Insecure:   g.sourceSFTPInsecure,
 	}
 }
 
@@ -236,22 +183,22 @@ func clientConfigFromProfileStore(s profile.Store) (clientConfig, error) {
 // obscure more than it clarifies.
 func applyProfileStore(cfg *clientConfig, s profile.Store, provided func(string) bool) error {
 	if !provided("store") && s.URI != "" {
-		cfg.store.uri = s.URI
+		cfg.Store.URI = s.URI
 	}
 	if !provided("s3-endpoint") && s.S3Endpoint != "" {
-		cfg.store.s3.endpoint = s.S3Endpoint
+		cfg.Store.S3.Endpoint = s.S3Endpoint
 	}
 	if !provided("s3-region") && s.S3Region != "" {
-		cfg.store.s3.region = s.S3Region
+		cfg.Store.S3.Region = s.S3Region
 	}
 	if !provided("kms-key-arn") && s.KMSKeyARN != "" {
-		cfg.unlock.kms.keyARN = s.KMSKeyARN
+		cfg.Unlock.KMS.KeyARN = s.KMSKeyARN
 	}
 	if !provided("kms-region") && s.KMSRegion != "" {
-		cfg.unlock.kms.region = s.KMSRegion
+		cfg.Unlock.KMS.Region = s.KMSRegion
 	}
 	if !provided("kms-endpoint") && s.KMSEndpoint != "" {
-		cfg.unlock.kms.endpoint = s.KMSEndpoint
+		cfg.Unlock.KMS.Endpoint = s.KMSEndpoint
 	}
 
 	// Values that may be given inline or as a secret reference. Unlike the
@@ -264,16 +211,16 @@ func applyProfileStore(cfg *clientConfig, s profile.Store, provided func(string)
 		secret string
 		dest   *string
 	}{
-		{"s3-profile", "s3_profile", s.S3Profile, "", &cfg.store.s3.profile},
-		{"s3-access-key", "s3_access_key", s.S3AccessKey, s.S3AccessKeySecret, &cfg.store.s3.accessKey},
-		{"s3-secret-key", "s3_secret_key", s.S3SecretKey, s.S3SecretKeySecret, &cfg.store.s3.secretKey},
-		{"b2-key-id", "b2_key_id", s.B2KeyID, s.B2KeyIDSecret, &cfg.store.b2.keyID},
-		{"b2-app-key", "b2_app_key", s.B2AppKey, s.B2AppKeySecret, &cfg.store.b2.appKey},
-		{"store-sftp-password", "store_sftp_password", s.StoreSFTPPassword, s.StoreSFTPPasswordSecret, &cfg.store.sftp.password},
-		{"store-sftp-key", "store_sftp_key", s.StoreSFTPKey, s.StoreSFTPKeySecret, &cfg.store.sftp.key},
-		{"password", "password", "", s.PasswordSecret, &cfg.unlock.password},
-		{"encryption-key", "encryption_key", "", s.EncryptionKeySecret, &cfg.unlock.encryptionKey},
-		{"recovery-key", "recovery_key", "", s.RecoveryKeySecret, &cfg.unlock.recoveryKey},
+		{"s3-profile", "s3_profile", s.S3Profile, "", &cfg.Store.S3.Profile},
+		{"s3-access-key", "s3_access_key", s.S3AccessKey, s.S3AccessKeySecret, &cfg.Store.S3.AccessKey},
+		{"s3-secret-key", "s3_secret_key", s.S3SecretKey, s.S3SecretKeySecret, &cfg.Store.S3.SecretKey},
+		{"b2-key-id", "b2_key_id", s.B2KeyID, s.B2KeyIDSecret, &cfg.Store.B2.KeyID},
+		{"b2-app-key", "b2_app_key", s.B2AppKey, s.B2AppKeySecret, &cfg.Store.B2.AppKey},
+		{"store-sftp-password", "store_sftp_password", s.StoreSFTPPassword, s.StoreSFTPPasswordSecret, &cfg.Store.SFTP.Password},
+		{"store-sftp-key", "store_sftp_key", s.StoreSFTPKey, s.StoreSFTPKeySecret, &cfg.Store.SFTP.Key},
+		{"password", "password", "", s.PasswordSecret, &cfg.Unlock.Password},
+		{"encryption-key", "encryption_key", "", s.EncryptionKeySecret, &cfg.Unlock.EncryptionKey},
+		{"recovery-key", "recovery_key", "", s.RecoveryKeySecret, &cfg.Unlock.RecoveryKey},
 	}
 	for _, r := range refs {
 		if provided(r.flag) {

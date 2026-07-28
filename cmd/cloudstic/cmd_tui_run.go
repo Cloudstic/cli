@@ -101,7 +101,7 @@ func (b tuiCLIBackend) InitProfile(ctx context.Context, profilesFile, profileNam
 	if err != nil {
 		return err
 	}
-	resolved.quiet = false
+	resolved.Quiet = false
 	if code := execInit(b.r, ctx, &initArgs{globalFlags: &globalFlags{}}, resolved); code != 0 {
 		return fmt.Errorf("init failed")
 	}

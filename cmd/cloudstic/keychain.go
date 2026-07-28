@@ -17,12 +17,12 @@ import (
 // buildKeychain assembles the credential chain that unlocks a repository, in
 // the order the client should try them.
 func buildKeychain(ctx context.Context, cfg unlockConfig) (keychain.Chain, error) {
-	platformKey, err := parsePlatformKey(cfg.encryptionKey)
+	platformKey, err := parsePlatformKey(cfg.EncryptionKey)
 	if err != nil {
 		return nil, err
 	}
 
-	kmsClient, err := buildKMSClient(ctx, cfg.kms)
+	kmsClient, err := buildKMSClient(ctx, cfg.KMS)
 	if err != nil {
 		return nil, err
 	}
@@ -35,13 +35,13 @@ func buildKeychain(ctx context.Context, cfg unlockConfig) (keychain.Chain, error
 	if len(platformKey) > 0 {
 		chain = append(chain, keychain.WithPlatformKey(platformKey))
 	}
-	if cfg.password != "" {
-		chain = append(chain, keychain.WithPassword(cfg.password))
+	if cfg.Password != "" {
+		chain = append(chain, keychain.WithPassword(cfg.Password))
 	}
-	if cfg.recoveryKey != "" {
-		chain = append(chain, keychain.WithRecoveryKey(cfg.recoveryKey))
+	if cfg.RecoveryKey != "" {
+		chain = append(chain, keychain.WithRecoveryKey(cfg.RecoveryKey))
 	}
-	if (len(chain) == 0 || cfg.prompt) && !cfg.noPrompt && term.IsTerminal(os.Stdin.Fd()) {
+	if (len(chain) == 0 || cfg.Prompt) && !cfg.NoPrompt && term.IsTerminal(os.Stdin.Fd()) {
 		chain = append(chain, keychain.WithPrompt(
 			func() (string, error) { return ui.PromptPassword("Repository password") },
 			func() (string, error) { return ui.PromptPasswordConfirm("Enter new repository password") },
@@ -54,17 +54,17 @@ func buildKeychain(ctx context.Context, cfg unlockConfig) (keychain.Chain, error
 // buildKMSClient creates an AWS KMS client if a key ARN is configured,
 // otherwise returns nil.
 func buildKMSClient(ctx context.Context, cfg kmsConfig) (crypto.KMSClient, error) {
-	if cfg.keyARN == "" {
+	if cfg.KeyARN == "" {
 		return nil, nil
 	}
 	var opts []kms.Option
-	if cfg.region != "" {
-		opts = append(opts, kms.WithRegion(cfg.region))
+	if cfg.Region != "" {
+		opts = append(opts, kms.WithRegion(cfg.Region))
 	}
-	if cfg.endpoint != "" {
-		opts = append(opts, kms.WithEndpoint(cfg.endpoint))
+	if cfg.Endpoint != "" {
+		opts = append(opts, kms.WithEndpoint(cfg.Endpoint))
 	}
-	client, err := kms.New(ctx, cfg.keyARN, opts...)
+	client, err := kms.New(ctx, cfg.KeyARN, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("init KMS client: %w", err)
 	}

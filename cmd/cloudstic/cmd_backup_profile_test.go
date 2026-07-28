@@ -60,14 +60,14 @@ func TestMergeProfileBackupArgs_AppliesProfileAndStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveClientConfig: %v", err)
 	}
-	if resolved.store.uri != "s3:bucket/prefix" {
-		t.Fatalf("store.uri=%q want s3:bucket/prefix", resolved.store.uri)
+	if resolved.Store.URI != "s3:bucket/prefix" {
+		t.Fatalf("store.uri=%q want s3:bucket/prefix", resolved.Store.URI)
 	}
-	if resolved.store.s3.region != "eu-west-1" {
-		t.Fatalf("s3.region=%q want eu-west-1", resolved.store.s3.region)
+	if resolved.Store.S3.Region != "eu-west-1" {
+		t.Fatalf("s3.region=%q want eu-west-1", resolved.Store.S3.Region)
 	}
-	if resolved.store.s3.accessKey != "AKIA" {
-		t.Fatalf("s3.accessKey=%q want AKIA", resolved.store.s3.accessKey)
+	if resolved.Store.S3.AccessKey != "AKIA" {
+		t.Fatalf("s3.accessKey=%q want AKIA", resolved.Store.S3.AccessKey)
 	}
 }
 
@@ -101,8 +101,8 @@ func TestMergeProfileBackupArgs_CLIFlagsWin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveClientConfig: %v", err)
 	}
-	if resolved.store.uri != "local:/cli-store" {
-		t.Fatalf("store.uri=%q want local:/cli-store", resolved.store.uri)
+	if resolved.Store.URI != "local:/cli-store" {
+		t.Fatalf("store.uri=%q want local:/cli-store", resolved.Store.URI)
 	}
 }
 
@@ -372,22 +372,22 @@ func TestApplyProfileStore_AllFields(t *testing.T) {
 		got  string
 		want string
 	}{
-		{"store.uri", cfg.store.uri, "s3:my-bucket/prefix"},
-		{"s3.region", cfg.store.s3.region, "us-east-1"},
-		{"s3.endpoint", cfg.store.s3.endpoint, "https://s3.example.com"},
-		{"s3.profile", cfg.store.s3.profile, "prod"},
-		{"s3.accessKey", cfg.store.s3.accessKey, "AKIATEST"},
-		{"s3.secretKey", cfg.store.s3.secretKey, "SECRETTEST"},
-		{"b2.keyID", cfg.store.b2.keyID, "b2-key-id"},
-		{"b2.appKey", cfg.store.b2.appKey, "b2-app-key"},
-		{"sftp.password", cfg.store.sftp.password, "sftp-pw"},
-		{"sftp.key", cfg.store.sftp.key, "/tmp/sftp.key"},
-		{"unlock.password", cfg.unlock.password, "secret-pw"},
-		{"unlock.encryptionKey", cfg.unlock.encryptionKey, "enc-key-val"},
-		{"unlock.recoveryKey", cfg.unlock.recoveryKey, "rec-key-val"},
-		{"kms.keyARN", cfg.unlock.kms.keyARN, "arn:aws:kms:us-east-1:123:key/abc"},
-		{"kms.region", cfg.unlock.kms.region, "us-east-1"},
-		{"kms.endpoint", cfg.unlock.kms.endpoint, "https://kms.example.com"},
+		{"store.uri", cfg.Store.URI, "s3:my-bucket/prefix"},
+		{"s3.region", cfg.Store.S3.Region, "us-east-1"},
+		{"s3.endpoint", cfg.Store.S3.Endpoint, "https://s3.example.com"},
+		{"s3.profile", cfg.Store.S3.Profile, "prod"},
+		{"s3.accessKey", cfg.Store.S3.AccessKey, "AKIATEST"},
+		{"s3.secretKey", cfg.Store.S3.SecretKey, "SECRETTEST"},
+		{"b2.keyID", cfg.Store.B2.KeyID, "b2-key-id"},
+		{"b2.appKey", cfg.Store.B2.AppKey, "b2-app-key"},
+		{"sftp.password", cfg.Store.SFTP.Password, "sftp-pw"},
+		{"sftp.key", cfg.Store.SFTP.Key, "/tmp/sftp.key"},
+		{"unlock.password", cfg.Unlock.Password, "secret-pw"},
+		{"unlock.encryptionKey", cfg.Unlock.EncryptionKey, "enc-key-val"},
+		{"unlock.recoveryKey", cfg.Unlock.RecoveryKey, "rec-key-val"},
+		{"kms.keyARN", cfg.Unlock.KMS.KeyARN, "arn:aws:kms:us-east-1:123:key/abc"},
+		{"kms.region", cfg.Unlock.KMS.Region, "us-east-1"},
+		{"kms.endpoint", cfg.Unlock.KMS.Endpoint, "https://kms.example.com"},
 	}
 	for _, c := range checks {
 		if c.got != c.want {
@@ -407,8 +407,8 @@ func TestApplyProfileStore_CLIFlagOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("applyProfileStore: %v", err)
 	}
-	if cfg.store.uri != "local:/cli-store" {
-		t.Fatalf("store.uri=%q want local:/cli-store", cfg.store.uri)
+	if cfg.Store.URI != "local:/cli-store" {
+		t.Fatalf("store.uri=%q want local:/cli-store", cfg.Store.URI)
 	}
 }
 
@@ -419,8 +419,8 @@ func TestApplyProfileStore_SecretRef(t *testing.T) {
 	if err != nil {
 		t.Fatalf("applyProfileStore: %v", err)
 	}
-	if cfg.unlock.password != "from-secret-ref" {
-		t.Fatalf("unlock.password=%q want from-secret-ref", cfg.unlock.password)
+	if cfg.Unlock.Password != "from-secret-ref" {
+		t.Fatalf("unlock.password=%q want from-secret-ref", cfg.Unlock.Password)
 	}
 }
 
@@ -435,11 +435,11 @@ func TestApplyProfileStore_B2SecretRef(t *testing.T) {
 	if err != nil {
 		t.Fatalf("applyProfileStore: %v", err)
 	}
-	if cfg.store.b2.keyID != "b2-id-from-env" {
-		t.Fatalf("b2.keyID=%q want b2-id-from-env", cfg.store.b2.keyID)
+	if cfg.Store.B2.KeyID != "b2-id-from-env" {
+		t.Fatalf("b2.keyID=%q want b2-id-from-env", cfg.Store.B2.KeyID)
 	}
-	if cfg.store.b2.appKey != "b2-key-from-env" {
-		t.Fatalf("b2.appKey=%q want b2-key-from-env", cfg.store.b2.appKey)
+	if cfg.Store.B2.AppKey != "b2-key-from-env" {
+		t.Fatalf("b2.appKey=%q want b2-key-from-env", cfg.Store.B2.AppKey)
 	}
 }
 

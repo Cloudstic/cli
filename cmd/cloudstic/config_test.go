@@ -46,8 +46,8 @@ func TestResolveClientConfig_ProfileOverridesEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveClientConfig: %v", err)
 	}
-	if resolved.store.s3.region != "profile-region" {
-		t.Fatalf("store.s3.region=%q want profile-region (profile should win over environment)", resolved.store.s3.region)
+	if resolved.Store.S3.Region != "profile-region" {
+		t.Fatalf("store.s3.region=%q want profile-region (profile should win over environment)", resolved.Store.S3.Region)
 	}
 }
 
@@ -75,14 +75,14 @@ func TestResolveClientConfig_AppliesProfileStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveClientConfig: %v", err)
 	}
-	if cfg.store.uri != "s3:bucket/prefix" {
-		t.Fatalf("store=%q want s3:bucket/prefix", cfg.store.uri)
+	if cfg.Store.URI != "s3:bucket/prefix" {
+		t.Fatalf("store=%q want s3:bucket/prefix", cfg.Store.URI)
 	}
-	if cfg.store.s3.region != "eu-west-1" {
-		t.Fatalf("s3Region=%q want eu-west-1", cfg.store.s3.region)
+	if cfg.Store.S3.Region != "eu-west-1" {
+		t.Fatalf("s3Region=%q want eu-west-1", cfg.Store.S3.Region)
 	}
-	if cfg.store.s3.profile != "prod" {
-		t.Fatalf("s3Profile=%q want prod", cfg.store.s3.profile)
+	if cfg.Store.S3.Profile != "prod" {
+		t.Fatalf("s3Profile=%q want prod", cfg.Store.S3.Profile)
 	}
 }
 
@@ -123,23 +123,23 @@ func TestResolveClientConfig_EncryptionFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveClientConfig: %v", err)
 	}
-	if cfg.unlock.password != "s3cret" {
-		t.Fatalf("password=%q want s3cret", cfg.unlock.password)
+	if cfg.Unlock.Password != "s3cret" {
+		t.Fatalf("password=%q want s3cret", cfg.Unlock.Password)
 	}
-	if cfg.unlock.encryptionKey != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
-		t.Fatalf("encryptionKey=%q want aaa...", cfg.unlock.encryptionKey)
+	if cfg.Unlock.EncryptionKey != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatalf("encryptionKey=%q want aaa...", cfg.Unlock.EncryptionKey)
 	}
-	if cfg.unlock.recoveryKey == "" {
+	if cfg.Unlock.RecoveryKey == "" {
 		t.Fatal("expected recoveryKey to be set from env")
 	}
-	if cfg.unlock.kms.keyARN != "arn:aws:kms:us-east-1:123456:key/abcd" {
-		t.Fatalf("kmsKeyARN=%q want arn:...", cfg.unlock.kms.keyARN)
+	if cfg.Unlock.KMS.KeyARN != "arn:aws:kms:us-east-1:123456:key/abcd" {
+		t.Fatalf("kmsKeyARN=%q want arn:...", cfg.Unlock.KMS.KeyARN)
 	}
-	if cfg.unlock.kms.region != "us-east-1" {
-		t.Fatalf("kmsRegion=%q want us-east-1", cfg.unlock.kms.region)
+	if cfg.Unlock.KMS.Region != "us-east-1" {
+		t.Fatalf("kmsRegion=%q want us-east-1", cfg.Unlock.KMS.Region)
 	}
-	if cfg.unlock.kms.endpoint != "https://kms.example.com" {
-		t.Fatalf("kmsEndpoint=%q want https://kms.example.com", cfg.unlock.kms.endpoint)
+	if cfg.Unlock.KMS.Endpoint != "https://kms.example.com" {
+		t.Fatalf("kmsEndpoint=%q want https://kms.example.com", cfg.Unlock.KMS.Endpoint)
 	}
 }
 
@@ -168,8 +168,8 @@ func TestResolveClientConfig_DoesNotOverrideExplicitStoreFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveClientConfig: %v", err)
 	}
-	if cfg.store.uri != "local:/explicit" {
-		t.Fatalf("store=%q want local:/explicit", cfg.store.uri)
+	if cfg.Store.URI != "local:/explicit" {
+		t.Fatalf("store=%q want local:/explicit", cfg.Store.URI)
 	}
 	// Resolution must not write back into the parsed flags.
 	if g.store != "local:/explicit" {

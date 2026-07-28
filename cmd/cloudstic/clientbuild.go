@@ -14,18 +14,18 @@ import (
 // repository client on top of it. Passing a nil reporter selects one from the
 // configured output mode.
 func openClient(ctx context.Context, cfg clientConfig, reporterOverride cloudstic.Reporter) (*cloudstic.Client, error) {
-	raw, err := newObjectStore(ctx, cfg.store)
+	raw, err := newObjectStore(ctx, cfg.Store)
 	if err != nil {
 		return nil, err
 	}
-	raw, debugLog := withDebugStore(raw, cfg.store.debug)
+	raw, debugLog := withDebugStore(raw, cfg.Store.Debug)
 
 	reporter := reporterOverride
 	if reporter == nil {
 		reporter = newReporter(cfg, debugLog)
 	}
 
-	kc, err := buildKeychain(ctx, cfg.unlock)
+	kc, err := buildKeychain(ctx, cfg.Unlock)
 	if err != nil {
 		return nil, err
 	}
@@ -33,12 +33,12 @@ func openClient(ctx context.Context, cfg clientConfig, reporterOverride cloudsti
 	return cloudstic.NewClient(ctx, raw,
 		cloudstic.WithKeychain(kc),
 		cloudstic.WithReporter(reporter),
-		cloudstic.WithPackfile(!cfg.disablePackfile),
+		cloudstic.WithPackfile(!cfg.DisablePackfile),
 	)
 }
 
 func newReporter(cfg clientConfig, debugLog *ui.SafeLogWriter) cloudstic.Reporter {
-	if cfg.quiet || cfg.json {
+	if cfg.Quiet || cfg.JSON {
 		return ui.NewNoOpReporter()
 	}
 	cr := ui.NewConsoleReporter()

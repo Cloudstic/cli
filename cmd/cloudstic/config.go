@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	"github.com/cloudstic/cli/pkg/config"
 	"github.com/cloudstic/cli/pkg/profile"
 )
 
@@ -20,74 +21,20 @@ import (
 // and never sees globalFlags, which is what makes it unit-testable without
 // going through flag parsing.
 
-// s3Config holds the credentials and endpoint settings for an S3 store.
-type s3Config struct {
-	Endpoint  string
-	Region    string
-	Profile   string
-	AccessKey string
-	SecretKey string
-}
-
-// b2Config holds Backblaze B2 application key credentials.
-type b2Config struct {
-	KeyID  string
-	AppKey string
-}
-
-// sftpConfig holds SFTP authentication and host-key settings. The same shape
-// serves both a store and a backup source, which are configured independently.
-type sftpConfig struct {
-	Password   string
-	Key        string
-	KnownHosts string
-	Insecure   bool
-}
-
-// kmsConfig holds AWS KMS settings for kms-platform key slots.
-type kmsConfig struct {
-	KeyARN   string
-	Region   string
-	Endpoint string
-}
-
-// storeConfig is everything needed to construct an object store.
-type storeConfig struct {
-	URI   string
-	S3    s3Config
-	B2    b2Config
-	SFTP  sftpConfig
-	Debug bool
-}
-
-// unlockConfig is everything needed to build the keychain that unlocks a
-// repository.
-type unlockConfig struct {
-	Password      string
-	EncryptionKey string
-	RecoveryKey   string
-	KMS           kmsConfig
-	Prompt        bool
-	NoPrompt      bool
-}
-
-// clientConfig is the resolved configuration for opening a repository client.
-//
-// Fields are oriented so the zero value is the correct default, because
-// RFC 0022 §7 makes these types public and a consumer writing
-// clientConfig{Store: …} must get the same behaviour the CLI gets. That is why
-// packfiles are expressed as DisablePackfile rather than Packfile: NewClient
-// enables them by default, so a `Packfile bool` zero value would silently turn
-// them off and write a repository with a different physical layout, with no
-// error at any layer. The negative field also matches the -disable-packfile
-// flag it comes from.
-type clientConfig struct {
-	Store           storeConfig
-	Unlock          unlockConfig
-	DisablePackfile bool
-	Quiet           bool
-	JSON            bool
-}
+// The resolved configuration types now live in pkg/config, so that a caller
+// outside this module can build the same values the CLI does. They are aliased
+// rather than renamed at every use site: an alias is the same type, so these
+// spellings and pkg/config's stay interchangeable while the remaining
+// resolution logic in this file moves across (RFC 0022 §7).
+type (
+	s3Config     = config.S3
+	b2Config     = config.B2
+	sftpConfig   = config.SFTP
+	kmsConfig    = config.KMS
+	storeConfig  = config.Store
+	unlockConfig = config.Unlock
+	clientConfig = config.Client
+)
 
 // clientConfigFromFlags projects parsed flags into a resolved configuration,
 // without consulting any profile. It is a pure translation: no I/O, no

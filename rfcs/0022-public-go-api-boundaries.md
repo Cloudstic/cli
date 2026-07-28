@@ -429,6 +429,13 @@ value is the safe default (matching the `-disable-packfile` flag it comes from),
 and the region default resolves inside `open.Store` rather than at one of two
 call sites.
 
+Both landed ahead of the move, as `disablePackfile` and `s3Region`
+(`storebuild.go`) while the types were still unexported — so the behavioral
+change was reviewable on its own, before any code changed packages. Moving the
+region default was caught by an existing test asserting the pre-filled value,
+which is the correct outcome: the config now carries `""` and the guarantee is
+asserted where the backend receives it.
+
 **`open.Client` is a convenience over public parts, not a funnel.** A composition
 root in a library is a fair thing to object to. The answer is that
 `open.Store`, `open.Source`, and `open.Keychain` are independently useful and
@@ -580,7 +587,7 @@ Stages 5–8 add three requirements:
    dependency-weight sweep that would have caught it. **Done.**
 6. Characterization tests over the §7 blast radius, in `package main`, before
    anything moves. Then fix the `packfile` and `s3.region` zero values as a
-   separate, behavioral commit.
+   separate, behavioral commit. **Done.**
 7. Move config types to `pkg/config` behind `type clientConfig = config.Client`
    aliases in `cmd/cloudstic`, then the URI parsers, then profile resolution
    with the resolver injected — three commits, no call-site churn.

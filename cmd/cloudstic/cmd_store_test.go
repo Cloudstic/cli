@@ -1405,6 +1405,13 @@ func TestRunStoreNew_LocalStore(t *testing.T) {
 	}
 }
 
+// TestClientConfigFromProfileStore_DefaultRegion asserts the guarantee that a
+// profile store naming no region still reaches S3 on the default one.
+//
+// The default is no longer pre-filled into the config: it is applied once at
+// construction (s3Region, storebuild.go), so that a config built any other way
+// gets it too. The config therefore carries "" here, and the assertion is on
+// the value the backend actually receives.
 func TestClientConfigFromProfileStore_DefaultRegion(t *testing.T) {
 	s := profile.Store{
 		URI: "s3:some-bucket",
@@ -1413,8 +1420,24 @@ func TestClientConfigFromProfileStore_DefaultRegion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("clientConfigFromProfileStore: %v", err)
 	}
-	if sc.store.s3.region != "us-east-1" {
-		t.Fatalf("expected default region us-east-1, got %q", sc.store.s3.region)
+	if sc.store.s3.region != "" {
+		t.Fatalf("expected the config to carry no region, got %q", sc.store.s3.region)
+	}
+	if got := s3Region(sc.store.s3.region); got != "us-east-1" {
+		t.Fatalf("expected default region us-east-1 at construction, got %q", got)
+	}
+}
+
+// TestClientConfigFromProfileStore_ExplicitRegionWins guards the other half:
+// applying the default at construction must not override a region the profile
+// actually names.
+func TestClientConfigFromProfileStore_ExplicitRegionWins(t *testing.T) {
+	sc, err := clientConfigFromProfileStore(profile.Store{URI: "s3:some-bucket", S3Region: "eu-west-3"})
+	if err != nil {
+		t.Fatalf("clientConfigFromProfileStore: %v", err)
+	}
+	if got := s3Region(sc.store.s3.region); got != "eu-west-3" {
+		t.Fatalf("expected the profile's region eu-west-3, got %q", got)
 	}
 }
 

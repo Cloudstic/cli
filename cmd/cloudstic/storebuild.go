@@ -66,7 +66,7 @@ func newObjectStore(ctx context.Context, cfg storeConfig) (store.ObjectStore, er
 			ctx,
 			uri.bucket,
 			s3store.WithEndpoint(cfg.s3.endpoint),
-			s3store.WithRegion(cfg.s3.region),
+			s3store.WithRegion(s3Region(cfg.s3.region)),
 			s3store.WithProfile(cfg.s3.profile),
 			s3store.WithCredentials(cfg.s3.accessKey, cfg.s3.secretKey),
 			s3store.WithPrefix(uri.prefix),
@@ -81,6 +81,18 @@ func newObjectStore(ctx context.Context, cfg storeConfig) (store.ObjectStore, er
 		return nil, err
 	}
 	return withCrashInjection(inner)
+}
+
+// s3Region applies the built-in region default. It lives here, at the single
+// point of construction, rather than being pre-filled into every storeConfig
+// that might reach it: the flag path gets defaultS3Region from the -s3-region
+// flag's own default, but a config built from a profile store has no flag to
+// carry it, and prefilling that separately is how the two paths drift.
+func s3Region(region string) string {
+	if region == "" {
+		return defaultS3Region
+	}
+	return region
 }
 
 func sftpStoreOpts(cfg sftpConfig, uri *storeURIParts) []sftpstore.Option {

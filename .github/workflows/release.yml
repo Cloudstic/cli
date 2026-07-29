@@ -14,51 +14,35 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-      - run: go test -race -count=1 ./...
+      - uses: ./.github/actions/setup-go
+      - run: go test -race -shuffle=on -count=1 ./...
 
-  verify-platform-build-paths:
-    name: Verify platform build paths (${{ matrix.name }})
+  # The test job above runs on Linux only, so unlike in ci.yml both runners
+  # here are verifying build paths nothing else has compiled.
+  platform:
+    name: Platform build paths
     needs: test
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - name: macOS
-            os: macos-latest
-            run: go test ./pkg/secretref/... ./cmd/cloudstic
-          - name: Windows
-            os: windows-latest
-            run: go test ./pkg/secretref/... ./cmd/cloudstic
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-      - name: Run platform-specific verification
-        run: ${{ matrix.run }}
+    uses: ./.github/workflows/wc-platform-tests.yml
+    with:
+      runners: '["macos-latest", "windows-latest"]'
 
   release:
     name: Release
     needs:
       - test
-      - verify-platform-build-paths
+      - platform
     runs-on: macos-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
+      - uses: ./.github/actions/setup-go
       - name: Install Syft
         uses: anchore/sbom-action/download-syft@v0
       - uses: goreleaser/goreleaser-action@v7
@@ -79,6 +63,7 @@ jobs:
   winget:
     needs: release
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - uses: vedantmgoyal9/winget-releaser@v2
         with:

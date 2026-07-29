@@ -6,8 +6,10 @@
 // each caller.
 //
 // The package is deliberately independent of the repository model: it matches
-// strings. `find` uses it for -name/-path patterns, and it is the intended home
-// for backup exclude patterns, which need the same syntax.
+// strings. `find` uses it for -name/-path patterns, and pkg/source's
+// ExcludeMatcher compiles backup exclude patterns through it — the gitignore
+// layer (negation, directory-only, anchoring) stays there, the glob lives here,
+// so the two cannot drift apart.
 package pathmatch
 
 import (

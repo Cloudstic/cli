@@ -5,14 +5,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/cloudstic/cli/internal/pathmatch"
 )
 
 // excludeRule is a single parsed exclude pattern.
 type excludeRule struct {
-	pattern  string // the cleaned glob pattern
-	negate   bool   // true if the original line started with '!'
-	dirOnly  bool   // true if the original line ended with '/'
-	hasSlash bool   // true if the pattern contains a '/' (anchored to path)
+	pattern  *pathmatch.Pattern // the compiled glob
+	negate   bool               // true if the original line started with '!'
+	dirOnly  bool               // true if the original line ended with '/'
+	hasSlash bool               // true if the pattern contains a '/' (anchored to path)
 }
 
 // ExcludeMatcher evaluates gitignore-style exclude patterns against relative
@@ -31,6 +33,10 @@ type ExcludeMatcher struct {
 //   - '**' matches zero or more path segments.
 //   - Patterns without '/' match against the file/dir name in any directory.
 //   - Patterns with '/' are anchored to the root of the walk.
+//
+// The glob syntax itself is internal/pathmatch's: path.Match per segment, plus
+// '**' for zero or more segments. Only the gitignore layer — negation,
+// directory-only, anchoring, last-rule-wins — lives here.
 func NewExcludeMatcher(patterns []string) *ExcludeMatcher {
 	var rules []excludeRule
 	for _, raw := range patterns {
@@ -58,7 +64,17 @@ func NewExcludeMatcher(patterns []string) *ExcludeMatcher {
 
 		// If the pattern contains a slash, it is anchored to the root.
 		r.hasSlash = strings.Contains(line, "/")
-		r.pattern = line
+
+		// A pattern that will not compile is dropped rather than reported: this
+		// constructor has never returned an error, and the matching it replaces
+		// discarded path.Match's error and treated a malformed pattern as one
+		// that matches nothing. Dropping the rule is that same outcome, reached
+		// once at compile time instead of on every candidate.
+		compiled, err := pathmatch.Compile(line, false)
+		if err != nil {
+			continue
+		}
+		r.pattern = compiled
 		rules = append(rules, r)
 	}
 	return &ExcludeMatcher{rules: rules}
@@ -107,125 +123,17 @@ func (m *ExcludeMatcher) Excludes(relPath string, isDir bool) bool {
 
 // matchRule checks whether a single rule matches relPath.
 func matchRule(r excludeRule, relPath string) bool {
-	pattern := r.pattern
-
 	if r.hasSlash {
 		// Anchored pattern: match against the full relative path.
-		return globMatch(pattern, relPath)
+		return r.pattern.Match(relPath)
 	}
 
 	// Unanchored: match against the basename, but also try the full path
 	// so that e.g. "vendor" matches both "vendor" and "a/vendor".
-	base := baseName(relPath)
-	if globMatch(pattern, base) {
+	if r.pattern.Match(baseName(relPath)) {
 		return true
 	}
-	// Also try matching against every suffix of the path.
-	return globMatch(pattern, relPath)
-}
-
-// globMatch matches pattern against name, supporting '*' (no slash) and '**'
-// (zero or more path segments).
-func globMatch(pattern, name string) bool {
-	// Fast path: no '**' → use filepath.Match (which handles '*' and '?').
-	if !strings.Contains(pattern, "**") {
-		ok, _ := filepath.Match(pattern, name)
-		return ok
-	}
-
-	// Split on '**' and match each segment.
-	return matchDoublestar(pattern, name)
-}
-
-// matchDoublestar handles patterns containing '**'.
-func matchDoublestar(pattern, name string) bool {
-	// Split on "**" — each part must match a contiguous section of the path.
-	parts := strings.Split(pattern, "**")
-
-	if len(parts) == 1 {
-		// No '**' — should not reach here, but handle gracefully.
-		ok, _ := filepath.Match(pattern, name)
-		return ok
-	}
-
-	// First part must match a prefix.
-	first := parts[0]
-	if first != "" {
-		// First must match beginning of name.
-		first = strings.TrimSuffix(first, "/")
-		if first != "" {
-			segments := strings.Split(name, "/")
-			firstSegs := strings.Split(first, "/")
-			if len(segments) < len(firstSegs) {
-				return false
-			}
-			for i, fp := range firstSegs {
-				ok, _ := filepath.Match(fp, segments[i])
-				if !ok {
-					return false
-				}
-			}
-			name = strings.Join(segments[len(firstSegs):], "/")
-		}
-	}
-
-	// Last part must match a suffix.
-	last := parts[len(parts)-1]
-	if last != "" {
-		last = strings.TrimPrefix(last, "/")
-		if last != "" {
-			segments := strings.Split(name, "/")
-			lastSegs := strings.Split(last, "/")
-			if len(segments) < len(lastSegs) {
-				return false
-			}
-			offset := len(segments) - len(lastSegs)
-			for i, lp := range lastSegs {
-				ok, _ := filepath.Match(lp, segments[offset+i])
-				if !ok {
-					return false
-				}
-			}
-			name = strings.Join(segments[:offset], "/")
-		}
-	}
-
-	// Middle parts (if any) must each match somewhere in the remaining path.
-	for i := 1; i < len(parts)-1; i++ {
-		mid := strings.Trim(parts[i], "/")
-		if mid == "" {
-			continue
-		}
-		idx := indexGlob(name, mid)
-		if idx < 0 {
-			return false
-		}
-		midSegs := strings.Split(mid, "/")
-		segments := strings.Split(name, "/")
-		name = strings.Join(segments[idx+len(midSegs):], "/")
-	}
-
-	return true
-}
-
-// indexGlob finds the first position in name (split by '/') where sub matches.
-func indexGlob(name, sub string) int {
-	segments := strings.Split(name, "/")
-	subSegs := strings.Split(sub, "/")
-	for i := 0; i <= len(segments)-len(subSegs); i++ {
-		match := true
-		for j, sp := range subSegs {
-			ok, _ := filepath.Match(sp, segments[i+j])
-			if !ok {
-				match = false
-				break
-			}
-		}
-		if match {
-			return i
-		}
-	}
-	return -1
+	return r.pattern.Match(relPath)
 }
 
 // IsUnderExcludedDir reports whether true if relPath falls under any of the excluded

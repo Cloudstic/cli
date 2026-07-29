@@ -9,6 +9,7 @@ import "testing"
 // Note: `list` does not support filtering by tag — tags are shown inline in
 // the snapshot summary. `forget` is the command that supports --tag filtering.
 func TestCLI_Feature_BackupTags(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "backup_tags",
 		sourceFilter: localOnlySource,

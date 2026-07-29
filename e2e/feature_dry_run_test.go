@@ -5,6 +5,7 @@ import "testing"
 // TestCLI_Feature_BackupDryRun verifies that `backup -dry-run` reports what
 // would be uploaded without actually writing any data to the store.
 func TestCLI_Feature_BackupDryRun(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "backup_dry_run",
 		sourceFilter: localOnlySource,
@@ -25,6 +26,7 @@ func TestCLI_Feature_BackupDryRun(t *testing.T) {
 // This test complements the policy test in feature_retention_test.go by focusing
 // specifically on dry-run output semantics.
 func TestCLI_Feature_ForgetDryRun(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "forget_dry_run",
 		sourceFilter: localOnlySource,

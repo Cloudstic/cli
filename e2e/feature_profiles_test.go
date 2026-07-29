@@ -18,6 +18,7 @@ func TestCLI_Feature_ProfilesLocalStore(t *testing.T) {
 	if !shouldRun(Hermetic) {
 		t.Skip("skipping hermetic test")
 	}
+	t.Parallel()
 
 	bin := buildBinary(t)
 	src1 := t.TempDir()
@@ -108,6 +109,7 @@ func TestCLI_Feature_ProfilesAllProfilesJSON(t *testing.T) {
 	if !shouldRun(Hermetic) {
 		t.Skip("skipping hermetic test")
 	}
+	t.Parallel()
 
 	bin := buildBinary(t)
 	src1 := t.TempDir()

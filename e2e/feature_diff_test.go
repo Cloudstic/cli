@@ -6,6 +6,7 @@ import "testing"
 // added and modified files between two snapshots.
 // Diff is a metadata-only operation; local store is sufficient.
 func TestCLI_Feature_Diff(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "diff_snapshots",
 		sourceFilter: localOnlySource,
@@ -39,6 +40,7 @@ func TestCLI_Feature_Diff(t *testing.T) {
 // TestCLI_Feature_DiffSameSnapshot verifies that diffing a snapshot against
 // itself produces no output (no changes).
 func TestCLI_Feature_DiffSameSnapshot(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "diff_same_snapshot",
 		sourceFilter: localOnlySource,

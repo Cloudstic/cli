@@ -104,6 +104,10 @@ func dockerAvailable() bool {
 	return cmd.Run() == nil
 }
 
+// runFeatureMatrix deliberately does not mark the calling test parallel: a test
+// may call it more than once (see TestCLI_Feature_CompressedFilesRoundTrip),
+// and a second t.Parallel on the same T panics. Each top-level test declares
+// t.Parallel() itself, which is also where a reader expects to find it.
 func runFeatureMatrix(t *testing.T, spec featureSpec) {
 	t.Helper()
 

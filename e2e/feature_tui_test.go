@@ -9,6 +9,7 @@ func TestCLI_Feature_TUI_Help(t *testing.T) {
 	if !shouldRun(Hermetic) {
 		t.Skip("skipping hermetic test")
 	}
+	t.Parallel()
 
 	bin := buildBinary(t)
 	out := run(t, bin, "tui", "--help")
@@ -25,6 +26,7 @@ func TestCLI_Feature_TUI_NonInteractiveGuardrail(t *testing.T) {
 	if !shouldRun(Hermetic) {
 		t.Skip("skipping hermetic test")
 	}
+	t.Parallel()
 
 	bin := buildBinary(t)
 	out := runExpectFail(t, bin, "tui")

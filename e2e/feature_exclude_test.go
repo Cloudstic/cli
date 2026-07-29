@@ -10,6 +10,7 @@ import (
 // and -exclude-file patterns correctly suppress files from the backup.
 // This is a source-level feature; running on every store backend adds no value.
 func TestCLI_Feature_BackupExcludePatterns(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "backup_exclude_patterns",
 		sourceFilter: localOnlySource,

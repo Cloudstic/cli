@@ -27,6 +27,7 @@ func TestCLI_Feature_BackupCrashConsistency(t *testing.T) {
 	if !shouldRun(Hermetic) {
 		t.Skip("skipping hermetic test")
 	}
+	t.Parallel()
 	bin := buildBinary(t)
 
 	// Files well over the 512KiB chunk-size floor so each one's content

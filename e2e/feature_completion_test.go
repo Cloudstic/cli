@@ -12,6 +12,7 @@ func TestCLI_Feature_Completion(t *testing.T) {
 	if !shouldRun(Hermetic) {
 		t.Skip("skipping hermetic test")
 	}
+	t.Parallel()
 
 	bin := buildBinary(t)
 

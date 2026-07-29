@@ -9,6 +9,7 @@ import (
 // TestCLI_Feature_EncryptedRepoErrors verifies that accessing an encrypted
 // repository with no credentials or the wrong password produces clear errors.
 func TestCLI_Feature_EncryptedRepoErrors(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "encrypted_repo_errors",
 		sourceFilter: localOnlySource,
@@ -31,6 +32,7 @@ func TestCLI_Feature_EncryptedRepoErrors(t *testing.T) {
 // TestCLI_Feature_InitRequiresEncryption verifies that `init` without any
 // encryption option fails with an actionable error message.
 func TestCLI_Feature_InitRequiresEncryption(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "init_requires_encryption",
 		sourceFilter: localOnlySource,
@@ -45,6 +47,7 @@ func TestCLI_Feature_InitRequiresEncryption(t *testing.T) {
 // TestCLI_Feature_RecoveryKeyRoundTrip verifies the full recovery-key flow:
 // init with a BIP39 recovery key → backup → restore using only the mnemonic.
 func TestCLI_Feature_RecoveryKeyRoundTrip(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "recovery_key_round_trip",
 		sourceFilter: localOnlySource,
@@ -80,6 +83,7 @@ func TestCLI_Feature_RecoveryKeyRoundTrip(t *testing.T) {
 // so all subsequent harness calls (backup, list, check, forget) work without
 // a password — no separate *Unencrypted methods needed.
 func TestCLI_Feature_UnencryptedLifecycle(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "unencrypted_lifecycle",
 		sourceFilter: localOnlySource,

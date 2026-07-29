@@ -69,6 +69,7 @@ func fileExists(path string) bool {
 // A real backup through the CLI must leave no object keys readable in the pack
 // catalog or in any packfile footer, and must still restore byte for byte.
 func TestCLI_Feature_PackIndexIsSealedOnDisk(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "pack_index_sealed_on_disk",
 		sourceFilter: localOnlySource,
@@ -116,6 +117,7 @@ func TestCLI_Feature_PackIndexIsSealedOnDisk(t *testing.T) {
 // An unencrypted repository has no key to seal with; it must keep working and
 // keep its indexes readable, rather than failing or half-sealing.
 func TestCLI_Feature_PackIndexUnsealedWithoutEncryption(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "pack_index_unsealed_without_encryption",
 		sourceFilter: localOnlySource,

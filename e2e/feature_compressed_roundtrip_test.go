@@ -109,6 +109,7 @@ func compressedFixtures(t *testing.T) map[string]string {
 }
 
 func TestCLI_Feature_CompressedFilesRoundTrip(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name      string
 		encrypted bool

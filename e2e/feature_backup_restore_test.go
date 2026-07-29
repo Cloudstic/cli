@@ -6,6 +6,7 @@ import (
 )
 
 func TestCLI_Feature_BackupRestoreLatest(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name: "backup_restore_latest",
 		test: func(t *testing.T, h *harness, entry matrixEntry) {

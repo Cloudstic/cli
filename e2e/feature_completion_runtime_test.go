@@ -21,6 +21,7 @@ type completionScenario struct {
 }
 
 func TestCLI_Feature_CompletionRuntime_RootCommands(t *testing.T) {
+	t.Parallel()
 	runCompletionShellMatrix(t, completionScenario{
 		name:  "root_commands",
 		words: []string{"cloudstic", ""},
@@ -31,6 +32,7 @@ func TestCLI_Feature_CompletionRuntime_RootCommands(t *testing.T) {
 }
 
 func TestCLI_Feature_CompletionRuntime_BackupFlags(t *testing.T) {
+	t.Parallel()
 	runCompletionShellMatrix(t, completionScenario{
 		name:  "backup_flags",
 		words: []string{"cloudstic", "backup", "-"},
@@ -41,6 +43,7 @@ func TestCLI_Feature_CompletionRuntime_BackupFlags(t *testing.T) {
 }
 
 func TestCLI_Feature_CompletionRuntime_GroupedSubcommandFlags(t *testing.T) {
+	t.Parallel()
 	runCompletionShellMatrix(t, completionScenario{
 		name:  "grouped_subcommand_flags",
 		words: []string{"cloudstic", "key", "passwd", "-"},
@@ -51,6 +54,7 @@ func TestCLI_Feature_CompletionRuntime_GroupedSubcommandFlags(t *testing.T) {
 }
 
 func TestCLI_Feature_CompletionRuntime_ProfileValues(t *testing.T) {
+	t.Parallel()
 	runCompletionShellMatrix(t, completionScenario{
 		name:  "profile_values",
 		words: []string{"cloudstic", "backup", "-profile", ""},
@@ -61,6 +65,7 @@ func TestCLI_Feature_CompletionRuntime_ProfileValues(t *testing.T) {
 }
 
 func TestCLI_Feature_CompletionRuntime_StorePrefixes(t *testing.T) {
+	t.Parallel()
 	runCompletionShellMatrix(t, completionScenario{
 		name:  "store_prefixes",
 		words: []string{"cloudstic", "-store", ""},

@@ -1,5 +1,19 @@
 version: "2"
 
+linters:
+  # The v2 defaults (errcheck, govet, ineffassign, staticcheck, unused) plus:
+  enable:
+    # Error comparisons that break the moment an error is wrapped with %w,
+    # which this codebase does throughout.
+    - errorlint
+    # Leaked HTTP response bodies. The gdrive and onedrive sources are the
+    # only HTTP clients here, and a leak there holds a connection per file.
+    - bodyclose
+    # Pre-1.22 loop-variable copies, now dead weight.
+    - copyloopvar
+    # os.MkdirTemp and friends in tests, where t.TempDir cleans up on failure.
+    - usetesting
+
 formatters:
   enable:
     - gofmt

@@ -27,10 +27,10 @@ func TestKeychainBackend_Integration(t *testing.T) {
 	item := keychain.NewGenericPassword(service, account, "", []byte(secret), "")
 	item.SetAccessible(keychain.AccessibleWhenUnlockedThisDeviceOnly)
 	if err := keychain.AddItem(item); err != nil {
-		if err == keychain.ErrorInteractionNotAllowed || err == keychain.ErrorNotAvailable || err == keychain.ErrorNoSuchKeychain {
+		if errors.Is(err, keychain.ErrorInteractionNotAllowed) || errors.Is(err, keychain.ErrorNotAvailable) || errors.Is(err, keychain.ErrorNoSuchKeychain) {
 			t.Skipf("keychain unavailable in this session: %v", err)
 		}
-		if err == keychain.ErrorDuplicateItem {
+		if errors.Is(err, keychain.ErrorDuplicateItem) {
 			query := keychain.NewItem()
 			query.SetSecClass(keychain.SecClassGenericPassword)
 			query.SetService(service)

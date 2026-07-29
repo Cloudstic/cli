@@ -22,10 +22,12 @@ func defaultKeychainLookupBlob(ctx context.Context, service, account string) ([]
 
 	out, err := keychainGetGenericPasswordDarwin(service, account, "", "")
 	if err != nil {
-		switch err {
-		case keychain.ErrorItemNotFound:
+		switch {
+		case errors.Is(err, keychain.ErrorItemNotFound):
 			return nil, errKeychainNotFound
-		case keychain.ErrorInteractionNotAllowed, keychain.ErrorNotAvailable, keychain.ErrorNoSuchKeychain:
+		case errors.Is(err, keychain.ErrorInteractionNotAllowed),
+			errors.Is(err, keychain.ErrorNotAvailable),
+			errors.Is(err, keychain.ErrorNoSuchKeychain):
 			return nil, fmt.Errorf("%w: keychain locked or unavailable in this session", errKeychainUnavailable)
 		default:
 			return nil, fmt.Errorf("keychain lookup failed: %w", err)
@@ -59,7 +61,7 @@ func defaultKeychainStoreBlob(_ context.Context, service, account string, value 
 	item.SetData(value)
 
 	if err := keychainAddItemDarwin(item); err != nil {
-		if err == keychain.ErrorDuplicateItem {
+		if errors.Is(err, keychain.ErrorDuplicateItem) {
 			query := keychain.NewItem()
 			query.SetSecClass(keychain.SecClassGenericPassword)
 			query.SetService(service)
@@ -85,7 +87,7 @@ func defaultKeychainDelete(_ context.Context, service, account string) error {
 	query.SetAccount(account)
 
 	if err := keychainDeleteItemDarwin(query); err != nil {
-		if err == keychain.ErrorItemNotFound {
+		if errors.Is(err, keychain.ErrorItemNotFound) {
 			return nil
 		}
 		return mapKeychainStoreError(err)
@@ -94,8 +96,10 @@ func defaultKeychainDelete(_ context.Context, service, account string) error {
 }
 
 func mapKeychainStoreError(err error) error {
-	switch err {
-	case keychain.ErrorInteractionNotAllowed, keychain.ErrorNotAvailable, keychain.ErrorNoSuchKeychain:
+	switch {
+	case errors.Is(err, keychain.ErrorInteractionNotAllowed),
+		errors.Is(err, keychain.ErrorNotAvailable),
+		errors.Is(err, keychain.ErrorNoSuchKeychain):
 		return fmt.Errorf("%w: keychain locked or unavailable in this session", errKeychainUnavailable)
 	default:
 		return fmt.Errorf("keychain write failed: %w", err)

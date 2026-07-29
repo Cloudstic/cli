@@ -128,7 +128,7 @@ func (c Chain) WrapAll(ctx context.Context, masterKey []byte) ([]KeySlot, error)
 	var results []KeySlot
 	for _, cred := range c {
 		slot, err := cred.Wrap(ctx, masterKey)
-		if err == ErrCannotWrap {
+		if errors.Is(err, ErrCannotWrap) {
 			continue
 		}
 		if err != nil {

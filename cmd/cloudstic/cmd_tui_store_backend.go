@@ -28,7 +28,7 @@ func (b *tuiFormsBackend) ComposeStore(storeType, value string) (string, error) 
 		return "", nil
 	}
 	if _, err := config.ParseStoreURI(uri); err != nil {
-		return "", fmt.Errorf("invalid store: %v", err)
+		return "", fmt.Errorf("invalid store: %w", err)
 	}
 	return uri, nil
 }
@@ -47,7 +47,7 @@ func (b *tuiFormsBackend) StoreExists(name string) bool {
 
 func (b *tuiFormsBackend) ValidateSecretRef(ref string) error {
 	if _, err := secretref.Parse(ref); err != nil {
-		return fmt.Errorf("invalid secret reference: %v", err)
+		return fmt.Errorf("invalid secret reference: %w", err)
 	}
 	return nil
 }

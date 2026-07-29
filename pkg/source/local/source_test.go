@@ -12,11 +12,7 @@ import (
 
 func TestSource_WithExcludes(t *testing.T) {
 	ctx := context.Background()
-	tmpDir, err := os.MkdirTemp("", "cloudstic-exclude-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	// Create filesystem structure.
 	for _, dir := range []string{"src", ".git/objects", "node_modules/pkg", "build"} {
@@ -43,7 +39,7 @@ func TestSource_WithExcludes(t *testing.T) {
 
 	// Test Walk() — excluded files/dirs should not appear.
 	var walked []string
-	err = s.Walk(ctx, func(fm source.FileMeta) error {
+	err := s.Walk(ctx, func(fm source.FileMeta) error {
 		walked = append(walked, fm.FileID)
 		return nil
 	})
@@ -99,11 +95,7 @@ func TestSource_WithExcludes(t *testing.T) {
 
 func TestSource(t *testing.T) {
 	ctx := context.Background()
-	tmpDir, err := os.MkdirTemp("", "cloudstic-source-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	// Create a nested filesystem structure
 	nestedDir := filepath.Join(tmpDir, "folder")

@@ -61,10 +61,7 @@ func (f *faultyCatalogStore) List(ctx context.Context, prefix string) ([]string,
 func newCatalogTestStore(t *testing.T) (*faultyCatalogStore, store.ObjectStore) {
 	t.Helper()
 
-	tmpDir, err := os.MkdirTemp("", "cloudstic-pack-catalog-*")
-	if err != nil {
-		t.Fatalf("create temp dir: %v", err)
-	}
+	tmpDir := t.TempDir()
 	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
 
 	localStore, err := local.New(tmpDir)

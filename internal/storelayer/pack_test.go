@@ -2,7 +2,6 @@ package storelayer
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"github.com/cloudstic/cli/pkg/store/local"
@@ -11,11 +10,7 @@ import (
 func TestPackStore_RepackOrphan(t *testing.T) {
 	ctx := context.Background()
 
-	tmpDir, err := os.MkdirTemp("", "cloudstic-pack-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	localStore, err := local.New(tmpDir)
 	if err != nil {
@@ -80,11 +75,7 @@ func TestPackStore_RepackOrphan(t *testing.T) {
 func TestPackStore_RepackFragmented(t *testing.T) {
 	ctx := context.Background()
 
-	tmpDir, err := os.MkdirTemp("", "cloudstic-pack-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	localStore, err := local.New(tmpDir)
 	if err != nil {
@@ -164,11 +155,7 @@ func TestPackStore_RepackFragmented(t *testing.T) {
 func TestPackStore_RepackNoFragment(t *testing.T) {
 	ctx := context.Background()
 
-	tmpDir, err := os.MkdirTemp("", "cloudstic-pack-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	localStore, err := local.New(tmpDir)
 	if err != nil {

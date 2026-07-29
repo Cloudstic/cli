@@ -2,7 +2,6 @@ package storelayer
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"github.com/cloudstic/cli/pkg/store/local"
@@ -12,11 +11,7 @@ func TestMeteredStore(t *testing.T) {
 	ctx := context.Background()
 
 	// 1. Setup local Datastore
-	tmpDir, err := os.MkdirTemp("", "cloudstic-metered-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	localStore, err := local.New(tmpDir)
 	if err != nil {

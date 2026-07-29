@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"sync"
 
@@ -115,7 +116,7 @@ func (c *Chunker) ProcessStream(ctx context.Context, r io.Reader, onProgress fun
 		defer close(jobs)
 		for {
 			chunk, err := cdc.Next()
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				break
 			}
 			if err != nil {

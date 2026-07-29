@@ -815,7 +815,7 @@ func TestLoadRejectsTamperedNode(t *testing.T) {
 func buildOverDeepChain(t *testing.T, s *inMemoryStore, depth int) string {
 	t.Helper()
 
-	put := func(hn *core.HAMTNode) string {
+	put := func(hn *storedNode) string {
 		hash, data, err := core.ComputeJSONHash(hn)
 		if err != nil {
 			t.Fatalf("encode: %v", err)
@@ -827,12 +827,12 @@ func buildOverDeepChain(t *testing.T, s *inMemoryStore, depth int) string {
 		return ref
 	}
 
-	ref := put(&core.HAMTNode{
-		Type:    core.ObjectTypeLeaf,
-		Entries: []core.LeafEntry{{Key: "deep", PathKey: routingKey("", "deep"), Value: "filemeta/deep"}},
+	ref := put(&storedNode{
+		Type:    nodeTypeLeaf,
+		Entries: []leafEntry{{Key: "deep", PathKey: routingKey("", "deep"), Value: "filemeta/deep"}},
 	})
 	for i := 0; i < depth; i++ {
-		ref = put(&core.HAMTNode{Type: core.ObjectTypeInternal, Bitmap: 1, Children: []string{ref}})
+		ref = put(&storedNode{Type: nodeTypeInternal, Bitmap: 1, Children: []string{ref}})
 	}
 	return ref
 }

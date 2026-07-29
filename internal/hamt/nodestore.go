@@ -58,20 +58,20 @@ func (ns *NodeStore) load(ctx context.Context, ref string) (*node, error) {
 	if err := verifyNodeRef(ref, data); err != nil {
 		return nil, err
 	}
-	var hn core.HAMTNode
-	if err := json.Unmarshal(data, &hn); err != nil {
+	var sn storedNode
+	if err := json.Unmarshal(data, &sn); err != nil {
 		return nil, fmt.Errorf("decode node %s: %w", ref, err)
 	}
-	n := decodeNode(&hn)
+	n := decodeNode(&sn)
 	ns.cache.Add(ref, n)
 	return n, nil
 }
 
-// seal encodes hn under its content address and returns the ref plus the bytes
+// seal encodes sn under its content address and returns the ref plus the bytes
 // to write. It performs no I/O, so callers can compute a root ref without
 // committing to it.
-func (ns *NodeStore) seal(hn *core.HAMTNode) (string, []byte, error) {
-	hash, data, err := core.ComputeJSONHash(hn)
+func (ns *NodeStore) seal(sn *storedNode) (string, []byte, error) {
+	hash, data, err := core.ComputeJSONHash(sn)
 	if err != nil {
 		return "", nil, err
 	}

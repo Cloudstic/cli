@@ -6,9 +6,7 @@ import "github.com/cloudstic/cli/pkg/source"
 type ObjectType string
 
 const (
-	ObjectTypeContent  ObjectType = "content"
-	ObjectTypeInternal ObjectType = "internal"
-	ObjectTypeLeaf     ObjectType = "leaf"
+	ObjectTypeContent ObjectType = "content"
 )
 
 // Content represents a file's content as a list of chunks
@@ -33,23 +31,9 @@ func FileMetaRef(f *FileMeta) (string, []byte, error) {
 	return "filemeta/" + hash, data, nil
 }
 
-// HAMTNode represents a node in the Merkle-HAMT
-// Object key: node/<sha256>
-type HAMTNode struct {
-	Type     ObjectType  `json:"type"` // "internal" or "leaf"
-	Bitmap   uint32      `json:"bitmap,omitempty"`
-	Children []string    `json:"children,omitempty"` // ["node/<sha256>", ...]
-	Entries  []LeafEntry `json:"entries,omitempty"`
-}
-
-// LeafEntry represents an entry in a Leaf node.
-// The HAMT treats Value as opaque; the backup engine stores filemeta refs in
-// it, which is why the wire tag is "filemeta".
-type LeafEntry struct {
-	Key     string `json:"key"`                // caller's entry key (the source file ID)
-	PathKey string `json:"path_key,omitempty"` // routing key; falls back to SHA256(Key) if empty
-	Value   string `json:"filemeta"`           // "filemeta/<sha256>"
-}
+// The node objects at "node/<sha256>" are defined in internal/hamt, which is
+// the only package that reads or writes them. Their encoding is part of the
+// repository format all the same — see internal/hamt/node.go.
 
 // Snapshot represents a backup checkpoint
 // Object key: snapshot/<sha256>

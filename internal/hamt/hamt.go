@@ -361,7 +361,7 @@ func (tx *Txn) insert(ctx context.Context, c child, r routing, key, value string
 }
 
 func (tx *Txn) insertIntoLeaf(n *node, r routing, key, value string, level int) (child, error) {
-	entry := core.LeafEntry{Key: key, PathKey: r.hex, Value: value}
+	entry := leafEntry{Key: key, PathKey: r.hex, Value: value}
 
 	if i := n.indexOfKey(key); i >= 0 {
 		n.entries[i] = entry
@@ -376,19 +376,19 @@ func (tx *Txn) insertIntoLeaf(n *node, r routing, key, value string, level int) 
 	}
 
 	// Leaf full: split into an internal node.
-	all := make([]core.LeafEntry, len(n.entries), len(n.entries)+1)
+	all := make([]leafEntry, len(n.entries), len(n.entries)+1)
 	copy(all, n.entries)
 	return buildNode(append(all, entry), level)
 }
 
 // buildNode recursively partitions entries into a subtree starting at level.
-func buildNode(entries []core.LeafEntry, level int) (child, error) {
+func buildNode(entries []leafEntry, level int) (child, error) {
 	if len(entries) <= maxLeafSize || level >= maxDepth {
 		sortEntries(entries)
 		return child{node: &node{leaf: true, entries: entries}}, nil
 	}
 
-	buckets := make(map[int][]core.LeafEntry)
+	buckets := make(map[int][]leafEntry)
 	for _, e := range entries {
 		r, err := routingForEntry(e)
 		if err != nil {
@@ -675,7 +675,7 @@ func childForBucket(ctx context.Context, ns *NodeStore, n *node, idx, level int)
 		return resolve(ctx, ns, n.children[pos])
 	}
 
-	var filtered []core.LeafEntry
+	var filtered []leafEntry
 	for _, e := range n.entries {
 		r, err := routingForEntry(e)
 		if err != nil {
@@ -775,7 +775,7 @@ func newRouting(keyHex string) (routing, error) {
 
 // routingForEntry returns the routing key of a stored leaf entry, falling back
 // to SHA256(Key) for legacy entries written before PathKey existed.
-func routingForEntry(e core.LeafEntry) (routing, error) {
+func routingForEntry(e leafEntry) (routing, error) {
 	pk := e.PathKey
 	if pk == "" {
 		pk = core.ComputeHash([]byte(e.Key))
@@ -791,7 +791,7 @@ func (r routing) indexAt(level int) (int, error) {
 	return int((r.prefix >> shift) & ((1 << bitsPerLevel) - 1)), nil
 }
 
-func sortEntries(entries []core.LeafEntry) {
+func sortEntries(entries []leafEntry) {
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].Key < entries[j].Key
 	})

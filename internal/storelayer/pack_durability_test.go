@@ -87,10 +87,7 @@ func (d *deleteBlockingStore) Delete(ctx context.Context, key string) error {
 func TestPackStore_RepackInterruptedBeforeDeleteLosesNothing(t *testing.T) {
 	ctx := context.Background()
 
-	tmpDir, err := os.MkdirTemp("", "cloudstic-repack-durability-*")
-	if err != nil {
-		t.Fatalf("temp dir: %v", err)
-	}
+	tmpDir := t.TempDir()
 	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
 
 	localStore, err := local.New(tmpDir)

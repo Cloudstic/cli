@@ -2,6 +2,7 @@ package gdrive
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/cloudstic/cli/pkg/source"
@@ -212,7 +213,7 @@ func (s *ChangeSource) resolveChangePath(ctx context.Context, meta source.FileMe
 	}
 	parentPath, err := s.resolveDrivePath(ctx, meta.Parents[0], pathMap)
 	if err != nil {
-		if err == errNotDescendant {
+		if errors.Is(err, errNotDescendant) {
 			return "", nil
 		}
 		return "", err

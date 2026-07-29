@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -201,7 +202,7 @@ func (rm *RestoreManager) runWithWriter(ctx context.Context, plan restorePlan, w
 			})
 			defer phase.Increment(1)
 			switch {
-			case err == errRestoreSkipped:
+			case errors.Is(err, errRestoreSkipped):
 				return nil
 			case err != nil:
 				phase.Log(fmt.Sprintf("Failed: %s: %v", rel, err))
@@ -221,7 +222,7 @@ func (rm *RestoreManager) runWithWriter(ctx context.Context, plan restorePlan, w
 
 		if meta.Type == core.FileTypeFolder {
 			if err := writer.MkdirAll(rel, meta); err != nil {
-				if err != errRestoreSkipped {
+				if !errors.Is(err, errRestoreSkipped) {
 					phase.Log(fmt.Sprintf("Failed: %s: %v", rel, err))
 					result.Errors++
 				}

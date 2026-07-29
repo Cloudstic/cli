@@ -7,6 +7,7 @@
 package forms
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -355,10 +356,7 @@ func (f *Form) submit() tea.Cmd {
 	result, err := f.Submit(f)
 	if err != nil {
 		var fieldErr *FieldError
-		if fe, ok := err.(*FieldError); ok {
-			fieldErr = fe
-		}
-		if fieldErr != nil {
+		if errors.As(err, &fieldErr) {
 			f.errField = fieldErr.Field
 			f.errMsg = fieldErr.Message
 			if field := f.field(fieldErr.Field); field != nil {

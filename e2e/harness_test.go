@@ -61,6 +61,12 @@ var (
 func buildBinary(t *testing.T) string {
 	t.Helper()
 	buildOnce.Do(func() {
+		// Deliberately not t.TempDir(): this runs once and the binary is shared
+		// by every test in the package, but t.TempDir() is scoped to whichever
+		// test happened to win the race into buildOnce — it would delete the
+		// binary the moment that test finished, and every test scheduled after
+		// it would exec a path that no longer exists.
+		//nolint:usetesting // see above; lifetime must outlive the calling test
 		dir, err := os.MkdirTemp("", "cloudstic-e2e-bin-*")
 		if err != nil {
 			buildErr = err

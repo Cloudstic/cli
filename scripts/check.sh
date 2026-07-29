@@ -16,8 +16,13 @@ git diff --exit-code -- go.mod go.sum
 # Formatting is checked, not applied: .golangci.yml enables the gofmt formatter,
 # so `golangci-lint run` reports a misformatted file the same way CI does.
 # Run `golangci-lint fmt ./...` to fix what it reports.
-echo "==> Running golangci-lint..."
-golangci-lint run ./...
+# Once per target platform: golangci-lint only analyses the files that build
+# for one GOOS, so a single run never opens the *_darwin.go / *_windows.go
+# backends under pkg/secretref. CI runs the same three.
+for goos in linux darwin windows; do
+  echo "==> Running golangci-lint (GOOS=$goos)..."
+  GOOS=$goos golangci-lint run ./...
+done
 
 echo "==> Running markdownlint..."
 npx markdownlint-cli2 "**/*.md"

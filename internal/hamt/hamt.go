@@ -2,6 +2,7 @@ package hamt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math/bits"
@@ -552,7 +553,7 @@ func lookupByKey(ctx context.Context, ns *NodeStore, root child, key string) (st
 		}
 		return nil
 	})
-	if err == errFoundSentinel {
+	if errors.Is(err, errFoundSentinel) {
 		return found, nil
 	}
 	return "", err

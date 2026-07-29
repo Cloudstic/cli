@@ -3,6 +3,7 @@ package gdrive
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -571,8 +572,14 @@ func driveCallWithRetry[T any](ctx context.Context, fn func() (T, error)) (T, er
 	return result, err
 }
 
+// isRetryableGoogleErr reports whether err is a rate-limit or server-side
+// failure worth retrying. It unwraps rather than asserting directly: the API
+// client returns *googleapi.Error inside a *url.Error for transport-level
+// failures, and a bare assertion classified those as permanent — so a 429 or a
+// 503 reached on that path was surfaced immediately instead of being retried.
 func isRetryableGoogleErr(err error) bool {
-	if apiErr, ok := err.(*googleapi.Error); ok {
+	var apiErr *googleapi.Error
+	if errors.As(err, &apiErr) {
 		return apiErr.Code == 429 || apiErr.Code >= 500
 	}
 	return false
@@ -901,6 +908,8 @@ func (s *Source) GetFileStream(fileID string) (io.ReadCloser, error) {
 	err := retry.Do(context.Background(), retry.DefaultPolicy(), func() error {
 		call := s.service.Files.Get(fileID).SupportsAllDrives(true)
 		var err error
+		//nolint:bodyclose // resp.Body is returned to the caller as the
+		// io.ReadCloser it asked for; closing it here would close the stream.
 		resp, err = call.Download()
 		if err != nil {
 			if isRetryableGoogleErr(err) {
@@ -920,6 +929,8 @@ func (s *Source) exportFile(fileID, exportMimeType string) (io.ReadCloser, error
 	var resp *http.Response
 	err := retry.Do(context.Background(), retry.DefaultPolicy(), func() error {
 		var err error
+		//nolint:bodyclose // resp.Body is returned to the caller as the
+		// io.ReadCloser it asked for; closing it here would close the stream.
 		resp, err = s.service.Files.Export(fileID, exportMimeType).Download()
 		if err != nil {
 			if isRetryableGoogleErr(err) {

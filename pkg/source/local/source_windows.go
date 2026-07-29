@@ -104,7 +104,7 @@ func getPartitionUUID(mountPoint string) string {
 	if err != nil {
 		return ""
 	}
-	defer windows.CloseHandle(handle)
+	defer func() { _ = windows.CloseHandle(handle) }()
 
 	var info partitionInformationEx
 	var bytesReturned uint32

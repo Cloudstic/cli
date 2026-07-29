@@ -67,7 +67,7 @@ func (b *tuiFormsBackend) ComposeSource(sourceType, value string) (string, error
 		return "", nil
 	}
 	if _, err := config.ParseSourceURI(source); err != nil {
-		return "", fmt.Errorf("invalid source: %v", err)
+		return "", fmt.Errorf("invalid source: %w", err)
 	}
 	return source, nil
 }

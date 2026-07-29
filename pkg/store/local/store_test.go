@@ -13,11 +13,7 @@ import (
 func TestStore(t *testing.T) {
 	ctx := context.Background()
 	// Setup temp dir
-	tmpDir, err := os.MkdirTemp("", "cloudstic-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	s, err := New(tmpDir)
 	if err != nil {

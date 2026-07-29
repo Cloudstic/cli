@@ -25,13 +25,25 @@ concurrency:
 
 jobs:
   lint:
-    name: Lint
+    # golangci-lint only analyses the files that build for one GOOS, so a
+    # Linux-only run never opens *_darwin.go or *_windows.go — which is most of
+    # pkg/secretref's backends. Linting all three target platforms found real
+    # issues in every one of them; the runner stays ubuntu since GOOS only
+    # selects which files are analysed, not where the analysis runs.
+    name: Lint (${{ matrix.goos }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, darwin, windows]
+    env:
+      GOOS: ${{ matrix.goos }}
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-go
       - name: Check go.mod is tidy
+        if: matrix.goos == 'linux'
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum

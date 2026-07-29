@@ -4,6 +4,7 @@ package backends
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -69,12 +70,10 @@ func defaultSecretServiceLookup(_ context.Context, collection, item string) (str
 func defaultSecretServiceExists(ctx context.Context, collection, item string) (bool, error) {
 	_, err := defaultSecretServiceLookup(ctx, collection, item)
 	if err != nil {
-		switch err {
-		case errSecretServiceNotFound:
+		if errors.Is(err, errSecretServiceNotFound) {
 			return false, nil
-		default:
-			return false, err
 		}
+		return false, err
 	}
 	return true, nil
 }
@@ -201,15 +200,17 @@ func mapSecretServiceCallError(err error, action string) error {
 	if err == nil {
 		return nil
 	}
-	switch e := err.(type) {
-	case dbus.Error:
-		return mapSecretServiceDBusErrorName(e.Name, action, err)
-	case *dbus.Error:
-		return mapSecretServiceDBusErrorName(e.Name, action, err)
+	var dbusErrPtr *dbus.Error
+	if errors.As(err, &dbusErrPtr) {
+		return mapSecretServiceDBusErrorName(dbusErrPtr.Name, action, err)
+	}
+	var dbusErr dbus.Error
+	if errors.As(err, &dbusErr) {
+		return mapSecretServiceDBusErrorName(dbusErr.Name, action, err)
 	}
 	lower := strings.ToLower(err.Error())
 	if strings.Contains(lower, "dbus") || strings.Contains(lower, "secret service") {
-		return fmt.Errorf("%w: %s failed (%v); use env://... as a fallback", errSecretServiceUnavailable, action, err)
+		return fmt.Errorf("%w: %s failed (%w); use env://... as a fallback", errSecretServiceUnavailable, action, err)
 	}
 	return fmt.Errorf("%s: %w", action, err)
 }

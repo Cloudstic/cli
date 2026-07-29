@@ -11,11 +11,7 @@ import (
 )
 
 func TestDetectVolumeIdentity_TempDir(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "cloudstic-volume-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	uuid, label, mountPoint := detectVolumeIdentity(tmpDir)
 
@@ -54,11 +50,7 @@ func TestNormalizeVolumeUUID(t *testing.T) {
 }
 
 func TestSource_WithVolumeUUID_Override(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "cloudstic-uuid-override-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	explicitUUID := "CUSTOM-UUID-1234-5678-ABCD-EF0123456789"
 	src := New(tmpDir, WithVolumeUUID(explicitUUID))
@@ -70,11 +62,7 @@ func TestSource_WithVolumeUUID_Override(t *testing.T) {
 }
 
 func TestSource_Info_PopulatesVolumeFields(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "cloudstic-info-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	src := New(tmpDir)
 	info := src.Info()
@@ -114,18 +102,14 @@ func TestSource_Info_PopulatesVolumeFields(t *testing.T) {
 }
 
 func TestSource_Walk_NormalizesPathSeparators(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "cloudstic-walk-sep-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	tmpDir := t.TempDir()
 
 	// Create nested structure.
 	writeTestFile(t, tmpDir, "docs/notes/file.txt", "hello")
 
 	src := New(tmpDir)
 	var metas []struct{ id, parent, path string }
-	err = src.Walk(t.Context(), func(fm source.FileMeta) error {
+	err := src.Walk(t.Context(), func(fm source.FileMeta) error {
 		var parent string
 		if len(fm.Parents) > 0 {
 			parent = fm.Parents[0]

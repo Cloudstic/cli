@@ -4,6 +4,7 @@ package backends
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"unsafe"
 
@@ -42,10 +43,10 @@ func defaultWincredWriteSupported() bool { return true }
 func defaultWincredLookup(_ context.Context, target string) (string, error) {
 	value, err := wincredReadGenericCredential(target)
 	if err != nil {
-		switch err {
-		case windows.ERROR_NOT_FOUND:
+		switch {
+		case errors.Is(err, windows.ERROR_NOT_FOUND):
 			return "", errWincredNotFound
-		case windows.ERROR_NO_SUCH_LOGON_SESSION:
+		case errors.Is(err, windows.ERROR_NO_SUCH_LOGON_SESSION):
 			return "", fmt.Errorf("%w: Credential Manager unavailable in this logon session; this is common in service or scheduled-task contexts without a loaded user profile", errWincredUnavailable)
 		default:
 			return "", fmt.Errorf("windows credential lookup failed: %w", err)
@@ -57,24 +58,20 @@ func defaultWincredLookup(_ context.Context, target string) (string, error) {
 func defaultWincredExists(ctx context.Context, target string) (bool, error) {
 	_, err := defaultWincredLookup(ctx, target)
 	if err != nil {
-		switch err {
-		case errWincredNotFound:
+		if errors.Is(err, errWincredNotFound) {
 			return false, nil
-		default:
-			return false, err
 		}
+		return false, err
 	}
 	return true, nil
 }
 
 func defaultWincredStore(_ context.Context, target, value string) error {
 	if err := wincredWriteGenericCredential(target, value); err != nil {
-		switch err {
-		case windows.ERROR_NO_SUCH_LOGON_SESSION:
+		if errors.Is(err, windows.ERROR_NO_SUCH_LOGON_SESSION) {
 			return fmt.Errorf("%w: Credential Manager unavailable in this logon session; this is common in service or scheduled-task contexts without a loaded user profile", errWincredUnavailable)
-		default:
-			return fmt.Errorf("windows credential write failed: %w", err)
 		}
+		return fmt.Errorf("windows credential write failed: %w", err)
 	}
 	return nil
 }
@@ -93,12 +90,13 @@ func readGenericCredential(target string) (string, error) {
 		uintptr(unsafe.Pointer(&cred)),
 	)
 	if r1 == 0 {
-		if callErr != nil && callErr != windows.ERROR_SUCCESS {
+		if callErr != nil && !errors.Is(callErr, windows.ERROR_SUCCESS) {
 			return "", callErr
 		}
 		return "", windows.ERROR_GEN_FAILURE
 	}
-	defer procCredFree.Call(uintptr(unsafe.Pointer(cred)))
+	// CredFree returns void; the syscall wrapper's error is not meaningful here.
+	defer func() { _, _, _ = procCredFree.Call(uintptr(unsafe.Pointer(cred))) }()
 
 	if cred == nil {
 		return "", windows.ERROR_NOT_FOUND
@@ -128,7 +126,7 @@ func writeGenericCredential(target, value string) error {
 	}
 	r1, _, callErr := procCredWriteW.Call(uintptr(unsafe.Pointer(&cred)), 0)
 	if r1 == 0 {
-		if callErr != nil && callErr != windows.ERROR_SUCCESS {
+		if callErr != nil && !errors.Is(callErr, windows.ERROR_SUCCESS) {
 			return callErr
 		}
 		return windows.ERROR_GEN_FAILURE

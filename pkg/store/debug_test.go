@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 
@@ -15,11 +14,7 @@ import (
 func TestDebugStore_Operations(t *testing.T) {
 	ctx := context.Background()
 
-	tmp, err := os.MkdirTemp("", "cloudstic-debug-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.RemoveAll(tmp) }()
+	tmp := t.TempDir()
 
 	inner, err := local.New(tmp)
 	if err != nil {
@@ -125,11 +120,7 @@ func TestDebugStore_Operations(t *testing.T) {
 func TestDebugStore_LogsErrors(t *testing.T) {
 	ctx := context.Background()
 
-	tmp, err := os.MkdirTemp("", "cloudstic-debug-err-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.RemoveAll(tmp) }()
+	tmp := t.TempDir()
 
 	inner, err := local.New(tmp)
 	if err != nil {

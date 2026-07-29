@@ -83,7 +83,6 @@ func runCompletionShellMatrix(t *testing.T, scenario completionScenario) {
 
 	rt := newCompletionRuntime(t)
 	for _, shell := range []string{"bash", "zsh", "fish"} {
-		shell := shell
 		t.Run(shell, func(t *testing.T) {
 			if _, err := exec.LookPath(shell); err != nil {
 				t.Skipf("%s not installed", shell)

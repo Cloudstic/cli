@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -41,7 +42,7 @@ func TestQuotaStore_ExceedsBudget(t *testing.T) {
 	if ctx.Err() == nil {
 		t.Fatal("context should be cancelled after exceeding budget")
 	}
-	if cause := context.Cause(ctx); cause != ErrQuotaExceeded {
+	if cause := context.Cause(ctx); !errors.Is(cause, ErrQuotaExceeded) {
 		t.Fatalf("expected ErrQuotaExceeded, got %v", cause)
 	}
 }

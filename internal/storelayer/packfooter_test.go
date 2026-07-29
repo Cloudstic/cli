@@ -389,10 +389,7 @@ func TestPackStore_FooterIsInertToOffsetBasedReaders(t *testing.T) {
 // GetRange must agree with a full Get, since footer recovery depends on it.
 func TestLocalStore_GetRangeMatchesFullGet(t *testing.T) {
 	ctx := context.Background()
-	tmp, err := os.MkdirTemp("", "cloudstic-range-*")
-	if err != nil {
-		t.Fatal(err)
-	}
+	tmp := t.TempDir()
 	t.Cleanup(func() { _ = os.RemoveAll(tmp) })
 
 	ls, err := local.New(tmp)

@@ -77,6 +77,49 @@ func TestExcludeMatcher_Doublestar(t *testing.T) {
 	}
 }
 
+// "**" is a path-segment wildcard only when it is a whole segment. Anywhere
+// else it is just consecutive asterisks inside one segment, which is what
+// gitignore itself specifies and what path.Match already does — so "a**b"
+// matches "ab" and "aXb", and does not reach across a separator to "a/b".
+//
+// The hand-rolled matcher this package used before sharing internal/pathmatch
+// read it the other way round, splitting any pattern containing "**" on it and
+// treating the halves as segment lists. That was the only case where the two
+// disagreed, which is why it is pinned here.
+func TestExcludeMatcher_DoublestarInsideSegment(t *testing.T) {
+	m := NewExcludeMatcher([]string{"a**b"})
+
+	tests := []struct {
+		path    string
+		exclude bool
+	}{
+		{"ab", true},
+		{"aXb", true},
+		{"axyzb", true},
+		{"a/b", false},
+		{"a/vendor/b", false},
+	}
+	for _, tc := range tests {
+		if got := m.Excludes(tc.path, false); got != tc.exclude {
+			t.Errorf("Excludes(%q) = %v, want %v", tc.path, got, tc.exclude)
+		}
+	}
+}
+
+// A pattern that cannot compile is dropped, matching nothing — the behavior the
+// discarded path.Match error produced before, now decided once at compile time.
+// NewExcludeMatcher has never reported an error and still does not.
+func TestExcludeMatcher_MalformedPatternMatchesNothing(t *testing.T) {
+	m := NewExcludeMatcher([]string{"[unclosed", "*.log"})
+
+	if m.Excludes("[unclosed", false) {
+		t.Error("malformed pattern should match nothing, not even itself")
+	}
+	if !m.Excludes("app.log", false) {
+		t.Error("a valid pattern alongside a malformed one should still apply")
+	}
+}
+
 func TestExcludeMatcher_Negation(t *testing.T) {
 	m := NewExcludeMatcher([]string{"*.log", "!important.log"})
 

@@ -1,0 +1,47 @@
+name: Coverage summary
+description: >-
+  Append a Go coverage profile to the job summary as a collapsed section. The
+  per-function report is long enough to bury everything below it, so it stays
+  folded and the total is promoted onto the row you can see without expanding.
+
+inputs:
+  file:
+    description: Path to a Go coverage profile.
+    required: true
+  label:
+    description: Name shown on the collapsed row.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      # Values reach the script through the environment rather than through
+      # ${{ }} interpolation, which would splice them into the source text.
+      env:
+        COVERAGE_FILE: ${{ inputs.file }}
+        COVERAGE_LABEL: ${{ inputs.label }}
+      run: |
+        set -euo pipefail
+
+        # E2E builds its profile from GOCOVERDIR as the harness exits. Skip the
+        # section rather than failing the job if that conversion fell over.
+        if [ ! -f "$COVERAGE_FILE" ]; then
+          echo "coverage summary: $COVERAGE_FILE not found, skipping" >&2
+          exit 0
+        fi
+
+        report=$(go tool cover -func="$COVERAGE_FILE")
+        total=$(printf '%s\n' "$report" | tail -n 1 | awk '{print $NF}')
+
+        {
+          echo "<details>"
+          echo "<summary><strong>$COVERAGE_LABEL</strong> — total $total</summary>"
+          # A blank line is required here: without it GitHub keeps parsing as
+          # HTML and the fenced block below renders as literal backticks.
+          echo ""
+          echo '```text'
+          printf '%s\n' "$report"
+          echo '```'
+          echo "</details>"
+        } >> "$GITHUB_STEP_SUMMARY"

@@ -94,15 +94,10 @@ jobs:
           reporter: golang-json
       - name: Coverage summary
         if: matrix.os == 'ubuntu-latest'
-        shell: bash
-        run: |
-          {
-            echo "## Unit coverage"
-            echo ""
-            echo '```text'
-            go tool cover -func=unit.out
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+        uses: ./.github/actions/coverage-summary
+        with:
+          file: unit.out
+          label: Unit coverage
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7
         if: matrix.os == 'ubuntu-latest'
@@ -154,18 +149,10 @@ jobs:
           reporter: golang-json
       - name: Coverage summary
         if: matrix.os == 'ubuntu-latest'
-        shell: bash
-        run: |
-          # The harness converts GOCOVERDIR into this file on exit; skip the
-          # section rather than failing the job if that conversion fell over.
-          [ -f e2e_coverage.out ] || exit 0
-          {
-            echo "## E2E coverage"
-            echo ""
-            echo '```text'
-            go tool cover -func=e2e_coverage.out
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+        uses: ./.github/actions/coverage-summary
+        with:
+          file: e2e_coverage.out
+          label: E2E coverage
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7
         if: matrix.os == 'ubuntu-latest'

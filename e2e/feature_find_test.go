@@ -15,6 +15,7 @@ import (
 // Find is metadata-only, so a local store is sufficient here; the layered store
 // path gets its own test below.
 func TestCLI_Feature_Find(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "find_across_snapshots",
 		sourceFilter: localOnlySource,
@@ -60,6 +61,7 @@ func TestCLI_Feature_Find(t *testing.T) {
 // be edited before it works is worse than no hint, and only an end-to-end run
 // can catch a flag name that does not exist.
 func TestCLI_Feature_FindLocatesDeletedFileAndPrintsAWorkingRestore(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "find_deleted_file",
 		sourceFilter: localOnlySource,
@@ -136,6 +138,7 @@ func restoreArgsFromHint(t *testing.T, output, outDir string) []string {
 // tests use. A delta scan that is correct over a plain map but wrong once reads
 // are batched into packs would pass those and fail here.
 func TestCLI_Feature_FindDeltaScanMatchesFullScan(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "find_delta_equivalence",
 		sourceFilter: localOnlySource,
@@ -194,6 +197,7 @@ func renderFindMatches(r *findResult) string {
 // TestCLI_Feature_FindByContent covers the axis the default grouping
 // deliberately does not collapse: two distinct files holding identical bytes.
 func TestCLI_Feature_FindByContent(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "find_by_content",
 		sourceFilter: localOnlySource,
@@ -230,6 +234,7 @@ func TestCLI_Feature_FindByContent(t *testing.T) {
 // directory tree, where paths are reconstructed from the parent chain rather
 // than handed to the matcher.
 func TestCLI_Feature_FindPredicates(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "find_predicates",
 		sourceFilter: localOnlySource,
@@ -284,6 +289,7 @@ func TestCLI_Feature_FindPredicates(t *testing.T) {
 // TestCLI_Feature_FindSnapshotSelectors checks that scoping narrows the search
 // rather than merely filtering its output.
 func TestCLI_Feature_FindSnapshotSelectors(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "find_snapshot_selectors",
 		sourceFilter: localOnlySource,
@@ -324,6 +330,7 @@ func TestCLI_Feature_FindSnapshotSelectors(t *testing.T) {
 // empty result is a successful search, and a query with no predicate is refused
 // rather than dumping the whole repository.
 func TestCLI_Feature_FindExitStatus(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "find_exit_status",
 		sourceFilter: localOnlySource,
@@ -350,6 +357,7 @@ func TestCLI_Feature_FindExitStatus(t *testing.T) {
 // depends on: stdout under -json is the result and nothing else, even when the
 // search has something to say about how it ran.
 func TestCLI_Feature_FindKeepsJSONClean(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "find_json_is_clean",
 		sourceFilter: localOnlySource,

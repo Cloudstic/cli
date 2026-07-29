@@ -5,6 +5,7 @@ import "testing"
 // TestCLI_Feature_Ls verifies that `cloudstic ls` lists all files in the
 // latest snapshot with the expected paths. Ls is metadata-only; local store is sufficient.
 func TestCLI_Feature_Ls(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "ls_latest",
 		sourceFilter: localOnlySource,
@@ -27,6 +28,7 @@ func TestCLI_Feature_Ls(t *testing.T) {
 // TestCLI_Feature_LsBySnapshotID verifies that `cloudstic ls <id>` resolves
 // a specific snapshot by its prefix.
 func TestCLI_Feature_LsBySnapshotID(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "ls_by_snapshot_id",
 		sourceFilter: localOnlySource,

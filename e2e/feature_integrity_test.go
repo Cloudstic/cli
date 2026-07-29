@@ -3,6 +3,7 @@ package e2e
 import "testing"
 
 func TestCLI_Feature_IntegrityCheck(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name: "integrity_check",
 		test: func(t *testing.T, h *harness, entry matrixEntry) {

@@ -6,6 +6,7 @@ import "testing"
 // that has no active lock. After a clean backup completes, there should be no stale
 // lock file, so break-lock should report that no lock was found (or exit cleanly).
 func TestCLI_Feature_BreakLock(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "break_lock_no_stale_lock",
 		sourceFilter: localOnlySource,

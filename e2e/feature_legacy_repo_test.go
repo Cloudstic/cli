@@ -118,6 +118,7 @@ func materialiseFixture(t *testing.T, dir string) string {
 // Every committed baseline must remain fully usable by the current build:
 // listable, checkable, restorable, and writable.
 func TestCLI_Feature_ReadsLegacyRepositories(t *testing.T) {
+	t.Parallel()
 	bin := buildBinary(t)
 
 	for _, dir := range legacyFixtures(t) {
@@ -260,6 +261,7 @@ func assertFixtureFiles(t *testing.T, dir string, want map[string]string) {
 // is not documented, or a documented baseline with no fixture, means the
 // written guarantee and the enforced one have drifted apart.
 func TestCompatibilityDocListsEveryFixture(t *testing.T) {
+	t.Parallel()
 	table := guaranteedBaselinesTable(t)
 
 	documented := documentedBaselines(table)

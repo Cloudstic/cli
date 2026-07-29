@@ -3,6 +3,7 @@ package e2e
 import "testing"
 
 func TestCLI_Feature_PartialRestore(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name: "partial_restore",
 		test: func(t *testing.T, h *harness, entry matrixEntry) {

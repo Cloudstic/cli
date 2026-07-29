@@ -13,6 +13,7 @@ type catJSONItem struct {
 // TestCLI_Feature_CatConfig verifies that `cloudstic cat config -json`
 // returns a structured JSON array containing the config object.
 func TestCLI_Feature_CatConfig(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "cat_config",
 		sourceFilter: localOnlySource,
@@ -44,6 +45,7 @@ func TestCLI_Feature_CatConfig(t *testing.T) {
 // `cloudstic cat index/latest -json` returns a structured JSON array
 // containing an object with a latest snapshot reference.
 func TestCLI_Feature_CatIndexLatest(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "cat_index_latest",
 		sourceFilter: localOnlySource,

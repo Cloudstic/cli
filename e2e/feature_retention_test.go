@@ -6,6 +6,7 @@ import (
 )
 
 func TestCLI_Feature_RetentionAndPrune(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "retention_prune",
 		sourceFilter: localOnlySource,
@@ -27,6 +28,7 @@ func TestCLI_Feature_RetentionAndPrune(t *testing.T) {
 }
 
 func TestCLI_Feature_ForgetDryRunPolicy(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name:         "forget_policy_dry_run",
 		sourceFilter: localOnlySource,

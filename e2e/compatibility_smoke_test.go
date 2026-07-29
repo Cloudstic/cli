@@ -3,6 +3,7 @@ package e2e
 import "testing"
 
 func TestCLI_CompatibilitySmokeMatrix(t *testing.T) {
+	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
 		name: "compatibility_smoke",
 		test: func(t *testing.T, h *harness, entry matrixEntry) {

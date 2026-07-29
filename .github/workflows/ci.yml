@@ -17,115 +17,184 @@ on:
 permissions:
   contents: read
 
+# Superseded pushes to a pull request are abandoned; pushes to main always run
+# to completion so every commit on the branch keeps a coverage report.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - name: Setup Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
+      - uses: ./.github/actions/setup-go
+      - name: Check go.mod is tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
           args: --timeout=5m
 
-  test:
-    name: Test
+  vulncheck:
+    name: Vulnerabilities
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-go
+      - name: Run govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  # Unit and E2E are separate jobs, not two steps of one job: nothing in the
+  # E2E run consumes the unit run's output, and keeping them together made the
+  # slowest runner pay for both in sequence.
+  unit:
+    name: Unit tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     permissions:
       contents: read
       checks: write
       pull-requests: write
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          # Data races are OS-independent, so one runner carries the detector's
+          # 2-3x cost. The others are here for the platform-specific build paths.
+          - os: ubuntu-latest
+            race: '-race'
+          - os: macos-latest
+            race: ''
     steps:
       - uses: actions/checkout@v7
-      - name: Setup Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-      - name: Install shell dependencies for E2E
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y zsh fish
-      - name: Run Unit Tests
+      - uses: ./.github/actions/setup-go
+      - name: Run unit tests
+        shell: bash
         run: |
           set -o pipefail
-          go test -v -json -race -coverprofile=unit.out -count=1 $(go list ./... | grep -v '/e2e') | tee test-output.json
-      - name: Run E2E Tests
-        run: |
-          set -o pipefail
-          E2E_COVERAGE_OUT="$PWD/e2e_coverage.out" go test -v -json -count=1 ./e2e/ | tee -a test-output.json
-      - name: Test Report
+          go test -json ${{ matrix.race }} -shuffle=on -coverprofile=unit.out -count=1 \
+            $(go list ./... | grep -v '/e2e') | tee test-output.json
+      - name: Test report
         uses: dorny/test-reporter@v3
-        if: always()
+        # Pull requests from forks get a read-only token, so publishing a check
+        # run from them fails; the job's own conclusion still reports the result.
+        if: >-
+          always() && (github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository)
         with:
-          name: Go Tests (${{ matrix.os }})
+          name: Unit tests (${{ matrix.os }})
           path: test-output.json
           reporter: golang-json
-      - name: Coverage Summary
+      - name: Coverage summary
         if: matrix.os == 'ubuntu-latest'
+        shell: bash
         run: |
-          echo "## Code Coverage" >> $GITHUB_STEP_SUMMARY
-          echo "<details>" >> $GITHUB_STEP_SUMMARY
-          echo "<summary>Unit Tests</summary>" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo '```text' >> $GITHUB_STEP_SUMMARY
-          go tool cover -func=unit.out >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "</details>" >> $GITHUB_STEP_SUMMARY
-          if [ -f e2e_coverage.out ]; then
-            echo "<details>" >> $GITHUB_STEP_SUMMARY
-            echo "<summary>E2E Tests</summary>" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo '```text' >> $GITHUB_STEP_SUMMARY
-            go tool cover -func=e2e_coverage.out >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "</details>" >> $GITHUB_STEP_SUMMARY
-          fi
-      - name: Upload coverage reports to Codecov
+          {
+            echo "## Unit coverage"
+            echo ""
+            echo '```text'
+            go tool cover -func=unit.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7
         if: matrix.os == 'ubuntu-latest'
         with:
           slug: Cloudstic/cli
-          files: unit.out,e2e_coverage.out
+          files: unit.out
           token: ${{ secrets.CODECOV_TOKEN }}
 
-  verify-platform-build-paths:
-    name: Verify platform build paths (${{ matrix.name }})
+  e2e:
+    name: E2E tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
     strategy:
+      fail-fast: false
       matrix:
-        include:
-          - name: macOS
-            os: macos-latest
-            run: go test ./pkg/secretref/... ./cmd/cloudstic
-          - name: Windows
-            os: windows-latest
-            run: go test ./pkg/secretref/... ./cmd/cloudstic
+        # Docker is only present on the Linux runner, so the MinIO and SFTP
+        # container suites skip themselves on macOS (see e2e/minio.go).
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v7
-      - name: Setup Go
-        uses: actions/setup-go@v7
+      - uses: ./.github/actions/setup-go
+      - name: Install shell dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh fish
+      - name: Run E2E tests
+        shell: bash
+        run: |
+          set -o pipefail
+          E2E_COVERAGE_OUT="$PWD/e2e_coverage.out" \
+            go test -json -shuffle=on -count=1 ./e2e/ | tee test-output.json
+      - name: Test report
+        uses: dorny/test-reporter@v3
+        if: >-
+          always() && (github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository)
         with:
-          go-version-file: go.mod
-      - name: Run platform-specific verification
-        run: ${{ matrix.run }}
+          name: E2E tests (${{ matrix.os }})
+          path: test-output.json
+          reporter: golang-json
+      - name: Coverage summary
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          # The harness converts GOCOVERDIR into this file on exit; skip the
+          # section rather than failing the job if that conversion fell over.
+          [ -f e2e_coverage.out ] || exit 0
+          {
+            echo "## E2E coverage"
+            echo ""
+            echo '```text'
+            go tool cover -func=e2e_coverage.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v7
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          slug: Cloudstic/cli
+          files: e2e_coverage.out
+          token: ${{ secrets.CODECOV_TOKEN }}
 
+  # macOS is covered by the macOS unit job, which already runs these packages.
+  platform:
+    name: Platform build paths
+    uses: ./.github/workflows/wc-platform-tests.yml
+    with:
+      runners: '["windows-latest"]'
+
+  # Mirrors the goreleaser `cloudstic-cross` build (.goreleaser.yml) so a
+  # target that only breaks at tag time breaks here instead. darwin is covered
+  # by the macOS jobs, which compile the CLI natively.
   build:
-    name: Build
+    name: Cross-compile (${{ matrix.goos }}/${{ matrix.goarch }})
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, windows]
+        goarch: [amd64, arm64]
+    env:
+      CGO_ENABLED: '0'
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
     steps:
       - uses: actions/checkout@v7
-      - name: Setup Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-      - name: Run Build
-        run: go build ./cmd/cloudstic
+      - uses: ./.github/actions/setup-go
+      - name: Build
+        run: go build -o /dev/null ./cmd/cloudstic

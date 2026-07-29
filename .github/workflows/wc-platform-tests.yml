@@ -1,0 +1,32 @@
+name: Platform tests
+
+# Reusable: the packages whose behaviour is selected by build tags
+# (pkg/secretref's keychain/secret-service/wincred backends) plus the CLI that
+# wires them up. Called with different runner sets by ci.yml and release.yml,
+# so the command itself is defined exactly once.
+
+on:
+  workflow_call:
+    inputs:
+      runners:
+        description: JSON array of runner labels to verify on
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  platform:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.runners) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-go
+      - name: Verify platform build paths
+        run: go test -count=1 ./pkg/secretref/... ./cmd/cloudstic

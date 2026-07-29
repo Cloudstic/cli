@@ -1,0 +1,11 @@
+name: Setup Go
+description: >-
+  Install the Go toolchain pinned by go.mod. Every workflow goes through this so
+  the toolchain source (and any future cache tuning) lives in one place.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v7
+      with:
+        go-version-file: go.mod

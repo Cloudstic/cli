@@ -125,25 +125,27 @@ func runBackup(r *runner, ctx context.Context, a *backupArgs) int {
 	if err != nil {
 		return r.fail("Failed to prepare auth settings: %v", err)
 	}
-	return execBackup(r, ctx, a, bcfg)
+	cfg, err := resolveClientConfig(a.globalFlags)
+	if err != nil {
+		return r.fail("Failed to init store: %v", err)
+	}
+	return execBackup(r, ctx, bcfg, cfg)
 }
 
-// execBackup opens the source and store described by bcfg and runs the backup.
+// execBackup runs one backup from two resolved configurations: bcfg says what to
+// read, cfg says which repository to write it to.
 //
-// a is still needed for two things the resolved backup configuration
-// deliberately does not carry: the store half of the configuration, which
-// r.openClient resolves from the flags and the selected profile, and the output
-// mode.
-func execBackup(r *runner, ctx context.Context, a *backupArgs, bcfg config.Backup) int {
+// It takes no args struct. Everything it needs is in those two values —
+// including the output mode, which clientConfig already carries as JSON. That
+// is the whole point of resolving first: below this line nothing is a flag any
+// more, so a caller with configuration from somewhere else (the TUI does) reaches
+// exactly the same code path.
+func execBackup(r *runner, ctx context.Context, bcfg config.Backup, cfg clientConfig) int {
 	job, err := open.Backup(ctx, bcfg, open.WithSecretResolver(newSecretResolver(bcfg.Source.ConfigDir)))
 	if err != nil {
 		return r.fail("Failed to init source: %v", err)
 	}
 
-	cfg, err := resolveClientConfig(a.globalFlags)
-	if err != nil {
-		return r.fail("Failed to init store: %v", err)
-	}
 	if err := r.openClient(ctx, cfg); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
@@ -152,7 +154,7 @@ func execBackup(r *runner, ctx context.Context, a *backupArgs, bcfg config.Backu
 	if err != nil {
 		return r.fail("Backup failed: %v", err)
 	}
-	if a.jsonEnabled() {
+	if cfg.JSON {
 		return r.writeJSON(result)
 	}
 	printBackupSummary(r.out, result)
@@ -327,14 +329,19 @@ func runBackupWithProfiles(r *runner, ctx context.Context, base *backupArgs) int
 		}
 
 		// Naming the profile is how the store half reaches resolveClientConfig;
-		// the parsed flags are left intact so their precedence still applies.
-		perProfile := *base
+		// the parsed flags are copied rather than mutated so their precedence
+		// still applies and the base flags stay untouched.
 		g := *base.globalFlags
 		g.profile = name
-		perProfile.globalFlags = &g
+		cfg, err := resolveClientConfig(&g)
+		if err != nil {
+			r.fail("[%s] %v", name, err)
+			failures++
+			continue
+		}
 
 		r.client = nil // each profile may target a different store
-		if code := execBackup(r, ctx, &perProfile, bcfg); code != 0 {
+		if code := execBackup(r, ctx, bcfg, cfg); code != 0 {
 			failures++
 			if !base.allProfiles {
 				return code

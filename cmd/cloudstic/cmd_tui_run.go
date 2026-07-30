@@ -115,8 +115,10 @@ func (b tuiCLIBackend) InitProfile(ctx context.Context, profilesFile, profileNam
 
 func (b tuiCLIBackend) BackupProfile(ctx context.Context, profilesFile, profileName string, cfg *profile.Config, reporter cloudstic.Reporter) error {
 	g := &globalFlags{profile: profileName, profilesFile: profilesFile, configDir: b.configDir, quiet: true}
-	base := &backupArgs{globalFlags: g}
-	bcfg, err := config.MergeProfileBackup(backupConfigFromFlags(base), nil, profileName, cfg)
+	// The dashboard has no flags to project, so it states its one input directly
+	// rather than synthesizing an args struct to be read back out of.
+	bcfg, err := config.MergeProfileBackup(
+		config.Backup{Source: config.Source{ConfigDir: b.configDir}}, nil, profileName, cfg)
 	if err != nil {
 		return err
 	}
@@ -130,7 +132,7 @@ func (b tuiCLIBackend) BackupProfile(ctx context.Context, profilesFile, profileN
 	}
 	b.r.client = client
 	defer func() { b.r.client = nil }()
-	if code := execBackup(b.r, ctx, base, bcfg); code != 0 {
+	if code := execBackup(b.r, ctx, bcfg, resolved); code != 0 {
 		return fmt.Errorf("backup failed")
 	}
 	return nil

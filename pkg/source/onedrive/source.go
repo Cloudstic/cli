@@ -135,7 +135,7 @@ func New(ctx context.Context, opts ...Option) (*Source, error) {
 	}
 
 	if err != nil {
-		token, err = sourceoauth.ExchangeWithLocalServer(conf, oauth2.AccessTypeOffline)
+		token, err = sourceoauth.ExchangeWithLocalServer(ctx, conf, oauth2.AccessTypeOffline)
 		if err != nil {
 			return nil, fmt.Errorf("onedrive auth: %w", err)
 		}

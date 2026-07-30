@@ -20,8 +20,8 @@ func declareListArgs(g *globalFlags) (*listArgs, commandInput) {
 	}}
 }
 
-func runList(r *runner, ctx context.Context, a *listArgs) int {
-	if err := r.openClient(ctx, a.globalFlags); err != nil {
+func runList(r *runner, ctx context.Context, a *listArgs, cfg clientConfig) int {
+	if err := r.openClient(ctx, cfg); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 
@@ -57,6 +57,6 @@ func printListResult(out io.Writer, result *cloudstic.ListResult, group bool) {
 
 // listCommand declares the `list` command.
 func listCommand() command {
-	return leaf("list", "List all backup snapshots in the repository",
+	return repoLeaf("list", "List all backup snapshots in the repository",
 		repoCommandGroups, declareListArgs, runList)
 }

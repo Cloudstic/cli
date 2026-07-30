@@ -24,8 +24,8 @@ func declareCheckArgs(g *globalFlags) (*checkArgs, commandInput) {
 	}
 }
 
-func runCheck(r *runner, ctx context.Context, a *checkArgs) int {
-	if err := r.openClient(ctx, a.globalFlags); err != nil {
+func runCheck(r *runner, ctx context.Context, a *checkArgs, cfg clientConfig) int {
+	if err := r.openClient(ctx, cfg); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 
@@ -85,6 +85,6 @@ func printCheckResult(errOut io.Writer, result *cloudstic.CheckResult) bool {
 
 // checkCommand declares the `check` command.
 func checkCommand() command {
-	return leaf("check", "Verify repository integrity (reference chain, objects, data)",
+	return repoLeaf("check", "Verify repository integrity (reference chain, objects, data)",
 		repoCommandGroups, declareCheckArgs, runCheck)
 }

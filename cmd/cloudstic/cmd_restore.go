@@ -38,7 +38,7 @@ func declareRestoreArgs(g *globalFlags) (*restoreArgs, commandInput) {
 	}
 }
 
-func runRestore(r *runner, ctx context.Context, a *restoreArgs) int {
+func runRestore(r *runner, ctx context.Context, a *restoreArgs, cfg clientConfig) int {
 	a.format = strings.TrimSpace(strings.ToLower(a.format))
 	format, err := resolveRestoreFormat(a.format, a.output)
 	if err != nil {
@@ -46,7 +46,7 @@ func runRestore(r *runner, ctx context.Context, a *restoreArgs) int {
 	}
 	a.format = format
 
-	if err := r.openClient(ctx, a.globalFlags); err != nil {
+	if err := r.openClient(ctx, cfg); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 
@@ -155,6 +155,6 @@ func resolveRestoreFormat(explicitFormat, output string) (string, error) {
 
 // restoreCommand declares the `restore` command.
 func restoreCommand() command {
-	return leaf("restore", "Restore files from a backup snapshot",
+	return repoLeaf("restore", "Restore files from a backup snapshot",
 		repoCommandGroups, declareRestoreArgs, runRestore)
 }

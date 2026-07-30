@@ -23,11 +23,7 @@ func declareKeyListArgs(g *globalFlags) (*keyListArgs, commandInput) {
 	return &keyListArgs{globalFlags: g}, commandInput{}
 }
 
-func runKeyList(r *runner, ctx context.Context, a *keyListArgs) int {
-	cfg, err := resolveClientConfig(a.globalFlags)
-	if err != nil {
-		return r.fail("Failed to init store: %v", err)
-	}
+func runKeyList(r *runner, ctx context.Context, a *keyListArgs, cfg clientConfig) int {
 	raw, err := openStore(ctx, cfg.Store)
 	if err != nil {
 		return r.fail("Failed to init store: %v", err)
@@ -77,11 +73,7 @@ func declareKeyPasswdArgs(g *globalFlags) (*keyPasswdArgs, commandInput) {
 	}}
 }
 
-func runKeyPasswd(r *runner, ctx context.Context, a *keyPasswdArgs) int {
-	cfg, err := resolveClientConfig(a.globalFlags)
-	if err != nil {
-		return r.fail("Failed to init store: %v", err)
-	}
+func runKeyPasswd(r *runner, ctx context.Context, a *keyPasswdArgs, cfg clientConfig) int {
 	raw, err := openStore(ctx, cfg.Store)
 	if err != nil {
 		return r.fail("Failed to init store: %v", err)
@@ -133,11 +125,7 @@ func declareAddRecoveryKeyArgs(g *globalFlags) (*addRecoveryKeyArgs, commandInpu
 	}}
 }
 
-func runAddRecoveryKey(r *runner, ctx context.Context, a *addRecoveryKeyArgs) int {
-	cfg, err := resolveClientConfig(a.globalFlags)
-	if err != nil {
-		return r.fail("Failed to init store: %v", err)
-	}
+func runAddRecoveryKey(r *runner, ctx context.Context, a *addRecoveryKeyArgs, cfg clientConfig) int {
 	raw, err := openStore(ctx, cfg.Store)
 	if err != nil {
 		return r.fail("Failed to init store: %v", err)
@@ -172,11 +160,11 @@ func runAddRecoveryKey(r *runner, ctx context.Context, a *addRecoveryKeyArgs) in
 // keyCommand declares the `key` command group.
 func keyCommand() command {
 	return group("key", "Manage encryption key slots",
-		leaf("list", "List all encryption key slots in the repository",
+		repoLeaf("list", "List all encryption key slots in the repository",
 			repoCommandGroups, declareKeyListArgs, runKeyList),
-		leaf("add-recovery", "Generate a 24-word recovery key for an encrypted repository",
+		repoLeaf("add-recovery", "Generate a 24-word recovery key for an encrypted repository",
 			repoCommandGroups, declareAddRecoveryKeyArgs, runAddRecoveryKey),
-		leaf("passwd", "Change the repository password",
+		repoLeaf("passwd", "Change the repository password",
 			repoCommandGroups, declareKeyPasswdArgs, runKeyPasswd),
 	)
 }

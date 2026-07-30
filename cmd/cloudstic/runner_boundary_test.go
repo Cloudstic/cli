@@ -4,6 +4,8 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -62,5 +64,72 @@ func TestRunnerHoldsNoConfigurationResolution(t *testing.T) {
 	}
 	if !sawOpenClient {
 		t.Error("runner.go no longer declares (*runner).openClient; if it moved, move this guard with it")
+	}
+}
+
+// TestRunnerMethodsAreIOPrimitivesOnly pins the runner's method set to the I/O
+// primitives AGENTS.md describes it as holding.
+//
+// The list had drifted: four profiles-domain workflows had accumulated as
+// methods — two of them mutating a profile config and returning a process exit
+// code, one of them writing the profiles file. Being methods on the runner made
+// them look like runner capabilities and made command flow inseparable from
+// prompting. They are free functions taking the runner now, the same shape the
+// commands and the print helpers already use.
+//
+// Adding a genuine primitive here is fine; adding a domain workflow is what this
+// catches. If a new entry needs a profile.Config, writes a file, or returns an
+// exit code, it belongs outside this list.
+func TestRunnerMethodsAreIOPrimitivesOnly(t *testing.T) {
+	allowed := map[string]bool{
+		// Output and process result.
+		"fail": true, "parseError": true, "writeJSON": true,
+		"failJSONFlagConflict": true, "jsonEnabled": true, "printUsage": true,
+		// Input.
+		"canPrompt": true, "lineReader": true, "promptLine": true,
+		"promptValidatedLine": true, "promptConfirm": true, "promptSelect": true,
+		"promptSecret": true,
+		// Connection and dispatch plumbing.
+		"openClient": true, "withArgs": true, "withUsage": true,
+	}
+
+	sources, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatalf("Glob: %v", err)
+	}
+
+	fset := token.NewFileSet()
+	seen := 0
+	for _, path := range sources {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatalf("ParseFile %s: %v", path, err)
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Recv == nil || len(fn.Recv.List) == 0 {
+				continue
+			}
+			star, ok := fn.Recv.List[0].Type.(*ast.StarExpr)
+			if !ok {
+				continue
+			}
+			ident, ok := star.X.(*ast.Ident)
+			if !ok || ident.Name != "runner" {
+				continue
+			}
+			seen++
+			if !allowed[fn.Name.Name] {
+				t.Errorf("%s: runner must not have method %q; make it a free function "+
+					"taking the runner, as the commands and print helpers do",
+					path, fn.Name.Name)
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatal("found no runner methods; this test is not checking anything")
 	}
 }

@@ -1264,7 +1264,7 @@ func TestPromptSecretReference_EnvInteractive(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	got, err := r.promptSecretReference(context.Background(), "", "prod", "repository password", "CLOUDSTIC_PASSWORD", "password")
+	got, err := promptSecretReference(r, context.Background(), "", "prod", "repository password", "CLOUDSTIC_PASSWORD", "password")
 	if err != nil {
 		t.Fatalf("promptSecretReference: %v", err)
 	}
@@ -1293,7 +1293,7 @@ func TestPromptEncryptionConfig_PasswordViaEnvRef(t *testing.T) {
 	var errOut strings.Builder
 	r := &runner{out: &out, errOut: &errOut}
 
-	r.promptEncryptionConfig(context.Background(), cfg, "prod", profilesPath, "")
+	promptEncryptionConfig(r, context.Background(), cfg, "prod", profilesPath, "")
 
 	s := cfg.Stores["prod"]
 	if s.PasswordSecret != "env://MY_BACKUP_PASSWORD" {

@@ -239,9 +239,9 @@ func runProfileNew(r *runner, ctx context.Context, a *profileNewArgs) int {
 	} else {
 		// No store provided — prompt or fail.
 		if r.canPrompt() {
-			ref, created, code := r.promptStoreSelection(ctx, cfg)
-			if code != 0 {
-				return code
+			ref, created, selErr := promptStoreSelection(r, ctx, cfg)
+			if selErr != nil {
+				return r.fail("Failed to %v", selErr)
 			}
 			a.storeRef = ref
 			createdStore = created
@@ -254,7 +254,7 @@ func runProfileNew(r *runner, ctx context.Context, a *profileNewArgs) int {
 	if createdStore && r.canPrompt() {
 		s := cfg.Stores[a.storeRef]
 		if !storeHasExplicitEncryption(s) {
-			r.promptEncryptionConfig(ctx, cfg, a.storeRef, a.profilesFile, a.configDir)
+			promptEncryptionConfig(r, ctx, cfg, a.storeRef, a.profilesFile, a.configDir)
 		}
 		if err := checkOrInitStoreWithRecovery(r, ctx, cfg, a.storeRef, a.profilesFile, checkOrInitOptions{
 			configDir:            a.configDir,
@@ -299,9 +299,9 @@ func runProfileNew(r *runner, ctx context.Context, a *profileNewArgs) int {
 	} else if requiredProvider != "" {
 		// Cloud source without -auth-ref — prompt or fail.
 		if r.canPrompt() {
-			ref, code := r.promptAuthSelection(ctx, cfg, requiredProvider, a.name)
-			if code != 0 {
-				return code
+			ref, selErr := promptAuthSelection(r, ctx, cfg, requiredProvider, a.name)
+			if selErr != nil {
+				return r.fail("Failed to %v", selErr)
 			}
 			a.authRef = ref
 		}
@@ -342,7 +342,21 @@ func runProfileNew(r *runner, ctx context.Context, a *profileNewArgs) int {
 // promptStoreSelection prompts the user to pick an existing store or create a
 // new one. It returns the chosen store-ref name, whether a new store was
 // created, and exit code 0 on success.
-func (r *runner) promptStoreSelection(ctx context.Context, cfg *profile.Config) (string, bool, int) {
+// promptStoreSelection asks the user to pick an existing store or describe a new
+// one, adding the new entry to cfg in place. It reports the chosen reference name
+// and whether it was just created.
+//
+// A free function taking the runner rather than a method on it: this is a
+// profiles-domain workflow that happens to prompt, not a capability of the
+// runner, which holds only I/O primitives. It returns an error rather than an
+// exit code for the same reason — deciding a process exit status is the
+// command's job.
+//
+// Its errors start with a verb phrase ("select store: …") so a caller reporting
+// them as `r.fail("Failed to %v", err)` reproduces the message this produced
+// when it formatted its own failures, which keeps the refactor invisible to
+// users.
+func promptStoreSelection(r *runner, ctx context.Context, cfg *profile.Config) (name string, created bool, err error) {
 	options := []string{"Create new store"}
 	for name := range cfg.Stores {
 		options = append(options, name)
@@ -351,11 +365,11 @@ func (r *runner) promptStoreSelection(ctx context.Context, cfg *profile.Config) 
 
 	picked, err := r.promptSelect(ctx, "Select a store", options)
 	if err != nil {
-		return "", false, r.fail("Failed to select store: %v", err)
+		return "", false, fmt.Errorf("select store: %w", err)
 	}
 
 	if picked != "Create new store" {
-		return picked, false, 0
+		return picked, false, nil
 	}
 
 	// Create a new store inline.
@@ -366,7 +380,7 @@ func (r *runner) promptStoreSelection(ctx context.Context, cfg *profile.Config) 
 		return validateRefName("store", v)
 	})
 	if err != nil {
-		return "", false, r.fail("Failed to read store reference name: %v", err)
+		return "", false, fmt.Errorf("read store reference name: %w", err)
 	}
 	uri, err := r.promptValidatedLine(ctx, "Store URI (e.g. s3:bucket/path, local:/path, sftp://host/path)", "", func(v string) error {
 		if v == "" {
@@ -379,16 +393,19 @@ func (r *runner) promptStoreSelection(ctx context.Context, cfg *profile.Config) 
 		return nil
 	})
 	if err != nil {
-		return "", false, r.fail("Failed to read store URI: %v", err)
+		return "", false, fmt.Errorf("read store URI: %w", err)
 	}
 	cfg.Stores[refName] = profile.Store{URI: uri}
-	return refName, true, 0
+	return refName, true, nil
 }
 
 // promptAuthSelection prompts the user to pick an existing auth entry (filtered
-// by provider) or create a new one. It returns the chosen auth-ref name and
-// exit code 0 on success. The new entry is added to cfg.Auth in place.
-func (r *runner) promptAuthSelection(ctx context.Context, cfg *profile.Config, provider, profileName string) (string, int) {
+// by provider) or create a new one, adding the new entry to cfg.Auth in place.
+// It reports the chosen auth-ref name.
+//
+// See promptStoreSelection for why this is a free function returning an error
+// rather than a runner method returning an exit code.
+func promptAuthSelection(r *runner, ctx context.Context, cfg *profile.Config, provider, profileName string) (string, error) {
 	options := []string{"Create new auth"}
 	for name, auth := range cfg.Auth {
 		if auth.Provider == provider {
@@ -399,10 +416,10 @@ func (r *runner) promptAuthSelection(ctx context.Context, cfg *profile.Config, p
 
 	picked, err := r.promptSelect(ctx, fmt.Sprintf("Select %s auth entry", provider), options)
 	if err != nil {
-		return "", r.fail("Failed to select auth entry: %v", err)
+		return "", fmt.Errorf("select auth entry: %w", err)
 	}
 	if picked != "Create new auth" {
-		return picked, 0
+		return picked, nil
 	}
 
 	refName, err := r.promptValidatedLine(ctx, "Auth reference name", provider+"-"+profileName, func(v string) error {
@@ -412,13 +429,13 @@ func (r *runner) promptAuthSelection(ctx context.Context, cfg *profile.Config, p
 		return validateRefName("auth", v)
 	})
 	if err != nil {
-		return "", r.fail("Failed to read auth reference name: %v", err)
+		return "", fmt.Errorf("read auth reference name: %w", err)
 	}
 
 	defTokenRef := config.DefaultAuthTokenRef(provider, refName)
 	tokenStorage, err := r.promptLine(ctx, "Token storage (file path or secret ref)", defTokenRef)
 	if err != nil {
-		return "", r.fail("Failed to read token storage: %v", err)
+		return "", fmt.Errorf("read token storage: %w", err)
 	}
 	if tokenStorage == "" {
 		tokenStorage = defTokenRef
@@ -441,7 +458,7 @@ func (r *runner) promptAuthSelection(ctx context.Context, cfg *profile.Config, p
 		}
 	}
 	cfg.Auth[refName] = auth
-	return refName, 0
+	return refName, nil
 }
 
 func prefillProfileArgs(a *profileNewArgs, p profile.Profile) {

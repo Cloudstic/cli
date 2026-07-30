@@ -218,7 +218,7 @@ func runStoreNew(r *runner, ctx context.Context, a *storeNewArgs) int {
 			forcePromptEncryption = !keepCurrent
 		}
 		if forcePromptEncryption || !storeHasExplicitEncryption(s) {
-			r.promptEncryptionConfig(ctx, cfg, a.name, a.profilesFile, a.configDir)
+			promptEncryptionConfig(r, ctx, cfg, a.name, a.profilesFile, a.configDir)
 		}
 		if err := checkOrInitStoreWithRecovery(r, ctx, cfg, a.name, a.profilesFile, checkOrInitOptions{
 			configDir:            a.configDir,
@@ -475,7 +475,12 @@ func checkOrInitStoreWithRecovery(r *runner, ctx context.Context, cfg *profile.C
 // promptEncryptionConfig guides the user through encryption configuration
 // and saves the chosen settings to profiles.yaml. It does not build a keychain
 // or prompt for the actual password — that happens later during init.
-func (r *runner) promptEncryptionConfig(ctx context.Context, cfg *profile.Config, storeName, profilesFile, configDir string) {
+// promptEncryptionConfig walks the user through choosing an encryption method for
+// a store and records the choice in the profiles file.
+//
+// A free function taking the runner: it reads and writes a profiles file and
+// mutates cfg, which is profiles-domain work rather than a runner capability.
+func promptEncryptionConfig(r *runner, ctx context.Context, cfg *profile.Config, storeName, profilesFile, configDir string) {
 	_, _ = fmt.Fprintln(r.out)
 	_, _ = fmt.Fprintln(r.out, "No encryption is configured for this store.")
 
@@ -497,7 +502,7 @@ func (r *runner) promptEncryptionConfig(ctx context.Context, cfg *profile.Config
 		storeName,
 		picked,
 		func(ctx context.Context, storeName, secretLabel, defaultEnvName, defaultAccount string) (string, error) {
-			return r.promptSecretReference(ctx, configDir, storeName, secretLabel, defaultEnvName, defaultAccount)
+			return promptSecretReference(r, ctx, configDir, storeName, secretLabel, defaultEnvName, defaultAccount)
 		},
 		r.promptLine,
 		r.out,
@@ -559,7 +564,9 @@ func configureStoreEncryptionSelection(
 	return s, nil
 }
 
-func (r *runner) promptSecretReference(ctx context.Context, configDir, storeName, secretLabel, defaultEnvName, defaultAccount string) (string, error) {
+// promptSecretReference asks where a store credential should be stored and
+// returns the secret reference for it.
+func promptSecretReference(r *runner, ctx context.Context, configDir, storeName, secretLabel, defaultEnvName, defaultAccount string) (string, error) {
 	return promptSecretReferenceWithFns(
 		ctx,
 		storeName,

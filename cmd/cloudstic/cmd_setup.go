@@ -49,15 +49,15 @@ func runSetupWorkstation(r *runner, ctx context.Context, args *setupWorkstationA
 			if !r.canPrompt() || args.yes {
 				return r.fail("No store is configured; create one first with 'cloudstic store new' or rerun interactively")
 			}
-			ref, created, code := r.promptStoreSelection(ctx, cfg)
-			if code != 0 {
-				return code
+			ref, created, selErr := promptStoreSelection(r, ctx, cfg)
+			if selErr != nil {
+				return r.fail("Failed to %v", selErr)
 			}
 			args.storeRef = ref
 			if created {
 				s := cfg.Stores[args.storeRef]
 				if !storeHasExplicitEncryption(s) {
-					r.promptEncryptionConfig(ctx, cfg, args.storeRef, args.profilesFile, args.configDir)
+					promptEncryptionConfig(r, ctx, cfg, args.storeRef, args.profilesFile, args.configDir)
 				}
 				if err := checkOrInitStoreWithRecovery(r, ctx, cfg, args.storeRef, args.profilesFile, checkOrInitOptions{
 					configDir:            args.configDir,
@@ -72,9 +72,9 @@ func runSetupWorkstation(r *runner, ctx context.Context, args *setupWorkstationA
 			if !r.canPrompt() || args.yes {
 				return r.fail("Multiple stores are configured; pass -store-ref or rerun interactively")
 			}
-			ref, _, code := r.promptStoreSelection(ctx, cfg)
-			if code != 0 {
-				return code
+			ref, _, selErr := promptStoreSelection(r, ctx, cfg)
+			if selErr != nil {
+				return r.fail("Failed to %v", selErr)
 			}
 			args.storeRef = ref
 		}

@@ -2,30 +2,22 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
+	"errors"
 	"fmt"
-	"github.com/cloudstic/cli/pkg/config"
 	"io"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/cloudstic/cli/pkg/config"
+	"github.com/cloudstic/cli/pkg/open"
+
 	"github.com/cloudstic/cli/pkg/profile"
 
-	"golang.org/x/crypto/ssh"
-
-	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/engine"
 	"github.com/cloudstic/cli/internal/paths"
-	"github.com/cloudstic/cli/pkg/source"
-	"github.com/cloudstic/cli/pkg/source/gdrive"
-	"github.com/cloudstic/cli/pkg/source/local"
-	"github.com/cloudstic/cli/pkg/source/onedrive"
-
 	// Aliased to keep "sftp" free: this file also reaches SSH host-key types,
 	// and the store-side SFTP wiring lives alongside it.
-	sftpsource "github.com/cloudstic/cli/pkg/source/sftp"
 )
 
 type backupArgs struct {
@@ -111,6 +103,8 @@ func runBackup(r *runner, ctx context.Context, a *backupArgs) int {
 		return runBackupWithProfiles(r, ctx, a)
 	}
 
+	bcfg := backupConfigFromFlags(a)
+
 	if a.authRef != "" {
 		cfg, err := profile.Load(a.profilesFile)
 		if err != nil {
@@ -120,44 +114,28 @@ func runBackup(r *runner, ctx context.Context, a *backupArgs) int {
 		if !ok {
 			return r.fail("Unknown auth reference %q", a.authRef)
 		}
-		if err := applyProfileAuthToBackupArgs(a, authCfg); err != nil {
+		// The flags win over the entry they name — a user who passed both meant the
+		// flag, so the entry only fills what was left unsaid.
+		if bcfg, err = config.ApplyProfileAuth(bcfg, backupDecidedFields(a), authCfg); err != nil {
 			return r.fail("Auth reference %q: %v", a.authRef, err)
 		}
 	}
 
-	return runSingleBackup(r, ctx, a)
-}
-
-func runSingleBackup(r *runner, ctx context.Context, a *backupArgs) int {
-	if err := ensureDefaultAuthRefForCloudBackup(a); err != nil {
+	bcfg, err := ensureDefaultAuthRef(bcfg, a.profilesFile)
+	if err != nil {
 		return r.fail("Failed to prepare auth settings: %v", err)
 	}
+	return execBackup(r, ctx, a, bcfg)
+}
 
-	excludePatterns, err := parseExcludePatterns(a)
-	if err != nil {
-		return r.fail("Failed to read exclude file: %v", err)
-	}
-
-	src, err := initSource(ctx, initSourceOptions{
-		sourceURI:         a.sourceURI,
-		configDir:         a.configDir,
-		skipNativeFiles:   a.skipNativeFiles,
-		volumeUUID:        a.volumeUUID,
-		googleCreds:       a.googleCreds,
-		googleCredsRef:    a.googleCredsRef,
-		googleCredsJSON:   a.googleCredsJSON,
-		googleTokenFile:   a.googleTokenFile,
-		googleTokenRef:    a.googleTokenRef,
-		onedriveClientID:  a.onedriveClientID,
-		onedriveTokenFile: a.onedriveTokenFile,
-		onedriveTokenRef:  a.onedriveTokenRef,
-		skipMode:          a.skipMode,
-		skipFlags:         a.skipFlags,
-		skipXattrs:        a.skipXattrs,
-		xattrNamespaces:   a.xattrNamespaces,
-		sourceSFTP:        sourceSFTPConfigFromFlags(a.globalFlags),
-		excludePatterns:   excludePatterns,
-	})
+// execBackup opens the source and store described by bcfg and runs the backup.
+//
+// a is still needed for two things the resolved backup configuration
+// deliberately does not carry: the store half of the configuration, which
+// r.openClient resolves from the flags and the selected profile, and the output
+// mode.
+func execBackup(r *runner, ctx context.Context, a *backupArgs, bcfg config.Backup) int {
+	job, err := open.Backup(ctx, bcfg, open.WithSecretResolver(newSecretResolver(bcfg.Source.ConfigDir)))
 	if err != nil {
 		return r.fail("Failed to init source: %v", err)
 	}
@@ -166,9 +144,7 @@ func runSingleBackup(r *runner, ctx context.Context, a *backupArgs) int {
 		return r.fail("Failed to init store: %v", err)
 	}
 
-	backupOpts := buildBackupOpts(a, excludePatterns)
-
-	result, err := r.client.Backup(ctx, src, backupOpts...)
+	result, err := r.client.Backup(ctx, job.Source, job.Options...)
 	if err != nil {
 		return r.fail("Backup failed: %v", err)
 	}
@@ -179,89 +155,136 @@ func runSingleBackup(r *runner, ctx context.Context, a *backupArgs) int {
 	return 0
 }
 
-func ensureDefaultAuthRefForCloudBackup(a *backupArgs) error {
-	uri, err := config.ParseSourceURI(a.sourceURI)
+// backupConfigFromFlags projects parsed flags into a resolved backup
+// configuration. It is the counterpart to clientConfigFromFlags (config.go) and
+// is likewise a pure translation: no I/O, no mutation of a.
+func backupConfigFromFlags(a *backupArgs) config.Backup {
+	return config.Backup{
+		Source: config.Source{
+			URI:             a.sourceURI,
+			ConfigDir:       a.configDir,
+			SFTP:            sourceSFTPConfigFromFlags(a.globalFlags),
+			Google:          config.Google{CredsPath: a.googleCreds, CredsRef: a.googleCredsRef, CredsJSON: a.googleCredsJSON, TokenPath: a.googleTokenFile, TokenRef: a.googleTokenRef},
+			OneDrive:        config.OneDrive{ClientID: a.onedriveClientID, TokenPath: a.onedriveTokenFile, TokenRef: a.onedriveTokenRef},
+			VolumeUUID:      a.volumeUUID,
+			SkipNativeFiles: a.skipNativeFiles,
+			SkipMode:        a.skipMode,
+			SkipFlags:       a.skipFlags,
+			SkipXattrs:      a.skipXattrs,
+			XattrNamespaces: splitCommaList(a.xattrNamespaces),
+			Excludes:        []string(a.excludes),
+			ExcludeFile:     a.excludeFile,
+		},
+		Tags:        []string(a.tags),
+		IgnoreEmpty: a.ignoreEmpty,
+		AuthRef:     a.authRef,
+		DryRun:      a.dryRun,
+		Verbose:     a.verbose,
+	}
+}
+
+// backupDecidedFields is the set of profile-supplied backup fields the user
+// settled on the command line, derived from config.BackupFields for the same
+// reason flagDecidedFields is (see config.go).
+//
+// The repeatable flags are excluded: -tag and -exclude merge on emptiness
+// rather than on being passed, so naming them here would change that rule.
+func backupDecidedFields(a *backupArgs) config.FieldSet {
+	decided := config.NewFieldSet()
+	for _, f := range config.BackupFields() {
+		switch f {
+		case config.FieldTags, config.FieldExcludes:
+			continue
+		}
+		if a.flagProvided(string(f)) {
+			decided[f] = struct{}{}
+		}
+	}
+	return decided
+}
+
+// ensureDefaultAuthRef gives a cloud backup an auth entry to use when the user
+// named none, creating it in the profiles file on first use.
+//
+// This is onboarding, not resolution: `cloudstic backup gdrive` with no further
+// configuration should work a second time without re-authenticating, which means
+// persisting where the token went. A non-cloud source needs none of this and is
+// returned unchanged.
+func ensureDefaultAuthRef(bcfg config.Backup, profilesFile string) (config.Backup, error) {
+	uri, err := config.ParseSourceURI(bcfg.Source.URI)
 	if err != nil {
-		return err
+		return config.Backup{}, err
 	}
 
-	var (
-		provider             string
-		defaultAuthRef       string
-		defaultTokenFilename string
-		getToken             func() string
-		setToken             func(string)
-	)
-
+	var provider, authRef, tokenFilename string
 	switch uri.Scheme {
 	case "gdrive", "gdrive-changes":
-		provider = "google"
-		defaultAuthRef = "google-default"
-		defaultTokenFilename = "google_token.json"
-		getToken = func() string { return a.googleTokenFile }
-		setToken = func(v string) { a.googleTokenFile = v }
+		provider, authRef, tokenFilename = "google", "google-default", "google_token.json"
 	case "onedrive", "onedrive-changes":
-		provider = "onedrive"
-		defaultAuthRef = "onedrive-default"
-		defaultTokenFilename = "onedrive_token.json"
-		getToken = func() string { return a.onedriveTokenFile }
-		setToken = func(v string) { a.onedriveTokenFile = v }
+		provider, authRef, tokenFilename = "onedrive", "onedrive-default", "onedrive_token.json"
 	default:
-		return nil
+		return bcfg, nil
+	}
+	if bcfg.AuthRef != "" {
+		return bcfg, nil
 	}
 
-	if a.authRef == "" {
-		authRef := defaultAuthRef
-		a.authRef = authRef
+	cfg, err := loadProfilesOrInit(profilesFile)
+	if err != nil {
+		return config.Backup{}, fmt.Errorf("load profiles for default auth: %w", err)
+	}
+	ensureProfilesMaps(cfg)
 
-		cfg, loadErr := loadProfilesOrInit(a.profilesFile)
-		if loadErr != nil {
-			return fmt.Errorf("load profiles for default auth: %w", loadErr)
-		}
-		ensureProfilesMaps(cfg)
+	auth := cfg.Auth[authRef]
+	if auth.Provider != "" && auth.Provider != provider {
+		return config.Backup{}, fmt.Errorf("default auth %q has provider %q, expected %q", authRef, auth.Provider, provider)
+	}
+	auth.Provider = provider
 
-		tokenPath := getToken()
-		if tokenPath == "" {
-			resolved, resolveErr := resolveTokenPath(a.configDir, "", defaultTokenFilename)
-			if resolveErr != nil {
-				return resolveErr
-			}
-			tokenPath = resolved
-			setToken(tokenPath)
+	// Record the credentials the user passed on the command line, so the next
+	// run finds them without being told again.
+	switch provider {
+	case "google":
+		tokenPath, err := defaultTokenPath(bcfg.Source.ConfigDir, bcfg.Source.Google.TokenPath, tokenFilename)
+		if err != nil {
+			return config.Backup{}, err
 		}
+		if bcfg.Source.Google.CredsPath != "" {
+			auth.GoogleCreds = bcfg.Source.Google.CredsPath
+		}
+		if bcfg.Source.Google.CredsJSON != "" {
+			auth.GoogleCredsJSON = bcfg.Source.Google.CredsJSON
+		}
+		auth.GoogleTokenFile = tokenPath
+	case "onedrive":
+		tokenPath, err := defaultTokenPath(bcfg.Source.ConfigDir, bcfg.Source.OneDrive.TokenPath, tokenFilename)
+		if err != nil {
+			return config.Backup{}, err
+		}
+		if bcfg.Source.OneDrive.ClientID != "" {
+			auth.OneDriveClientID = bcfg.Source.OneDrive.ClientID
+		}
+		auth.OneDriveTokenFile = tokenPath
+	}
+	cfg.Auth[authRef] = auth
 
-		auth := cfg.Auth[authRef]
-		if auth.Provider != "" && auth.Provider != provider {
-			return fmt.Errorf("default auth %q has provider %q, expected %q", authRef, auth.Provider, provider)
-		}
-		auth.Provider = provider
-		if provider == "google" {
-			if a.googleCreds != "" {
-				auth.GoogleCreds = a.googleCreds
-			}
-			if a.googleCredsJSON != "" {
-				auth.GoogleCredsJSON = a.googleCredsJSON
-			}
-			auth.GoogleTokenFile = tokenPath
-		}
-		if provider == "onedrive" {
-			if a.onedriveClientID != "" {
-				auth.OneDriveClientID = a.onedriveClientID
-			}
-			auth.OneDriveTokenFile = tokenPath
-		}
-		cfg.Auth[authRef] = auth
-
-		if saveErr := profile.Save(a.profilesFile, cfg); saveErr != nil {
-			return fmt.Errorf("save profiles with default auth: %w", saveErr)
-		}
-
-		if err := applyProfileAuthToBackupArgs(a, auth); err != nil {
-			return err
-		}
+	if err := profile.Save(profilesFile, cfg); err != nil {
+		return config.Backup{}, fmt.Errorf("save profiles with default auth: %w", err)
 	}
 
-	return nil
+	bcfg.AuthRef = authRef
+	// Nothing is decided here: the entry was just written from this very
+	// configuration, so folding it back in is what fills the token path.
+	return config.ApplyProfileAuth(bcfg, nil, auth)
+}
+
+// defaultTokenPath mirrors open.Source's token-path rule so the entry recorded
+// in the profiles file names the file the source will actually use.
+func defaultTokenPath(configDir, explicit, filename string) (string, error) {
+	if explicit != "" {
+		return explicit, nil
+	}
+	return paths.TokenPath(configDir, filename)
 }
 
 func runBackupWithProfiles(r *runner, ctx context.Context, base *backupArgs) int {
@@ -270,38 +293,44 @@ func runBackupWithProfiles(r *runner, ctx context.Context, base *backupArgs) int
 		return r.fail("Failed to load profiles: %v", err)
 	}
 
-	var names []string
-	if base.profile != "" {
-		if _, ok := cfg.Profiles[base.profile]; !ok {
-			return r.fail("Unknown profile %q", base.profile)
-		}
-		names = []string{base.profile}
-	} else {
-		for name, p := range cfg.Profiles {
-			if p.IsEnabled() {
-				names = append(names, name)
-			}
-		}
-		if len(names) == 0 {
-			return r.fail("No enabled profiles found")
-		}
-		slices.Sort(names)
+	names, err := backupProfileNames(cfg, base)
+	if err != nil {
+		return r.fail("Failed to select profiles: %v", err)
 	}
+
+	fromFlags := backupConfigFromFlags(base)
+	decided := backupDecidedFields(base)
 
 	failures := 0
 	for _, name := range names {
-		p := cfg.Profiles[name]
-		effective, err := mergeProfileBackupArgs(base, name, p, cfg)
+		bcfg, err := config.MergeProfileBackup(fromFlags, decided, name, cfg)
 		if err != nil {
 			r.fail("[%s] profile merge failed: %v", name, err)
 			failures++
 			continue
 		}
+		// Fail before spending effort on a backup whose store cannot be found.
+		// The store itself is applied where every other command applies it, when
+		// the client is opened below (see resolveClientConfig).
+		if _, err := cfg.StoreFor(name); err != nil {
+			r.fail("[%s] profile merge failed: %v", name, err)
+			failures++
+			continue
+		}
+
 		if !base.jsonEnabled() {
 			_, _ = fmt.Fprintf(r.out, "\n== Running profile %s ==\n", name)
 		}
+
+		// Naming the profile is how the store half reaches resolveClientConfig;
+		// the parsed flags are left intact so their precedence still applies.
+		perProfile := *base
+		g := *base.globalFlags
+		g.profile = name
+		perProfile.globalFlags = &g
+
 		r.client = nil // each profile may target a different store
-		if code := runSingleBackup(r, ctx, effective); code != 0 {
+		if code := execBackup(r, ctx, &perProfile, bcfg); code != 0 {
 			failures++
 			if !base.allProfiles {
 				return code
@@ -314,198 +343,42 @@ func runBackupWithProfiles(r *runner, ctx context.Context, base *backupArgs) int
 	return 0
 }
 
-// mergeProfileBackupArgs folds profile p's fields into a copy of base,
-// wherever the corresponding flag was not passed explicitly. It is the
-// backup-specific counterpart to config.go's applyProfileStore: that function
-// covers a profile's store, folded in later via g.profile when
-// resolveClientConfig runs; this one covers everything else a backup profile
-// can carry (source, tags, excludes, native-source credentials, auth). Both
-// apply the same "explicit flag beats profile value" precedence, just against
-// different field shapes.
-func mergeProfileBackupArgs(base *backupArgs, profileName string, p profile.Profile, cfg *profile.Config) (*backupArgs, error) {
-	g := cloneGlobalFlags(base.globalFlags)
-	a := *base
-	a.globalFlags = g
-
-	if !a.flagProvided("source") {
-		a.sourceURI = p.Source
-	}
-	if a.sourceURI == "" {
-		return nil, fmt.Errorf("profile %q has empty source", profileName)
-	}
-
-	if !a.flagProvided("skip-native-files") {
-		a.skipNativeFiles = p.SkipNativeFiles
-	}
-	if !a.flagProvided("volume-uuid") && p.VolumeUUID != "" {
-		a.volumeUUID = p.VolumeUUID
-	}
-	if !a.flagProvided("google-credentials") && p.GoogleCreds != "" {
-		a.googleCreds = p.GoogleCreds
-	}
-	if !a.flagProvided("google-credentials-ref") && p.GoogleCredsRef != "" {
-		a.googleCredsRef = p.GoogleCredsRef
-	}
-	if !a.flagProvided("google-credentials-json") && p.GoogleCredsJSON != "" {
-		a.googleCredsJSON = p.GoogleCredsJSON
-	}
-	if !a.flagProvided("google-token-file") && p.GoogleTokenFile != "" {
-		a.googleTokenFile = p.GoogleTokenFile
-	}
-	if !a.flagProvided("google-token-ref") && p.GoogleTokenRef != "" {
-		a.googleTokenRef = p.GoogleTokenRef
-	}
-	if !a.flagProvided("onedrive-client-id") && p.OneDriveClientID != "" {
-		a.onedriveClientID = p.OneDriveClientID
-	}
-	if !a.flagProvided("onedrive-token-file") && p.OneDriveTokenFile != "" {
-		a.onedriveTokenFile = p.OneDriveTokenFile
-	}
-	if !a.flagProvided("onedrive-token-ref") && p.OneDriveTokenRef != "" {
-		a.onedriveTokenRef = p.OneDriveTokenRef
-	}
-
-	if len(a.tags) == 0 && len(p.Tags) > 0 {
-		a.tags = append(stringArrayFlags{}, p.Tags...)
-	}
-	if len(a.excludes) == 0 && len(p.Excludes) > 0 {
-		a.excludes = append(stringArrayFlags{}, p.Excludes...)
-	}
-	if !a.flagProvided("exclude-file") && p.ExcludeFile != "" {
-		a.excludeFile = p.ExcludeFile
-	}
-	if !a.flagProvided("ignore-empty-snapshot") {
-		a.ignoreEmpty = p.IgnoreEmpty
-	}
-
-	// The store itself is not folded in here. Naming the profile is enough:
-	// resolveClientConfig looks it up when the client is opened, so the store
-	// definition is applied in exactly one place and parsed flags stay intact.
-	// lookupProfileStore (config.go) is the same check loadProfileStore
-	// performs at that point; it's repeated here only to fail fast, before
-	// spending effort on a backup that would fail at store-open time anyway.
-	if _, err := lookupProfileStore(cfg, profileName, p); err != nil {
-		return nil, err
-	}
-	g.profile = profileName
-
-	if p.AuthRef != "" {
-		effectiveAuthRef := p.AuthRef
-		if a.flagProvided("auth-ref") {
-			effectiveAuthRef = a.authRef
+// backupProfileNames resolves which profiles this invocation runs: the one named
+// by -profile, or every enabled profile for -all-profiles.
+func backupProfileNames(cfg *profile.Config, a *backupArgs) ([]string, error) {
+	if a.profile != "" {
+		if _, ok := cfg.Profiles[a.profile]; !ok {
+			return nil, fmt.Errorf("unknown profile %q", a.profile)
 		}
-		authCfg, ok := cfg.Auth[effectiveAuthRef]
-		if !ok {
-			return nil, fmt.Errorf("profile %q references unknown auth %q", profileName, effectiveAuthRef)
-		}
-		if err := applyProfileAuthToBackupArgs(&a, authCfg); err != nil {
-			return nil, fmt.Errorf("profile %q auth %q: %w", profileName, effectiveAuthRef, err)
-		}
-	} else if a.flagProvided("auth-ref") {
-		authCfg, ok := cfg.Auth[a.authRef]
-		if !ok {
-			return nil, fmt.Errorf("profile %q requested unknown auth %q", profileName, a.authRef)
-		}
-		if err := applyProfileAuthToBackupArgs(&a, authCfg); err != nil {
-			return nil, fmt.Errorf("profile %q auth %q: %w", profileName, a.authRef, err)
+		return []string{a.profile}, nil
+	}
+
+	var names []string
+	for name, p := range cfg.Profiles {
+		if p.IsEnabled() {
+			names = append(names, name)
 		}
 	}
-
-	return &a, nil
+	if len(names) == 0 {
+		return nil, errors.New("no enabled profiles found")
+	}
+	slices.Sort(names)
+	return names, nil
 }
 
-func applyProfileAuthToBackupArgs(a *backupArgs, auth profile.Auth) error {
-	uri, err := config.ParseSourceURI(a.sourceURI)
-	if err != nil {
-		return fmt.Errorf("parse source URI: %w", err)
+// splitCommaList splits a comma-separated flag value, dropping blanks.
+func splitCommaList(raw string) []string {
+	if raw == "" {
+		return nil
 	}
-
-	requiredProvider := ""
-	switch uri.Scheme {
-	case "gdrive", "gdrive-changes":
-		requiredProvider = "google"
-	case "onedrive", "onedrive-changes":
-		requiredProvider = "onedrive"
-	default:
-		return fmt.Errorf("auth refs are only valid for Google Drive and OneDrive sources")
-	}
-
-	if auth.Provider != "" && auth.Provider != requiredProvider {
-		return fmt.Errorf("provider mismatch: source requires %q but auth entry is %q", requiredProvider, auth.Provider)
-	}
-
-	if requiredProvider == "google" {
-		if !a.flagProvided("google-credentials") && auth.GoogleCreds != "" {
-			a.googleCreds = auth.GoogleCreds
-		}
-		if !a.flagProvided("google-credentials-ref") && auth.GoogleCredsRef != "" {
-			a.googleCredsRef = auth.GoogleCredsRef
-		}
-		if !a.flagProvided("google-credentials-json") && auth.GoogleCredsJSON != "" {
-			a.googleCredsJSON = auth.GoogleCredsJSON
-		}
-		if !a.flagProvided("google-token-file") && auth.GoogleTokenFile != "" {
-			a.googleTokenFile = auth.GoogleTokenFile
-		}
-		if !a.flagProvided("google-token-ref") && auth.GoogleTokenRef != "" {
-			a.googleTokenRef = auth.GoogleTokenRef
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
 		}
 	}
-
-	if requiredProvider == "onedrive" {
-		if !a.flagProvided("onedrive-client-id") && auth.OneDriveClientID != "" {
-			a.onedriveClientID = auth.OneDriveClientID
-		}
-		if !a.flagProvided("onedrive-token-file") && auth.OneDriveTokenFile != "" {
-			a.onedriveTokenFile = auth.OneDriveTokenFile
-		}
-		if !a.flagProvided("onedrive-token-ref") && auth.OneDriveTokenRef != "" {
-			a.onedriveTokenRef = auth.OneDriveTokenRef
-		}
-	}
-
-	return nil
-}
-
-// cloneGlobalFlags returns an independent copy of src: globalFlags holds only
-// value fields (plus the shared *ui.SafeLogWriter debug log), so a shallow
-// struct copy is a complete, correct clone.
-func cloneGlobalFlags(src *globalFlags) *globalFlags {
-	clone := *src
-	return &clone
-}
-
-func parseExcludePatterns(a *backupArgs) ([]string, error) {
-	excludePatterns := []string(a.excludes)
-	if a.excludeFile != "" {
-		filePatterns, err := source.ParseExcludeFile(a.excludeFile)
-		if err != nil {
-			return nil, err
-		}
-		excludePatterns = append(excludePatterns, filePatterns...)
-	}
-	return excludePatterns, nil
-}
-
-func buildBackupOpts(a *backupArgs, excludePatterns []string) []cloudstic.BackupOption {
-	var opts []cloudstic.BackupOption
-	if a.verbose {
-		opts = append(opts, cloudstic.WithVerbose())
-	}
-	if a.dryRun {
-		opts = append(opts, engine.WithBackupDryRun())
-	}
-	if a.ignoreEmpty {
-		opts = append(opts, cloudstic.WithIgnoreEmptySnapshot())
-	}
-	if len(a.tags) > 0 {
-		opts = append(opts, cloudstic.WithTags(a.tags...))
-	}
-	if len(excludePatterns) > 0 {
-		h := sha256.Sum256([]byte(strings.Join(excludePatterns, "\n")))
-		opts = append(opts, cloudstic.WithExcludeHash(hex.EncodeToString(h[:])))
-	}
-	return opts
+	return out
 }
 
 func printBackupSummary(out io.Writer, res *engine.RunResult) {
@@ -531,182 +404,6 @@ func printBackupSummary(out io.Writer, res *engine.RunResult) {
 	if !res.DryRun && !res.EmptySnapshotIgnored {
 		_, _ = fmt.Fprintf(out, "Snapshot %s saved\n", res.SnapshotHash)
 	}
-}
-
-type initSourceOptions struct {
-	sourceURI         string
-	configDir         string
-	skipNativeFiles   bool
-	volumeUUID        string
-	googleCreds       string
-	googleCredsRef    string
-	googleCredsJSON   string
-	googleTokenFile   string
-	googleTokenRef    string
-	onedriveClientID  string
-	onedriveTokenFile string
-	onedriveTokenRef  string
-	skipMode          bool
-	skipFlags         bool
-	skipXattrs        bool
-	xattrNamespaces   string
-	sourceSFTP        sftpConfig
-	excludePatterns   []string
-}
-
-func initSource(ctx context.Context, opts initSourceOptions) (source.Source, error) {
-	uri, err := config.ParseSourceURI(opts.sourceURI)
-	if err != nil {
-		return nil, err
-	}
-
-	resolver := newSecretResolver(opts.configDir)
-
-	switch uri.Scheme {
-	case "local":
-		localOpts := []local.Option{local.WithExcludePatterns(opts.excludePatterns)}
-		if opts.volumeUUID != "" {
-			localOpts = append(localOpts, local.WithVolumeUUID(opts.volumeUUID))
-		}
-		if opts.skipMode {
-			localOpts = append(localOpts, local.WithSkipMode())
-		}
-		if opts.skipFlags {
-			localOpts = append(localOpts, local.WithSkipFlags())
-		}
-		if opts.skipXattrs {
-			localOpts = append(localOpts, local.WithSkipXattrs())
-		}
-		if opts.xattrNamespaces != "" {
-			prefixes := parseXattrNamespacePrefixes(opts.xattrNamespaces)
-			if len(prefixes) > 0 {
-				localOpts = append(localOpts, local.WithXattrNamespaces(prefixes))
-			}
-		}
-		return local.New(uri.Path, localOpts...), nil
-	case "sftp":
-		sftpOpts := sftpSourceOpts(opts.sourceSFTP, uri)
-		sftpOpts = append(sftpOpts, sftpsource.WithExcludePatterns(opts.excludePatterns))
-		return sftpsource.New(uri.Host, sftpOpts...)
-	case "gdrive":
-		tokenPath, err := resolveTokenPath(opts.configDir, opts.googleTokenFile, "google_token.json")
-		if err != nil {
-			return nil, err
-		}
-		gdriveOpts := []gdrive.Option{
-			gdrive.WithResolver(resolver),
-			gdrive.WithCredsPath(opts.googleCreds),
-			gdrive.WithCredsRef(opts.googleCredsRef),
-			gdrive.WithCredsJSON([]byte(opts.googleCredsJSON)),
-			gdrive.WithTokenPath(tokenPath),
-			gdrive.WithTokenRef(opts.googleTokenRef),
-			gdrive.WithDriveName(uri.Host),
-			gdrive.WithRootPath(uri.Path),
-			gdrive.WithExcludePatterns(opts.excludePatterns),
-		}
-		if opts.skipNativeFiles {
-			gdriveOpts = append(gdriveOpts, gdrive.WithSkipNativeFiles())
-		}
-		return gdrive.New(ctx, gdriveOpts...)
-	case "gdrive-changes":
-		tokenPath, err := resolveTokenPath(opts.configDir, opts.googleTokenFile, "google_token.json")
-		if err != nil {
-			return nil, err
-		}
-		gdriveOpts := []gdrive.Option{
-			gdrive.WithResolver(resolver),
-			gdrive.WithCredsPath(opts.googleCreds),
-			gdrive.WithCredsRef(opts.googleCredsRef),
-			gdrive.WithCredsJSON([]byte(opts.googleCredsJSON)),
-			gdrive.WithTokenPath(tokenPath),
-			gdrive.WithTokenRef(opts.googleTokenRef),
-			gdrive.WithDriveName(uri.Host),
-			gdrive.WithRootPath(uri.Path),
-			gdrive.WithExcludePatterns(opts.excludePatterns),
-		}
-		if opts.skipNativeFiles {
-			gdriveOpts = append(gdriveOpts, gdrive.WithSkipNativeFiles())
-		}
-		return gdrive.NewChangeSource(ctx, gdriveOpts...)
-	case "onedrive":
-		tokenPath, err := resolveTokenPath(opts.configDir, opts.onedriveTokenFile, "onedrive_token.json")
-		if err != nil {
-			return nil, err
-		}
-		return onedrive.New(ctx,
-			onedrive.WithResolver(resolver),
-			onedrive.WithClientID(opts.onedriveClientID),
-			onedrive.WithTokenPath(tokenPath),
-			onedrive.WithTokenRef(opts.onedriveTokenRef),
-			onedrive.WithDriveName(uri.Host),
-			onedrive.WithRootPath(uri.Path),
-			onedrive.WithExcludePatterns(opts.excludePatterns),
-		)
-	case "onedrive-changes":
-		tokenPath, err := resolveTokenPath(opts.configDir, opts.onedriveTokenFile, "onedrive_token.json")
-		if err != nil {
-			return nil, err
-		}
-		return onedrive.NewChangeSource(ctx,
-			onedrive.WithResolver(resolver),
-			onedrive.WithClientID(opts.onedriveClientID),
-			onedrive.WithTokenPath(tokenPath),
-			onedrive.WithTokenRef(opts.onedriveTokenRef),
-			onedrive.WithDriveName(uri.Host),
-			onedrive.WithRootPath(uri.Path),
-			onedrive.WithExcludePatterns(opts.excludePatterns),
-		)
-	default:
-		return nil, fmt.Errorf("unsupported source: %s", uri.Scheme)
-	}
-}
-
-func sftpSourceOpts(cfg sftpConfig, uri *sourceURIParts) []sftpsource.Option {
-	opts := []sftpsource.Option{
-		sftpsource.WithBasePath(uri.Path),
-	}
-	if uri.Port != "" {
-		opts = append(opts, sftpsource.WithPort(uri.Port))
-	}
-	if uri.User != "" {
-		opts = append(opts, sftpsource.WithUser(uri.User))
-	}
-	if cfg.Password != "" {
-		opts = append(opts, sftpsource.WithPassword(cfg.Password))
-	}
-	if cfg.Key != "" {
-		opts = append(opts, sftpsource.WithKey(cfg.Key))
-	}
-	if cfg.Insecure {
-		opts = append(opts, sftpsource.WithHostKeyCallback(ssh.InsecureIgnoreHostKey())) //nolint:gosec // explicitly requested by user
-	}
-	if cfg.KnownHosts != "" {
-		opts = append(opts, sftpsource.WithKnownHosts(cfg.KnownHosts))
-	}
-	return opts
-}
-
-func parseXattrNamespacePrefixes(raw string) []string {
-	parts := strings.Split(raw, ",")
-	prefixes := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		prefixes = append(prefixes, p)
-	}
-	return prefixes
-}
-
-// resolveTokenPath returns the token file path to use. If explicit is non-empty
-// it is used as-is; otherwise the filename is placed in the cloudstic config
-// dir, which configDir may override (see paths.ConfigDir).
-func resolveTokenPath(configDir, explicit, defaultFilename string) (string, error) {
-	if explicit != "" {
-		return explicit, nil
-	}
-	return paths.TokenPath(configDir, defaultFilename)
 }
 
 // backupCommand declares the `backup` command.

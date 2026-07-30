@@ -14,9 +14,9 @@ import (
 
 type stubTUIBackend struct {
 	loadStoreSnapshots func(context.Context, string, profile.Store) ([]engine.SnapshotEntry, error)
-	initProfile        func(context.Context, string, string, profile.Profile, *profile.Config) error
-	backupProfile      func(context.Context, string, string, profile.Profile, *profile.Config, cloudstic.Reporter) error
-	checkProfile       func(context.Context, string, string, profile.Profile, *profile.Config, cloudstic.Reporter) error
+	initProfile        func(context.Context, string, string, *profile.Config) error
+	backupProfile      func(context.Context, string, string, *profile.Config, cloudstic.Reporter) error
+	checkProfile       func(context.Context, string, string, *profile.Config, cloudstic.Reporter) error
 }
 
 func (b stubTUIBackend) LoadStoreSnapshots(ctx context.Context, storeName string, storeCfg profile.Store) ([]engine.SnapshotEntry, error) {
@@ -26,25 +26,25 @@ func (b stubTUIBackend) LoadStoreSnapshots(ctx context.Context, storeName string
 	return b.loadStoreSnapshots(ctx, storeName, storeCfg)
 }
 
-func (b stubTUIBackend) InitProfile(ctx context.Context, profilesFile, profileName string, profileCfg profile.Profile, cfg *profile.Config) error {
+func (b stubTUIBackend) InitProfile(ctx context.Context, profilesFile, profileName string, cfg *profile.Config) error {
 	if b.initProfile == nil {
 		return nil
 	}
-	return b.initProfile(ctx, profilesFile, profileName, profileCfg, cfg)
+	return b.initProfile(ctx, profilesFile, profileName, cfg)
 }
 
-func (b stubTUIBackend) BackupProfile(ctx context.Context, profilesFile, profileName string, profileCfg profile.Profile, cfg *profile.Config, reporter cloudstic.Reporter) error {
+func (b stubTUIBackend) BackupProfile(ctx context.Context, profilesFile, profileName string, cfg *profile.Config, reporter cloudstic.Reporter) error {
 	if b.backupProfile == nil {
 		return nil
 	}
-	return b.backupProfile(ctx, profilesFile, profileName, profileCfg, cfg, reporter)
+	return b.backupProfile(ctx, profilesFile, profileName, cfg, reporter)
 }
 
-func (b stubTUIBackend) CheckProfile(ctx context.Context, profilesFile, profileName string, profileCfg profile.Profile, cfg *profile.Config, reporter cloudstic.Reporter) error {
+func (b stubTUIBackend) CheckProfile(ctx context.Context, profilesFile, profileName string, cfg *profile.Config, reporter cloudstic.Reporter) error {
 	if b.checkProfile == nil {
 		return nil
 	}
-	return b.checkProfile(ctx, profilesFile, profileName, profileCfg, cfg, reporter)
+	return b.checkProfile(ctx, profilesFile, profileName, cfg, reporter)
 }
 
 func TestTUIServiceLoadDashboardConfigInitializesMaps(t *testing.T) {
@@ -68,11 +68,11 @@ func TestTUIServiceLoadDashboardConfigInitializesMaps(t *testing.T) {
 func TestTUIServiceRunProfileActionRunsInitWhenNeeded(t *testing.T) {
 	called := ""
 	svc := NewTUIService(stubTUIBackend{
-		initProfile: func(context.Context, string, string, profile.Profile, *profile.Config) error {
+		initProfile: func(context.Context, string, string, *profile.Config) error {
 			called = "init"
 			return nil
 		},
-		backupProfile: func(context.Context, string, string, profile.Profile, *profile.Config, cloudstic.Reporter) error {
+		backupProfile: func(context.Context, string, string, *profile.Config, cloudstic.Reporter) error {
 			called = "backup"
 			return nil
 		},
@@ -101,7 +101,7 @@ func TestTUIServiceRunProfileActionRunsInitWhenNeeded(t *testing.T) {
 func TestTUIServiceRunProfileActionRunsBackup(t *testing.T) {
 	called := ""
 	svc := NewTUIService(stubTUIBackend{
-		backupProfile: func(context.Context, string, string, profile.Profile, *profile.Config, cloudstic.Reporter) error {
+		backupProfile: func(context.Context, string, string, *profile.Config, cloudstic.Reporter) error {
 			called = "backup"
 			return nil
 		},
@@ -142,7 +142,7 @@ func TestTUIServiceRunProfileActionPropagatesLoadError(t *testing.T) {
 func TestTUIServiceRunProfileCheckRunsBackend(t *testing.T) {
 	called := ""
 	svc := NewTUIService(stubTUIBackend{
-		checkProfile: func(context.Context, string, string, profile.Profile, *profile.Config, cloudstic.Reporter) error {
+		checkProfile: func(context.Context, string, string, *profile.Config, cloudstic.Reporter) error {
 			called = "check"
 			return nil
 		},

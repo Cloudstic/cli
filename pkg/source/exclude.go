@@ -2,6 +2,8 @@ package source
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,6 +97,29 @@ func ParseExcludeFile(path string) ([]string, error) {
 		patterns = append(patterns, scanner.Text())
 	}
 	return patterns, scanner.Err()
+}
+
+// ExcludeHash is the canonical fingerprint of a set of exclude patterns, as
+// recorded on a snapshot.
+//
+// It is repository format, not a convenience. A backup writes it, and the next
+// backup compares its own against the previous snapshot's to decide whether the
+// exclude set changed: when it did, the incremental change feed cannot be
+// trusted — files newly excluded must be dropped and newly included files found
+// — so the engine falls back to a full rescan. Two callers computing it
+// differently therefore do not merely disagree about a string; one of them
+// silently skips that rescan, or forces one on every run.
+//
+// The patterns are joined in the order given, so this is a hash of the exclude
+// *list*, not of the set: reordering the same patterns reads as a change. That
+// is deliberate and cheap — a spurious full rescan is safe, a skipped one is
+// not.
+func ExcludeHash(patterns []string) string {
+	if len(patterns) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(strings.Join(patterns, "\n")))
+	return hex.EncodeToString(sum[:])
 }
 
 // Empty returns true if the matcher has no rules.

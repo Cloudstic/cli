@@ -13,9 +13,14 @@ import (
 
 type TUIBackend interface {
 	LoadStoreSnapshots(context.Context, string, profile.Store) ([]engine.SnapshotEntry, error)
-	InitProfile(context.Context, string, string, profile.Profile, *profile.Config) error
-	BackupProfile(context.Context, string, string, profile.Profile, *profile.Config, cloudstic.Reporter) error
-	CheckProfile(context.Context, string, string, profile.Profile, *profile.Config, cloudstic.Reporter) error
+	// Each takes the profile's name and the whole config rather than the
+	// resolved profile.Profile as well: every implementation needs the store
+	// the profile points at, and profile.Config.StoreFor is the one lookup
+	// that resolves it. Passing both invited a caller to supply a profile that
+	// is not the one the name selects.
+	InitProfile(context.Context, string, string, *profile.Config) error
+	BackupProfile(context.Context, string, string, *profile.Config, cloudstic.Reporter) error
+	CheckProfile(context.Context, string, string, *profile.Config, cloudstic.Reporter) error
 }
 
 type TUIService struct {
@@ -38,8 +43,7 @@ func (s *TUIService) RunProfileAction(ctx context.Context, profilesFile string, 
 		return fmt.Errorf("load profiles: %w", err)
 	}
 
-	profileCfg, ok := cfg.Profiles[profile.Name]
-	if !ok {
+	if _, ok := cfg.Profiles[profile.Name]; !ok {
 		return fmt.Errorf("unknown profile %q", profile.Name)
 	}
 
@@ -47,13 +51,13 @@ func (s *TUIService) RunProfileAction(ctx context.Context, profilesFile string, 
 		if s.backend == nil {
 			return fmt.Errorf("init action is not configured")
 		}
-		return s.backend.InitProfile(ctx, profilesFile, profile.Name, profileCfg, cfg)
+		return s.backend.InitProfile(ctx, profilesFile, profile.Name, cfg)
 	}
 
 	if s.backend == nil {
 		return fmt.Errorf("backup action is not configured")
 	}
-	return s.backend.BackupProfile(ctx, profilesFile, profile.Name, profileCfg, cfg, reporter)
+	return s.backend.BackupProfile(ctx, profilesFile, profile.Name, cfg, reporter)
 }
 
 func (s *TUIService) RunProfileCheck(ctx context.Context, profilesFile string, profile tui.ProfileCard, reporter cloudstic.Reporter) error {
@@ -62,8 +66,7 @@ func (s *TUIService) RunProfileCheck(ctx context.Context, profilesFile string, p
 		return fmt.Errorf("load profiles: %w", err)
 	}
 
-	profileCfg, ok := cfg.Profiles[profile.Name]
-	if !ok {
+	if _, ok := cfg.Profiles[profile.Name]; !ok {
 		return fmt.Errorf("unknown profile %q", profile.Name)
 	}
 	if profileNeedsInit(profile) {
@@ -72,7 +75,7 @@ func (s *TUIService) RunProfileCheck(ctx context.Context, profilesFile string, p
 	if s.backend == nil {
 		return fmt.Errorf("check action is not configured")
 	}
-	return s.backend.CheckProfile(ctx, profilesFile, profile.Name, profileCfg, cfg, reporter)
+	return s.backend.CheckProfile(ctx, profilesFile, profile.Name, cfg, reporter)
 }
 
 func (s *TUIService) SaveProfile(profilesFile, name string, p profile.Profile) error {

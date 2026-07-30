@@ -8,8 +8,13 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/cloudstic/cli/internal/paths"
 	"github.com/cloudstic/cli/pkg/secretref"
 )
+
+// DefaultFilename is the conventional name of the profiles file inside the
+// config directory. See DefaultPath for the full location.
+const DefaultFilename = "profiles.yaml"
 
 // Config is the top-level YAML document for backup profiles.
 type Config struct {
@@ -88,6 +93,51 @@ func (p Profile) IsEnabled() bool {
 		return true
 	}
 	return *p.Enabled
+}
+
+// StoreFor returns the store definition that profile name selects, or nil when
+// the profile names no store.
+//
+// A nil store is not an error. A profile may leave the store to whoever runs
+// it — the cloudstic CLI then takes it from -store or CLOUDSTIC_STORE — so
+// "this profile says nothing about where the repository is" is a legitimate
+// answer, distinct from the broken reference that produces an error.
+//
+// Resolving the store: pass the result to config.FromProfileStore, which reads
+// the secret references it names, or to config.MergeProfileStore to fold it
+// under a configuration the caller has already partly decided.
+func (c *Config) StoreFor(name string) (*Store, error) {
+	p, ok := c.Profiles[name]
+	if !ok {
+		return nil, fmt.Errorf("unknown profile %q", name)
+	}
+	if p.Store == "" {
+		return nil, nil
+	}
+	s, ok := c.Stores[p.Store]
+	if !ok {
+		return nil, fmt.Errorf("profile %q references unknown store %q", name, p.Store)
+	}
+	return &s, nil
+}
+
+// DefaultPath returns where the profiles file lives when no path is given:
+// profiles.yaml inside the config directory, which configDir may override (see
+// paths.ConfigDir, whose meaning it carries — empty means CLOUDSTIC_CONFIG_DIR
+// or the platform default).
+//
+// It resolves a path without touching the filesystem, so asking where profiles
+// would live does not create anything.
+//
+// CLOUDSTIC_PROFILES_FILE is deliberately not consulted. The cloudstic CLI
+// binds it to -profiles-file as an ordinary environment default, so by the time
+// a caller needs this, that variable was either applied already or not set.
+func DefaultPath(configDir string) (string, error) {
+	dir, err := paths.ConfigDir(configDir)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, DefaultFilename), nil
 }
 
 // Normalize returns a config that is safe to read and write into: a nil

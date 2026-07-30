@@ -452,6 +452,79 @@ region default was caught by an existing test asserting the pre-filled value,
 which is the correct outcome: the config now carries `""` and the guarantee is
 asserted where the backend receives it.
 
+**Reaching a profile still took five steps, one of them unreachable.** Moving
+the fold left the *entry* to it in `main`: `lookupProfileStore` — nine lines
+resolving a profile's `store:` key against the top-level `stores:` map — stayed
+unexported, so a consumer had to re-derive that relationship from the YAML, and
+the same lookup had been open-coded a further three times in the TUI backend,
+each with its own copy of the error message. It is now
+`profile.Config.StoreFor(name)`, and `open.FromProfile(ctx, path, name)` is the
+one-call form of `profile.Load` → `StoreFor` → `config.FromProfileStore` →
+`open.Client`. An empty path resolves through `profile.DefaultPath`, the same
+rule the CLI uses, so a program reading a user's profiles cannot land on a
+different file than the one they edit.
+
+Collapsing those copies removed a redundant parameter that had let callers
+disagree with themselves: `mergeProfileBackupArgs` and the three `TUIBackend`
+methods each took both a profile *name* and an already-resolved
+`profile.Profile`. Every production call derived the second from the first, but
+nothing required it to, and the CLI's own test fixtures had drifted into
+passing pairs that no run could produce — a profile absent from the config it
+was passed with. The name alone is now the argument.
+
+**The override vocabulary was a string, and there were two plausible spellings
+of every field.** `ApplyProfileStore` asked "have you decided this?" as
+`overridden func(flag string) bool`, and the sixteen answers it recognized were
+unexported — the doc comment listed them as `("store", "s3-access-key", …)`.
+Worse, `secretField` carried `flag` (`s3-access-key`) and `field`
+(`s3_access_key`) side by side, the first driving overrides and the second
+appearing in errors, so a caller who reached for the spelling they had just read
+out of their profiles file got a silent non-override and connected with a
+credential they had not chosen — no error at any layer. That is the same class of
+failure the credential-clearing rule exists to prevent, reintroduced through the
+key.
+
+The question is now asked with a typed `config.Field`, with all sixteen exported
+as constants and `StoreFields()` enumerating them. A field's string value is the
+cloudstic flag that carries it, which keeps the CLI's mapping an identity rather
+than a second table, and `Field.ProfileKey` gives the profiles-file spelling for
+errors — one identity, two renderings, both from one table. `FieldsSetIn(cfg)`
+derives the set from a filled-in config for the callers whose mechanism has no
+notion of "present but empty"; an explicit `NewFieldSet` stays available for the
+CLI, where `-password ""` is a deliberate choice that must still win.
+
+`ApplyProfileStore` becomes `MergeProfileStore(ctx, base, decided, s, r)
+(Client, error)`, returning a value rather than mutating through a pointer, and
+the two hardcoded loops plus the `secretFields` table collapse into one
+`fieldSpecs` table where each entry carries its own group. `StoreFields`,
+`FieldsSetIn` and the merge all read it, so the set of fields cannot differ
+between them. A reflection test walks `profile.Store` and fails if any field is
+not read by some entry — the case that previously meant a configured credential
+was silently ignored.
+
+`open.FromProfile` gains `WithDecided(cfg, fields)`, which is what lets a caller
+with a configuration mechanism of its own use it at all. Without it the one-call
+form served only a caller who had nothing but the profile, and the clearest
+example of a caller it could not serve was this repository's own CLI. It is an
+option on the resolution rather than a hook that edits the resolved
+configuration afterwards, because only the former can skip resolving a decided
+field's secret reference.
+
+Provenance — kopia's `Definition`, a parallel value recording which layer
+supplied each field — is deliberately *not* part of this. It would double the
+merge's result surface to serve a use nobody has yet: the CLI tracks flag
+origins itself, and no consumer has asked to render where a value came from.
+Adding a variant that returns it later is additive.
+
+The resolver stays a parameter, as `pkg/config` established, but
+`open.FromProfile` defaults it to `backends.Default` rather than requiring one.
+The reasoning that keeps `pkg/config` from defaulting is import cost, and it
+does not reach this far: a caller already in `pkg/open` links a provider SDK, so
+the platform keychain backends add nothing it was not paying, and a one-call
+convenience that could not read a `keychain://` reference would not be one.
+`WithSecretResolver` overrides it for a caller registering extra schemes, and
+for tests that must not touch a real keychain.
+
 **`open.Client` is a convenience over public parts, not a funnel.** A composition
 root in a library is a fair thing to object to. The answer is that
 `open.Store`, `open.Source`, and `open.Keychain` are independently useful and

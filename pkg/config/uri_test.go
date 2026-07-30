@@ -4,6 +4,51 @@ import (
 	"testing"
 )
 
+// StoreSchemes is the closed set ParseStoreURI may return, asserted below.
+// pkg/open's store constructor switches over exactly these; the guard on its
+// default branch reports a broken invariant rather than a user error precisely
+// because this test holds.
+var storeSchemes = map[string]bool{"local": true, "s3": true, "b2": true, "sftp": true}
+
+// TestParseStoreURI_SchemeIsAlwaysFromTheKnownSet is the invariant every
+// scheme-switching consumer depends on: a successful parse names one of four
+// schemes, and anything else is an error rather than a StoreURI nobody handles.
+//
+// The inputs lean on the adversarial side — empty schemes, near-misses, case
+// variants, embedded separators — because the failure this guards against is a
+// URI that parses into a scheme no constructor knows, which would otherwise
+// surface as a nil store rather than a message naming the bad URI.
+func TestParseStoreURI_SchemeIsAlwaysFromTheKnownSet(t *testing.T) {
+	inputs := []string{
+		"local:/x", "s3:bucket", "b2:bucket", "sftp://host/path",
+		"", ":", "::", ":x", "x:", "unknown:value", "gcs:bucket", "azure:container",
+		"LOCAL:/x", "Local:/x", "S3:bucket", "SFTP://host/path",
+		"local", "sftp:/host/path", "sftp:host/path", "sftp://",
+		"s3:bucket:with:colons", "local:./rel/../path", "local: ",
+		" local:/x", "local :/x", "http://example.com", "file:///etc/passwd",
+		"s3://bucket", "b2://bucket", "local://x",
+	}
+	for _, raw := range inputs {
+		t.Run(raw, func(t *testing.T) {
+			uri, err := ParseStoreURI(raw)
+			if err != nil {
+				if uri != nil {
+					t.Errorf("ParseStoreURI(%q) returned both a URI and an error", raw)
+				}
+				return
+			}
+			if uri == nil {
+				t.Fatalf("ParseStoreURI(%q) returned neither a URI nor an error", raw)
+			}
+			if !storeSchemes[uri.Scheme] {
+				t.Errorf("ParseStoreURI(%q) yielded scheme %q, which is outside the known set %v — "+
+					"a consumer switching on the scheme would fall through to its unreachable branch",
+					raw, uri.Scheme, storeSchemes)
+			}
+		})
+	}
+}
+
 func TestParseStoreURI(t *testing.T) {
 	tests := []struct {
 		raw     string

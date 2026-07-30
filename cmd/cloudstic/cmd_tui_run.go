@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cloudstic/cli/pkg/config"
 	"github.com/cloudstic/cli/pkg/profile"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -93,12 +94,15 @@ func (b tuiCLIBackend) LoadStoreSnapshots(ctx context.Context, storeName string,
 	return result.Snapshots, nil
 }
 
-func (b tuiCLIBackend) InitProfile(ctx context.Context, profilesFile, profileName string, profileCfg profile.Profile, cfg *profile.Config) error {
-	storeCfg, ok := cfg.Stores[profileCfg.Store]
-	if !ok {
-		return fmt.Errorf("profile %q references unknown store %q", profileName, profileCfg.Store)
+func (b tuiCLIBackend) InitProfile(ctx context.Context, profilesFile, profileName string, cfg *profile.Config) error {
+	storeCfg, err := cfg.StoreFor(profileName)
+	if err != nil {
+		return err
 	}
-	resolved, err := tuiClientConfig(storeCfg, b.configDir)
+	if storeCfg == nil {
+		return fmt.Errorf("profile %q names no store to initialize", profileName)
+	}
+	resolved, err := tuiClientConfig(*storeCfg, b.configDir)
 	if err != nil {
 		return err
 	}
@@ -109,14 +113,14 @@ func (b tuiCLIBackend) InitProfile(ctx context.Context, profilesFile, profileNam
 	return nil
 }
 
-func (b tuiCLIBackend) BackupProfile(ctx context.Context, profilesFile, profileName string, profileCfg profile.Profile, cfg *profile.Config, reporter cloudstic.Reporter) error {
+func (b tuiCLIBackend) BackupProfile(ctx context.Context, profilesFile, profileName string, cfg *profile.Config, reporter cloudstic.Reporter) error {
 	g := &globalFlags{profile: profileName, profilesFile: profilesFile, configDir: b.configDir, quiet: true}
 	base := &backupArgs{globalFlags: g}
-	effective, err := mergeProfileBackupArgs(base, profileName, profileCfg, cfg)
+	bcfg, err := config.MergeProfileBackup(backupConfigFromFlags(base), nil, profileName, cfg)
 	if err != nil {
 		return err
 	}
-	resolved, err := resolveClientConfig(effective.globalFlags)
+	resolved, err := resolveClientConfig(g)
 	if err != nil {
 		return fmt.Errorf("init store: %w", err)
 	}
@@ -126,18 +130,21 @@ func (b tuiCLIBackend) BackupProfile(ctx context.Context, profilesFile, profileN
 	}
 	b.r.client = client
 	defer func() { b.r.client = nil }()
-	if code := runSingleBackup(b.r, ctx, effective); code != 0 {
+	if code := execBackup(b.r, ctx, base, bcfg); code != 0 {
 		return fmt.Errorf("backup failed")
 	}
 	return nil
 }
 
-func (b tuiCLIBackend) CheckProfile(ctx context.Context, profilesFile, profileName string, profileCfg profile.Profile, cfg *profile.Config, reporter cloudstic.Reporter) error {
-	storeCfg, ok := cfg.Stores[profileCfg.Store]
-	if !ok {
-		return fmt.Errorf("profile %q references unknown store %q", profileName, profileCfg.Store)
+func (b tuiCLIBackend) CheckProfile(ctx context.Context, profilesFile, profileName string, cfg *profile.Config, reporter cloudstic.Reporter) error {
+	storeCfg, err := cfg.StoreFor(profileName)
+	if err != nil {
+		return err
 	}
-	resolved, err := tuiClientConfig(storeCfg, b.configDir)
+	if storeCfg == nil {
+		return fmt.Errorf("profile %q names no store to check", profileName)
+	}
+	resolved, err := tuiClientConfig(*storeCfg, b.configDir)
 	if err != nil {
 		return err
 	}

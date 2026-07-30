@@ -196,8 +196,12 @@ func runAuthNew(r *runner, ctx context.Context, a *authNewArgs) int {
 
 type authLoginArgs struct {
 	*globalFlags
-	profilesFile string
-	name         string
+	profilesFile     string
+	name             string
+	googleCreds      string
+	googleCredsRef   string
+	googleCredsJSON  string
+	onedriveClientID string
 }
 
 func declareAuthLoginArgs(g *globalFlags) (*authLoginArgs, commandInput) {
@@ -206,9 +210,50 @@ func declareAuthLoginArgs(g *globalFlags) (*authLoginArgs, commandInput) {
 		flags: []flagSpec{
 			profilesFileFlag(&a.profilesFile, g),
 			stringFlag(&a.name, "name", "", "Auth reference name", withPlaceholder("<name>"), withCompleter("_cloudstic_auth_names")),
+			// Which OAuth client to authorize with. The entry normally says,
+			// but these let a caller supply one it does not have — and carry
+			// the environment bindings that make a build without the
+			// ldflags-injected default client usable at all.
+			stringFlag(&a.googleCreds, "google-credentials", "", "Path to Google OAuth client or service account credentials JSON file",
+				withEnv("GOOGLE_APPLICATION_CREDENTIALS"), withPlaceholder("<path>"), withCompleter("_files")),
+			stringFlag(&a.googleCredsRef, "google-credentials-ref", "", "Secret reference to Google credentials JSON",
+				withPlaceholder("<ref>")),
+			stringFlag(&a.googleCredsJSON, "google-credentials-json", "", "Inline Google credentials JSON",
+				withEnv("GOOGLE_CREDENTIALS_JSON"), withPlaceholder("<json>"), asSecret()),
+			stringFlag(&a.onedriveClientID, "onedrive-client-id", "", "OneDrive OAuth client ID",
+				withEnv("ONEDRIVE_CLIENT_ID"), withPlaceholder("<id>")),
 		},
 		positionals: []positionalSpec{optionalPositional(&a.name, "auth name", "", "_cloudstic_auth_names")},
 	}
+}
+
+// applyAuthLoginCredentialFlags folds this command's credential flags over the
+// auth entry's own values.
+//
+// The precedence is the one the rest of the CLI applies (see the
+// resolution-precedence note in config.go): an explicitly passed flag wins, then
+// what the auth entry says, then an environment value. That ordering is why this
+// consults flagProvided rather than just checking for a non-empty flag —
+// an environment value must not override an entry that names something
+// different, but must still fill an entry that names nothing.
+//
+// The environment bindings are what make a locally built binary usable: the
+// built-in OAuth client is injected via ldflags at release time, so a plain
+// `go build` has an empty client ID and any authorization it starts is rejected
+// for having no client_id at all.
+func applyAuthLoginCredentialFlags(cfg *config.Source, a *authLoginArgs) {
+	fold := func(flag, val string, dest *string) {
+		if val == "" {
+			return
+		}
+		if a.flagProvided(flag) || *dest == "" {
+			*dest = val
+		}
+	}
+	fold("google-credentials", a.googleCreds, &cfg.Google.CredsPath)
+	fold("google-credentials-ref", a.googleCredsRef, &cfg.Google.CredsRef)
+	fold("google-credentials-json", a.googleCredsJSON, &cfg.Google.CredsJSON)
+	fold("onedrive-client-id", a.onedriveClientID, &cfg.OneDrive.ClientID)
 }
 
 func runAuthLogin(r *runner, ctx context.Context, a *authLoginArgs) int {
@@ -238,6 +283,7 @@ func runAuthLogin(r *runner, ctx context.Context, a *authLoginArgs) int {
 		return r.fail("Auth %q: %v", a.name, err)
 	}
 	srcCfg.ConfigDir = a.configDir
+	applyAuthLoginCredentialFlags(&srcCfg, a)
 
 	src, err := open.Source(ctx, srcCfg, open.WithSecretResolver(newSecretResolver(a.configDir)))
 	if err != nil {

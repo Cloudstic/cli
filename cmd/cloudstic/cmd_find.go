@@ -85,17 +85,13 @@ func declareFindArgs(g *globalFlags) (*findArgs, commandInput) {
 	}
 }
 
-func runFind(r *runner, ctx context.Context, a *findArgs) int {
+func runFind(r *runner, ctx context.Context, a *findArgs, cfg clientConfig) int {
 	opts, err := buildFindOpts(a)
 	if err != nil {
 		if !a.jsonEnabled() {
 			r.printUsage(r.errOut)
 		}
 		return r.parseError(err)
-	}
-	cfg, err := resolveClientConfig(a.globalFlags)
-	if err != nil {
-		return r.fail("Failed to init store: %v", err)
 	}
 	if err := r.openClient(ctx, cfg); err != nil {
 		return r.fail("Failed to init store: %v", err)
@@ -371,6 +367,6 @@ func formatFindTime(unix int64) string {
 
 // findCommand declares the `find` command.
 func findCommand() command {
-	return leaf("find", "Locate a file across every snapshot in the repository",
+	return repoLeaf("find", "Locate a file across every snapshot in the repository",
 		repoCommandGroups, declareFindArgs, runFind)
 }

@@ -16,11 +16,7 @@ func declareBreakLockArgs(g *globalFlags) (*breakLockArgs, commandInput) {
 	return &breakLockArgs{globalFlags: g}, commandInput{}
 }
 
-func runBreakLock(r *runner, ctx context.Context, a *breakLockArgs) int {
-	cfg, err := resolveClientConfig(a.globalFlags)
-	if err != nil {
-		return r.fail("Failed to init store: %v", err)
-	}
+func runBreakLock(r *runner, ctx context.Context, a *breakLockArgs, cfg clientConfig) int {
 	if err := r.openClient(ctx, cfg); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
@@ -54,6 +50,6 @@ func printBreakLockResult(errOut io.Writer, removed []*cloudstic.RepoLock) {
 
 // breakLockCommand declares the `break-lock` command.
 func breakLockCommand() command {
-	return leaf("break-lock", "Remove a stale repository lock left by a crashed process",
+	return repoLeaf("break-lock", "Remove a stale repository lock left by a crashed process",
 		repoCommandGroups, declareBreakLockArgs, runBreakLock)
 }

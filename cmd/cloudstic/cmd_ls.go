@@ -26,11 +26,7 @@ func declareLsArgs(g *globalFlags) (*lsArgs, commandInput) {
 	}}
 }
 
-func runLsSnapshot(r *runner, ctx context.Context, a *lsArgs) int {
-	cfg, err := resolveClientConfig(a.globalFlags)
-	if err != nil {
-		return r.fail("Failed to init store: %v", err)
-	}
+func runLsSnapshot(r *runner, ctx context.Context, a *lsArgs, cfg clientConfig) int {
 	if err := r.openClient(ctx, cfg); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
@@ -99,6 +95,6 @@ func appendTreeNode(l list.Writer, ref string, refToMeta map[string]core.FileMet
 
 // lsCommand declares the `ls` command.
 func lsCommand() command {
-	return leaf("ls", "List files within a specific snapshot",
+	return repoLeaf("ls", "List files within a specific snapshot",
 		repoCommandGroups, declareLsArgs, runLsSnapshot)
 }

@@ -30,11 +30,7 @@ func declareInitArgs(g *globalFlags) (*initArgs, commandInput) {
 	}}
 }
 
-func runInit(r *runner, ctx context.Context, a *initArgs) int {
-	cfg, err := resolveClientConfig(a.globalFlags)
-	if err != nil {
-		return r.fail("Failed to init store: %v", err)
-	}
+func runInit(r *runner, ctx context.Context, a *initArgs, cfg clientConfig) int {
 	return execInit(r, ctx, a, cfg)
 }
 
@@ -132,6 +128,6 @@ func printRecoveryKey(errOut io.Writer, mnemonic string) {
 
 // initCommand declares the `init` command.
 func initCommand() command {
-	return leaf("init", "Initialize a new repository (must run before first backup)",
+	return repoLeaf("init", "Initialize a new repository (must run before first backup)",
 		repoCommandGroups, declareInitArgs, runInit)
 }

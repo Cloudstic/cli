@@ -139,16 +139,12 @@ func validateForgetArgs(a *forgetArgs) error {
 	return nil
 }
 
-func runForget(r *runner, ctx context.Context, a *forgetArgs) int {
+func runForget(r *runner, ctx context.Context, a *forgetArgs, cfg clientConfig) int {
 	if err := prepareForgetArgs(a); err != nil {
 		if !r.jsonEnabled() {
 			r.printUsage(r.errOut)
 		}
 		return r.parseError(err)
-	}
-	cfg, err := resolveClientConfig(a.globalFlags)
-	if err != nil {
-		return r.fail("Failed to init store: %v", err)
 	}
 	if err := r.openClient(ctx, cfg); err != nil {
 		return r.fail("Failed to init store: %v", err)
@@ -296,6 +292,6 @@ func printPolicyResult(out io.Writer, result *cloudstic.PolicyResult, dryRun boo
 
 // forgetCommand declares the `forget` command.
 func forgetCommand() command {
-	return leaf("forget", "Remove a specific snapshot from history",
+	return repoLeaf("forget", "Remove a specific snapshot from history",
 		repoCommandGroups, declareForgetArgs, runForget)
 }

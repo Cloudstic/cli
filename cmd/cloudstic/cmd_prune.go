@@ -21,11 +21,7 @@ func declarePruneArgs(g *globalFlags) (*pruneArgs, commandInput) {
 	}}
 }
 
-func runPrune(r *runner, ctx context.Context, a *pruneArgs) int {
-	cfg, err := resolveClientConfig(a.globalFlags)
-	if err != nil {
-		return r.fail("Failed to init store: %v", err)
-	}
+func runPrune(r *runner, ctx context.Context, a *pruneArgs, cfg clientConfig) int {
 	if err := r.openClient(ctx, cfg); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
@@ -70,6 +66,6 @@ func printPruneStats(out io.Writer, res *cloudstic.PruneResult) {
 
 // pruneCommand declares the `prune` command.
 func pruneCommand() command {
-	return leaf("prune", "Remove unused data chunks from the repository",
+	return repoLeaf("prune", "Remove unused data chunks from the repository",
 		repoCommandGroups, declarePruneArgs, runPrune)
 }

@@ -123,7 +123,7 @@ func TestRunFind_JSONEmitsResultAndKeepsWarningsOnStderr(t *testing.T) {
 	g.json = true
 	r := &runner{out: &out, errOut: &errOut, client: stub}
 
-	if code := runFind(r, context.Background(), &findArgs{globalFlags: g, pattern: "*.kdbx"}); code != 0 {
+	if code := runFind(r, context.Background(), &findArgs{globalFlags: g, pattern: "*.kdbx"}, clientConfig{}); code != 0 {
 		t.Fatalf("exit code = %d", code)
 	}
 
@@ -155,7 +155,7 @@ func TestRunFind_NoMatchesSucceeds(t *testing.T) {
 	stub := &stubClient{findResult: &cloudstic.FindResult{SnapshotsSearched: 2, Elapsed: "1ms"}}
 	r := &runner{out: &out, errOut: &errOut, client: stub}
 
-	if code := runFind(r, context.Background(), &findArgs{globalFlags: newTestGlobalFlags(), pattern: "nope"}); code != 0 {
+	if code := runFind(r, context.Background(), &findArgs{globalFlags: newTestGlobalFlags(), pattern: "nope"}, clientConfig{}); code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
 	if !strings.Contains(out.String(), "No matches") {
@@ -168,7 +168,7 @@ func TestRunFind_InvalidArgumentsFailBeforeOpeningTheRepository(t *testing.T) {
 	stub := &stubClient{}
 	r := &runner{out: &out, errOut: &errOut, client: stub}
 
-	code := runFind(r, context.Background(), &findArgs{globalFlags: newTestGlobalFlags(), size: "nonsense"})
+	code := runFind(r, context.Background(), &findArgs{globalFlags: newTestGlobalFlags(), size: "nonsense"}, clientConfig{})
 	if code == 0 {
 		t.Fatal("want a non-zero exit for an unparseable -size")
 	}

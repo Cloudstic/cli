@@ -26,11 +26,7 @@ func declareCatArgs(g *globalFlags) (*catArgs, commandInput) {
 	}
 }
 
-func runCat(r *runner, ctx context.Context, a *catArgs) int {
-	cfg, err := resolveClientConfig(a.globalFlags)
-	if err != nil {
-		return r.fail("Failed to init store: %v", err)
-	}
+func runCat(r *runner, ctx context.Context, a *catArgs, cfg clientConfig) int {
 	if err := r.openClient(ctx, cfg); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
@@ -80,6 +76,6 @@ func printCatResult(out io.Writer, errOut io.Writer, results []*cloudstic.CatRes
 
 // catCommand declares the `cat` command.
 func catCommand() command {
-	return leaf("cat", "Display raw JSON content of repository objects",
+	return repoLeaf("cat", "Display raw JSON content of repository objects",
 		repoCommandGroups, declareCatArgs, runCat)
 }

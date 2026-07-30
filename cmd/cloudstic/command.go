@@ -162,21 +162,69 @@ func leaf[T any](
 	run func(r *runner, ctx context.Context, a *T) int,
 	opts ...commandOpt,
 ) command {
-	build := func() (*T, commandFlags) {
+	return leafWith(name, summary, groups, declare,
+		func(r *runner, ctx context.Context, a *T, _ *globalFlags) int {
+			return run(r, ctx, a)
+		}, opts...)
+}
+
+// repoLeaf declares a command that opens a repository.
+//
+// It resolves the client configuration once, after a successful parse, and hands
+// it to run — so the two-step "resolve, then connect" happens in one place
+// instead of once per command. Before this existed, every such command carried
+// its own copy of the resolve call and of the failure message for it, which is
+// eleven chances for them to drift and eleven error branches no test exercised.
+//
+// Resolution deliberately happens after parsing rather than before: it reads the
+// profiles file, and `-h`, completion and a parse failure must not.
+//
+// Not every repository command fits. `backup` runs its profile loop N times with
+// N configurations, one per profile, so a single value resolved before dispatch
+// would be wrong for it — it uses leaf and resolves per iteration.
+func repoLeaf[T any](
+	name, summary string,
+	groups []flagGroup,
+	declare declareArgs[T],
+	run func(r *runner, ctx context.Context, a *T, cfg clientConfig) int,
+	opts ...commandOpt,
+) command {
+	return leafWith(name, summary, groups, declare,
+		func(r *runner, ctx context.Context, a *T, g *globalFlags) int {
+			cfg, err := resolveClientConfig(g)
+			if err != nil {
+				return r.fail("Failed to init store: %v", err)
+			}
+			return run(r, ctx, a, cfg)
+		}, opts...)
+}
+
+// leafWith is the shared body of leaf and repoLeaf. invoke receives the parsed
+// args together with the global flags they were parsed into, which is what lets
+// repoLeaf resolve a configuration without every command having to hand its own
+// flag struct back.
+func leafWith[T any](
+	name, summary string,
+	groups []flagGroup,
+	declare declareArgs[T],
+	invoke func(r *runner, ctx context.Context, a *T, g *globalFlags) int,
+	opts ...commandOpt,
+) command {
+	build := func() (*T, *globalFlags, commandFlags) {
 		g := &globalFlags{}
 		a, input := declare(g)
-		return a, newCommandFlags(name, groups, g, input)
+		return a, g, newCommandFlags(name, groups, g, input)
 	}
 
-	_, declared := build()
+	_, _, declared := build()
 	var c command
 	c = command{
 		name:        name,
 		summary:     summary,
 		positionals: declared.positionals,
-		flags:       func() commandFlags { _, cf := build(); return cf },
+		flags:       func() commandFlags { _, _, cf := build(); return cf },
 		run: func(r *runner, ctx context.Context, path string) int {
-			a, cf := build()
+			a, g, cf := build()
 			if commandHelpRequested(cf.set, r.args) {
 				printCommandHelp(r.out, c, path)
 				return 0
@@ -194,7 +242,7 @@ func leaf[T any](
 				}
 				return r.parseError(err)
 			}
-			return run(r, ctx, a)
+			return invoke(r, ctx, a, g)
 		},
 	}
 	for _, opt := range opts {

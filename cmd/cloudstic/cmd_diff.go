@@ -22,11 +22,7 @@ func declareDiffArgs(g *globalFlags) (*diffArgs, commandInput) {
 	}}
 }
 
-func runDiff(r *runner, ctx context.Context, a *diffArgs) int {
-	cfg, err := resolveClientConfig(a.globalFlags)
-	if err != nil {
-		return r.fail("Failed to init store: %v", err)
-	}
+func runDiff(r *runner, ctx context.Context, a *diffArgs, cfg clientConfig) int {
 	if err := r.openClient(ctx, cfg); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
@@ -61,6 +57,6 @@ func printDiffResult(out io.Writer, result *cloudstic.DiffResult) {
 
 // diffCommand declares the `diff` command.
 func diffCommand() command {
-	return leaf("diff", "Compare two snapshots or a snapshot against latest",
+	return repoLeaf("diff", "Compare two snapshots or a snapshot against latest",
 		repoCommandGroups, declareDiffArgs, runDiff)
 }

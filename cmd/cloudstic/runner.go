@@ -124,15 +124,18 @@ func (r *runner) fail(format string, args ...any) int {
 	return exitCode
 }
 
-// openClient opens the cloudstic client from the given global flags.
+// openClient connects to the repository described by cfg.
 // No-op if r.client is already set (e.g. injected for tests).
-func (r *runner) openClient(ctx context.Context, g *globalFlags) error {
+//
+// It takes a resolved configuration rather than the flags it came from. That
+// keeps this type to the I/O primitives it is meant to hold: resolving flags
+// against a profile means reading the profiles file, and hiding a file read
+// behind "open the client" put it out of sight of every call site. Each command
+// now resolves first — the same two steps `init` and the `key` subcommands
+// always used.
+func (r *runner) openClient(ctx context.Context, cfg clientConfig) error {
 	if r.client != nil {
 		return nil
-	}
-	cfg, err := resolveClientConfig(g)
-	if err != nil {
-		return err
 	}
 	client, err := openClient(ctx, cfg, nil)
 	if err != nil {

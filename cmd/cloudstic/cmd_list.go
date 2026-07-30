@@ -21,7 +21,11 @@ func declareListArgs(g *globalFlags) (*listArgs, commandInput) {
 }
 
 func runList(r *runner, ctx context.Context, a *listArgs) int {
-	if err := r.openClient(ctx, a.globalFlags); err != nil {
+	cfg, err := resolveClientConfig(a.globalFlags)
+	if err != nil {
+		return r.fail("Failed to init store: %v", err)
+	}
+	if err := r.openClient(ctx, cfg); err != nil {
 		return r.fail("Failed to init store: %v", err)
 	}
 

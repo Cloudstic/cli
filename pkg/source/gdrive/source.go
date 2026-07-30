@@ -482,7 +482,7 @@ func oauthClient(ctx context.Context, config *oauth2.Config, r *secretref.Resolv
 	}
 
 	if err != nil {
-		tok, err = tokenFromWeb(config)
+		tok, err = tokenFromWeb(ctx, config)
 		if err != nil {
 			return nil, err
 		}
@@ -512,8 +512,8 @@ func oauthClient(ctx context.Context, config *oauth2.Config, r *secretref.Resolv
 	return oauth2.NewClient(ctx, pts), nil
 }
 
-func tokenFromWeb(config *oauth2.Config) (*oauth2.Token, error) {
-	return sourceoauth.ExchangeWithLocalServer(config, oauth2.AccessTypeOffline)
+func tokenFromWeb(ctx context.Context, config *oauth2.Config) (*oauth2.Token, error) {
+	return sourceoauth.ExchangeWithLocalServer(ctx, config, oauth2.AccessTypeOffline)
 }
 
 func tokenFromFile(file string) (*oauth2.Token, error) {

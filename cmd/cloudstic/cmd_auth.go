@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/cloudstic/cli/pkg/config"
+	"github.com/cloudstic/cli/pkg/open"
 	"github.com/cloudstic/cli/pkg/profile"
 )
 
@@ -231,17 +233,21 @@ func runAuthLogin(r *runner, ctx context.Context, a *authLoginArgs) int {
 		return r.fail("Unknown auth %q", a.name)
 	}
 
-	src, err := initSource(ctx, initSourceOptions{
-		sourceURI:         auth.Provider + "://auth",
-		configDir:         a.configDir,
-		googleCreds:       auth.GoogleCreds,
-		googleCredsRef:    auth.GoogleCredsRef,
-		googleTokenFile:   auth.GoogleTokenFile,
-		googleTokenRef:    auth.GoogleTokenRef,
-		onedriveClientID:  auth.OneDriveClientID,
-		onedriveTokenFile: auth.OneDriveTokenFile,
-		onedriveTokenRef:  auth.OneDriveTokenRef,
-	})
+	src, err := open.Source(ctx, config.Source{
+		URI:       auth.Provider + "://auth",
+		ConfigDir: a.configDir,
+		Google: config.Google{
+			CredsPath: auth.GoogleCreds,
+			CredsRef:  auth.GoogleCredsRef,
+			TokenPath: auth.GoogleTokenFile,
+			TokenRef:  auth.GoogleTokenRef,
+		},
+		OneDrive: config.OneDrive{
+			ClientID:  auth.OneDriveClientID,
+			TokenPath: auth.OneDriveTokenFile,
+			TokenRef:  auth.OneDriveTokenRef,
+		},
+	}, open.WithSecretResolver(newSecretResolver(a.configDir)))
 	if err != nil {
 		return r.fail("Failed to initialize auth source: %v", err)
 	}

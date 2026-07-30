@@ -126,28 +126,7 @@ func loadProfileStore(g *globalFlags) (*profile.Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load profiles file %q: %w", profilesFile, err)
 	}
-	p, ok := cfg.Profiles[g.profile]
-	if !ok {
-		return nil, fmt.Errorf("unknown profile %q", g.profile)
-	}
-	return lookupProfileStore(cfg, g.profile, p)
-}
-
-// lookupProfileStore returns profileName's referenced store, or nil if the
-// profile names no store. Shared by loadProfileStore above, which resolves it
-// fully to fold into a running command's config, and cmd_backup.go's
-// mergeProfileBackupArgs, which only needs the existence check: the store
-// itself is deliberately applied later, when resolveClientConfig runs for the
-// backup that's actually about to happen (see mergeProfileBackupArgs).
-func lookupProfileStore(cfg *profile.Config, profileName string, p profile.Profile) (*profile.Store, error) {
-	if p.Store == "" {
-		return nil, nil
-	}
-	s, ok := cfg.Stores[p.Store]
-	if !ok {
-		return nil, fmt.Errorf("profile %q references unknown store %q", profileName, p.Store)
-	}
-	return &s, nil
+	return cfg.StoreFor(g.profile)
 }
 
 // clientConfigFromProfileStore builds a configuration from a store definition
@@ -181,5 +160,36 @@ func clientConfigFromProfileStore(s profile.Store, configDir string) (clientConf
 // resolution vs. plain strings here) that forcing a shared table would
 // obscure more than it clarifies.
 func applyProfileStore(cfg *clientConfig, s profile.Store, configDir string, provided func(string) bool) error {
-	return config.ApplyProfileStore(context.Background(), cfg, s, newSecretResolver(configDir), provided)
+	merged, err := config.MergeProfileStore(
+		context.Background(), *cfg, flagDecidedFields(provided), s, newSecretResolver(configDir))
+	if err != nil {
+		return err
+	}
+	*cfg = merged
+	return nil
+}
+
+// flagDecidedFields is the set of profile-supplied fields the user settled on
+// the command line.
+//
+// It is derived from config.Fields rather than listed here, so a field added to
+// the profiles format is covered without a matching edit on this side — the
+// parallel list that used to live here is the drift this indirection exists to
+// prevent. A config.Field's string value is the flag that carries it, which is
+// what makes the mapping an identity rather than a second table.
+//
+// provided must recognize only flags the user actually passed: an environment
+// value is ordinary ambient configuration and a selected profile is entitled to
+// override it (see the resolution-precedence note above).
+func flagDecidedFields(provided func(string) bool) config.FieldSet {
+	if provided == nil {
+		return nil
+	}
+	decided := config.NewFieldSet()
+	for _, f := range config.StoreFields() {
+		if provided(string(f)) {
+			decided[f] = struct{}{}
+		}
+	}
+	return decided
 }

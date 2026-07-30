@@ -166,20 +166,21 @@ func TestFromProfileStore_SilentProfileLeavesZeroValues(t *testing.T) {
 	}
 }
 
-// TestApplyProfileStore_LocationIsTakenOnlyWhenNamed and its credential
+// TestMergeProfileStore_LocationIsTakenOnlyWhenNamed and its credential
 // counterpart below pin the asymmetry between the two groups of fields. It is
 // deliberate and load-bearing, and the pair exists so that collapsing them
 // into one rule fails a test rather than silently changing which store a
 // command talks to, or with whose identity.
-func TestApplyProfileStore_LocationIsTakenOnlyWhenNamed(t *testing.T) {
+func TestMergeProfileStore_LocationIsTakenOnlyWhenNamed(t *testing.T) {
 	cfg := config.Client{Store: config.Store{
 		URI: "local:/from-env",
 		S3:  config.S3{Region: "us-east-1"},
 	}}
 
 	// A profile that says nothing about location leaves it alone.
-	if err := config.ApplyProfileStore(context.Background(), &cfg, profile.Store{}, testResolver(), nil); err != nil {
-		t.Fatalf("ApplyProfileStore: %v", err)
+	cfg, err := config.MergeProfileStore(context.Background(), cfg, nil, profile.Store{}, testResolver())
+	if err != nil {
+		t.Fatalf("MergeProfileStore: %v", err)
 	}
 	if cfg.Store.URI != "local:/from-env" {
 		t.Errorf("URI = %q, want the pre-existing value kept when the profile names none", cfg.Store.URI)
@@ -189,28 +190,30 @@ func TestApplyProfileStore_LocationIsTakenOnlyWhenNamed(t *testing.T) {
 	}
 
 	// One that does name a location replaces it.
-	if err := config.ApplyProfileStore(context.Background(), &cfg,
-		profile.Store{URI: "s3:bucket"}, testResolver(), nil); err != nil {
-		t.Fatalf("ApplyProfileStore: %v", err)
+	cfg, err = config.MergeProfileStore(context.Background(), cfg, nil,
+		profile.Store{URI: "s3:bucket"}, testResolver())
+	if err != nil {
+		t.Fatalf("MergeProfileStore: %v", err)
 	}
 	if cfg.Store.URI != "s3:bucket" {
 		t.Errorf("URI = %q, want the profile's value", cfg.Store.URI)
 	}
 }
 
-// TestApplyProfileStore_CredentialsAreClearedWhenTheProfileIsSilent is the
+// TestMergeProfileStore_CredentialsAreClearedWhenTheProfileIsSilent is the
 // other half, and the surprising one. Selecting a profile is an explicit
 // choice of which store to talk to, so a credential left over from the
 // environment must not follow it there — reaching the profile's store with an
 // unrelated identity is worse than failing to reach it.
-func TestApplyProfileStore_CredentialsAreClearedWhenTheProfileIsSilent(t *testing.T) {
+func TestMergeProfileStore_CredentialsAreClearedWhenTheProfileIsSilent(t *testing.T) {
 	cfg := config.Client{Store: config.Store{
 		S3: config.S3{AccessKey: "AKIA-from-environment", SecretKey: "secret-from-environment"},
 	}}
 
-	if err := config.ApplyProfileStore(context.Background(), &cfg,
-		profile.Store{URI: "s3:other-bucket"}, testResolver(), nil); err != nil {
-		t.Fatalf("ApplyProfileStore: %v", err)
+	cfg, err := config.MergeProfileStore(context.Background(), cfg, nil,
+		profile.Store{URI: "s3:other-bucket"}, testResolver())
+	if err != nil {
+		t.Fatalf("MergeProfileStore: %v", err)
 	}
 	if cfg.Store.S3.AccessKey != "" || cfg.Store.S3.SecretKey != "" {
 		t.Errorf("credentials = (%q, %q), want both cleared: a profile that names none "+
@@ -218,17 +221,17 @@ func TestApplyProfileStore_CredentialsAreClearedWhenTheProfileIsSilent(t *testin
 	}
 }
 
-// TestApplyProfileStore_OverriddenFieldsAreNeverResolved pins the laziness the
+// TestMergeProfileStore_OverriddenFieldsAreNeverResolved pins the laziness the
 // CLI depends on: a field the caller has already decided is not read from the
 // profile, so a broken secret reference on a field that is about to be
 // replaced is not an error.
-func TestApplyProfileStore_OverriddenFieldsAreNeverResolved(t *testing.T) {
-	cfg := config.Client{Unlock: config.Unlock{Password: "from-flag"}}
-	overridden := func(flag string) bool { return flag == "password" }
+func TestMergeProfileStore_OverriddenFieldsAreNeverResolved(t *testing.T) {
+	base := config.Client{Unlock: config.Unlock{Password: "from-flag"}}
+	decided := config.NewFieldSet(config.FieldPassword)
 
-	err := config.ApplyProfileStore(context.Background(), &cfg, profile.Store{
+	cfg, err := config.MergeProfileStore(context.Background(), base, decided, profile.Store{
 		PasswordSecret: "env://CLOUDSTIC_TEST_DEFINITELY_UNSET",
-	}, testResolver(), overridden)
+	}, testResolver())
 	if err != nil {
 		t.Fatalf("an overridden field must not be resolved, so its broken reference "+
 			"must not fail: %v", err)
@@ -238,12 +241,12 @@ func TestApplyProfileStore_OverriddenFieldsAreNeverResolved(t *testing.T) {
 	}
 }
 
-// TestFromProfileStoreMatchesApplyOnZeroValue keeps the convenience entry
+// TestFromProfileStoreMatchesMergeOnZeroValue keeps the convenience entry
 // point and the fold from drifting apart. FromProfileStore is defined as
-// ApplyProfileStore against an empty configuration; if that ever stops being
+// MergeProfileStore against an empty configuration; if that ever stops being
 // true, a library caller and the CLI would resolve the same profile
 // differently.
-func TestFromProfileStoreMatchesApplyOnZeroValue(t *testing.T) {
+func TestFromProfileStoreMatchesMergeOnZeroValue(t *testing.T) {
 	t.Setenv("CLOUDSTIC_TEST_ACCESS", "AKIA-from-ref")
 
 	s := profile.Store{
@@ -259,12 +262,12 @@ func TestFromProfileStoreMatchesApplyOnZeroValue(t *testing.T) {
 		t.Fatalf("FromProfileStore: %v", err)
 	}
 
-	var folded config.Client
-	if err := config.ApplyProfileStore(context.Background(), &folded, s, testResolver(), nil); err != nil {
-		t.Fatalf("ApplyProfileStore: %v", err)
+	folded, err := config.MergeProfileStore(context.Background(), config.Client{}, nil, s, testResolver())
+	if err != nil {
+		t.Fatalf("MergeProfileStore: %v", err)
 	}
 
 	if fromHelper != folded {
-		t.Errorf("FromProfileStore and ApplyProfileStore disagree:\n got  %+v\n want %+v", fromHelper, folded)
+		t.Errorf("FromProfileStore and MergeProfileStore disagree:\n got  %+v\n want %+v", fromHelper, folded)
 	}
 }

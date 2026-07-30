@@ -4,33 +4,24 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/cloudstic/cli/pkg/config"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/cloudstic/cli/pkg/config"
 	"github.com/cloudstic/cli/pkg/profile"
-
-	"github.com/cloudstic/cli/internal/paths"
 )
 
-const defaultProfilesFilename = "profiles.yaml"
+const defaultProfilesFilename = profile.DefaultFilename
 
 // defaultProfilesPath returns where the profiles file lives when the user
-// names no path: inside the config directory, which configDir may override
-// (see paths.ConfigDir).
+// names no path.
 //
-// CLOUDSTIC_PROFILES_FILE is deliberately not consulted here. It is bound to
-// the -profiles-file flag as an ordinary environment default, so it is already
-// applied — by the time this runs, it did not apply, which is precisely what
-// makes a default needed.
+// The rule itself lives in pkg/profile, so a library caller reaching for a
+// user's profiles lands on the same file this CLI does (RFC 0022 §7); this
+// wrapper exists only to keep the call sites reading in flag terms.
 func defaultProfilesPath(configDir string) (string, error) {
-	dir, err := paths.ConfigDir(configDir)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, defaultProfilesFilename), nil
+	return profile.DefaultPath(configDir)
 }
 
 type profileShowArgs struct {

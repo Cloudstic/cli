@@ -26,6 +26,9 @@ import (
 
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/pkg/config"
+	"github.com/cloudstic/cli/pkg/profile"
+	"github.com/cloudstic/cli/pkg/secretref"
+	"github.com/cloudstic/cli/pkg/secretref/backends"
 	"github.com/cloudstic/cli/pkg/store"
 	b2store "github.com/cloudstic/cli/pkg/store/b2"
 	localstore "github.com/cloudstic/cli/pkg/store/local"
@@ -54,6 +57,25 @@ type options struct {
 	reporter       cloudstic.Reporter
 	promptResolve  func() (string, error)
 	promptWrap     func() (string, error)
+	secretResolver *secretref.Resolver
+	decidedConfig  config.Client
+	decidedFields  config.FieldSet
+}
+
+// resolver returns the secret resolver to read profile references with,
+// falling back to the built-in backend set.
+//
+// Defaulting is right here and wrong in pkg/config, which takes a resolver as
+// a parameter precisely so it never imports the platform keychain backends. By
+// the time a caller is in this package it is connecting for real and already
+// links a provider SDK, so the backends cost it nothing it was not paying —
+// and a one-call convenience that could not read a keychain:// reference would
+// not be much of a convenience.
+func (o *options) resolver() *secretref.Resolver {
+	if o.secretResolver != nil {
+		return o.secretResolver
+	}
+	return backends.NewDefaultResolver()
 }
 
 func newOptions(opts []Option) *options {
@@ -117,6 +139,43 @@ func WithPasswordPrompt(resolve, wrap func() (string, error)) Option {
 	return func(o *options) { o.promptResolve, o.promptWrap = resolve, wrap }
 }
 
+// WithSecretResolver reads the scheme://path secret references a profile names
+// through r, instead of through the built-in backend set.
+//
+// Supply one to register a scheme the built-ins do not cover — a Vault or
+// cloud-secret-manager backend — or, in a test, to resolve references without
+// touching a real keychain. backends.Default returns a fresh map, so the usual
+// shape is to add to it rather than replace it.
+//
+// This affects only the profile-reading entry points. Store, Keychain and
+// Client take configuration whose secrets are already resolved.
+func WithSecretResolver(r *secretref.Resolver) Option {
+	return func(o *options) { o.secretResolver = r }
+}
+
+// WithDecided layers configuration of the caller's own over the profile:
+// every field named in decided is taken from cfg, and the profile supplies the
+// rest.
+//
+// This is what makes FromProfile usable by a program that has a second
+// configuration mechanism — command-line flags, its own file, a form — rather
+// than only by one that has nothing but the profile. Without it, such a caller
+// had to abandon FromProfile and rebuild the four steps by hand, and the
+// cloudstic CLI itself was the clearest example of a caller it could not serve.
+//
+// Pass config.FieldsSetIn(cfg) as decided when a non-empty value is what
+// "I decided this" means for your mechanism. Pass an explicit
+// config.NewFieldSet when empty is itself a choice you need to keep.
+//
+// Precedence is the same rule config.MergeProfileStore documents, including
+// that a decided field's secret reference is never read — so a broken reference
+// on a field you are replacing is not an error. That is the reason this is an
+// option on FromProfile rather than a hook that edits the resolved
+// configuration afterwards, which could not skip the resolution.
+func WithDecided(cfg config.Client, decided config.FieldSet) Option {
+	return func(o *options) { o.decidedConfig, o.decidedFields = cfg, decided }
+}
+
 // Store constructs the object store described by cfg.
 //
 // The result is a raw backend, with no repository layers on it. Pass it to
@@ -154,7 +213,15 @@ func openStore(ctx context.Context, cfg config.Store, o *options) (store.ObjectS
 	case "sftp":
 		inner, err = sftpstore.New(uri.Host, sftpStoreOpts(cfg.SFTP, uri)...)
 	default:
-		return nil, fmt.Errorf("unsupported store type: %s", uri.Scheme)
+		// Unreachable: ParseStoreURI above yields one of exactly these four
+		// schemes or an error, which TestParseStoreURI_SchemeIsAlwaysFromTheKnownSet
+		// pins. The branch stays because each case assigns inner — without it a
+		// scheme added to ParseStoreURI and forgotten here would fall through
+		// with both inner and err nil, and this function would hand back a nil
+		// store and no error. It reports a broken invariant rather than an
+		// unsupported store, because a user cannot cause it: reaching here means
+		// the two switches have drifted apart.
+		return nil, fmt.Errorf("internal error: store URI %q parsed to unhandled scheme %q", cfg.URI, uri.Scheme)
 	}
 	if err != nil {
 		return nil, err
@@ -207,8 +274,57 @@ func sftpStoreOpts(cfg config.SFTP, uri *config.StoreURI) []sftpstore.Option {
 // Client opens a repository client on the store described by cfg, unlocked
 // with the credentials cfg names.
 func Client(ctx context.Context, cfg config.Client, opts ...Option) (*cloudstic.Client, error) {
+	return openClient(ctx, cfg, newOptions(opts))
+}
+
+// FromProfile opens a repository client on the store that profile name selects
+// in the profiles file at path.
+//
+// An empty path means the default location — profiles.yaml inside the config
+// directory, honouring CLOUDSTIC_CONFIG_DIR (profile.DefaultPath) — so a
+// program reading a user's profiles finds the same file the cloudstic CLI
+// would, rather than a second one that silently disagrees.
+//
+// This is the one-call form of profile.Load → Config.StoreFor →
+// config.MergeProfileStore → Client. Configuration of your own goes in through
+// WithDecided, which layers it over the profile with the same precedence the
+// cloudstic CLI applies to its flags. Drop to the explicit sequence when you
+// need the resolved configuration itself — to display it, diff it, or decide
+// something from it before connecting; that cannot be done afterwards, since
+// the client this returns is already connected.
+//
+// A profile that names no store is an error here, because a client needs one.
+// Config.StoreFor reports that case as a nil store without an error, for
+// callers that have another way to reach the repository.
+func FromProfile(ctx context.Context, path, name string, opts ...Option) (*cloudstic.Client, error) {
 	o := newOptions(opts)
 
+	if path == "" {
+		p, err := profile.DefaultPath("")
+		if err != nil {
+			return nil, err
+		}
+		path = p
+	}
+	cfg, err := profile.Load(path)
+	if err != nil {
+		return nil, err
+	}
+	s, err := cfg.StoreFor(name)
+	if err != nil {
+		return nil, err
+	}
+	if s == nil {
+		return nil, fmt.Errorf("profile %q names no store", name)
+	}
+	clientCfg, err := config.MergeProfileStore(ctx, o.decidedConfig, o.decidedFields, *s, o.resolver())
+	if err != nil {
+		return nil, err
+	}
+	return openClient(ctx, clientCfg, o)
+}
+
+func openClient(ctx context.Context, cfg config.Client, o *options) (*cloudstic.Client, error) {
 	raw, err := openStore(ctx, cfg.Store, o)
 	if err != nil {
 		return nil, err

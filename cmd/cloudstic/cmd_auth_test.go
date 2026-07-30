@@ -273,9 +273,9 @@ func TestPromptAuthSelection_DerivesTokenRef(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	name, code := r.promptAuthSelection(ctx, cfg, "google", "test-profile")
-	if code != 0 {
-		t.Fatalf("promptAuthSelection failed with code %d", code)
+	name, err := promptAuthSelection(r, ctx, cfg, "google", "test-profile")
+	if err != nil {
+		t.Fatalf("promptAuthSelection: %v", err)
 	}
 	if name != "my-google" {
 		t.Fatalf("expected name 'my-google', got %q", name)

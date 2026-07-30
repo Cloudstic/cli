@@ -415,7 +415,7 @@ func (r *runner) promptAuthSelection(ctx context.Context, cfg *profile.Config, p
 		return "", r.fail("Failed to read auth reference name: %v", err)
 	}
 
-	defTokenRef := "config-token://" + provider + "/" + refName
+	defTokenRef := config.DefaultAuthTokenRef(provider, refName)
 	tokenStorage, err := r.promptLine(ctx, "Token storage (file path or secret ref)", defTokenRef)
 	if err != nil {
 		return "", r.fail("Failed to read token storage: %v", err)

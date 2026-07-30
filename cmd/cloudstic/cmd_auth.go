@@ -120,23 +120,23 @@ func runAuthNew(r *runner, ctx context.Context, a *authNewArgs) int {
 	if err := validateRefName("auth", a.name); err != nil {
 		return r.fail("%v", err)
 	}
-	if a.provider != "google" && a.provider != "onedrive" {
+	if a.provider != config.ProviderGoogle && a.provider != config.ProviderOneDrive {
 		if r.canPrompt() {
-			picked, err := r.promptSelect(ctx, "Select auth provider", []string{"google", "onedrive"})
+			picked, err := r.promptSelect(ctx, "Select auth provider", []string{config.ProviderGoogle, config.ProviderOneDrive})
 			if err != nil {
 				return r.fail("Failed to read auth provider: %v", err)
 			}
 			a.provider = picked
 		}
-		if a.provider != "google" && a.provider != "onedrive" {
+		if a.provider != config.ProviderGoogle && a.provider != config.ProviderOneDrive {
 			return r.fail("-provider must be 'google' or 'onedrive'")
 		}
 	}
 
 	auth := profile.Auth{Provider: a.provider}
-	if a.provider == "google" {
+	if a.provider == config.ProviderGoogle {
 		if a.googleTokenFile == "" && a.googleTokenRef == "" {
-			def := defaultAuthTokenRef("google", a.name)
+			def := defaultAuthTokenRef(config.ProviderGoogle, a.name)
 			if r.canPrompt() {
 				v, err := r.promptLine(ctx, "Google token storage (file path or secret ref)", def)
 				if err != nil {
@@ -157,9 +157,9 @@ func runAuthNew(r *runner, ctx context.Context, a *authNewArgs) int {
 		auth.GoogleTokenFile = a.googleTokenFile
 		auth.GoogleTokenRef = a.googleTokenRef
 	}
-	if a.provider == "onedrive" {
+	if a.provider == config.ProviderOneDrive {
 		if a.onedriveTokenFile == "" && a.onedriveTokenRef == "" {
-			def := defaultAuthTokenRef("onedrive", a.name)
+			def := defaultAuthTokenRef(config.ProviderOneDrive, a.name)
 			if r.canPrompt() {
 				v, err := r.promptLine(ctx, "OneDrive token storage (file path or secret ref)", def)
 				if err != nil {
@@ -233,21 +233,13 @@ func runAuthLogin(r *runner, ctx context.Context, a *authLoginArgs) int {
 		return r.fail("Unknown auth %q", a.name)
 	}
 
-	src, err := open.Source(ctx, config.Source{
-		URI:       auth.Provider + "://auth",
-		ConfigDir: a.configDir,
-		Google: config.Google{
-			CredsPath: auth.GoogleCreds,
-			CredsRef:  auth.GoogleCredsRef,
-			TokenPath: auth.GoogleTokenFile,
-			TokenRef:  auth.GoogleTokenRef,
-		},
-		OneDrive: config.OneDrive{
-			ClientID:  auth.OneDriveClientID,
-			TokenPath: auth.OneDriveTokenFile,
-			TokenRef:  auth.OneDriveTokenRef,
-		},
-	}, open.WithSecretResolver(newSecretResolver(a.configDir)))
+	srcCfg, err := config.SourceForAuth(auth)
+	if err != nil {
+		return r.fail("Auth %q: %v", a.name, err)
+	}
+	srcCfg.ConfigDir = a.configDir
+
+	src, err := open.Source(ctx, srcCfg, open.WithSecretResolver(newSecretResolver(a.configDir)))
 	if err != nil {
 		return r.fail("Failed to initialize auth source: %v", err)
 	}
@@ -258,11 +250,11 @@ func runAuthLogin(r *runner, ctx context.Context, a *authLoginArgs) int {
 	return 0
 }
 
+// defaultAuthTokenRef is config.DefaultAuthTokenRef under the name this package
+// has always used for it. The convention itself lives in pkg/config so that
+// anything writing an auth entry produces the same reference the CLI reads.
 func defaultAuthTokenRef(provider, name string) string {
-	if name == "" {
-		name = "default"
-	}
-	return "config-token://" + provider + "/" + name
+	return config.DefaultAuthTokenRef(provider, name)
 }
 
 // authCommand declares the `auth` command group.

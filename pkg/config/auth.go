@@ -1,0 +1,84 @@
+package config
+
+import (
+	"fmt"
+
+	"github.com/cloudstic/cli/pkg/profile"
+)
+
+// Auth providers, as written in a profiles file's `provider:` field.
+const (
+	ProviderGoogle   = "google"
+	ProviderOneDrive = "onedrive"
+)
+
+// SourceURIForProvider returns the source URI that authenticates a provider
+// without addressing any particular content.
+//
+// The provider name and the source scheme are not the same word — Google's
+// provider is "google" but its scheme is "gdrive" — and the URI deliberately
+// carries no drive name or path. Both cloud sources resolve a drive name
+// eagerly during construction, so naming one here would make authenticating
+// depend on a drive existing, which is backwards: you authenticate in order to
+// find out which drives there are.
+func SourceURIForProvider(provider string) (string, error) {
+	switch provider {
+	case ProviderGoogle:
+		return "gdrive", nil
+	case ProviderOneDrive:
+		return "onedrive", nil
+	case "":
+		return "", fmt.Errorf("auth entry names no provider: want %q or %q", ProviderGoogle, ProviderOneDrive)
+	default:
+		return "", fmt.Errorf("unknown auth provider %q: want %q or %q", provider, ProviderGoogle, ProviderOneDrive)
+	}
+}
+
+// SourceForAuth returns the source configuration that authenticates auth's
+// provider with auth's credentials.
+//
+// Use it to act on a profiles file's auth entry — signing in, or checking which
+// account an entry belongs to — without addressing any content: pass the result
+// to open.Source and read the resulting source's Info.
+//
+// Only the credentials belonging to auth's provider are carried over. An entry
+// holding both providers' fields (which a hand-edited file may) does not produce
+// a source that would try both.
+func SourceForAuth(auth profile.Auth) (Source, error) {
+	uri, err := SourceURIForProvider(auth.Provider)
+	if err != nil {
+		return Source{}, err
+	}
+
+	cfg := Source{URI: uri}
+	switch auth.Provider {
+	case ProviderGoogle:
+		cfg.Google = Google{
+			CredsPath: auth.GoogleCreds,
+			CredsRef:  auth.GoogleCredsRef,
+			CredsJSON: auth.GoogleCredsJSON,
+			TokenPath: auth.GoogleTokenFile,
+			TokenRef:  auth.GoogleTokenRef,
+		}
+	case ProviderOneDrive:
+		cfg.OneDrive = OneDrive{
+			ClientID:  auth.OneDriveClientID,
+			TokenPath: auth.OneDriveTokenFile,
+			TokenRef:  auth.OneDriveTokenRef,
+		}
+	}
+	return cfg, nil
+}
+
+// DefaultAuthTokenRef returns the secret reference an auth entry's OAuth token
+// is stored under when the user names no location: a token in the config
+// directory's managed store, keyed by provider and entry name.
+//
+// An empty name yields the "default" entry, which is what an auth entry created
+// implicitly by `cloudstic backup gdrive` uses.
+func DefaultAuthTokenRef(provider, name string) string {
+	if name == "" {
+		name = "default"
+	}
+	return "config-token://" + provider + "/" + name
+}

@@ -128,15 +128,30 @@ func localSource(path string) *core.SourceInfo {
 // runFind executes a query against the repository under both scanners and
 // requires them to agree, so every test in this file doubles as a check that
 // the delta scan matches the straightforward walk.
-func (r *findRepo) runFind(opts ...FindOption) *FindResult {
+// withNoDelta returns q with delta scanning disabled, which the full-scan
+// comparison in runFind uses as its control.
+func withNoDelta(q FindQuery) FindQuery {
+	q.NoDelta = true
+	return q
+}
+
+// patternQuery builds a query from a positional pattern, routing by shape the
+// way the CLI's positional argument does.
+func patternQuery(pattern string) FindQuery {
+	var q FindQuery
+	q.SetPattern(pattern)
+	return q
+}
+
+func (r *findRepo) runFind(q FindQuery) *FindResult {
 	r.t.Helper()
 	ctx := context.Background()
 
-	delta, err := NewFindManager(r.store, nil).Run(ctx, opts...)
+	delta, err := NewFindManager(r.store, nil).Run(ctx, q)
 	if err != nil {
 		r.t.Fatalf("find (delta): %v", err)
 	}
-	full, err := NewFindManager(r.store, nil).Run(ctx, append(append([]FindOption{}, opts...), WithFindNoDelta())...)
+	full, err := NewFindManager(r.store, nil).Run(ctx, withNoDelta(q))
 	if err != nil {
 		r.t.Fatalf("find (no-delta): %v", err)
 	}
@@ -194,7 +209,7 @@ func TestFind_UnchangedFileCollapsesToOneVersion(t *testing.T) {
 		r.snapshot(fmt.Sprintf("2026-01-0%dT00:00:00Z", day), src, docs, vault)
 	}
 
-	result := r.runFind(WithFindPattern("vault.kdbx"))
+	result := r.runFind(patternQuery("vault.kdbx"))
 
 	if len(result.Matches) != 1 {
 		t.Fatalf("want 1 match, got %d: %s", len(result.Matches), renderMatches(result.Matches))
@@ -229,7 +244,7 @@ func TestFind_EditedFileYieldsOrderedVersions(t *testing.T) {
 	r.snapshot("2026-01-03T00:00:00Z", src, docs, vault.withSize(200).withContent("v2"))
 	r.snapshot("2026-01-04T00:00:00Z", src, docs, vault.withSize(300).withContent("v3"))
 
-	result := r.runFind(WithFindPattern("vault.kdbx"))
+	result := r.runFind(patternQuery("vault.kdbx"))
 
 	if len(result.Matches) != 1 {
 		t.Fatalf("an edited file stays one match, got %d: %s", len(result.Matches), renderMatches(result.Matches))
@@ -270,7 +285,7 @@ func TestFind_EditedFileWithinSameSecondStaysOrderedBySeq(t *testing.T) {
 	r.snapshot(sameSecond, src, docs, vault.withSize(100))
 	r.snapshot(sameSecond, src, docs, vault.withSize(200).withContent("v2"))
 
-	result := r.runFind(WithFindPattern("vault.kdbx"))
+	result := r.runFind(patternQuery("vault.kdbx"))
 
 	versions := result.Matches[0].Versions
 	if len(versions) != 2 {
@@ -298,7 +313,7 @@ func TestFind_IdenticalContentAtDifferentPathsStaysSeparate(t *testing.T) {
 		file("f2", "report.pdf", "d2").withContent("same-bytes"),
 	)
 
-	result := r.runFind(WithFindPattern("report.pdf"))
+	result := r.runFind(patternQuery("report.pdf"))
 	if len(result.Matches) != 2 {
 		t.Fatalf("two distinct files must stay separate matches, got %d: %s",
 			len(result.Matches), renderMatches(result.Matches))
@@ -307,7 +322,7 @@ func TestFind_IdenticalContentAtDifferentPathsStaysSeparate(t *testing.T) {
 		t.Errorf("matches share a FileID %q", a)
 	}
 
-	grouped := r.runFind(WithFindPattern("report.pdf"), WithFindGroupByContent())
+	grouped := r.runFind(FindQuery{Name: "report.pdf", GroupByContent: true})
 	if len(grouped.Matches) != 1 {
 		t.Fatalf("-by-content must group them into one, got %d: %s",
 			len(grouped.Matches), renderMatches(grouped.Matches))
@@ -336,7 +351,7 @@ func TestFind_MultiParentEntryReportsEveryPath(t *testing.T) {
 		file("f1", "spec.md", "d1", "d2"),
 	)
 
-	result := r.runFind(WithFindPattern("spec.md"))
+	result := r.runFind(patternQuery("spec.md"))
 	if len(result.Matches) != 1 {
 		t.Fatalf("want 1 match, got %d", len(result.Matches))
 	}
@@ -350,7 +365,7 @@ func TestFind_MultiParentEntryReportsEveryPath(t *testing.T) {
 
 	// Either path is a valid way to ask for it.
 	for _, pattern := range []string{"Work/spec.md", "Shared/spec.md"} {
-		got := r.runFind(WithFindPattern(pattern))
+		got := r.runFind(patternQuery(pattern))
 		if len(got.Matches) != 1 {
 			t.Errorf("pattern %q matched %d entries, want 1", pattern, len(got.Matches))
 		}
@@ -369,7 +384,7 @@ func TestFind_RenameIsOneMatchWithDifferingVersionNames(t *testing.T) {
 	r.snapshot("2026-01-01T00:00:00Z", src, docs, file("f1", "old-name.txt", "d1"))
 	r.snapshot("2026-01-02T00:00:00Z", src, docs, file("f1", "new-name.txt", "d1"))
 
-	byID := r.runFind(WithFindFileID("f1"))
+	byID := r.runFind(FindQuery{FileID: "f1"})
 	if len(byID.Matches) != 1 {
 		t.Fatalf("a renamed file is one match, got %d: %s", len(byID.Matches), renderMatches(byID.Matches))
 	}
@@ -383,7 +398,7 @@ func TestFind_RenameIsOneMatchWithDifferingVersionNames(t *testing.T) {
 
 	// A name query matches only the versions bearing that name. Pulling in the
 	// post-rename versions would make the result set depend on grouping.
-	byName := r.runFind(WithFindPattern("old-name.txt"))
+	byName := r.runFind(patternQuery("old-name.txt"))
 	if len(byName.Matches) != 1 {
 		t.Fatalf("want 1 match, got %d", len(byName.Matches))
 	}
@@ -409,7 +424,7 @@ func TestFind_DeletedAndReaddedFileHasNonContiguousSnapshots(t *testing.T) {
 	r.snapshot("2026-01-02T00:00:00Z", src, docs) // deleted
 	third := r.snapshot("2026-01-03T00:00:00Z", src, docs, notes)
 
-	result := r.runFind(WithFindPattern("notes.txt"))
+	result := r.runFind(patternQuery("notes.txt"))
 	if len(result.Matches) != 1 {
 		t.Fatalf("want 1 match, got %d", len(result.Matches))
 	}
@@ -440,7 +455,7 @@ func TestFind_LegacyStoredPathIsHonored(t *testing.T) {
 		file("f1", "legacy.txt", "missing-parent").withPaths("Archive/2019/legacy.txt"),
 	)
 
-	result := r.runFind(WithFindPath("Archive/**/legacy.txt"))
+	result := r.runFind(FindQuery{Path: "Archive/**/legacy.txt"})
 	if len(result.Matches) != 1 {
 		t.Fatalf("a stored path must be usable for matching, got %d matches", len(result.Matches))
 	}
@@ -461,7 +476,7 @@ func TestFind_AncestorRenameSplitsVersionsByPath(t *testing.T) {
 	r.snapshot("2026-01-01T00:00:00Z", src, folder("d1", "Documents"), notes)
 	r.snapshot("2026-01-02T00:00:00Z", src, folder("d1", "Papers"), notes)
 
-	result := r.runFind(WithFindPattern("notes.txt"))
+	result := r.runFind(patternQuery("notes.txt"))
 	if len(result.Matches) != 1 {
 		t.Fatalf("want 1 match, got %d", len(result.Matches))
 	}
@@ -479,7 +494,7 @@ func TestFind_AncestorRenameSplitsVersionsByPath(t *testing.T) {
 	}
 
 	// A path query sees only the snapshots where the file was really there.
-	old := r.runFind(WithFindPath("Documents/notes.txt"))
+	old := r.runFind(FindQuery{Path: "Documents/notes.txt"})
 	if len(old.Matches) != 1 || len(old.Matches[0].Versions[0].Snapshots) != 1 {
 		t.Errorf("the old path must match only the first snapshot: %s", renderMatches(old.Matches))
 	}
@@ -503,36 +518,38 @@ func TestFind_Predicates(t *testing.T) {
 
 	cases := []struct {
 		name  string
-		opts  []FindOption
+		query FindQuery
 		paths []string
 	}{
-		{"name glob", []FindOption{WithFindPattern("*.pdf")},
+		// The first three exercise SetPattern's shape routing: no separator
+		// constrains the basename, a separator constrains the full path.
+		{"name glob", patternQuery("*.pdf"),
 			[]string{"Documents/2026/report.pdf", "Documents/report.pdf"}},
-		{"path glob", []FindOption{WithFindPattern("Documents/*.pdf")},
+		{"path glob", patternQuery("Documents/*.pdf"),
 			[]string{"Documents/report.pdf"}},
-		{"double star", []FindOption{WithFindPattern("Documents/**/report.pdf")},
+		{"double star", patternQuery("Documents/**/report.pdf"),
 			[]string{"Documents/2026/report.pdf", "Documents/report.pdf"}},
-		{"regex", []FindOption{WithFindRegex(`2026/.*\.pdf$`)},
+		{"regex", FindQuery{Regex: `2026/.*\.pdf$`},
 			[]string{"Documents/2026/report.pdf"}},
-		{"case insensitive", []FindOption{WithFindName("REPORT.PDF"), WithFindIgnoreCase()},
+		{"case insensitive", FindQuery{Name: "REPORT.PDF", IgnoreCase: true},
 			[]string{"Documents/2026/report.pdf", "Documents/report.pdf"}},
-		{"type folder", []FindOption{WithFindType(core.FileTypeFolder)},
+		{"type folder", FindQuery{Type: core.FileTypeFolder},
 			[]string{"Documents", "Documents/2026"}},
-		{"size at least", []FindOption{WithFindName("*"), WithFindSize(SizeCompare{Op: SizeAtLeast, Bytes: 10 << 20})},
+		{"size at least", FindQuery{Name: "*", Size: &SizeCompare{Op: SizeAtLeast, Bytes: 10 << 20}},
 			[]string{"Documents/2026/report.pdf"}},
-		{"size at most", []FindOption{WithFindName("*.txt"), WithFindSize(SizeCompare{Op: SizeAtMost, Bytes: 2 << 10})},
+		{"size at most", FindQuery{Name: "*.txt", Size: &SizeCompare{Op: SizeAtMost, Bytes: 2 << 10}},
 			[]string{"Documents/2026/notes.txt"}},
-		{"content hash", []FindOption{WithFindContentHash("shared")},
+		{"content hash", FindQuery{ContentHash: "shared"},
 			[]string{"Documents/2026/report.pdf"}},
-		{"file id", []FindOption{WithFindFileID("f2")},
+		{"file id", FindQuery{FileID: "f2"},
 			[]string{"Documents/2026/notes.txt"}},
-		{"conjunction", []FindOption{WithFindPattern("*.pdf"), WithFindSize(SizeCompare{Op: SizeAtMost, Bytes: 10 << 20})},
+		{"conjunction", FindQuery{Name: "*.pdf", Size: &SizeCompare{Op: SizeAtMost, Bytes: 10 << 20}},
 			[]string{"Documents/report.pdf"}},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := r.runFind(tc.opts...)
+			result := r.runFind(tc.query)
 			var got []string
 			for _, m := range result.Matches {
 				got = append(got, m.Path())
@@ -555,13 +572,13 @@ func TestFind_RefPredicateMatchesExactlyOneMetadataObject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ref: %v", err)
 	}
-	result := r.runFind(WithFindRef(ref))
+	result := r.runFind(FindQuery{Ref: ref})
 	if len(result.Matches) != 1 || result.Matches[0].Versions[0].Ref != ref {
 		t.Fatalf("want exactly the named object, got %s", renderMatches(result.Matches))
 	}
 
 	// A bare hash is accepted as well.
-	bare := r.runFind(WithFindRef(strings.TrimPrefix(ref, "filemeta/")))
+	bare := r.runFind(FindQuery{Ref: strings.TrimPrefix(ref, "filemeta/")})
 	if len(bare.Matches) != 1 {
 		t.Errorf("a bare hash must resolve to the same object, got %d matches", len(bare.Matches))
 	}
@@ -578,11 +595,11 @@ func TestFind_MtimePredicates(t *testing.T) {
 		file("f2", "recent.txt", "d1").withMtime(recent.Unix()),
 	)
 
-	newer := r.runFind(WithFindName("*.txt"), WithFindNewer("2023-01-01"))
+	newer := r.runFind(FindQuery{Name: "*.txt", Newer: "2023-01-01"})
 	if len(newer.Matches) != 1 || newer.Matches[0].Versions[0].Name != "recent.txt" {
 		t.Errorf("-newer selected %s", renderMatches(newer.Matches))
 	}
-	older := r.runFind(WithFindName("*.txt"), WithFindOlder("2023-01-01"))
+	older := r.runFind(FindQuery{Name: "*.txt", Older: "2023-01-01"})
 	if len(older.Matches) != 1 || older.Matches[0].Versions[0].Name != "old.txt" {
 		t.Errorf("-older selected %s", renderMatches(older.Matches))
 	}
@@ -602,7 +619,7 @@ func TestFind_SnapshotSelectors(t *testing.T) {
 	r.snapshot("2026-03-01T00:00:00Z", src, docs, file("f1", "notes.txt", "d1").withSize(30))
 
 	t.Run("explicit snapshot", func(t *testing.T) {
-		result := r.runFind(WithFindPattern("notes.txt"), WithFindSnapshots(first))
+		result := r.runFind(FindQuery{Name: "notes.txt", Snapshots: []string{first}})
 		if result.SnapshotsSearched != 1 {
 			t.Fatalf("searched %d snapshots, want 1", result.SnapshotsSearched)
 		}
@@ -613,28 +630,28 @@ func TestFind_SnapshotSelectors(t *testing.T) {
 
 	t.Run("hash prefix", func(t *testing.T) {
 		short := strings.TrimPrefix(first, "snapshot/")[:8]
-		result := r.runFind(WithFindPattern("notes.txt"), WithFindSnapshots(short))
+		result := r.runFind(FindQuery{Name: "notes.txt", Snapshots: []string{short}})
 		if result.SnapshotsSearched != 1 {
 			t.Errorf("a hash prefix must resolve to one snapshot, searched %d", result.SnapshotsSearched)
 		}
 	})
 
 	t.Run("latest", func(t *testing.T) {
-		result := r.runFind(WithFindPattern("notes.txt"), WithFindSnapshots("latest"))
+		result := r.runFind(FindQuery{Name: "notes.txt", Snapshots: []string{"latest"}})
 		if got := result.Matches[0].Versions[0].Size; got != 30 {
 			t.Errorf("size = %d, want the newest version", got)
 		}
 	})
 
 	t.Run("latest n", func(t *testing.T) {
-		result := r.runFind(WithFindPattern("notes.txt"), WithFindLatest(2))
+		result := r.runFind(FindQuery{Name: "notes.txt", Latest: 2})
 		if result.SnapshotsSearched != 2 {
 			t.Errorf("searched %d snapshots, want 2", result.SnapshotsSearched)
 		}
 	})
 
 	t.Run("since selects snapshots not files", func(t *testing.T) {
-		result := r.runFind(WithFindPattern("notes.txt"), WithFindSince("2026-02-15"))
+		result := r.runFind(FindQuery{Name: "notes.txt", Since: "2026-02-15"})
 		if result.SnapshotsSearched != 1 {
 			t.Errorf("searched %d snapshots, want 1", result.SnapshotsSearched)
 		}
@@ -642,7 +659,7 @@ func TestFind_SnapshotSelectors(t *testing.T) {
 
 	t.Run("unknown snapshot is an error", func(t *testing.T) {
 		_, err := NewFindManager(r.store, nil).Run(context.Background(),
-			WithFindPattern("notes.txt"), WithFindSnapshots("deadbeef"))
+			FindQuery{Name: "notes.txt", Snapshots: []string{"deadbeef"}})
 		if err == nil {
 			t.Fatal("want an error for an unknown snapshot")
 		}
@@ -660,13 +677,13 @@ func TestFind_SeparateLineagesAreScannedSeparately(t *testing.T) {
 	r.snapshot("2026-01-01T00:00:00Z", laptop, folder("d1", "Documents"), file("f1", "notes.txt", "d1"))
 	r.snapshot("2026-01-02T00:00:00Z", desktop, folder("d2", "Documents"), file("f2", "notes.txt", "d2"))
 
-	all := r.runFind(WithFindPattern("notes.txt"))
+	all := r.runFind(patternQuery("notes.txt"))
 	if len(all.Matches) != 2 {
 		t.Fatalf("two sources hold distinct files, want 2 matches, got %d: %s",
 			len(all.Matches), renderMatches(all.Matches))
 	}
 
-	filtered := r.runFind(WithFindPattern("notes.txt"), WithFindSource("local:./laptop"))
+	filtered := r.runFind(FindQuery{Name: "notes.txt", Source: "local:./laptop"})
 	if len(filtered.Matches) != 1 || filtered.Matches[0].FileID != "f1" {
 		t.Errorf("-source must narrow to one lineage: %s", renderMatches(filtered.Matches))
 	}
@@ -685,7 +702,7 @@ func TestFind_MaxResultsTruncatesButKeepsCountersAccurate(t *testing.T) {
 	}
 	r.snapshot("2026-01-01T00:00:00Z", src, entries...)
 
-	result := r.runFind(WithFindPattern("*.txt"), WithFindMaxResults(3))
+	result := r.runFind(FindQuery{Name: "*.txt", MaxResults: 3})
 	if len(result.Matches) != 3 {
 		t.Fatalf("want the cap honored, got %d matches", len(result.Matches))
 	}
@@ -699,20 +716,20 @@ func TestFind_MaxResultsTruncatesButKeepsCountersAccurate(t *testing.T) {
 
 func TestFind_EmptyQueryIsRejected(t *testing.T) {
 	r := newFindRepo(t)
-	if _, err := NewFindManager(r.store, nil).Run(context.Background()); err == nil {
+	if _, err := NewFindManager(r.store, nil).Run(context.Background(), FindQuery{}); err == nil {
 		t.Fatal("a query with no predicate must be refused rather than dumping the repository")
 	}
 }
 
 func TestFind_InvalidPatternsFailBeforeScanning(t *testing.T) {
 	r := newFindRepo(t)
-	for _, opt := range []FindOption{
-		WithFindName("[unterminated"),
-		WithFindRegex("("),
-		WithFindType("symlink"),
-		WithFindNewer("not-a-time"),
+	for _, q := range []FindQuery{
+		{Name: "[unterminated"},
+		{Regex: "("},
+		{Type: "symlink"},
+		{Newer: "not-a-time"},
 	} {
-		if _, err := NewFindManager(r.store, nil).Run(context.Background(), opt); err == nil {
+		if _, err := NewFindManager(r.store, nil).Run(context.Background(), q); err == nil {
 			t.Error("want a compile error before the scan starts")
 		}
 	}
@@ -722,7 +739,7 @@ func TestFind_NoMatchesIsNotAnError(t *testing.T) {
 	r := newFindRepo(t)
 	r.snapshot("2026-01-01T00:00:00Z", localSource("./docs"), folder("d1", "Documents"))
 
-	result := r.runFind(WithFindPattern("nothing-here.txt"))
+	result := r.runFind(patternQuery("nothing-here.txt"))
 	if len(result.Matches) != 0 {
 		t.Errorf("want no matches, got %d", len(result.Matches))
 	}
@@ -744,7 +761,7 @@ func TestFind_MissingMetadataObjectIsAnError(t *testing.T) {
 			break
 		}
 	}
-	if _, err := NewFindManager(r.store, nil).Run(context.Background(), WithFindPattern("*.txt")); err == nil {
+	if _, err := NewFindManager(r.store, nil).Run(context.Background(), patternQuery("*.txt")); err == nil {
 		t.Fatal("want an error when a referenced filemeta cannot be read")
 	}
 }
@@ -774,11 +791,11 @@ func TestFind_DeltaScanReadsFarFewerObjectsThanFullScan(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	delta, err := NewFindManager(r.store, nil).Run(ctx, WithFindPattern("*.txt"))
+	delta, err := NewFindManager(r.store, nil).Run(ctx, patternQuery("*.txt"))
 	if err != nil {
 		t.Fatalf("delta: %v", err)
 	}
-	full, err := NewFindManager(r.store, nil).Run(ctx, WithFindPattern("*.txt"), WithFindNoDelta())
+	full, err := NewFindManager(r.store, nil).Run(ctx, withNoDelta(patternQuery("*.txt")))
 	if err != nil {
 		t.Fatalf("full: %v", err)
 	}

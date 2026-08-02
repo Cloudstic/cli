@@ -25,7 +25,8 @@ type stubClient struct {
 	lsErr           error
 	findResult      *cloudstic.FindResult
 	findErr         error
-	findOpts        []cloudstic.FindOption
+	findQuery       cloudstic.FindQuery
+	findCalled      bool
 	pruneResult     *cloudstic.PruneResult
 	pruneErr        error
 	forgetResult    *cloudstic.ForgetResult
@@ -66,8 +67,8 @@ func (s *stubClient) LsSnapshot(_ context.Context, _ string, _ ...cloudstic.LsSn
 	return s.lsResult, s.lsErr
 }
 
-func (s *stubClient) Find(_ context.Context, opts ...cloudstic.FindOption) (*cloudstic.FindResult, error) {
-	s.findOpts = opts
+func (s *stubClient) Find(_ context.Context, q cloudstic.FindQuery) (*cloudstic.FindResult, error) {
+	s.findQuery, s.findCalled = q, true
 	return s.findResult, s.findErr
 }
 

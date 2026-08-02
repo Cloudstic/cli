@@ -198,119 +198,20 @@ func (r *FindResult) TotalSnapshots() int {
 // Options
 // ---------------------------------------------------------------------------
 
-// FindOption configures a find operation.
-type FindOption func(*findConfig)
-
-type findConfig struct {
-	query FindQuery
-}
-
-// WithFindPattern applies the positional pattern, routing it by shape: a
-// pattern containing a separator constrains the full path, one without it
-// constrains the basename. This split is what keeps the common case cheap —
-// a basename is on the metadata object already, a path has to be reconstructed.
-func WithFindPattern(pattern string) FindOption {
-	return func(c *findConfig) {
-		if pathPatternLooksLikePath(pattern) {
-			c.query.Path = pattern
-			return
-		}
-		c.query.Name = pattern
+// SetPattern applies a positional pattern, routing it by shape: a pattern
+// containing a separator constrains the full path, one without it constrains
+// the basename. This split is what keeps the common case cheap — a basename is
+// on the metadata object already, a path has to be reconstructed.
+//
+// It is a method rather than a plain field because that routing is a decision,
+// not a value: a caller who assigned Path directly would silently make every
+// basename search pay for path reconstruction.
+func (q *FindQuery) SetPattern(pattern string) {
+	if pathPatternLooksLikePath(pattern) {
+		q.Path = pattern
+		return
 	}
-}
-
-func WithFindName(pattern string) FindOption {
-	return func(c *findConfig) { c.query.Name = pattern }
-}
-
-func WithFindPath(pattern string) FindOption {
-	return func(c *findConfig) { c.query.Path = pattern }
-}
-
-func WithFindRegex(expr string) FindOption {
-	return func(c *findConfig) { c.query.Regex = expr }
-}
-
-func WithFindIgnoreCase() FindOption {
-	return func(c *findConfig) { c.query.IgnoreCase = true }
-}
-
-func WithFindFileID(id string) FindOption {
-	return func(c *findConfig) { c.query.FileID = id }
-}
-
-func WithFindContentHash(hash string) FindOption {
-	return func(c *findConfig) { c.query.ContentHash = hash }
-}
-
-func WithFindRef(ref string) FindOption {
-	return func(c *findConfig) { c.query.Ref = ref }
-}
-
-func WithFindType(t core.FileType) FindOption {
-	return func(c *findConfig) { c.query.Type = t }
-}
-
-func WithFindSize(cmp SizeCompare) FindOption {
-	return func(c *findConfig) { c.query.Size = &cmp }
-}
-
-// WithFindNewer and WithFindOlder filter by a file's Mtime. They accept RFC3339
-// or a duration such as "7d", which is read relative to now.
-func WithFindNewer(spec string) FindOption {
-	return func(c *findConfig) { c.query.Newer = spec }
-}
-
-func WithFindOlder(spec string) FindOption {
-	return func(c *findConfig) { c.query.Older = spec }
-}
-
-// WithFindSnapshots restricts the search to the named snapshots. Refs may be
-// full ("snapshot/<hash>"), bare hashes, unambiguous prefixes, or "latest".
-func WithFindSnapshots(refs ...string) FindOption {
-	return func(c *findConfig) { c.query.Snapshots = append(c.query.Snapshots, refs...) }
-}
-
-func WithFindSource(uri string) FindOption {
-	return func(c *findConfig) { c.query.Source = uri }
-}
-
-func WithFindTags(tags ...string) FindOption {
-	return func(c *findConfig) { c.query.Tags = append(c.query.Tags, tags...) }
-}
-
-// WithFindLatest restricts the search to the n newest selected snapshots.
-func WithFindLatest(n int) FindOption {
-	return func(c *findConfig) { c.query.Latest = n }
-}
-
-// WithFindSince and WithFindUntil filter by a snapshot's creation time, not by
-// any file's Mtime — that is what WithFindNewer and WithFindOlder do.
-func WithFindSince(spec string) FindOption {
-	return func(c *findConfig) { c.query.Since = spec }
-}
-
-func WithFindUntil(spec string) FindOption {
-	return func(c *findConfig) { c.query.Until = spec }
-}
-
-// WithFindGroupByContent regroups the same matches by content hash instead of
-// by file identity, which is how duplicate content is found. It changes
-// grouping only, never which entries matched.
-func WithFindGroupByContent() FindOption {
-	return func(c *findConfig) { c.query.GroupByContent = true }
-}
-
-func WithFindMaxResults(n int) FindOption {
-	return func(c *findConfig) { c.query.MaxResults = n }
-}
-
-// WithFindNoDelta forces the straightforward per-snapshot walk instead of the
-// delta scan. It exists so a suspected delta-scan bug can be confirmed against
-// an implementation with nowhere to hide, and so the two can be compared in
-// tests.
-func WithFindNoDelta() FindOption {
-	return func(c *findConfig) { c.query.NoDelta = true }
+	q.Name = pattern
 }
 
 // ---------------------------------------------------------------------------
@@ -336,29 +237,18 @@ func NewFindManager(s store.ObjectStore, logWriter io.Writer) *FindManager {
 	return &FindManager{store: s, tree: hamt.NewTree(s), log: SnapshotLogger(logWriter)}
 }
 
-// QueryFromOptions resolves a set of options into the query they describe,
-// defaults filled in. Run uses it; callers that want to show or record what a
-// query will do before running it can too.
-func QueryFromOptions(opts ...FindOption) FindQuery {
-	return newFindConfig(opts...).query
-}
-
-func newFindConfig(opts ...FindOption) findConfig {
-	cfg := findConfig{query: FindQuery{MaxResults: defaultFindMaxResults}}
-	for _, opt := range opts {
-		opt(&cfg)
-	}
-	if cfg.query.MaxResults <= 0 {
-		cfg.query.MaxResults = defaultFindMaxResults
-	}
-	return cfg
-}
-
 // Run executes the query.
-func (fm *FindManager) Run(ctx context.Context, opts ...FindOption) (*FindResult, error) {
-	cfg := newFindConfig(opts...)
+//
+// A zero FindQuery is a valid search — every file in every snapshot, capped at
+// the default result limit. MaxResults is normalized here rather than being a
+// required field so that filling in only the predicates you care about behaves
+// the way the rest of this module's configuration values do.
+func (fm *FindManager) Run(ctx context.Context, q FindQuery) (*FindResult, error) {
+	if q.MaxResults <= 0 {
+		q.MaxResults = defaultFindMaxResults
+	}
 
-	pred, err := compileFindPredicate(cfg.query)
+	pred, err := compileFindPredicate(q)
 	if err != nil {
 		return nil, err
 	}
@@ -369,29 +259,29 @@ func (fm *FindManager) Run(ctx context.Context, opts ...FindOption) (*FindResult
 	if err != nil {
 		return nil, fmt.Errorf("load snapshot catalog: %w", err)
 	}
-	selected, err := selectFindSnapshots(fm.store, catalog, cfg.query)
+	selected, err := selectFindSnapshots(fm.store, catalog, q)
 	if err != nil {
 		return nil, err
 	}
 
 	result := &FindResult{
-		Query:             cfg.query,
+		Query:             q,
 		SnapshotsSearched: len(selected),
 		GroupedBy:         "file",
 	}
-	if cfg.query.GroupByContent {
+	if q.GroupByContent {
 		result.GroupedBy = "content"
 	}
 	if w := pred.prefilterWarning(); w != "" {
 		result.Warnings = append(result.Warnings, w)
 	}
 
-	collector := newFindCollector(cfg.query.GroupByContent, cfg.query.MaxResults)
+	collector := newFindCollector(q.GroupByContent, q.MaxResults)
 	scanner := newFindScanner(fm.store, fm.tree, pred, collector, fm.log)
 
 	for _, lineage := range groupFindLineages(selected) {
 		fm.log.Debugf("Scanning %d snapshot(s) for %s", len(lineage.snapshots), lineage.key)
-		if err := scanner.scanLineage(ctx, lineage, cfg.query.NoDelta); err != nil {
+		if err := scanner.scanLineage(ctx, lineage, q.NoDelta); err != nil {
 			return nil, err
 		}
 	}

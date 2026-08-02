@@ -37,7 +37,6 @@ func (c *Client) LsSnapshot(ctx context.Context, snapshotID string, opts ...LsSn
 // Find
 // ---------------------------------------------------------------------------
 
-type FindOption = engine.FindOption
 type FindQuery = engine.FindQuery
 type FindResult = engine.FindResult
 type FileMatch = engine.FileMatch
@@ -53,28 +52,6 @@ const (
 )
 
 var (
-	WithFindPattern        = engine.WithFindPattern
-	WithFindName           = engine.WithFindName
-	WithFindPath           = engine.WithFindPath
-	WithFindRegex          = engine.WithFindRegex
-	WithFindIgnoreCase     = engine.WithFindIgnoreCase
-	WithFindFileID         = engine.WithFindFileID
-	WithFindContentHash    = engine.WithFindContentHash
-	WithFindRef            = engine.WithFindRef
-	WithFindType           = engine.WithFindType
-	WithFindSize           = engine.WithFindSize
-	WithFindNewer          = engine.WithFindNewer
-	WithFindOlder          = engine.WithFindOlder
-	WithFindSnapshots      = engine.WithFindSnapshots
-	WithFindSource         = engine.WithFindSource
-	WithFindTags           = engine.WithFindTags
-	WithFindLatest         = engine.WithFindLatest
-	WithFindSince          = engine.WithFindSince
-	WithFindUntil          = engine.WithFindUntil
-	WithFindGroupByContent = engine.WithFindGroupByContent
-	WithFindMaxResults     = engine.WithFindMaxResults
-	WithFindNoDelta        = engine.WithFindNoDelta
-
 	ParseSizeCompare = engine.ParseSizeCompare
 	ParseFindTime    = engine.ParseFindTime
 )
@@ -88,9 +65,16 @@ var (
 //
 // It is a pure read path — no lock is taken, nothing is written, and the
 // repository format is not stamped.
-func (c *Client) Find(ctx context.Context, opts ...FindOption) (*FindResult, error) {
+//
+// The query is a value rather than a list of options because it already was
+// one: FindQuery is JSON-tagged and grouped into predicates, snapshot selectors
+// and presentation, so twenty-one option constructors existed only to set its
+// fields one at a time. Building it directly also makes a query serializable —
+// storable, loggable, sendable — which a closure over a private struct is not.
+// Use FindQuery.SetPattern for a positional pattern, which routes by shape.
+func (c *Client) Find(ctx context.Context, q FindQuery) (*FindResult, error) {
 	mgr := engine.NewFindManager(c.store, c.logWriter)
-	return mgr.Run(ctx, opts...)
+	return mgr.Run(ctx, q)
 }
 
 // ---------------------------------------------------------------------------

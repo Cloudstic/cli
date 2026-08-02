@@ -86,7 +86,7 @@ func declareFindArgs(g *globalFlags) (*findArgs, commandInput) {
 }
 
 func runFind(r *runner, ctx context.Context, a *findArgs, cfg clientConfig) int {
-	opts, err := buildFindOpts(a)
+	q, err := buildFindQuery(a)
 	if err != nil {
 		if !a.jsonEnabled() {
 			r.printUsage(r.errOut)
@@ -97,7 +97,7 @@ func runFind(r *runner, ctx context.Context, a *findArgs, cfg clientConfig) int 
 		return r.fail("Failed to init store: %v", err)
 	}
 
-	result, err := r.client.Find(ctx, opts...)
+	result, err := r.client.Find(ctx, q)
 	if err != nil {
 		return r.fail("Find failed: %v", err)
 	}
@@ -114,86 +114,59 @@ func runFind(r *runner, ctx context.Context, a *findArgs, cfg clientConfig) int 
 	return 0
 }
 
-// buildFindOpts turns the parsed flags into engine options, doing the semantic
-// validation and derivation that depends on more than one value.
-func buildFindOpts(a *findArgs) ([]cloudstic.FindOption, error) {
-	var opts []cloudstic.FindOption
+// buildFindQuery turns the parsed flags into the query they describe, doing the
+// semantic validation and derivation that depends on more than one value.
+//
+// Most fields are assigned unconditionally: a zero field already means "not
+// constrained", so guarding each one would only restate that. What is left is
+// the parts that are decisions — the mutually exclusive pattern shorthand, and
+// the two values that have to be parsed before they can be a constraint.
+func buildFindQuery(a *findArgs) (cloudstic.FindQuery, error) {
+	var q cloudstic.FindQuery
 
+	if a.pattern != "" && (a.name != "" || a.path != "") {
+		return q, fmt.Errorf("the positional pattern is shorthand for -name or -path; give one or the other")
+	}
+
+	q.Name = a.name
+	q.Path = a.path
+	q.Regex = a.regex
+	q.IgnoreCase = a.ignoreCase
+	q.FileID = a.fileID
+	q.ContentHash = a.contentHash
+	q.Ref = a.ref
+	q.Newer = a.newer
+	q.Older = a.older
+	q.Snapshots = a.snapshots
+	q.Source = a.source
+	q.Tags = a.tags
+	q.Latest = a.latest
+	q.Since = a.since
+	q.Until = a.until
+	q.GroupByContent = a.byContent
+	q.MaxResults = a.maxResults
+	q.NoDelta = a.noDelta
+
+	// Routes by shape, so it must run after Name and Path are assigned.
 	if a.pattern != "" {
-		if a.name != "" || a.path != "" {
-			return nil, fmt.Errorf("the positional pattern is shorthand for -name or -path; give one or the other")
-		}
-		opts = append(opts, cloudstic.WithFindPattern(a.pattern))
+		q.SetPattern(a.pattern)
 	}
-	if a.name != "" {
-		opts = append(opts, cloudstic.WithFindName(a.name))
-	}
-	if a.path != "" {
-		opts = append(opts, cloudstic.WithFindPath(a.path))
-	}
-	if a.regex != "" {
-		opts = append(opts, cloudstic.WithFindRegex(a.regex))
-	}
-	if a.ignoreCase {
-		opts = append(opts, cloudstic.WithFindIgnoreCase())
-	}
-	if a.fileID != "" {
-		opts = append(opts, cloudstic.WithFindFileID(a.fileID))
-	}
-	if a.contentHash != "" {
-		opts = append(opts, cloudstic.WithFindContentHash(a.contentHash))
-	}
-	if a.ref != "" {
-		opts = append(opts, cloudstic.WithFindRef(a.ref))
-	}
+
 	if a.fileType != "" {
 		t, err := parseFindType(a.fileType)
 		if err != nil {
-			return nil, err
+			return q, err
 		}
-		opts = append(opts, cloudstic.WithFindType(t))
+		q.Type = t
 	}
 	if a.size != "" {
 		cmp, err := cloudstic.ParseSizeCompare(a.size)
 		if err != nil {
-			return nil, fmt.Errorf("-size: %w", err)
+			return q, fmt.Errorf("-size: %w", err)
 		}
-		opts = append(opts, cloudstic.WithFindSize(cmp))
+		q.Size = &cmp
 	}
-	if a.newer != "" {
-		opts = append(opts, cloudstic.WithFindNewer(a.newer))
-	}
-	if a.older != "" {
-		opts = append(opts, cloudstic.WithFindOlder(a.older))
-	}
-	if len(a.snapshots) > 0 {
-		opts = append(opts, cloudstic.WithFindSnapshots(a.snapshots...))
-	}
-	if a.source != "" {
-		opts = append(opts, cloudstic.WithFindSource(a.source))
-	}
-	if len(a.tags) > 0 {
-		opts = append(opts, cloudstic.WithFindTags(a.tags...))
-	}
-	if a.latest > 0 {
-		opts = append(opts, cloudstic.WithFindLatest(a.latest))
-	}
-	if a.since != "" {
-		opts = append(opts, cloudstic.WithFindSince(a.since))
-	}
-	if a.until != "" {
-		opts = append(opts, cloudstic.WithFindUntil(a.until))
-	}
-	if a.byContent {
-		opts = append(opts, cloudstic.WithFindGroupByContent())
-	}
-	if a.maxResults > 0 {
-		opts = append(opts, cloudstic.WithFindMaxResults(a.maxResults))
-	}
-	if a.noDelta {
-		opts = append(opts, cloudstic.WithFindNoDelta())
-	}
-	return opts, nil
+	return q, nil
 }
 
 // parseFindType accepts find(1)'s single-letter type vocabulary as well as the

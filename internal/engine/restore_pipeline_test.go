@@ -18,9 +18,16 @@ import (
 // blockingStore makes every Get take a fixed amount of time, which is what a
 // remote backend's round trip looks like to the restore path, and records how
 // many Gets are outstanding at once.
+//
+// A Get whose key hold selects does not return until gate is released. That
+// lets a test hold a known number of fetches in flight for as long as it
+// needs, rather than infer overlap from the order in which a loaded machine
+// happened to finish two independent sleeps.
 type blockingStore struct {
 	store.ObjectStore
 	delay    time.Duration
+	hold     func(key string) bool
+	gate     *fetchGate
 	inFlight atomic.Int64
 	peak     atomic.Int64
 }
@@ -34,9 +41,52 @@ func (s *blockingStore) Get(ctx context.Context, key string) ([]byte, error) {
 		}
 	}
 	defer s.inFlight.Add(-1)
-	time.Sleep(s.delay)
+
+	if s.hold != nil && s.hold(key) {
+		if err := s.gate.wait(ctx); err != nil {
+			return nil, err
+		}
+	} else if s.delay > 0 {
+		time.Sleep(s.delay)
+	}
 	return s.ObjectStore.Get(ctx, key)
 }
+
+// fetchGate holds blockingStore fetches until something releases it.
+// Releasing is idempotent, because both the writer that is waiting for the
+// held fetches and the watchdog that gives up on them may call it.
+type fetchGate struct {
+	ch   chan struct{}
+	once sync.Once
+}
+
+func newFetchGate() *fetchGate { return &fetchGate{ch: make(chan struct{})} }
+
+func (g *fetchGate) release() { g.once.Do(func() { close(g.ch) }) }
+
+func (g *fetchGate) released() bool {
+	select {
+	case <-g.ch:
+		return true
+	default:
+		return false
+	}
+}
+
+func (g *fetchGate) wait(ctx context.Context) error {
+	select {
+	case <-g.ch:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// handshakeTimeout bounds the wait for the pipeline to reach the state under
+// test. It only has to outlast a scheduling hiccup: a pipelined writeChunks
+// satisfies the handshake on its first write, and an implementation that
+// cannot satisfy it will not start to no matter how long the test waits.
+const handshakeTimeout = 5 * time.Second
 
 // TestWriteChunks_KeepsFetchesInFlightWhileWriting is the regression guard for
 // the batch barrier this replaced. The old shape — fetch N chunks, wait for
@@ -60,52 +110,91 @@ func TestWriteChunks_KeepsFetchesInFlightWhileWriting(t *testing.T) {
 		want.Write(data)
 	}
 
-	bs := &blockingStore{ObjectStore: inner, delay: 2 * time.Millisecond}
-	rm := NewRestoreManager(bs, ui.NewNoOpReporter())
-
 	// The discriminating measurement is what the store is doing *during* a
 	// write, not the peak. A batched implementation also reaches a high peak —
 	// it fires a whole batch at once — but then blocks on g.Wait() and writes
-	// with nothing outstanding, so every write observes zero fetches in
-	// flight. A pipeline keeps the next chunks coming while this one is
-	// written, so writes observe a non-zero count.
-	slow := &slowWriter{delay: time.Millisecond, inFlight: &bs.inFlight}
-	if err := rm.writeChunks(ctx, slow, refs, 1024); err != nil {
+	// with nothing outstanding.
+	//
+	// So only the first chunk's fetch is allowed to complete on its own; every
+	// other fetch hangs on the gate. A pipeline writes chunk 0 in that state,
+	// with the rest of its window still outstanding, which is exactly the
+	// property under test. A batched implementation cannot write anything
+	// until its whole batch has landed, so it never reaches Write at all and
+	// the watchdog below has to open the gate on its behalf.
+	bs := &blockingStore{
+		ObjectStore: inner,
+		gate:        newFetchGate(),
+		hold:        func(key string) bool { return key != refs[0] },
+	}
+	rm := NewRestoreManager(bs, ui.NewNoOpReporter())
+
+	const wantInFlight = 2
+	w := &handshakeWriter{inFlight: &bs.inFlight, gate: bs.gate, want: wantInFlight}
+
+	// Without this, a regression to fetch-all-then-write-all would hang the
+	// test instead of failing it: every held fetch is waiting for a gate that
+	// only the first Write opens, and that Write never comes.
+	watchdog := time.AfterFunc(handshakeTimeout, bs.gate.release)
+	defer watchdog.Stop()
+
+	if err := rm.writeChunks(ctx, w, refs, 1024); err != nil {
 		t.Fatalf("writeChunks: %v", err)
 	}
 
-	if !bytes.Equal(slow.buf.Bytes(), want.Bytes()) {
+	if !bytes.Equal(w.buf.Bytes(), want.Bytes()) {
 		t.Fatal("pipelined writeChunks did not reconstruct the original byte sequence")
 	}
 	if peak := bs.peak.Load(); peak < 2 {
 		t.Errorf("chunk fetches never overlapped (peak in-flight = %d)", peak)
 	}
-
-	// The final chunks legitimately drain the window, so require a clear
-	// majority rather than every write. A batch barrier scores exactly 0.
-	overlapped, total := slow.overlapped, slow.writes
-	if overlapped*2 < total {
-		t.Errorf("only %d of %d writes overlapped an in-flight fetch; the chunk pipeline has regressed to fetch-all-then-write-all", overlapped, total)
+	if w.observed < wantInFlight {
+		t.Errorf("only %d fetches were in flight when the first chunk was written, want at least %d; the chunk pipeline has regressed to fetch-all-then-write-all", w.observed, wantInFlight)
 	}
 }
 
-// slowWriter takes measurable time per Write and samples how many store
-// fetches were outstanding while each one ran.
-type slowWriter struct {
-	delay      time.Duration
-	inFlight   *atomic.Int64
-	buf        bytes.Buffer
-	writes     int
-	overlapped int
+// handshakeWriter blocks its first Write until it sees want store fetches
+// outstanding, then releases them and records what it saw. Waiting for the
+// condition is what makes the measurement independent of scheduling: sampling
+// it, as this test used to, reports whichever way two unrelated sleeps
+// happened to interleave — on a loaded machine every fetch's sleep can elapse
+// before the writer is scheduled at all, draining the window the test is
+// there to observe.
+type handshakeWriter struct {
+	inFlight *atomic.Int64
+	gate     *fetchGate
+	want     int64
+
+	// Written from Write, which writeChunks calls on its caller's goroutine,
+	// so the test reads these after it returns without synchronisation.
+	buf      bytes.Buffer
+	observed int64
+
+	first sync.Once
 }
 
-func (w *slowWriter) Write(p []byte) (int, error) {
-	if w.inFlight.Load() > 0 {
-		w.overlapped++
-	}
-	w.writes++
-	time.Sleep(w.delay)
+func (w *handshakeWriter) Write(p []byte) (int, error) {
+	w.first.Do(func() {
+		w.observed = w.awaitFetches()
+		w.gate.release()
+	})
 	return w.buf.Write(p)
+}
+
+// awaitFetches waits for at least w.want fetches to be outstanding and returns
+// the count it saw. It gives up once the gate has been released, since the
+// fetches it is waiting for are then free to finish and any count it reports
+// would be meaningless — that is the path a batched implementation takes, and
+// what makes the reported count fail the assertion above.
+func (w *handshakeWriter) awaitFetches() int64 {
+	for {
+		if n := w.inFlight.Load(); n >= w.want {
+			return n
+		}
+		if w.gate.released() {
+			return w.inFlight.Load()
+		}
+		time.Sleep(200 * time.Microsecond)
+	}
 }
 
 // TestRunWithWriter_RestoresFilesConcurrently guards the other half: files

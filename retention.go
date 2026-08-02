@@ -38,8 +38,8 @@ type ForgetOption = engine.ForgetOption
 type ForgetResult = engine.ForgetResult
 
 var (
-	WithPrune         = engine.WithPrune
-	WithDryRun        = engine.WithDryRun
+	WithForgetPrune   = engine.WithForgetPrune
+	WithForgetDryRun  = engine.WithForgetDryRun
 	WithKeepLast      = engine.WithKeepLast
 	WithKeepHourly    = engine.WithKeepHourly
 	WithKeepDaily     = engine.WithKeepDaily

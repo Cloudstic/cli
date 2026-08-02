@@ -1,8 +1,8 @@
 # RFC 0022: Public Go API Boundaries
 
-- **Status:** §1–§9 implemented, except the naming rule and Check's snapshot
-  argument in §9. Outstanding: extending the external-module fixture to
-  *consume* the library, not only implement its contracts (see Testing strategy)
+- **Status:** §1–§9 implemented. Outstanding: extending the external-module
+  fixture to *consume* the library, not only implement its contracts (see
+  Testing strategy)
 - **Date:** 2026-07-28
 - **Affects:** `client.go`, `pkg/source`, `pkg/store`, `pkg/crypto`, `pkg/config`,
   `pkg/open`, `internal/logger`, `internal/storelayer`, `cmd/cloudstic`, `docs/`
@@ -627,6 +627,28 @@ its fields one at a time, and a query expressed as closures over a private struc
 cannot be stored, logged or sent. `Find` takes the value. The one option carrying
 a decision rather than a value — routing a positional pattern to the basename or
 the full path by shape — survives as `FindQuery.SetPattern`.
+
+**Two of the four inconsistencies did not survive inspection**, and the review
+is more useful for recording that than for the count.
+
+*The snapshot argument is not misplaced.* `Restore`, `LsSnapshot`, `Forget` and
+`Diff` take a snapshot positionally; `Check` and `Find` take one as an option,
+which looked like the same input in two places. It is not. For the first group
+the snapshot is the *subject* and is required — `Forget` errors without one. For
+the second it is an optional *narrowing filter* with a meaningful default:
+`Check` verifies every snapshot unless told otherwise. Moving it positionally
+would introduce an empty string meaning "all", which is worse than an option that
+is simply absent. The rule is: a required subject is positional, an optional
+filter is an option — and the surface already follows it.
+
+*Prefixing every option would make it worse, not better.* The defect was never
+"some names lack a prefix"; it was that a bare name was claimed by one operation
+while others shared the concept. `WithDryRun` belonged to forget while backup,
+restore and prune each had a prefixed one, and `WithPrune` — a `ForgetOption` —
+sat in retention.go beside genuine `PruneOption`s. Those two are renamed.
+`WithKeepDaily`, `WithFilterTag`, `WithReadData` and `WithTags` are unique to one
+operation, and `WithForgetKeepDaily` would be longer without being clearer. The
+rule is: prefix a concept more than one operation has, everywhere it appears.
 
 **What this costs.** These remove exported symbols from a released v1. The
 alternative was to keep an incoherent surface permanently, since the point of

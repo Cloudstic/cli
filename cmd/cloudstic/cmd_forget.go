@@ -159,10 +159,10 @@ func runForget(r *runner, ctx context.Context, a *forgetArgs, cfg clientConfig) 
 func execForgetSingle(r *runner, ctx context.Context, a *forgetArgs) int {
 	var forgetOpts []cloudstic.ForgetOption
 	if a.prune {
-		forgetOpts = append(forgetOpts, cloudstic.WithPrune())
+		forgetOpts = append(forgetOpts, cloudstic.WithForgetPrune())
 	}
 	if a.dryRun {
-		forgetOpts = append(forgetOpts, cloudstic.WithDryRun())
+		forgetOpts = append(forgetOpts, cloudstic.WithForgetDryRun())
 	}
 	result, err := r.client.Forget(ctx, a.snapshotID, forgetOpts...)
 	if err != nil {
@@ -202,10 +202,10 @@ func execForgetPolicy(r *runner, ctx context.Context, a *forgetArgs) int {
 func buildForgetPolicyOpts(a *forgetArgs) []cloudstic.ForgetOption {
 	var opts []cloudstic.ForgetOption
 	if a.prune {
-		opts = append(opts, cloudstic.WithPrune())
+		opts = append(opts, cloudstic.WithForgetPrune())
 	}
 	if a.dryRun {
-		opts = append(opts, cloudstic.WithDryRun())
+		opts = append(opts, cloudstic.WithForgetDryRun())
 	}
 	if a.keepLast > 0 {
 		opts = append(opts, cloudstic.WithKeepLast(a.keepLast))

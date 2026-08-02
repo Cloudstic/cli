@@ -27,13 +27,17 @@ type forgetConfig struct {
 	filter     snapshotFilter
 }
 
-// WithPrune runs a prune pass after forgetting snapshots.
-func WithPrune() ForgetOption {
+// WithForgetPrune runs a prune pass after forgetting snapshots.
+func WithForgetPrune() ForgetOption {
 	return func(cfg *forgetConfig) { cfg.prune = true }
 }
 
-// WithDryRun shows what would be removed without actually removing anything.
-func WithDryRun() ForgetOption {
+// WithForgetDryRun shows what would be removed without removing anything.
+//
+// Named for its operation because four operations have a dry run and this one
+// used to claim the bare WithDryRun, so a caller reaching for backup's or
+// prune's found forget's and got a compile error at best.
+func WithForgetDryRun() ForgetOption {
 	return func(cfg *forgetConfig) { cfg.dryRun = true }
 }
 

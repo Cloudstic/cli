@@ -172,7 +172,7 @@ func TestForgetManager_DryRunRemovesNothing(t *testing.T) {
 	_ = s.Put(ctx, "index/latest", createIndex(snapRef, 1))
 
 	fm := NewForgetManager(s, ui.NewNoOpReporter(), nil)
-	result, err := fm.Run(ctx, snapRef, WithDryRun())
+	result, err := fm.Run(ctx, snapRef, WithForgetDryRun())
 	if err != nil {
 		t.Fatalf("dry run: %v", err)
 	}

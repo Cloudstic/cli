@@ -500,7 +500,7 @@ func TestDryRunsDoNotStampTheFormat(t *testing.T) {
 	})
 
 	t.Run("forget", func(t *testing.T) {
-		if _, err := client.Forget(ctx, "latest", WithDryRun()); err != nil {
+		if _, err := client.Forget(ctx, "latest", WithForgetDryRun()); err != nil {
 			t.Fatalf("forget dry run: %v", err)
 		}
 		assertFormatVersion(t, base, 1)

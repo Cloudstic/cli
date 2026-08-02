@@ -1,8 +1,8 @@
 # RFC 0022: Public Go API Boundaries
 
-- **Status:** §1–§8 implemented. Outstanding: extending the external-module
-  fixture to *consume* the library, not only implement its contracts (see
-  Testing strategy)
+- **Status:** §1–§9 implemented, except the naming rule and Check's snapshot
+  argument in §9. Outstanding: extending the external-module fixture to
+  *consume* the library, not only implement its contracts (see Testing strategy)
 - **Date:** 2026-07-28
 - **Affects:** `client.go`, `pkg/source`, `pkg/store`, `pkg/crypto`, `pkg/config`,
   `pkg/open`, `internal/logger`, `internal/storelayer`, `cmd/cloudstic`, `docs/`
@@ -579,6 +579,60 @@ apply here: that rejection was about *`DebugStore` wrapping* — the
 `NewClient`, and `init`/`key` operate on a raw store with no Client at all. A
 logger sink has neither property. `DebugStore` construction stays exactly where
 §4a put it.
+
+### 9. The operation surface: one vocabulary for three channels
+
+Sections 1–8 made the library reachable. Reviewing what a caller then *reaches*
+found the option surface inconsistent in four ways, all of which are the same
+mistake: a cross-cutting concern expressed once per operation.
+
+**Verbosity was nine options.** `WithVerbose`, `WithCheckVerbose`,
+`WithDiffVerbose`, `WithFindVerbose`, `WithLsVerbose`, `WithForgetVerbose`,
+`WithPruneVerbose`, `WithListVerbose`, `WithRestoreVerbose` — one per operation,
+each setting a `verbose bool` that gated a log call. That put a *presentation*
+decision in the producer: the reporter is injected by the caller, who is the only
+one who knows how much they want shown, yet what to emit was decided nine layers
+down. It also meant formatting strings that would be discarded, once per object
+verified.
+
+Verbosity is now a level on the reporter (`ui.Detail`, `Phase.Logf`). The engine
+reports what happens; the reporter decides what is worth showing.
+
+**Three output channels, and the rule between them.** The client takes both a
+`Reporter` and a logger, which looks redundant and is not:
+
+- The **reporter** carries *progress*: a bounded unit of work with a count, which
+  a caller can render as a bar. Only operations that have phases use it.
+- The **logger** carries *diagnostics*: unstructured lines from layers that have
+  no phases at all — the pack store, the HAMT, the sources.
+- An operation with no phases uses the logger for both. `list`, `ls`, `diff` and
+  `find` are queries, not long-running work; their detail is diagnostics.
+
+That rule was implicit, and the cost of leaving it so was immediate: moving
+verbosity onto the reporter silently broke `list -verbose`, because the CLI wired
+the logger only under `-debug`. The two share a writer so their lines interleave
+above the progress bar, but they must not share a switch — `-debug` attaches a
+store decorator that logs every operation, which asking for progress detail must
+not drag in.
+
+**Debug is not another detail level**, for the same reason. Verbosity is a
+runtime filter the reporter applies per message; store tracing is a *decorator in
+the store chain*, chosen when the chain is built. Calling it a level would promise
+a runtime switch the architecture cannot honour.
+
+**`find` took twenty-one options over a struct that already existed.**
+`FindQuery` was already exported, already JSON-tagged, already grouped into
+predicates, snapshot selectors and presentation. The options existed only to set
+its fields one at a time, and a query expressed as closures over a private struct
+cannot be stored, logged or sent. `Find` takes the value. The one option carrying
+a decision rather than a value — routing a positional pattern to the basename or
+the full path by shape — survives as `FindQuery.SetPattern`.
+
+**What this costs.** These remove exported symbols from a released v1. The
+alternative was to keep an incoherent surface permanently, since the point of
+this RFC is that the library is only now becoming something to consume: shipping
+a stable-but-wrong API ahead of its first real consumer would preserve the
+mistake rather than the compatibility.
 
 ## Compatibility
 

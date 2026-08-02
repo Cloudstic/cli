@@ -15,7 +15,7 @@ import (
 // Argument handling
 // ---------------------------------------------------------------------------
 
-func TestBuildFindOpts_PositionalPatternRoutesByShape(t *testing.T) {
+func TestBuildFindQuery_PositionalPatternRoutesByShape(t *testing.T) {
 	// The positional is shorthand: a pattern with a separator constrains the
 	// full path, one without it constrains the basename.
 	for _, tc := range []struct {
@@ -34,14 +34,14 @@ func TestBuildFindOpts_PositionalPatternRoutesByShape(t *testing.T) {
 	}
 }
 
-func TestBuildFindOpts_PositionalConflictsWithExplicitPattern(t *testing.T) {
+func TestBuildFindQuery_PositionalConflictsWithExplicitPattern(t *testing.T) {
 	a := &findArgs{globalFlags: newTestGlobalFlags(), pattern: "*.pdf", name: "*.txt"}
-	if _, err := buildFindOpts(a); err == nil {
+	if _, err := buildFindQuery(a); err == nil {
 		t.Fatal("want an error when the positional and -name are both given")
 	}
 }
 
-func TestBuildFindOpts_TypeAcceptsFindVocabulary(t *testing.T) {
+func TestBuildFindQuery_TypeAcceptsFindVocabulary(t *testing.T) {
 	for _, tc := range []struct {
 		raw  string
 		want core.FileType
@@ -58,24 +58,24 @@ func TestBuildFindOpts_TypeAcceptsFindVocabulary(t *testing.T) {
 	}
 
 	a := &findArgs{globalFlags: newTestGlobalFlags(), fileType: "symlink"}
-	if _, err := buildFindOpts(a); err == nil {
+	if _, err := buildFindQuery(a); err == nil {
 		t.Fatal("want an error for an unsupported -type")
 	}
 }
 
-func TestBuildFindOpts_SizeUsesFindSuffixSyntax(t *testing.T) {
+func TestBuildFindQuery_SizeUsesFindSuffixSyntax(t *testing.T) {
 	q := queryFromArgs(t, &findArgs{globalFlags: newTestGlobalFlags(), size: "+10M"})
 	if q.Size == nil || q.Size.Op != cloudstic.SizeAtLeast || q.Size.Bytes != 10<<20 {
 		t.Fatalf("-size +10M parsed to %+v", q.Size)
 	}
 
 	a := &findArgs{globalFlags: newTestGlobalFlags(), size: "10Q"}
-	if _, err := buildFindOpts(a); err == nil {
+	if _, err := buildFindQuery(a); err == nil {
 		t.Fatal("want an error for an unknown size suffix")
 	}
 }
 
-func TestBuildFindOpts_SnapshotAndFileTimeSelectorsStaySeparate(t *testing.T) {
+func TestBuildFindQuery_SnapshotAndFileTimeSelectorsStaySeparate(t *testing.T) {
 	// -since/-until select snapshots; -newer/-older select files. The two
 	// vocabularies collide easily, so this pins that they land in distinct
 	// fields rather than one silently overwriting the other.
@@ -95,16 +95,15 @@ func TestBuildFindOpts_SnapshotAndFileTimeSelectorsStaySeparate(t *testing.T) {
 	}
 }
 
-// queryFromArgs resolves the options a command would build into the query the
-// engine will actually receive, so tests assert on meaning rather than on the
-// opaque option closures.
+// queryFromArgs builds the query a set of flags describes, failing the test if
+// they are invalid.
 func queryFromArgs(t *testing.T, a *findArgs) engine.FindQuery {
 	t.Helper()
-	opts, err := buildFindOpts(a)
+	q, err := buildFindQuery(a)
 	if err != nil {
-		t.Fatalf("buildFindOpts: %v", err)
+		t.Fatalf("buildFindQuery: %v", err)
 	}
-	return engine.QueryFromOptions(opts...)
+	return q
 }
 
 // ---------------------------------------------------------------------------
@@ -172,7 +171,7 @@ func TestRunFind_InvalidArgumentsFailBeforeOpeningTheRepository(t *testing.T) {
 	if code == 0 {
 		t.Fatal("want a non-zero exit for an unparseable -size")
 	}
-	if stub.findOpts != nil {
+	if stub.findCalled {
 		t.Error("the client was called despite an argument error")
 	}
 }

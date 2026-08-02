@@ -21,7 +21,6 @@ var (
 	ErrSnapshotRefAmbiguous = engine.ErrSnapshotRefAmbiguous
 
 	WithRestoreDryRun   = engine.WithRestoreDryRun
-	WithRestoreVerbose  = engine.WithRestoreVerbose
 	WithRestorePath     = engine.WithRestorePath
 	WithRestoreNoVerify = engine.WithRestoreNoVerify
 )

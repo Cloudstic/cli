@@ -5,9 +5,9 @@ import (
 
 	"context"
 	"fmt"
-	"github.com/cloudstic/cli/internal/logger"
-	"os"
 	"time"
+
+	"github.com/cloudstic/cli/internal/logger"
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
@@ -202,8 +202,7 @@ func (r *FindResult) TotalSnapshots() int {
 type FindOption func(*findConfig)
 
 type findConfig struct {
-	query   FindQuery
-	verbose bool
+	query FindQuery
 }
 
 // WithFindPattern applies the positional pattern, routing it by shape: a
@@ -314,10 +313,6 @@ func WithFindNoDelta() FindOption {
 	return func(c *findConfig) { c.query.NoDelta = true }
 }
 
-func WithFindVerbose() FindOption {
-	return func(c *findConfig) { c.verbose = true }
-}
-
 // ---------------------------------------------------------------------------
 // Manager
 // ---------------------------------------------------------------------------
@@ -369,9 +364,7 @@ func (fm *FindManager) Run(ctx context.Context, opts ...FindOption) (*FindResult
 	}
 
 	start := time.Now()
-	if cfg.verbose {
-		fmt.Fprintf(os.Stderr, "Loading snapshot catalog...\n")
-	}
+	fm.log.Debugf("Loading snapshot catalog...")
 	catalog, err := LoadSnapshotCatalog(fm.store, fm.log)
 	if err != nil {
 		return nil, fmt.Errorf("load snapshot catalog: %w", err)
@@ -394,12 +387,10 @@ func (fm *FindManager) Run(ctx context.Context, opts ...FindOption) (*FindResult
 	}
 
 	collector := newFindCollector(cfg.query.GroupByContent, cfg.query.MaxResults)
-	scanner := newFindScanner(fm.store, fm.tree, pred, collector, cfg.verbose)
+	scanner := newFindScanner(fm.store, fm.tree, pred, collector, fm.log)
 
 	for _, lineage := range groupFindLineages(selected) {
-		if cfg.verbose {
-			fmt.Fprintf(os.Stderr, "Scanning %d snapshot(s) for %s\n", len(lineage.snapshots), lineage.key)
-		}
+		fm.log.Debugf("Scanning %d snapshot(s) for %s", len(lineage.snapshots), lineage.key)
 		if err := scanner.scanLineage(ctx, lineage, cfg.query.NoDelta); err != nil {
 			return nil, err
 		}

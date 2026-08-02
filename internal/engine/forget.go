@@ -5,9 +5,10 @@ import (
 
 	"context"
 	"fmt"
-	"github.com/cloudstic/cli/internal/logger"
 	"sort"
 	"strings"
+
+	"github.com/cloudstic/cli/internal/logger"
 
 	"github.com/cloudstic/cli/internal/storelayer"
 	"github.com/cloudstic/cli/internal/ui"
@@ -20,7 +21,6 @@ type ForgetOption func(*forgetConfig)
 type forgetConfig struct {
 	prune      bool
 	dryRun     bool
-	verbose    bool
 	policy     ForgetPolicy
 	groupBy    string
 	groupBySet bool
@@ -35,11 +35,6 @@ func WithPrune() ForgetOption {
 // WithDryRun shows what would be removed without actually removing anything.
 func WithDryRun() ForgetOption {
 	return func(cfg *forgetConfig) { cfg.dryRun = true }
-}
-
-// WithForgetVerbose enables verbose output for the forget operation.
-func WithForgetVerbose() ForgetOption {
-	return func(cfg *forgetConfig) { cfg.verbose = true }
 }
 
 // WithKeepLast keeps the n most recent snapshots.
@@ -144,9 +139,7 @@ func (fm *ForgetManager) Run(ctx context.Context, snapshotID string, opts ...For
 	}
 
 	phase := fm.reporter.StartPhase("Forgetting snapshot", 0, false)
-	if cfg.verbose {
-		phase.Log(fmt.Sprintf("Forgetting %s", targetRef))
-	}
+	phase.Logf(ui.DetailVerbose, "Forgetting %s", targetRef)
 
 	// A dry run resolves the snapshot so the caller learns what would go, and
 	// stops before touching anything. Deleting here regardless — which is what

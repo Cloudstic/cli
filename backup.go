@@ -19,7 +19,6 @@ type BackupOption = engine.BackupOption
 type BackupResult = engine.RunResult
 
 var (
-	WithVerbose             = engine.WithVerbose
 	WithBackupDryRun        = engine.WithBackupDryRun
 	WithIgnoreEmptySnapshot = engine.WithIgnoreEmptySnapshot
 	WithTags                = engine.WithTags

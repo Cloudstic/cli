@@ -107,9 +107,7 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 // processFile uploads (or deduplicates) a single file's content and persists
 // its FileMeta. It is safe to call from multiple goroutines.
 func (bm *BackupManager) processFile(ctx context.Context, meta core.FileMeta, phase ui.Phase) uploadResult {
-	if bm.cfg.verbose {
-		phase.Log(fmt.Sprintf("Processing: %s", meta.Name))
-	}
+	phase.Logf(ui.DetailVerbose, "Processing: %s", meta.Name)
 
 	contentHash, size, contentRef, contentChunks, err := bm.uploadContent(ctx, meta, phase)
 	if err != nil {
@@ -152,9 +150,7 @@ func (bm *BackupManager) uploadContent(ctx context.Context, meta core.FileMeta, 
 
 		exists, err := bm.store.Exists(ctx, "content/"+contentRef)
 		if err == nil && exists {
-			if bm.cfg.verbose {
-				phase.Log(fmt.Sprintf("Deduplicated: %s", meta.Name))
-			}
+			phase.Logf(ui.DetailVerbose, "Deduplicated: %s", meta.Name)
 			return meta.ContentHash, meta.Size, contentRef, nil, nil
 		}
 	}
@@ -208,9 +204,7 @@ func (bm *BackupManager) uploadInline(ctx context.Context, r io.Reader, meta cor
 
 	contentKey := "content/" + contentRef
 	if exists, _ := bm.store.Exists(ctx, contentKey); exists {
-		if bm.cfg.verbose {
-			phase.Log(fmt.Sprintf("Deduplicated: %s", meta.Name))
-		}
+		phase.Logf(ui.DetailVerbose, "Deduplicated: %s", meta.Name)
 		return hash, size, contentRef, nil, nil
 	}
 

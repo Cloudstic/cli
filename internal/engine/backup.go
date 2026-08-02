@@ -39,7 +39,6 @@ type backupStats struct {
 type BackupOption func(*backupConfig)
 
 type backupConfig struct {
-	verbose             bool
 	dryRun              bool
 	ignoreEmptySnapshot bool
 	tags                []string
@@ -57,11 +56,6 @@ func WithBackupDryRun() BackupOption {
 // tree is identical to the previous snapshot for the same source lineage.
 func WithIgnoreEmptySnapshot() BackupOption {
 	return func(cfg *backupConfig) { cfg.ignoreEmptySnapshot = true }
-}
-
-// WithVerbose enables verbose output during backup.
-func WithVerbose() BackupOption {
-	return func(cfg *backupConfig) { cfg.verbose = true }
 }
 
 // WithTags adds tags to the backup snapshot.

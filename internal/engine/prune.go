@@ -15,16 +15,11 @@ import (
 type PruneOption func(*pruneConfig)
 
 type pruneConfig struct {
-	dryRun  bool
-	verbose bool
+	dryRun bool
 }
 
 func WithPruneDryRun() PruneOption {
 	return func(cfg *pruneConfig) { cfg.dryRun = true }
-}
-
-func WithPruneVerbose() PruneOption {
-	return func(cfg *pruneConfig) { cfg.verbose = true }
 }
 
 type PruneResult struct {
@@ -105,9 +100,7 @@ func (pm *PruneManager) Run(ctx context.Context, opts ...PruneOption) (*PruneRes
 				repackPhase.Error()
 				return nil, fmt.Errorf("repack: %w", err)
 			}
-			if cfg.verbose {
-				repackPhase.Log(fmt.Sprintf("Repacked/deleted %d packs, reclaimed %d bytes", packsDeleted, bytesReclaimed))
-			}
+			repackPhase.Logf(ui.DetailVerbose, "Repacked/deleted %d packs, reclaimed %d bytes", packsDeleted, bytesReclaimed)
 			result.BytesReclaimed += bytesReclaimed
 			result.ObjectsDeleted += packsDeleted
 			repackPhase.Done()
@@ -123,9 +116,7 @@ func (pm *PruneManager) Run(ctx context.Context, opts ...PruneOption) (*PruneRes
 				compactPhase.Error()
 				return nil, fmt.Errorf("compact pack index: %w", err)
 			}
-			if cfg.verbose {
-				compactPhase.Log(fmt.Sprintf("Consolidated %d index objects", removed))
-			}
+			compactPhase.Logf(ui.DetailVerbose, "Consolidated %d index objects", removed)
 			compactPhase.Done()
 		}
 
@@ -305,9 +296,7 @@ func (pm *PruneManager) sweep(ctx context.Context, reachable map[string]bool, cf
 				continue
 			}
 			if cfg.dryRun {
-				if cfg.verbose {
-					phase.Log(fmt.Sprintf("Would delete: %s", key))
-				}
+				phase.Logf(ui.DetailVerbose, "Would delete: %s", key)
 				result.ObjectsDeleted++
 				phase.Increment(0)
 				continue
@@ -316,9 +305,7 @@ func (pm *PruneManager) sweep(ctx context.Context, reachable map[string]bool, cf
 			if err != nil {
 				continue
 			}
-			if cfg.verbose {
-				phase.Log(fmt.Sprintf("Deleted: %s", key))
-			}
+			phase.Logf(ui.DetailVerbose, "Deleted: %s", key)
 			result.ObjectsDeleted++
 			phase.Increment(size)
 		}

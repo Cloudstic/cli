@@ -214,9 +214,6 @@ func BackupOptions(cfg config.Backup) ([]cloudstic.BackupOption, error) {
 
 func backupOptions(cfg config.Backup) []cloudstic.BackupOption {
 	var opts []cloudstic.BackupOption
-	if cfg.Verbose {
-		opts = append(opts, cloudstic.WithVerbose())
-	}
 	if cfg.DryRun {
 		opts = append(opts, cloudstic.WithBackupDryRun())
 	}

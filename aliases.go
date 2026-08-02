@@ -43,6 +43,16 @@ type Reporter = ui.Reporter
 // Phase represents an active progress tracking phase.
 type Phase = ui.Phase
 
+// Detail is how much an operation should report. It reaches the public API
+// through Phase.Logf, so a caller implementing Reporter can decide what to show.
+type Detail = ui.Detail
+
+// The detail levels a Reporter chooses between.
+const (
+	DetailNormal  = ui.DetailNormal
+	DetailVerbose = ui.DetailVerbose
+)
+
 // KeySlot is re-exported for callers that need to inspect slot metadata.
 type KeySlot = keychain.KeySlot
 

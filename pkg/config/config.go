@@ -88,4 +88,9 @@ type Client struct {
 	DisablePackfile bool
 	Quiet           bool
 	JSON            bool
+
+	// Verbose asks the reporter for per-item detail. It is a presentation
+	// choice, which is why it lives here and on the reporter rather than as an
+	// option on each operation.
+	Verbose bool
 }

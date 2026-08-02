@@ -84,9 +84,7 @@ func (bm *BackupManager) processEntry(ctx context.Context, meta *core.FileMeta, 
 		return bm.insertFolder(ctx, meta, phase)
 	}
 
-	if bm.cfg.verbose {
-		phase.Log(fmt.Sprintf("Queueing: %s", meta.Name))
-	}
+	phase.Logf(ui.DetailVerbose, "Queueing: %s", meta.Name)
 	s.pending = append(s.pending, *meta)
 	s.totalBytes += meta.Size
 	return nil
@@ -265,9 +263,7 @@ func bytesEqual(a, b []byte) bool {
 }
 
 func (bm *BackupManager) insertFolder(ctx context.Context, meta *core.FileMeta, phase ui.Phase) error {
-	if bm.cfg.verbose {
-		phase.Log(fmt.Sprintf("Folder: %s (New/Changed)", meta.Name))
-	}
+	phase.Logf(ui.DetailVerbose, "Folder: %s (New/Changed)", meta.Name)
 	meta.ContentHash = ""
 	meta.Size = 0
 

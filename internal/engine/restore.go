@@ -30,7 +30,6 @@ type RestoreOption func(*restoreConfig)
 
 type restoreConfig struct {
 	dryRun     bool
-	verbose    bool
 	pathFilter string
 	noVerify   bool
 }
@@ -46,11 +45,6 @@ type restorePlan struct {
 // WithRestoreDryRun resolves the snapshot and reports what would be restored without writing output.
 func WithRestoreDryRun() RestoreOption {
 	return func(cfg *restoreConfig) { cfg.dryRun = true }
-}
-
-// WithRestoreVerbose logs each file/dir being written.
-func WithRestoreVerbose() RestoreOption {
-	return func(cfg *restoreConfig) { cfg.verbose = true }
 }
 
 // WithRestoreNoVerify skips the content-hash check that restore normally runs
@@ -209,9 +203,7 @@ func (rm *RestoreManager) runWithWriter(ctx context.Context, plan restorePlan, w
 				bump(&result.Errors)
 				return nil
 			}
-			if plan.cfg.verbose {
-				phase.Log(fmt.Sprintf("File: %s (%d bytes)", rel, meta.Size))
-			}
+			phase.Logf(ui.DetailVerbose, "File: %s (%d bytes)", rel, meta.Size)
 			bump(&result.FilesWritten)
 			return nil
 		}
@@ -229,9 +221,7 @@ func (rm *RestoreManager) runWithWriter(ctx context.Context, plan restorePlan, w
 				phase.Increment(1)
 				continue
 			}
-			if plan.cfg.verbose {
-				phase.Log(fmt.Sprintf("Dir: %s", rel))
-			}
+			phase.Logf(ui.DetailVerbose, "Dir: %s", rel)
 			result.DirsWritten++
 			phase.Increment(1)
 			continue

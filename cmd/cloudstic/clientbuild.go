@@ -41,5 +41,11 @@ func newReporter(cfg clientConfig, debugLog *ui.SafeLogWriter) cloudstic.Reporte
 	if debugLog != nil {
 		cr.SetLogWriter(debugLog)
 	}
+	// One flag, one decision. Every operation used to carry its own verbose
+	// option; they now report at a detail level and this chooses which levels
+	// are shown.
+	if cfg.Verbose {
+		cr.SetDetail(ui.DetailVerbose)
+	}
 	return cr
 }

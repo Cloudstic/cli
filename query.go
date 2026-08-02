@@ -14,8 +14,6 @@ import (
 type ListOption = engine.ListOption
 type ListResult = engine.ListResult
 
-var WithListVerbose = engine.WithListVerbose
-
 func (c *Client) List(ctx context.Context, opts ...ListOption) (*ListResult, error) {
 	mgr := engine.NewListManager(c.store, c.logWriter)
 	return mgr.Run(ctx, opts...)
@@ -28,12 +26,10 @@ func (c *Client) List(ctx context.Context, opts ...ListOption) (*ListResult, err
 type LsSnapshotOption = engine.LsSnapshotOption
 type LsSnapshotResult = engine.LsSnapshotResult
 
-var WithLsVerbose = engine.WithLsVerbose
-
 // LsSnapshot lists a snapshot selected by latest, full hash, or unambiguous
 // hash prefix. An ambiguous prefix is rejected.
 func (c *Client) LsSnapshot(ctx context.Context, snapshotID string, opts ...LsSnapshotOption) (*LsSnapshotResult, error) {
-	mgr := engine.NewLsSnapshotManager(c.store)
+	mgr := engine.NewLsSnapshotManager(c.store, c.logWriter)
 	return mgr.Run(ctx, snapshotID, opts...)
 }
 
@@ -78,7 +74,6 @@ var (
 	WithFindGroupByContent = engine.WithFindGroupByContent
 	WithFindMaxResults     = engine.WithFindMaxResults
 	WithFindNoDelta        = engine.WithFindNoDelta
-	WithFindVerbose        = engine.WithFindVerbose
 
 	ParseSizeCompare = engine.ParseSizeCompare
 	ParseFindTime    = engine.ParseFindTime
@@ -117,12 +112,10 @@ const (
 	ChangeModified = engine.ChangeModified
 )
 
-var WithDiffVerbose = engine.WithDiffVerbose
-
 // Diff compares snapshots selected by latest, full hashes, or unambiguous hash
 // prefixes. An ambiguous prefix is rejected.
 func (c *Client) Diff(ctx context.Context, snap1, snap2 string, opts ...DiffOption) (*DiffResult, error) {
-	mgr := engine.NewDiffManager(c.store)
+	mgr := engine.NewDiffManager(c.store, c.logWriter)
 	return mgr.Run(ctx, snap1, snap2, opts...)
 }
 

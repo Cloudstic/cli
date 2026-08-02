@@ -164,9 +164,6 @@ func execForgetSingle(r *runner, ctx context.Context, a *forgetArgs) int {
 	if a.dryRun {
 		forgetOpts = append(forgetOpts, cloudstic.WithDryRun())
 	}
-	if a.verbose {
-		forgetOpts = append(forgetOpts, cloudstic.WithForgetVerbose())
-	}
 	result, err := r.client.Forget(ctx, a.snapshotID, forgetOpts...)
 	if err != nil {
 		return r.fail("Forget failed: %v", err)
@@ -209,9 +206,6 @@ func buildForgetPolicyOpts(a *forgetArgs) []cloudstic.ForgetOption {
 	}
 	if a.dryRun {
 		opts = append(opts, cloudstic.WithDryRun())
-	}
-	if a.verbose {
-		opts = append(opts, cloudstic.WithForgetVerbose())
 	}
 	if a.keepLast > 0 {
 		opts = append(opts, cloudstic.WithKeepLast(a.keepLast))

@@ -16,19 +16,31 @@ import (
 // repository client on top of it. Passing a nil reporter selects one from the
 // configured output mode.
 func openClient(ctx context.Context, cfg clientConfig, reporterOverride cloudstic.Reporter) (*cloudstic.Client, error) {
-	debugLog := newDebugLog(cfg.Store.Debug)
+	// Two audiences, one destination. -debug traces every store operation;
+	// -verbose asks the query operations for their progress detail, which they
+	// write to the component logger because they have no phases to report
+	// against (list, ls, diff and find are queries, not long-running work).
+	// Both land in the same writer so their lines interleave cleanly above the
+	// progress bar — but only -debug may switch on the store decorator, or
+	// asking for detail would flood the output with per-object traces.
+	diagnostics := newDebugLog(cfg.Store.Debug || cfg.Verbose)
 
 	reporter := reporterOverride
 	if reporter == nil {
-		reporter = newReporter(cfg, debugLog)
+		reporter = newReporter(cfg, diagnostics)
 	}
 
-	opts := append(storeOptions(debugLog),
+	storeOpts := storeOptions(nil)
+	if cfg.Store.Debug {
+		storeOpts = storeOptions(diagnostics)
+	}
+
+	opts := append(storeOpts,
 		open.WithReporter(reporter),
 		open.WithPasswordPrompt(passwordPrompts()),
 	)
-	if debugLog != nil {
-		opts = append(opts, open.WithLogger(debugLog))
+	if diagnostics != nil {
+		opts = append(opts, open.WithLogger(diagnostics))
 	}
 	return open.Client(ctx, cfg, opts...)
 }

@@ -86,7 +86,7 @@ func TestGDrive_Options(t *testing.T) {
 
 func TestOAuthClient_RequiresResolverForTokenRef(t *testing.T) {
 	config := &oauth2.Config{}
-	_, err := oauthClient(context.Background(), config, nil, "config-token://google/tok", "", nil)
+	_, err := oauthClient(context.Background(), config, nil, "config-token://google/tok", "", nil, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}

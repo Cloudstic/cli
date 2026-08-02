@@ -27,7 +27,10 @@ import (
 // gDriveOptions holds configuration for a Google Drive source.
 type gDriveOptions struct {
 	// logWriter is where this source sends its debug output; nil means none.
-	logWriter       io.Writer
+	logWriter io.Writer
+	// promptWriter is where the interactive OAuth flow writes what a human
+	// needs to read. Distinct from logWriter: this is not diagnostics.
+	promptWriter    io.Writer
 	service         *drive.Service // pre-built service; highest priority
 	httpClient      *http.Client
 	resolver        *secretref.Resolver
@@ -54,6 +57,17 @@ type Option func(*gDriveOptions)
 // cannot reach them; this is how a caller supplies one (RFC 0022 §8).
 func WithLogger(w io.Writer) Option {
 	return func(o *gDriveOptions) { o.logWriter = w }
+}
+
+// WithPromptWriter sets where the interactive OAuth flow writes the two lines a
+// human needs to see: that a browser is opening, and the URL to visit if it did
+// not open. A nil writer discards them.
+//
+// It is separate from WithLogger because this is not diagnostics — hiding it
+// behind a debug flag would leave the user waiting with no idea a browser was
+// meant to open.
+func WithPromptWriter(w io.Writer) Option {
+	return func(o *gDriveOptions) { o.promptWriter = w }
 }
 
 // WithDriveService injects a fully-constructed *drive.Service.
@@ -275,7 +289,7 @@ func buildDriveService(ctx context.Context, cfg gDriveOptions) (*drive.Service, 
 		Scopes:       []string{drive.DriveReadonlyScope},
 		Endpoint:     google.Endpoint,
 	}
-	client, err := oauthClient(ctx, config, cfg.resolver, cfg.tokenRef, cfg.tokenPath, cfg.logWriter)
+	client, err := oauthClient(ctx, config, cfg.resolver, cfg.tokenRef, cfg.tokenPath, cfg.logWriter, cfg.promptWriter)
 	if err != nil {
 		return nil, err
 	}
@@ -317,7 +331,7 @@ func serviceFromCredsBytes(ctx context.Context, cfg gDriveOptions, b []byte) (*d
 	// Try OAuth user config first.
 	oauthCfg, err := google.ConfigFromJSON(b, drive.DriveReadonlyScope)
 	if err == nil {
-		client, err := oauthClient(ctx, oauthCfg, cfg.resolver, cfg.tokenRef, cfg.tokenPath, cfg.logWriter)
+		client, err := oauthClient(ctx, oauthCfg, cfg.resolver, cfg.tokenRef, cfg.tokenPath, cfg.logWriter, cfg.promptWriter)
 		if err != nil {
 			return nil, err
 		}
@@ -466,7 +480,7 @@ func (s *Source) resolvePathToFolderID(ctx context.Context, path string) (string
 // OAuth helpers
 // ---------------------------------------------------------------------------
 
-func oauthClient(ctx context.Context, config *oauth2.Config, r *secretref.Resolver, tokRef, tokFile string, logWriter io.Writer) (*http.Client, error) {
+func oauthClient(ctx context.Context, config *oauth2.Config, r *secretref.Resolver, tokRef, tokFile string, logWriter, promptWriter io.Writer) (*http.Client, error) {
 	var tok *oauth2.Token
 	var err error
 	if tokRef != "" && r == nil {
@@ -482,7 +496,7 @@ func oauthClient(ctx context.Context, config *oauth2.Config, r *secretref.Resolv
 	}
 
 	if err != nil {
-		tok, err = tokenFromWeb(ctx, config)
+		tok, err = tokenFromWeb(ctx, promptWriter, config)
 		if err != nil {
 			return nil, err
 		}
@@ -512,8 +526,8 @@ func oauthClient(ctx context.Context, config *oauth2.Config, r *secretref.Resolv
 	return oauth2.NewClient(ctx, pts), nil
 }
 
-func tokenFromWeb(ctx context.Context, config *oauth2.Config) (*oauth2.Token, error) {
-	return sourceoauth.ExchangeWithLocalServer(ctx, config, oauth2.AccessTypeOffline)
+func tokenFromWeb(ctx context.Context, out io.Writer, config *oauth2.Config) (*oauth2.Token, error) {
+	return sourceoauth.ExchangeWithLocalServer(ctx, out, config, oauth2.AccessTypeOffline)
 }
 
 func tokenFromFile(file string) (*oauth2.Token, error) {

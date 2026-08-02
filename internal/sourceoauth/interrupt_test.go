@@ -55,7 +55,7 @@ func TestExchangeWithLocalServer_CancelledContextReturns(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := ExchangeWithLocalServer(ctx, testOAuthConfig(), oauth2.AccessTypeOffline)
+		_, err := ExchangeWithLocalServer(ctx, nil, testOAuthConfig(), oauth2.AccessTypeOffline)
 		done <- err
 	}()
 
@@ -84,7 +84,7 @@ func TestExchangeWithLocalServer_AlreadyCancelled(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := ExchangeWithLocalServer(ctx, testOAuthConfig(), oauth2.AccessTypeOffline)
+		_, err := ExchangeWithLocalServer(ctx, nil, testOAuthConfig(), oauth2.AccessTypeOffline)
 		done <- err
 	}()
 
@@ -114,7 +114,7 @@ func TestExchangeWithLocalServer_ShutsDownItsListener(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		cancel()
 	}()
-	if _, err := ExchangeWithLocalServer(ctx, testOAuthConfig(), oauth2.AccessTypeOffline); !errors.Is(err, context.Canceled) {
+	if _, err := ExchangeWithLocalServer(ctx, nil, testOAuthConfig(), oauth2.AccessTypeOffline); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 

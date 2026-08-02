@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os/exec"
@@ -19,8 +20,14 @@ import (
 // opens the user's default browser to the consent page and automatically
 // captures the authorization code, eliminating the need to copy-paste.
 //
-// If the browser cannot be opened, the auth URL is printed so the user can
-// navigate to it manually; the local server still captures the redirect.
+// If the browser cannot be opened, the auth URL is written to out so the user
+// can navigate to it manually; the local server still captures the redirect.
+//
+// out receives the two lines this flow must show a human: that a browser is
+// opening, and the URL to visit if it did not. A nil out discards them. They
+// are written there rather than to os.Stdout because a library has no claim on
+// the process's stdout — and because the cloudstic CLI offers `auth login
+// -json`, where a stray line corrupts the caller's parse stream.
 //
 // ctx governs the wait. This is the whole reason it is a parameter: the flow
 // blocks until a human finishes authorizing in a browser, which they may never
@@ -28,7 +35,10 @@ import (
 // rather than killing the process — so a wait that ignored ctx could not be
 // interrupted with Ctrl+C at all, and pressing it again would not help either.
 // Cancellation returns ctx.Err() promptly and shuts the local server down.
-func ExchangeWithLocalServer(ctx context.Context, config *oauth2.Config, authCodeOpts ...oauth2.AuthCodeOption) (*oauth2.Token, error) {
+func ExchangeWithLocalServer(ctx context.Context, out io.Writer, config *oauth2.Config, authCodeOpts ...oauth2.AuthCodeOption) (*oauth2.Token, error) {
+	if out == nil {
+		out = io.Discard
+	}
 	state, err := randomState()
 	if err != nil {
 		return nil, fmt.Errorf("generate state: %w", err)
@@ -87,9 +97,9 @@ func ExchangeWithLocalServer(ctx context.Context, config *oauth2.Config, authCod
 	opts := append([]oauth2.AuthCodeOption{oauth2.S256ChallengeOption(verifier)}, authCodeOpts...)
 	authURL := config.AuthCodeURL(state, opts...)
 
-	fmt.Printf("Opening browser for authorization...\n")
+	_, _ = fmt.Fprintln(out, "Opening browser for authorization...")
 	if err := openBrowserFn(authURL); err != nil {
-		fmt.Printf("Could not open browser automatically.\nPlease visit this URL:\n%s\n", authURL)
+		_, _ = fmt.Fprintf(out, "Could not open browser automatically.\nPlease visit this URL:\n%s\n", authURL)
 	}
 
 	var res result

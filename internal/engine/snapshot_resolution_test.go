@@ -40,14 +40,14 @@ func TestSnapshotReadersDoNotListForFullHash(t *testing.T) {
 		{
 			name: "ls",
 			resolve: func(selector string) error {
-				_, _, err := NewLsSnapshotManager(s).resolveSnapshot(ctx, selector)
+				_, _, err := NewLsSnapshotManager(s, nil).resolveSnapshot(ctx, selector)
 				return err
 			},
 		},
 		{
 			name: "diff",
 			resolve: func(selector string) error {
-				_, err := NewDiffManager(s).resolveSnapshot(ctx, selector)
+				_, err := NewDiffManager(s, nil).resolveSnapshot(ctx, selector)
 				return err
 			},
 		},
@@ -91,14 +91,14 @@ func TestSnapshotReadersResolveUniqueHashPrefix(t *testing.T) {
 		{
 			name: "ls",
 			resolve: func(selector string) (string, error) {
-				_, resolved, err := NewLsSnapshotManager(s).resolveSnapshot(ctx, selector)
+				_, resolved, err := NewLsSnapshotManager(s, nil).resolveSnapshot(ctx, selector)
 				return resolved, err
 			},
 		},
 		{
 			name: "diff",
 			resolve: func(selector string) (string, error) {
-				return NewDiffManager(s).resolveSnapshot(ctx, selector)
+				return NewDiffManager(s, nil).resolveSnapshot(ctx, selector)
 			},
 		},
 	}
@@ -145,14 +145,14 @@ func TestSnapshotReadersRejectAmbiguousHashPrefix(t *testing.T) {
 		{
 			name: "ls",
 			resolve: func(selector string) error {
-				_, _, err := NewLsSnapshotManager(s).resolveSnapshot(ctx, selector)
+				_, _, err := NewLsSnapshotManager(s, nil).resolveSnapshot(ctx, selector)
 				return err
 			},
 		},
 		{
 			name: "diff",
 			resolve: func(selector string) error {
-				_, err := NewDiffManager(s).resolveSnapshot(ctx, selector)
+				_, err := NewDiffManager(s, nil).resolveSnapshot(ctx, selector)
 				return err
 			},
 		},
@@ -192,14 +192,14 @@ func TestSnapshotReadersReturnNotFoundSentinel(t *testing.T) {
 		{
 			name: "ls",
 			resolve: func(selector string) error {
-				_, _, err := NewLsSnapshotManager(s).resolveSnapshot(ctx, selector)
+				_, _, err := NewLsSnapshotManager(s, nil).resolveSnapshot(ctx, selector)
 				return err
 			},
 		},
 		{
 			name: "diff",
 			resolve: func(selector string) error {
-				_, _, err := NewDiffManager(s).loadRoot(ctx, selector)
+				_, _, err := NewDiffManager(s, nil).loadRoot(ctx, selector)
 				return err
 			},
 		},

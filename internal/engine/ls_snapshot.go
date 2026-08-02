@@ -3,12 +3,12 @@ package engine
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"os"
+	"io"
 	"sort"
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
+	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/pkg/store"
 )
 
@@ -16,12 +16,6 @@ import (
 type LsSnapshotOption func(*lsSnapshotConfig)
 
 type lsSnapshotConfig struct {
-	verbose bool
-}
-
-// WithLsVerbose enables verbose output for the ls-snapshot operation.
-func WithLsVerbose() LsSnapshotOption {
-	return func(cfg *lsSnapshotConfig) { cfg.verbose = true }
 }
 
 // LsSnapshotResult holds the data returned by an ls-snapshot operation.
@@ -38,11 +32,14 @@ type LsSnapshotManager struct {
 	store     store.ObjectStore
 	tree      *hamt.Tree
 	metaCache map[string]core.FileMeta
+	// log is where progress detail goes; see DiffManager.log.
+	log *logger.Logger
 }
 
-func NewLsSnapshotManager(s store.ObjectStore) *LsSnapshotManager {
+func NewLsSnapshotManager(s store.ObjectStore, logWriter io.Writer) *LsSnapshotManager {
 	return &LsSnapshotManager{
 		store: s,
+		log:   SnapshotLogger(logWriter),
 		tree:  hamt.NewTree(s),
 	}
 }
@@ -56,31 +53,25 @@ func (lm *LsSnapshotManager) Run(ctx context.Context, snapshotID string, opts ..
 
 	lm.metaCache = make(map[string]core.FileMeta)
 
-	if cfg.verbose {
-		fmt.Fprintf(os.Stderr, "Resolving snapshot %q...\n", snapshotID)
-	}
+	lm.log.Debugf("Resolving snapshot %q...", snapshotID)
 	snap, ref, err := lm.resolveSnapshot(ctx, snapshotID)
 	if err != nil {
 		return nil, err
 	}
-	if cfg.verbose {
-		fmt.Fprintf(os.Stderr, "Resolved to %s (created %s, root %s)\n", ref, snap.Created, snap.Root)
-	}
+	lm.log.Debugf("Resolved to %s (created %s, root %s)", ref, snap.Created, snap.Root)
 
 	refToMeta, err := lm.collectMeta(ctx, snap.Root)
 	if err != nil {
 		return nil, err
 	}
-	if cfg.verbose {
-		var files, dirs int
-		for _, m := range refToMeta {
-			if m.Type == core.FileTypeFolder {
-				dirs++
-			} else {
-				files++
-			}
+	var files, dirs int
+	for _, m := range refToMeta {
+		if m.Type == core.FileTypeFolder {
+			dirs++
+		} else {
+			files++
 		}
-		fmt.Fprintf(os.Stderr, "Collected %d files, %d directories\n", files, dirs)
+		lm.log.Debugf("Collected %d files, %d directories", files, dirs)
 	}
 
 	roots, children := lm.buildHierarchy(refToMeta)

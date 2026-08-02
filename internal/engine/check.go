@@ -20,7 +20,6 @@ type CheckOption func(*checkConfig)
 
 type checkConfig struct {
 	readData    bool
-	verbose     bool
 	snapshotRef string
 }
 
@@ -34,11 +33,6 @@ type checkConfig struct {
 // to detect corruption inside the file data itself.
 func WithReadData() CheckOption {
 	return func(cfg *checkConfig) { cfg.readData = true }
-}
-
-// WithCheckVerbose logs each verified object.
-func WithCheckVerbose() CheckOption {
-	return func(cfg *checkConfig) { cfg.verbose = true }
 }
 
 // WithSnapshotRef limits the check to a single snapshot instead of all.
@@ -164,9 +158,7 @@ func (cm *CheckManager) checkSnapshot(ctx context.Context, ref string, result *C
 		return nil
 	}
 	result.ObjectsVerified++
-	if cfg.verbose {
-		phase.Log(fmt.Sprintf("OK: %s", ref))
-	}
+	phase.Logf(ui.DetailVerbose, "OK: %s", ref)
 
 	var snap core.Snapshot
 	if err := json.Unmarshal(data, &snap); err != nil {
@@ -226,9 +218,7 @@ func (cm *CheckManager) verifyObject(ctx context.Context, key string, result *Ch
 		}
 	}
 	result.ObjectsVerified++
-	if cfg.verbose {
-		phase.Log(fmt.Sprintf("OK: %s", key))
-	}
+	phase.Logf(ui.DetailVerbose, "OK: %s", key)
 	return nil
 }
 
@@ -254,9 +244,7 @@ func (cm *CheckManager) checkFileMeta(ctx context.Context, ref string, result *C
 		return nil
 	}
 	result.ObjectsVerified++
-	if cfg.verbose {
-		phase.Log(fmt.Sprintf("OK: %s", ref))
-	}
+	phase.Logf(ui.DetailVerbose, "OK: %s", ref)
 
 	var meta core.FileMeta
 	if err := json.Unmarshal(data, &meta); err != nil {
@@ -319,9 +307,7 @@ func (cm *CheckManager) checkContent(ctx context.Context, ref string, meta *core
 	}
 	cm.verified[ref] = true
 	result.ObjectsVerified++
-	if cfg.verbose {
-		phase.Log(fmt.Sprintf("OK: %s", ref))
-	}
+	phase.Logf(ui.DetailVerbose, "OK: %s", ref)
 
 	var content core.Content
 	if err := json.Unmarshal(data, &content); err != nil {
@@ -435,16 +421,12 @@ func (cm *CheckManager) checkChunk(ctx context.Context, ref string, result *Chec
 					Type:    "corrupt",
 					Message: fmt.Sprintf("hash mismatch: expected %s, got %s", parts[1], actual),
 				})
-				if cfg.verbose {
-					phase.Log(fmt.Sprintf("CORRUPT: %s", ref))
-				}
+				phase.Logf(ui.DetailVerbose, "CORRUPT: %s", ref)
 				return nil
 			}
 		}
 	}
 
-	if cfg.verbose {
-		phase.Log(fmt.Sprintf("OK: %s", ref))
-	}
+	phase.Logf(ui.DetailVerbose, "OK: %s", ref)
 	return nil
 }

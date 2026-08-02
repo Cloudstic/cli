@@ -42,9 +42,6 @@ func runDiff(r *runner, ctx context.Context, a *diffArgs, cfg clientConfig) int 
 
 func buildDiffOpts(a *diffArgs) []cloudstic.DiffOption {
 	var diffOpts []cloudstic.DiffOption
-	if a.verbose {
-		diffOpts = append(diffOpts, cloudstic.WithDiffVerbose())
-	}
 	return diffOpts
 }
 

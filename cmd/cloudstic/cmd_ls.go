@@ -47,9 +47,6 @@ func runLsSnapshot(r *runner, ctx context.Context, a *lsArgs, cfg clientConfig) 
 
 func buildLsOpts(a *lsArgs) []cloudstic.LsSnapshotOption {
 	var lsOpts []cloudstic.LsSnapshotOption
-	if a.verbose {
-		lsOpts = append(lsOpts, cloudstic.WithLsVerbose())
-	}
 	return lsOpts
 }
 

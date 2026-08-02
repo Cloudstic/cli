@@ -15,8 +15,7 @@ type PruneOption = engine.PruneOption
 type PruneResult = engine.PruneResult
 
 var (
-	WithPruneDryRun  = engine.WithPruneDryRun
-	WithPruneVerbose = engine.WithPruneVerbose
+	WithPruneDryRun = engine.WithPruneDryRun
 )
 
 func (c *Client) Prune(ctx context.Context, opts ...PruneOption) (*PruneResult, error) {
@@ -41,7 +40,6 @@ type ForgetResult = engine.ForgetResult
 var (
 	WithPrune         = engine.WithPrune
 	WithDryRun        = engine.WithDryRun
-	WithForgetVerbose = engine.WithForgetVerbose
 	WithKeepLast      = engine.WithKeepLast
 	WithKeepHourly    = engine.WithKeepHourly
 	WithKeepDaily     = engine.WithKeepDaily

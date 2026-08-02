@@ -77,6 +77,7 @@ func clientConfigFromFlags(g *globalFlags) clientConfig {
 		},
 		DisablePackfile: g.disablePackfile,
 		Quiet:           g.quiet,
+		Verbose:         g.verbose,
 		JSON:            g.json,
 	}
 }

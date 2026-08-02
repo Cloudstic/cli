@@ -12,6 +12,7 @@ import (
 
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/tui"
+	"github.com/cloudstic/cli/internal/ui"
 )
 
 func captureTUIRunnerOutput(r *runner, log *tuiActionState) func() {
@@ -183,6 +184,16 @@ func (p tuiReporterPhase) Log(msg string) {
 	p.state.mu.Lock()
 	defer p.state.mu.Unlock()
 	p.state.append(msg)
+}
+
+// Logf drops per-item detail. The activity panel keeps a bounded number of
+// lines, so a line per object verified would push out the milestones the panel
+// exists to show.
+func (p tuiReporterPhase) Logf(level ui.Detail, format string, args ...any) {
+	if level > ui.DetailNormal {
+		return
+	}
+	p.Log(fmt.Sprintf(format, args...))
 }
 
 func (p tuiReporterPhase) Done() {

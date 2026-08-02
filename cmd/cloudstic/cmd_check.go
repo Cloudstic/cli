@@ -55,9 +55,6 @@ func buildCheckOpts(a *checkArgs) []cloudstic.CheckOption {
 	if a.readData {
 		checkOpts = append(checkOpts, cloudstic.WithReadData())
 	}
-	if a.verbose {
-		checkOpts = append(checkOpts, cloudstic.WithCheckVerbose())
-	}
 	if a.snapshotRef != "" {
 		checkOpts = append(checkOpts, cloudstic.WithSnapshotRef(a.snapshotRef))
 	}

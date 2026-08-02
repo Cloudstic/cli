@@ -6,12 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
+	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/pkg/store"
 )
 
@@ -25,11 +25,13 @@ import (
 // pointer comparison. Both scanners emit the same observations, which is what
 // makes them comparable in tests.
 type findScanner struct {
-	store   store.ObjectStore
-	tree    *hamt.Tree
-	pred    *findPredicate
-	out     *findCollector
-	verbose bool
+	store store.ObjectStore
+	tree  *hamt.Tree
+	pred  *findPredicate
+	out   *findCollector
+	// log receives the scan heartbeat. It replaced a verbose flag writing
+	// straight to os.Stderr, which no library caller could redirect.
+	log *logger.Logger
 
 	// evaluated memoizes the verdict for a filemeta ref. Those objects are
 	// content-addressed and immutable, so a ref evaluated once never needs
@@ -88,13 +90,13 @@ func newLineageState() *lineageState {
 	}
 }
 
-func newFindScanner(s store.ObjectStore, tree *hamt.Tree, pred *findPredicate, out *findCollector, verbose bool) *findScanner {
+func newFindScanner(s store.ObjectStore, tree *hamt.Tree, pred *findPredicate, out *findCollector, log *logger.Logger) *findScanner {
 	return &findScanner{
 		store:     s,
 		tree:      tree,
 		pred:      pred,
 		out:       out,
-		verbose:   verbose,
+		log:       log,
 		evaluated: make(map[[16]byte]findRefEval),
 	}
 }
@@ -369,8 +371,8 @@ func (s *findScanner) loadMeta(ctx context.Context, ref string) (*core.FileMeta,
 		return nil, fmt.Errorf("load %s: %w", ref, err)
 	}
 	s.metaFetched++
-	if s.verbose && s.metaFetched%10000 == 0 {
-		fmt.Fprintf(os.Stderr, "  read %d metadata objects\n", s.metaFetched)
+	if s.metaFetched%10000 == 0 {
+		s.log.Debugf("  read %d metadata objects", s.metaFetched)
 	}
 	var meta core.FileMeta
 	if err := json.Unmarshal(data, &meta); err != nil {

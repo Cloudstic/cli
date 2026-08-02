@@ -5,8 +5,8 @@ import (
 
 	"context"
 	"fmt"
+
 	"github.com/cloudstic/cli/internal/logger"
-	"os"
 
 	"github.com/cloudstic/cli/pkg/store"
 )
@@ -15,12 +15,6 @@ import (
 type ListOption func(*listConfig)
 
 type listConfig struct {
-	verbose bool
-}
-
-// WithListVerbose enables verbose output for the list operation.
-func WithListVerbose() ListOption {
-	return func(cfg *listConfig) { cfg.verbose = true }
 }
 
 // ListResult holds the snapshots returned by a list operation.
@@ -47,22 +41,18 @@ func (lm *ListManager) Run(ctx context.Context, opts ...ListOption) (*ListResult
 		opt(&cfg)
 	}
 
-	if cfg.verbose {
-		fmt.Fprintf(os.Stderr, "Loading snapshot catalog...\n")
-	}
+	lm.log.Debugf("Loading snapshot catalog...")
 	entries, err := LoadSnapshotCatalog(lm.store, lm.log)
 	if err != nil {
 		return nil, err
 	}
-	if cfg.verbose {
-		fmt.Fprintf(os.Stderr, "Found %d snapshots\n", len(entries))
-		for _, e := range entries {
-			source := ""
-			if e.Snap.Source != nil {
-				source = fmt.Sprintf(" source=%s account=%s path=%s", e.Snap.Source.Type, e.Snap.Source.Account, e.Snap.Source.Path)
-				if e.Snap.Source.DriveName != "" {
-					source += fmt.Sprintf(" drive=%s", e.Snap.Source.DriveName)
-				}
+	lm.log.Debugf("Found %d snapshots", len(entries))
+	for _, e := range entries {
+		source := ""
+		if e.Snap.Source != nil {
+			source = fmt.Sprintf(" source=%s account=%s path=%s", e.Snap.Source.Type, e.Snap.Source.Account, e.Snap.Source.Path)
+			if e.Snap.Source.DriveName != "" {
+				source += fmt.Sprintf(" drive=%s", e.Snap.Source.DriveName)
 				if e.Snap.Source.Identity != "" {
 					source += fmt.Sprintf(" identity=%s", e.Snap.Source.Identity)
 				}
@@ -70,7 +60,7 @@ func (lm *ListManager) Run(ctx context.Context, opts ...ListOption) (*ListResult
 					source += fmt.Sprintf(" path_id=%s", e.Snap.Source.PathID)
 				}
 			}
-			fmt.Fprintf(os.Stderr, "  %s seq=%d created=%s%s\n", e.Ref, e.Snap.Seq, e.Snap.Created, source)
+			lm.log.Debugf("  %s seq=%d created=%s%s", e.Ref, e.Snap.Seq, e.Snap.Created, source)
 		}
 	}
 	return &ListResult{Snapshots: entries}, nil

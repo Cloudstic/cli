@@ -68,7 +68,7 @@ func setupBackupForRestore(t *testing.T) *MockStore {
 		Content: []byte("deep content"),
 	}
 
-	bkMgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, nil, WithVerbose())
+	bkMgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, nil)
 	if _, err := bkMgr.Run(context.Background()); err != nil {
 		t.Fatalf("Backup setup failed: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestRestoreManager_Run(t *testing.T) {
 		Content: []byte("nested content"),
 	}
 
-	bkMgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, nil, WithVerbose())
+	bkMgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, nil)
 	if _, err := bkMgr.Run(context.Background()); err != nil {
 		t.Fatalf("Backup setup failed: %v", err)
 	}

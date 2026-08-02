@@ -15,9 +15,8 @@ type CheckResult = engine.CheckResult
 type CheckError = engine.CheckError
 
 var (
-	WithReadData     = engine.WithReadData
-	WithCheckVerbose = engine.WithCheckVerbose
-	WithSnapshotRef  = engine.WithSnapshotRef
+	WithReadData    = engine.WithReadData
+	WithSnapshotRef = engine.WithSnapshotRef
 )
 
 // Check verifies the integrity of the repository by walking the full

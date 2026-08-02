@@ -3,12 +3,12 @@ package engine
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"os"
+	"io"
 	"sort"
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
+	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/pkg/store"
 )
 
@@ -32,12 +32,6 @@ type FileChange struct {
 type DiffOption func(*diffConfig)
 
 type diffConfig struct {
-	verbose bool
-}
-
-// WithDiffVerbose enables verbose output for the diff operation.
-func WithDiffVerbose() DiffOption {
-	return func(cfg *diffConfig) { cfg.verbose = true }
 }
 
 // DiffResult holds the outcome of a diff operation.
@@ -52,10 +46,14 @@ type DiffManager struct {
 	store     store.ObjectStore
 	tree      *hamt.Tree
 	metaCache map[string]core.FileMeta
+	// log is where progress detail goes. It used to be written straight to
+	// os.Stderr, which a library caller could neither capture nor silence.
+	log *logger.Logger
 }
 
-func NewDiffManager(s store.ObjectStore) *DiffManager {
+func NewDiffManager(s store.ObjectStore, logWriter io.Writer) *DiffManager {
 	return &DiffManager{
+		log:   SnapshotLogger(logWriter),
 		store: s,
 		tree:  hamt.NewTree(s),
 	}
@@ -70,24 +68,18 @@ func (dm *DiffManager) Run(ctx context.Context, snapID1, snapID2 string, opts ..
 
 	dm.metaCache = make(map[string]core.FileMeta)
 
-	if cfg.verbose {
-		fmt.Fprintf(os.Stderr, "Resolving snapshot %q...\n", snapID1)
-	}
+	dm.log.Debugf("Resolving snapshot %q...", snapID1)
 	root1, ref1, err := dm.loadRoot(ctx, snapID1)
 	if err != nil {
 		return nil, err
 	}
-	if cfg.verbose {
-		fmt.Fprintf(os.Stderr, "Resolving snapshot %q...\n", snapID2)
-	}
+	dm.log.Debugf("Resolving snapshot %q...", snapID2)
 	root2, ref2, err := dm.loadRoot(ctx, snapID2)
 	if err != nil {
 		return nil, err
 	}
 
-	if cfg.verbose {
-		fmt.Fprintf(os.Stderr, "Computing diff between %s and %s...\n", ref1, ref2)
-	}
+	dm.log.Debugf("Computing diff between %s and %s...", ref1, ref2)
 	changes, err := dm.diffRoots(ctx, root1, root2)
 	if err != nil {
 		return nil, err
@@ -97,19 +89,17 @@ func (dm *DiffManager) Run(ctx context.Context, snapID1, snapID2 string, opts ..
 		return changes[i].Path < changes[j].Path
 	})
 
-	if cfg.verbose {
-		var added, removed, modified int
-		for _, c := range changes {
-			switch c.Type {
-			case ChangeAdded:
-				added++
-			case ChangeRemoved:
-				removed++
-			case ChangeModified:
-				modified++
-			}
+	var added, removed, modified int
+	for _, c := range changes {
+		switch c.Type {
+		case ChangeAdded:
+			added++
+		case ChangeRemoved:
+			removed++
+		case ChangeModified:
+			modified++
 		}
-		fmt.Fprintf(os.Stderr, "Found %d changes: %d added, %d removed, %d modified\n", len(changes), added, removed, modified)
+		dm.log.Debugf("Found %d changes: %d added, %d removed, %d modified", len(changes), added, removed, modified)
 	}
 
 	return &DiffResult{Ref1: ref1, Ref2: ref2, Changes: changes}, nil

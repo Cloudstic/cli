@@ -193,9 +193,6 @@ func buildFindOpts(a *findArgs) ([]cloudstic.FindOption, error) {
 	if a.noDelta {
 		opts = append(opts, cloudstic.WithFindNoDelta())
 	}
-	if a.verbose {
-		opts = append(opts, cloudstic.WithFindVerbose())
-	}
 	return opts, nil
 }
 

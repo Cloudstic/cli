@@ -135,7 +135,9 @@ func runBackup(r *runner, ctx context.Context, a *backupArgs) int {
 // r.openClient resolves from the flags and the selected profile, and the output
 // mode.
 func execBackup(r *runner, ctx context.Context, a *backupArgs, bcfg config.Backup) int {
-	job, err := open.Backup(ctx, bcfg, open.WithSecretResolver(newSecretResolver(bcfg.Source.ConfigDir)))
+	job, err := open.Backup(ctx, bcfg,
+		open.WithSecretResolver(newSecretResolver(bcfg.Source.ConfigDir)),
+		open.WithPromptWriter(r.errOut))
 	if err != nil {
 		return r.fail("Failed to init source: %v", err)
 	}

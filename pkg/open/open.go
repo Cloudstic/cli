@@ -58,6 +58,7 @@ type options struct {
 	promptResolve  func() (string, error)
 	promptWrap     func() (string, error)
 	secretResolver *secretref.Resolver
+	promptWriter   io.Writer
 	decidedConfig  config.Client
 	decidedFields  config.FieldSet
 }
@@ -174,6 +175,18 @@ func WithSecretResolver(r *secretref.Resolver) Option {
 // configuration afterwards, which could not skip the resolution.
 func WithDecided(cfg config.Client, decided config.FieldSet) Option {
 	return func(o *options) { o.decidedConfig, o.decidedFields = cfg, decided }
+}
+
+// WithPromptWriter sets where an interactive OAuth flow writes what a human
+// needs to read: that a browser is opening, and the URL to visit if it did not.
+//
+// Supplying it is what makes the flow usable at all when the browser cannot
+// open. It is separate from WithLogger and WithDebugWriter because it is not
+// diagnostics — a caller who routes it to a debug sink leaves the user staring
+// at a stalled command. Without one the lines are discarded, which is right for
+// a caller that has no terminal to write to.
+func WithPromptWriter(w io.Writer) Option {
+	return func(o *options) { o.promptWriter = w }
 }
 
 // Store constructs the object store described by cfg.

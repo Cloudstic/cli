@@ -24,7 +24,10 @@ import (
 // oneDriveOptions holds configuration for a OneDrive source.
 type oneDriveOptions struct {
 	// logWriter is where this source sends its debug output; nil means none.
-	logWriter       io.Writer
+	logWriter io.Writer
+	// promptWriter is where the interactive OAuth flow writes what a human
+	// needs to read. Distinct from logWriter: this is not diagnostics.
+	promptWriter    io.Writer
 	clientID        string
 	resolver        *secretref.Resolver
 	tokenPath       string
@@ -43,6 +46,17 @@ type Option func(*oneDriveOptions)
 // cannot reach them; this is how a caller supplies one (RFC 0022 §8).
 func WithLogger(w io.Writer) Option {
 	return func(o *oneDriveOptions) { o.logWriter = w }
+}
+
+// WithPromptWriter sets where the interactive OAuth flow writes the two lines a
+// human needs to see: that a browser is opening, and the URL to visit if it did
+// not open. A nil writer discards them.
+//
+// It is separate from WithLogger because this is not diagnostics — hiding it
+// behind a debug flag would leave the user waiting with no idea a browser was
+// meant to open.
+func WithPromptWriter(w io.Writer) Option {
+	return func(o *oneDriveOptions) { o.promptWriter = w }
 }
 
 // WithClientID sets the OAuth client ID. If empty, uses the built-in default.
@@ -135,7 +149,7 @@ func New(ctx context.Context, opts ...Option) (*Source, error) {
 	}
 
 	if err != nil {
-		token, err = sourceoauth.ExchangeWithLocalServer(ctx, conf, oauth2.AccessTypeOffline)
+		token, err = sourceoauth.ExchangeWithLocalServer(ctx, cfg.promptWriter, conf, oauth2.AccessTypeOffline)
 		if err != nil {
 			return nil, fmt.Errorf("onedrive auth: %w", err)
 		}

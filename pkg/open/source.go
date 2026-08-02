@@ -106,6 +106,7 @@ func googleOpts(cfg config.Source, uri *config.SourceURI, o *options) ([]gdrive.
 		gdrive.WithDriveName(uri.Host),
 		gdrive.WithRootPath(uri.Path),
 		gdrive.WithExcludePatterns(cfg.Excludes),
+		gdrive.WithPromptWriter(o.promptWriter),
 	}
 	if cfg.SkipNativeFiles {
 		opts = append(opts, gdrive.WithSkipNativeFiles())
@@ -126,6 +127,7 @@ func oneDriveOpts(cfg config.Source, uri *config.SourceURI, o *options) ([]onedr
 		onedrive.WithDriveName(uri.Host),
 		onedrive.WithRootPath(uri.Path),
 		onedrive.WithExcludePatterns(cfg.Excludes),
+		onedrive.WithPromptWriter(o.promptWriter),
 	}, nil
 }
 

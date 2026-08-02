@@ -285,7 +285,12 @@ func runAuthLogin(r *runner, ctx context.Context, a *authLoginArgs) int {
 	srcCfg.ConfigDir = a.configDir
 	applyAuthLoginCredentialFlags(&srcCfg, a)
 
-	src, err := open.Source(ctx, srcCfg, open.WithSecretResolver(newSecretResolver(a.configDir)))
+	// The browser banner goes to errOut, where this CLI puts everything a human
+	// reads while stdout carries data — so `auth login -json` stays a clean
+	// stream.
+	src, err := open.Source(ctx, srcCfg,
+		open.WithSecretResolver(newSecretResolver(a.configDir)),
+		open.WithPromptWriter(r.errOut))
 	if err != nil {
 		return r.fail("Failed to initialize auth source: %v", err)
 	}

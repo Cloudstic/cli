@@ -178,6 +178,38 @@ fails if a flag's `env` binding has no matching row.
 
 `CLOUDSTIC_TEST_*` are test-only knobs, not user-facing.
 
+### Documentation Drift
+
+The user-facing docs live in a separate repository (`Cloudstic/doc`), so nothing
+here breaks when a rename leaves their code samples describing an API that no
+longer exists — which is how `store.NewLocalStore` and `source.NewGDriveSource`
+survived two releases past the backend split, long enough that the documented
+Quick Start could not compile.
+
+`internal/apicheck/docs_test.go` closes that gap. Point `CLOUDSTIC_DOCS_DIR` at a
+docs checkout and it checks every Go sample against the real API; without the
+variable it skips, so the ordinary build needs no second checkout:
+
+```bash
+CLOUDSTIC_DOCS_DIR=../cloudstic-doc go test ./internal/apicheck -run TestDocs
+```
+
+Two things are checked, matching the two ways docs actually rot: a sample naming
+a symbol that no longer exists, and a stated signature that no longer matches
+(`Client.Find` kept its name while losing its variadic options, so every
+documented call became wrong without the name changing).
+
+It does not compile the samples. Most are statement fragments referencing
+variables established in prose, and the rest are type declarations and bodiless
+signatures that would either fail to compile or compile vacuously as fresh local
+declarations — assembling them takes guesswork per block and fails for reasons
+that are not drift. Illustrative pseudocode opts out with
+`{/* apicheck:ignore <reason> */}` before the fence.
+
+The docs repository runs this on every pull request. **A change here that renames
+or removes exported API should be paired with a docs update**, since the docs
+side is where the failure surfaces.
+
 ## Documentation Map
 
 Deep-dive docs live in `docs/` and design records in `rfcs/`:

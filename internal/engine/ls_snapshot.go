@@ -12,6 +12,8 @@ import (
 	"github.com/cloudstic/cli/pkg/store"
 )
 
+var defaultLsLog = logger.New("ls", logger.ColorCyan)
+
 // LsSnapshotOption configures an ls-snapshot operation.
 type LsSnapshotOption func(*lsSnapshotConfig)
 
@@ -43,7 +45,7 @@ type LsSnapshotManager struct {
 func NewLsSnapshotManager(s store.ObjectStore, logWriter io.Writer) *LsSnapshotManager {
 	return &LsSnapshotManager{
 		store: s,
-		log:   SnapshotLogger(logWriter),
+		log:   defaultLsLog.To(logWriter),
 		tree:  hamt.NewTree(s),
 	}
 }

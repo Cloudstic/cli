@@ -112,10 +112,9 @@ func WithExcludeHash(hash string) BackupOption {
 // BackupManager orchestrates a backup: scanning a source for changes, uploading
 // new or modified files, and persisting a snapshot backed by a Merkle-HAMT.
 type BackupManager struct {
-	// log is this manager's debug sink, and snapLog the snapshot-catalog one
-	// it passes to the free functions in snapshots.go.
+	// log is this manager's debug sink; the snapshot catalog carries its own.
 	log     *logger.Logger
-	snapLog *logger.Logger
+	catalog snapshotCatalog
 	source  source.Source
 	// store is the key-cached view of the destination, and the only store this
 	// manager writes through. It is held at its concrete type so PreloadKeys
@@ -150,7 +149,7 @@ func NewBackupManager(src source.Source, dest store.ObjectStore, reporter ui.Rep
 	keyCache := storelayer.NewKeyCacheStore(dest)
 	return &BackupManager{
 		log:          defaultBackupLog.To(logWriter),
-		snapLog:      SnapshotLogger(logWriter),
+		catalog:      newSnapshotCatalog(keyCache, logWriter),
 		source:       src,
 		store:        keyCache,
 		tree:         hamt.NewTree(keyCache, hamt.WithLogger(logWriter)),
@@ -334,7 +333,7 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 	}
 
 	// Update snapshot catalog (best-effort).
-	AppendSnapshotCatalog(bm.store, snapshotToSummary(snapRef, snap), bm.snapLog)
+	bm.catalog.add(snapshotToSummary(snapRef, snap))
 
 	r := bm.buildResult()
 	r.SnapshotHash = snapHash
@@ -373,7 +372,7 @@ func (bm *BackupManager) loadLatestSeq() (int, error) {
 // silently downgrade an incremental backup to a full rescan and reset the
 // sequence number.
 func (bm *BackupManager) findPreviousSnapshot(info core.SourceInfo) (*core.Snapshot, error) {
-	entries, err := LoadSnapshotCatalog(bm.store, bm.snapLog)
+	entries, err := bm.catalog.load()
 	if err != nil {
 		return nil, err
 	}

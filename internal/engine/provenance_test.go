@@ -40,7 +40,7 @@ func TestSnapshotToSummary_LeavesProvenanceEmptyForOrdinarySnapshots(t *testing.
 // field when it reconciles. The value must come back from the snapshot object's
 // Meta on the next rebuild rather than staying lost — otherwise a single run of
 // an older binary would make copy re-import the whole history.
-func TestLoadSnapshotCatalog_RebuildsProvenanceFromSnapshotMeta(t *testing.T) {
+func TestSnapshotCatalogLoad_RebuildsProvenanceFromSnapshotMeta(t *testing.T) {
 	s := NewMockStore()
 	prov := core.CopyProvenance{RepoID: "9f2c1a", SnapshotRef: "snapshot/source123"}
 	ref := putSnapshot(t, s, copiedSnapshot("2026-01-01T00:00:00Z", prov))
@@ -54,9 +54,9 @@ func TestLoadSnapshotCatalog_RebuildsProvenanceFromSnapshotMeta(t *testing.T) {
 		Root:    "node/" + strings.Repeat("a", 8),
 	}})
 
-	entries, err := LoadSnapshotCatalog(s, nil)
+	entries, err := newSnapshotCatalog(s, nil).load()
 	if err != nil {
-		t.Fatalf("LoadSnapshotCatalog: %v", err)
+		t.Fatalf("catalog load: %v", err)
 	}
 	if len(entries) != 1 {
 		t.Fatalf("got %d entries, want 1", len(entries))
@@ -72,14 +72,14 @@ func TestLoadSnapshotCatalog_RebuildsProvenanceFromSnapshotMeta(t *testing.T) {
 
 // A snapshot written by backup lands in the catalog through the same funnel, so
 // an ordinary backup must not start claiming provenance.
-func TestAppendSnapshotCatalog_RoundTripsProvenance(t *testing.T) {
+func TestSnapshotCatalogAdd_RoundTripsProvenance(t *testing.T) {
 	s := NewMockStore()
 	prov := core.CopyProvenance{RepoID: "9f2c1a", SnapshotRef: "snapshot/source123"}
 
-	AppendSnapshotCatalog(s, snapshotToSummary("snapshot/dest456", *copiedSnapshot("2026-01-01T00:00:00Z", prov)), nil)
-	AppendSnapshotCatalog(s, snapshotToSummary("snapshot/plain", core.Snapshot{
+	newSnapshotCatalog(s, nil).add(snapshotToSummary("snapshot/dest456", *copiedSnapshot("2026-01-01T00:00:00Z", prov)))
+	newSnapshotCatalog(s, nil).add(snapshotToSummary("snapshot/plain", core.Snapshot{
 		Version: 1, Created: "2026-01-02T00:00:00Z", Seq: 2,
-	}), nil)
+	}))
 
 	catalog := readCatalog(t, s)
 	byRef := map[string]core.SnapshotSummary{}

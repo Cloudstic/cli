@@ -18,15 +18,35 @@ import (
 )
 
 // defaultSnapLog is the prefix and colour for snapshot-catalog diagnostics.
-// The functions below take a *logger.Logger rather than reading a package
-// variable, because they are free functions with no receiver to carry a sink
-// — see RFC 0022 §8. A nil logger is tolerated and simply logs nothing.
 var defaultSnapLog = logger.New("snapshots", logger.ColorCyan)
 
-// SnapshotLogger returns a snapshot-catalog logger writing to w.
-func SnapshotLogger(w io.Writer) *logger.Logger { return defaultSnapLog.To(w) }
-
 const snapshotCatalogKey = "index/snapshots"
+
+// snapshotCatalog is the index/snapshots catalog: the store holding it, paired
+// with the sink its best-effort failures are reported to.
+//
+// Every operation needs both, so they are bound once here rather than
+// re-passed on each call. That pairing is what keeps a manager down to a
+// single logger of its own: while these were free functions taking a store and
+// a *logger.Logger, every manager that so much as read the catalog had to
+// carry a second, snapshot-prefixed logger purely to hand back down.
+//
+// A nil sink is tolerated and simply logs nothing (RFC 0022 §8).
+type snapshotCatalog struct {
+	store store.ObjectStore
+	log   *logger.Logger
+}
+
+// newSnapshotCatalog binds the catalog living in s to the debug sink w.
+func newSnapshotCatalog(s store.ObjectStore, w io.Writer) snapshotCatalog {
+	return snapshotCatalog{store: s, log: defaultSnapLog.To(w)}
+}
+
+// debugf reports catalog progress to the bound sink, so a caller whose whole
+// job is the catalog can narrate it without reaching through to c.log.
+func (c snapshotCatalog) debugf(format string, args ...any) {
+	c.log.Debugf(format, args...)
+}
 
 var (
 	// ErrSnapshotNotFound means no snapshot matched a requested reference.
@@ -39,22 +59,22 @@ var (
 // Snapshot catalog (index/snapshots)
 // ---------------------------------------------------------------------------
 
-// LoadSnapshotCatalog returns all snapshots, using the catalog index when
-// available and falling back to individual GETs only for snapshots that are
-// missing from the catalog. The catalog is automatically rebuilt/updated
-// whenever a mismatch with the live snapshot keys is detected.
+// load returns all snapshots, using the catalog index when available and
+// falling back to individual GETs only for snapshots that are missing from the
+// catalog. The catalog is automatically rebuilt/updated whenever a mismatch
+// with the live snapshot keys is detected.
 // Results are sorted newest-first by Created time.
-func LoadSnapshotCatalog(s store.ObjectStore, log *logger.Logger) ([]SnapshotEntry, error) {
+func (c snapshotCatalog) load() ([]SnapshotEntry, error) {
 	ctx := context.Background()
 
 	// 1. Load catalog (best-effort).
 	var catalog []core.SnapshotSummary
-	if data, err := s.Get(ctx, snapshotCatalogKey); err == nil {
+	if data, err := c.store.Get(ctx, snapshotCatalogKey); err == nil {
 		_ = json.Unmarshal(data, &catalog)
 	}
 
 	// 2. List live snapshot keys for reconciliation.
-	liveKeys, err := s.List(ctx, "snapshot/")
+	liveKeys, err := c.store.List(ctx, "snapshot/")
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +112,7 @@ func LoadSnapshotCatalog(s store.ObjectStore, log *logger.Logger) ([]SnapshotEnt
 
 	// 5. Fetch missing snapshot objects concurrently.
 	if len(missing) > 0 {
-		fetched, err := fetchSnapshots(s, missing)
+		fetched, err := fetchSnapshots(c.store, missing)
 		if err != nil {
 			return nil, fmt.Errorf("load snapshot catalog: %w", err)
 		}
@@ -140,32 +160,31 @@ func LoadSnapshotCatalog(s store.ObjectStore, log *logger.Logger) ([]SnapshotEnt
 
 	// 7. Persist rebuilt catalog (best-effort).
 	if needRebuild {
-		if err := SaveSnapshotCatalog(s, updatedCatalog); err != nil {
-			log.Debugf("failed to persist snapshot catalog: %v", err)
+		if err := c.save(updatedCatalog); err != nil {
+			c.log.Debugf("failed to persist snapshot catalog: %v", err)
 		}
 	}
 
 	return entries, nil
 }
 
-// SaveSnapshotCatalog persists the full catalog to the store.
-func SaveSnapshotCatalog(s store.ObjectStore, catalog []core.SnapshotSummary) error {
+// save persists the full catalog to the store.
+func (c snapshotCatalog) save(catalog []core.SnapshotSummary) error {
 	data, err := json.Marshal(catalog)
 	if err != nil {
 		return err
 	}
-	return s.Put(context.Background(), snapshotCatalogKey, data)
+	return c.store.Put(context.Background(), snapshotCatalogKey, data)
 }
 
-// loadCatalogForUpdate reads the current catalog for AppendSnapshotCatalog and
-// RemoveFromSnapshotCatalog. ok is false when the read failed for a real
-// reason (not simply "no catalog yet"): callers must not treat that as an
-// empty catalog, since persisting one would clobber every existing entry with
-// a base that just happens to be wrong rather than absent. The self-heal in
-// LoadSnapshotCatalog recovers a merely stale catalog on the next read; it
-// cannot recover one that was overwritten with fabricated emptiness.
-func loadCatalogForUpdate(s store.ObjectStore) (catalog []core.SnapshotSummary, ok bool) {
-	data, err := s.Get(context.Background(), snapshotCatalogKey)
+// loadForUpdate reads the current catalog for add and remove. ok is false when
+// the read failed for a real reason (not simply "no catalog yet"): callers
+// must not treat that as an empty catalog, since persisting one would clobber
+// every existing entry with a base that just happens to be wrong rather than
+// absent. The self-heal in load recovers a merely stale catalog on the next
+// read; it cannot recover one that was overwritten with fabricated emptiness.
+func (c snapshotCatalog) loadForUpdate() (catalog []core.SnapshotSummary, ok bool) {
+	data, err := c.store.Get(context.Background(), snapshotCatalogKey)
 	switch {
 	case err == nil:
 		_ = json.Unmarshal(data, &catalog)
@@ -177,26 +196,26 @@ func loadCatalogForUpdate(s store.ObjectStore) (catalog []core.SnapshotSummary, 
 	}
 }
 
-// AppendSnapshotCatalog loads the current catalog, appends a new summary, and
-// persists it. This is best-effort; errors are logged but not propagated.
-func AppendSnapshotCatalog(s store.ObjectStore, summary core.SnapshotSummary, log *logger.Logger) {
-	catalog, ok := loadCatalogForUpdate(s)
+// add loads the current catalog, appends a new summary, and persists it. This
+// is best-effort; errors are logged but not propagated.
+func (c snapshotCatalog) add(summary core.SnapshotSummary) {
+	catalog, ok := c.loadForUpdate()
 	if !ok {
-		log.Debugf("failed to append snapshot catalog: could not read existing catalog")
+		c.log.Debugf("failed to append snapshot catalog: could not read existing catalog")
 		return
 	}
 	catalog = append(catalog, summary)
-	if err := SaveSnapshotCatalog(s, catalog); err != nil {
-		log.Debugf("failed to append snapshot catalog: %v", err)
+	if err := c.save(catalog); err != nil {
+		c.log.Debugf("failed to append snapshot catalog: %v", err)
 	}
 }
 
-// RemoveFromSnapshotCatalog loads the current catalog, removes entries whose
-// refs match, and persists the result. This is best-effort.
-func RemoveFromSnapshotCatalog(s store.ObjectStore, log *logger.Logger, refs ...string) {
-	catalog, ok := loadCatalogForUpdate(s)
+// remove loads the current catalog, drops entries whose refs match, and
+// persists the result. This is best-effort.
+func (c snapshotCatalog) remove(refs ...string) {
+	catalog, ok := c.loadForUpdate()
 	if !ok {
-		log.Debugf("failed to update snapshot catalog after removal: could not read existing catalog")
+		c.log.Debugf("failed to update snapshot catalog after removal: could not read existing catalog")
 		return
 	}
 	if len(catalog) == 0 {
@@ -212,8 +231,8 @@ func RemoveFromSnapshotCatalog(s store.ObjectStore, log *logger.Logger, refs ...
 			filtered = append(filtered, cs)
 		}
 	}
-	if err := SaveSnapshotCatalog(s, filtered); err != nil {
-		log.Debugf("failed to update snapshot catalog after removal: %v", err)
+	if err := c.save(filtered); err != nil {
+		c.log.Debugf("failed to update snapshot catalog after removal: %v", err)
 	}
 }
 

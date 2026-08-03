@@ -146,7 +146,11 @@ type CopyManager struct {
 
 	reporter ui.Reporter
 	log      *logger.Logger
-	snapLog  *logger.Logger
+
+	// A copy reads one repository's catalog and writes another's, so it binds
+	// one per side rather than passing a store per call.
+	srcCatalog snapshotCatalog
+	dstCatalog snapshotCatalog
 
 	srcTree *hamt.Tree
 	dstTree *hamt.Tree
@@ -218,7 +222,8 @@ func NewCopyManager(
 		dstID:       dstRepoID,
 		reporter:    reporter,
 		log:         defaultCopyLog.To(logWriter),
-		snapLog:     SnapshotLogger(logWriter),
+		srcCatalog:  newSnapshotCatalog(src.Store, logWriter),
+		dstCatalog:  newSnapshotCatalog(dst, logWriter),
 		srcTree:     hamt.NewTree(src.Store, hamt.WithLogger(logWriter)),
 		dstTree:     hamt.NewTree(dst, hamt.WithLogger(logWriter)),
 		chunkRefs:   map[string]string{},
@@ -249,7 +254,7 @@ func (cm *CopyManager) Run(ctx context.Context, opts ...CopyOption) (*CopyResult
 		DestRepoID:   cm.dstID,
 	}
 
-	sourceEntries, err := LoadSnapshotCatalog(cm.src.Store, cm.snapLog)
+	sourceEntries, err := cm.srcCatalog.load()
 	if err != nil {
 		return nil, fmt.Errorf("read source snapshot catalog: %w", err)
 	}
@@ -261,7 +266,7 @@ func (cm *CopyManager) Run(ctx context.Context, opts ...CopyOption) (*CopyResult
 	// One read of the destination catalog serves both questions asked of it:
 	// what has already been copied, and which tree each lineage should seed
 	// from.
-	destEntries, err := LoadSnapshotCatalog(cm.dst, cm.snapLog)
+	destEntries, err := cm.dstCatalog.load()
 	if err != nil {
 		return nil, fmt.Errorf("read destination snapshot catalog: %w", err)
 	}
@@ -700,7 +705,7 @@ func (cm *CopyManager) writeSnapshot(
 	if err := cm.dst.Put(ctx, ref, data); err != nil {
 		return "", fmt.Errorf("write snapshot: %w", err)
 	}
-	AppendSnapshotCatalog(cm.dst, snapshotToSummary(ref, dest), cm.snapLog)
+	cm.dstCatalog.add(snapshotToSummary(ref, dest))
 	return ref, nil
 }
 

@@ -1,12 +1,9 @@
 package engine
 
 import (
-	"io"
-
 	"context"
 	"fmt"
-
-	"github.com/cloudstic/cli/internal/logger"
+	"io"
 
 	"github.com/cloudstic/cli/pkg/store"
 )
@@ -24,14 +21,11 @@ type ListResult struct {
 
 // ListManager enumerates all available snapshots.
 type ListManager struct {
-	store store.ObjectStore
-	// log is the snapshot-catalog sink this manager passes to the free
-	// functions in snapshots.go.
-	log *logger.Logger
+	catalog snapshotCatalog
 }
 
 func NewListManager(s store.ObjectStore, logWriter io.Writer) *ListManager {
-	return &ListManager{store: s, log: SnapshotLogger(logWriter)}
+	return &ListManager{catalog: newSnapshotCatalog(s, logWriter)}
 }
 
 // Run lists every snapshot in the store.
@@ -41,12 +35,12 @@ func (lm *ListManager) Run(ctx context.Context, opts ...ListOption) (*ListResult
 		opt(&cfg)
 	}
 
-	lm.log.Debugf("Loading snapshot catalog...")
-	entries, err := LoadSnapshotCatalog(lm.store, lm.log)
+	lm.catalog.debugf("Loading snapshot catalog...")
+	entries, err := lm.catalog.load()
 	if err != nil {
 		return nil, err
 	}
-	lm.log.Debugf("Found %d snapshots", len(entries))
+	lm.catalog.debugf("Found %d snapshots", len(entries))
 	for _, e := range entries {
 		source := ""
 		if e.Snap.Source != nil {
@@ -60,7 +54,7 @@ func (lm *ListManager) Run(ctx context.Context, opts ...ListOption) (*ListResult
 					source += fmt.Sprintf(" path_id=%s", e.Snap.Source.PathID)
 				}
 			}
-			lm.log.Debugf("  %s seq=%d created=%s%s", e.Ref, e.Snap.Seq, e.Snap.Created, source)
+			lm.catalog.debugf("  %s seq=%d created=%s%s", e.Ref, e.Snap.Seq, e.Snap.Created, source)
 		}
 	}
 	return &ListResult{Snapshots: entries}, nil

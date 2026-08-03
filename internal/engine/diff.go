@@ -12,6 +12,8 @@ import (
 	"github.com/cloudstic/cli/pkg/store"
 )
 
+var defaultDiffLog = logger.New("diff", logger.ColorCyan)
+
 // ChangeType describes how a file differs between two snapshots.
 type ChangeType string
 
@@ -53,7 +55,7 @@ type DiffManager struct {
 
 func NewDiffManager(s store.ObjectStore, logWriter io.Writer) *DiffManager {
 	return &DiffManager{
-		log:   SnapshotLogger(logWriter),
+		log:   defaultDiffLog.To(logWriter),
 		store: s,
 		tree:  hamt.NewTree(s),
 	}

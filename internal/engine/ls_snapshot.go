@@ -28,10 +28,14 @@ type LsSnapshotResult struct {
 }
 
 // LsSnapshotManager lists the file tree of a single snapshot.
+//
+// Unlike DiffManager and PruneManager it holds no filemeta cache, because it
+// cannot benefit from one: a HAMT key is derived from meta.FileID, which is
+// itself a FileMeta field, so no two keys share a filemeta ref. Walking a
+// single root therefore reaches every ref exactly once.
 type LsSnapshotManager struct {
-	store     store.ObjectStore
-	tree      *hamt.Tree
-	metaCache map[string]core.FileMeta
+	store store.ObjectStore
+	tree  *hamt.Tree
 	// log is where progress detail goes; see DiffManager.log.
 	log *logger.Logger
 }
@@ -51,8 +55,6 @@ func (lm *LsSnapshotManager) Run(ctx context.Context, snapshotID string, opts ..
 		opt(&cfg)
 	}
 
-	lm.metaCache = make(map[string]core.FileMeta)
-
 	lm.log.Debugf("Resolving snapshot %q...", snapshotID)
 	snap, ref, err := lm.resolveSnapshot(ctx, snapshotID)
 	if err != nil {
@@ -71,8 +73,8 @@ func (lm *LsSnapshotManager) Run(ctx context.Context, snapshotID string, opts ..
 		} else {
 			files++
 		}
-		lm.log.Debugf("Collected %d files, %d directories", files, dirs)
 	}
+	lm.log.Debugf("Collected %d files, %d directories", files, dirs)
 
 	roots, children := lm.buildHierarchy(refToMeta)
 
@@ -120,9 +122,6 @@ func (lm *LsSnapshotManager) collectMeta(ctx context.Context, root string) (map[
 }
 
 func (lm *LsSnapshotManager) loadMeta(ctx context.Context, ref string) (*core.FileMeta, error) {
-	if fm, ok := lm.metaCache[ref]; ok {
-		return &fm, nil
-	}
 	data, err := getVerified(ctx, lm.store, ref)
 	if err != nil {
 		return nil, err

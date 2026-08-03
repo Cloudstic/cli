@@ -118,6 +118,36 @@ func TestLsSnapshotManager_LogsProgressToTheCallersWriter(t *testing.T) {
 	}
 }
 
+// The collected-entries line summarises the whole walk, so it belongs after the
+// counting loop rather than inside it. Emitting it per entry turned a one-line
+// summary into one line per file, which on a real snapshot buries every other
+// diagnostic in the debug log.
+func TestLsSnapshotManager_LogsTheCollectedSummaryOnce(t *testing.T) {
+	ctx := context.Background()
+	s := NewMockStore()
+
+	metas := []string{
+		createMeta(ctx, s, "file1.txt", 100),
+		createMeta(ctx, s, "file2.txt", 200),
+		createMeta(ctx, s, "file3.txt", 300),
+	}
+	root := createHamt(ctx, t, s, []string{"file1", "file2", "file3"}, metas)
+	snap := core.Snapshot{Seq: 1, Root: root, Created: "2025-01-01T00:00:00Z"}
+	ref := saveSnapshot(ctx, s, &snap)
+
+	var log bytes.Buffer
+	if _, err := NewLsSnapshotManager(s, &log).Run(ctx, ref); err != nil {
+		t.Fatalf("LsSnapshot: %v", err)
+	}
+
+	if got := strings.Count(log.String(), "Collected "); got != 1 {
+		t.Errorf("collected summary logged %d times, want 1; got:\n%s", got, log.String())
+	}
+	if !strings.Contains(log.String(), "Collected 3 files, 0 directories") {
+		t.Errorf("summary does not report the final totals; got:\n%s", log.String())
+	}
+}
+
 func TestDiffManager_LogsProgressToTheCallersWriter(t *testing.T) {
 	ctx := context.Background()
 	s := NewMockStore()

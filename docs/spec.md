@@ -258,6 +258,26 @@ Object key: `node/<sha256-of-serialized-json>`
 * Maximum 32 entries per leaf.
 * Entries are sorted by key for deterministic hashing.
 
+#### Canonical shape
+
+A tree's shape is a function of its contents alone: an internal node exists only
+where more than 32 entries live beneath it. Two trees holding the same entries
+therefore have the same root, whatever sequence of inserts and deletes produced
+them.
+
+Insertion maintains this by splitting a leaf exactly when it would exceed 32.
+Deletion maintains it by re-merging a subtree back into one leaf once it holds
+32 or fewer entries. Without that second rule a subtree that split under load
+and later shrank would stay split, and equal content would hash differently
+depending on its history — which costs node deduplication between repositories
+and leaves shrinking trees carrying nodes they no longer need.
+
+Older builds do not enforce the deletion rule, so a repository they wrote may
+contain trees that are not canonical. Those remain valid and readable: a leaf
+may appear at any level, which is already the case for any tree small enough to
+fit in one. Such a tree becomes canonical the next time a deletion passes
+through it.
+
 ### 5. Snapshot
 
 * A complete checkpoint pointing to a HAMT root.

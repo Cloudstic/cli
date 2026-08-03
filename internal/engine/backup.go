@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"fmt"
-	"io"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -17,7 +16,6 @@ import (
 	"github.com/cloudstic/cli/internal/storelayer"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/source"
-	"github.com/cloudstic/cli/pkg/store"
 )
 
 var defaultBackupLog = logger.New("backup", logger.ColorGreen)
@@ -133,7 +131,7 @@ type BackupManager struct {
 	hmacKey      []byte
 }
 
-func NewBackupManager(src source.Source, dest store.ObjectStore, reporter ui.Reporter, hmacKey []byte, logWriter io.Writer, opts ...BackupOption) *BackupManager {
+func NewBackupManager(d Deps, src source.Source, opts ...BackupOption) *BackupManager {
 	cfg := backupConfig{
 		generator: "cloudstic-cli",
 		meta:      map[string]string{},
@@ -143,22 +141,22 @@ func NewBackupManager(src source.Source, dest store.ObjectStore, reporter ui.Rep
 	}
 
 	sourceInfo := src.Info()
-	keyCache := storelayer.NewKeyCacheStore(dest)
+	keyCache := storelayer.NewKeyCacheStore(d.Store)
 	return &BackupManager{
-		log:          defaultBackupLog.To(logWriter),
-		catalog:      newSnapshotCatalog(keyCache, logWriter),
+		log:          defaultBackupLog.To(d.LogSink),
+		catalog:      newSnapshotCatalog(keyCache, d.LogSink),
 		source:       src,
 		store:        keyCache,
-		tree:         hamt.NewTree(keyCache, hamt.WithLogger(logWriter)),
-		chunker:      NewChunker(keyCache, hmacKey),
-		reporter:     reporter,
+		tree:         hamt.NewTree(keyCache, hamt.WithLogger(d.LogSink)),
+		chunker:      NewChunker(keyCache, d.HMACKey),
+		reporter:     d.Reporter,
 		sourceInfo:   sourceInfo,
 		cfg:          cfg,
 		newMetas:     make(map[string]core.FileMeta),
 		metas:        newMetaLoader(keyCache),
 		pendingMetas: make(map[string][]byte),
 		parentIndex:  make(map[string]string),
-		hmacKey:      hmacKey,
+		hmacKey:      d.HMACKey,
 	}
 }
 

@@ -3,9 +3,6 @@ package engine
 import (
 	"context"
 	"fmt"
-	"io"
-
-	"github.com/cloudstic/cli/pkg/store"
 )
 
 // ListOption configures a list operation.
@@ -24,8 +21,8 @@ type ListManager struct {
 	catalog snapshotCatalog
 }
 
-func NewListManager(s store.ObjectStore, logWriter io.Writer) *ListManager {
-	return &ListManager{catalog: newSnapshotCatalog(s, logWriter)}
+func NewListManager(d Deps) *ListManager {
+	return &ListManager{catalog: newSnapshotCatalog(d.Store, d.LogSink)}
 }
 
 // Run lists every snapshot in the store.

@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"io"
 	"sort"
 
 	"github.com/cloudstic/cli/internal/core"
@@ -52,12 +51,12 @@ type DiffManager struct {
 	log *logger.Logger
 }
 
-func NewDiffManager(s store.ObjectStore, logWriter io.Writer) *DiffManager {
+func NewDiffManager(d Deps) *DiffManager {
 	return &DiffManager{
-		log:   defaultDiffLog.To(logWriter),
-		store: s,
-		tree:  hamt.NewTree(s),
-		metas: newMetaLoader(s),
+		log:   defaultDiffLog.To(d.LogSink),
+		store: d.Store,
+		tree:  hamt.NewTree(d.Store),
+		metas: newMetaLoader(d.Store),
 	}
 }
 

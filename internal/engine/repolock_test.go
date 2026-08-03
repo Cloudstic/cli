@@ -353,7 +353,7 @@ func TestPruneDryRun_NoLock(t *testing.T) {
 	s := NewMockStore()
 
 	metered := storelayer.NewMeteredStore(s)
-	pm := NewPruneManager(metered, ui.NewNoOpReporter())
+	pm := NewPruneManager(Deps{Store: metered, Reporter: ui.NewNoOpReporter()})
 	_, err := pm.Run(ctx, WithPruneDryRun())
 	if err != nil {
 		t.Fatalf("dry run should succeed: %v", err)
@@ -370,7 +370,7 @@ func TestBackupDryRun_NoLock(t *testing.T) {
 	s := NewMockStore()
 	src := NewMockSource()
 
-	bm := NewBackupManager(src, s, ui.NewNoOpReporter(), nil, nil, WithBackupDryRun())
+	bm := NewBackupManager(Deps{Store: s, Reporter: ui.NewNoOpReporter()}, src, WithBackupDryRun())
 	_, err := bm.Run(ctx)
 	if err != nil {
 		t.Fatalf("dry run should succeed: %v", err)

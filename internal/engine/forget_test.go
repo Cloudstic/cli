@@ -26,7 +26,7 @@ func TestForgetManager_Run(t *testing.T) {
 
 	_ = store.Put(ctx, "index/latest", createIndex(snap3Ref, 3))
 
-	fm := NewForgetManager(store, ui.NewNoOpReporter(), nil)
+	fm := NewForgetManager(Deps{Store: store, Reporter: ui.NewNoOpReporter()})
 
 	// Test 1: Forget intermediate snapshot (snap2) -- latest should not change.
 	if _, err := fm.Run(context.Background(), snap2Ref); err != nil {
@@ -71,7 +71,7 @@ func TestForgetManager_Run(t *testing.T) {
 func TestForgetManager_ResolveSnapshot_PropagatesLatestError(t *testing.T) {
 	backendErr := errors.New("simulated network error")
 	s := newErrorOnGetStore(NewMockStore(), backendErr, "index/latest")
-	fm := NewForgetManager(s, ui.NewNoOpReporter(), nil)
+	fm := NewForgetManager(Deps{Store: s, Reporter: ui.NewNoOpReporter()})
 
 	_, err := fm.resolveSnapshot("latest")
 	if err == nil {
@@ -95,7 +95,7 @@ func TestForgetManager_FixupLatest_PropagatesError(t *testing.T) {
 	_ = inner.Put(ctx, "index/latest", createIndex(ref, 1))
 
 	s := newErrorOnGetStore(inner, backendErr, "index/latest")
-	fm := NewForgetManager(s, ui.NewNoOpReporter(), nil)
+	fm := NewForgetManager(Deps{Store: s, Reporter: ui.NewNoOpReporter()})
 
 	err := fm.fixupLatest(ref)
 	if err == nil {
@@ -120,7 +120,7 @@ func createIndex(ref string, seq int) []byte {
 }
 
 func TestForgetManager_RunPolicy_RequiresPolicyOrFilter(t *testing.T) {
-	fm := NewForgetManager(NewMockStore(), ui.NewNoOpReporter(), nil)
+	fm := NewForgetManager(Deps{Store: NewMockStore(), Reporter: ui.NewNoOpReporter()})
 
 	_, err := fm.RunPolicy(context.Background())
 	if err == nil {
@@ -134,7 +134,7 @@ func TestForgetManager_RunPolicy_RequiresPolicyOrFilter(t *testing.T) {
 func TestForgetManager_RunPolicy_FilterOnlyAllowed(t *testing.T) {
 	ctx := context.Background()
 	store := NewMockStore()
-	fm := NewForgetManager(store, ui.NewNoOpReporter(), nil)
+	fm := NewForgetManager(Deps{Store: store, Reporter: ui.NewNoOpReporter()})
 
 	snap := core.Snapshot{
 		Seq:     1,
@@ -171,7 +171,7 @@ func TestForgetManager_DryRunRemovesNothing(t *testing.T) {
 	snapRef := saveSnapshot(ctx, s, &snap)
 	_ = s.Put(ctx, "index/latest", createIndex(snapRef, 1))
 
-	fm := NewForgetManager(s, ui.NewNoOpReporter(), nil)
+	fm := NewForgetManager(Deps{Store: s, Reporter: ui.NewNoOpReporter()})
 	result, err := fm.Run(ctx, snapRef, WithForgetDryRun())
 	if err != nil {
 		t.Fatalf("dry run: %v", err)

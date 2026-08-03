@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 
 	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/internal/engine"
 	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/internal/repoconfig"
 	"github.com/cloudstic/cli/internal/storelayer"
@@ -103,6 +104,18 @@ type Client struct {
 	// one. An unbound logger falls back to the process-wide writer.
 	log       *logger.Logger
 	logWriter io.Writer
+}
+
+// engineDeps is the dependency set the engine managers are built from, as this
+// client is configured. An operation that works against a different store —
+// backup, which meters its own — overrides Store on the returned value.
+func (c *Client) engineDeps() engine.Deps {
+	return engine.Deps{
+		Store:    c.store,
+		Reporter: c.reporter,
+		LogSink:  c.logWriter,
+		HMACKey:  c.hmacKey,
+	}
 }
 
 func NewClient(ctx context.Context, base store.ObjectStore, opts ...ClientOption) (*Client, error) {

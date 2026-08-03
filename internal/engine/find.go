@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"fmt"
-	"io"
 	"time"
 
 	"github.com/cloudstic/cli/internal/core"
@@ -231,15 +230,15 @@ type FindManager struct {
 	log *logger.Logger
 }
 
-func NewFindManager(s store.ObjectStore, logWriter io.Writer) *FindManager {
+func NewFindManager(d Deps) *FindManager {
 	// One Tree serves every snapshot root and shares a single node cache
 	// between them, which is what makes the delta scan's structural sharing
 	// pay off rather than re-reading the same nodes per snapshot.
 	return &FindManager{
-		store:   s,
-		tree:    hamt.NewTree(s),
-		catalog: newSnapshotCatalog(s, logWriter),
-		log:     defaultFindLog.To(logWriter),
+		store:   d.Store,
+		tree:    hamt.NewTree(d.Store),
+		catalog: newSnapshotCatalog(d.Store, d.LogSink),
+		log:     defaultFindLog.To(d.LogSink),
 	}
 }
 

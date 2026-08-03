@@ -55,7 +55,7 @@ func TestPruneManager_Run(t *testing.T) {
 
 	// 3. Run Prune
 	metered := storelayer.NewMeteredStore(mockStore)
-	pm := NewPruneManager(metered, ui.NewNoOpReporter())
+	pm := NewPruneManager(Deps{Store: metered, Reporter: ui.NewNoOpReporter()})
 	result, err := pm.Run(ctx)
 	if err != nil {
 		t.Fatalf("Prune failed: %v", err)

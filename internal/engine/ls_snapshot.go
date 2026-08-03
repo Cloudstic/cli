@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"io"
 	"sort"
 
 	"github.com/cloudstic/cli/internal/core"
@@ -42,12 +41,12 @@ type LsSnapshotManager struct {
 	log *logger.Logger
 }
 
-func NewLsSnapshotManager(s store.ObjectStore, logWriter io.Writer) *LsSnapshotManager {
+func NewLsSnapshotManager(d Deps) *LsSnapshotManager {
 	return &LsSnapshotManager{
-		store: s,
-		log:   defaultLsLog.To(logWriter),
-		tree:  hamt.NewTree(s),
-		metas: newUncachedMetaLoader(s),
+		store: d.Store,
+		log:   defaultLsLog.To(d.LogSink),
+		tree:  hamt.NewTree(d.Store),
+		metas: newUncachedMetaLoader(d.Store),
 	}
 }
 

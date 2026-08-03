@@ -193,7 +193,12 @@ func (c *Client) Backup(ctx context.Context, src source.Source, opts ...BackupOp
 	rawMeter := storelayer.NewMeteredStore(c.store)
 	c.storedMeter.Reset()
 
-	mgr := engine.NewBackupManager(src, rawMeter, c.reporter, c.hmacKey, c.logWriter, opts...)
+	// Backup writes through its own meter so the run's raw byte count is
+	// separable from the client-wide stored-bytes total.
+	deps := c.engineDeps()
+	deps.Store = rawMeter
+
+	mgr := engine.NewBackupManager(deps, src, opts...)
 	result, err := mgr.Run(ctx)
 	if err != nil {
 		return nil, err

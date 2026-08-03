@@ -39,12 +39,12 @@ type PruneManager struct {
 	metas    *metaLoader
 }
 
-func NewPruneManager(s store.ObjectStore, reporter ui.Reporter) *PruneManager {
-	meteredStore := storelayer.NewMeteredStore(s)
+func NewPruneManager(d Deps) *PruneManager {
+	meteredStore := storelayer.NewMeteredStore(d.Store)
 	return &PruneManager{
 		store:    meteredStore,
 		tree:     hamt.NewTree(meteredStore),
-		reporter: reporter,
+		reporter: d.Reporter,
 		metas:    newMetaLoader(meteredStore),
 	}
 }

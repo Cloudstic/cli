@@ -111,12 +111,12 @@ type RestoreManager struct {
 	memBudget *semaphore.Weighted
 }
 
-func NewRestoreManager(s store.ObjectStore, reporter ui.Reporter) *RestoreManager {
+func NewRestoreManager(d Deps) *RestoreManager {
 	return &RestoreManager{
-		store:     s,
-		tree:      hamt.NewTree(s),
-		metas:     newUncachedMetaLoader(s),
-		reporter:  reporter,
+		store:     d.Store,
+		tree:      hamt.NewTree(d.Store),
+		metas:     newUncachedMetaLoader(d.Store),
+		reporter:  d.Reporter,
 		memBudget: semaphore.NewWeighted(restoreMemoryBudget),
 	}
 }

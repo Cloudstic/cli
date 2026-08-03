@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"sort"
 	"strings"
 	"time"
@@ -207,25 +206,18 @@ type copiedTree struct {
 //
 // dstHMAC is the destination's dedup key, and is what every rewritten
 // reference is computed under; pass nil for an unencrypted destination.
-func NewCopyManager(
-	src CopySide,
-	dst store.ObjectStore,
-	dstHMAC []byte,
-	dstRepoID string,
-	reporter ui.Reporter,
-	logWriter io.Writer,
-) *CopyManager {
+func NewCopyManager(d Deps, src CopySide, dstRepoID string) *CopyManager {
 	return &CopyManager{
 		src:         src,
-		dst:         dst,
-		dstHMAC:     dstHMAC,
+		dst:         d.Store,
+		dstHMAC:     d.HMACKey,
 		dstID:       dstRepoID,
-		reporter:    reporter,
-		log:         defaultCopyLog.To(logWriter),
-		srcCatalog:  newSnapshotCatalog(src.Store, logWriter),
-		dstCatalog:  newSnapshotCatalog(dst, logWriter),
-		srcTree:     hamt.NewTree(src.Store, hamt.WithLogger(logWriter)),
-		dstTree:     hamt.NewTree(dst, hamt.WithLogger(logWriter)),
+		reporter:    d.Reporter,
+		log:         defaultCopyLog.To(d.LogSink),
+		srcCatalog:  newSnapshotCatalog(src.Store, d.LogSink),
+		dstCatalog:  newSnapshotCatalog(d.Store, d.LogSink),
+		srcTree:     hamt.NewTree(src.Store, hamt.WithLogger(d.LogSink)),
+		dstTree:     hamt.NewTree(d.Store, hamt.WithLogger(d.LogSink)),
 		chunkRefs:   map[string]string{},
 		contentRefs: map[string]string{},
 		metaRefs:    map[string]copiedMeta{},

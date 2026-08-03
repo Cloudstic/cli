@@ -19,7 +19,7 @@ import (
 func TestRestoreManager_WriteChunks_PreservesOrder(t *testing.T) {
 	ctx := context.Background()
 	s := NewMockStore()
-	rm := NewRestoreManager(s, ui.NewNoOpReporter())
+	rm := NewRestoreManager(Deps{Store: s, Reporter: ui.NewNoOpReporter()})
 
 	const n = 37 // more than one batch at the default concurrency hint (10)
 	refs := make([]string, n)
@@ -49,7 +49,7 @@ func TestRestoreManager_WriteChunks_FetchesConcurrently(t *testing.T) {
 	ctx := context.Background()
 	inner := NewMockStore()
 	tracker := &concurrencyTrackingStore{ObjectStore: inner}
-	rm := NewRestoreManager(tracker, ui.NewNoOpReporter())
+	rm := NewRestoreManager(Deps{Store: tracker, Reporter: ui.NewNoOpReporter()})
 
 	const n = 8
 	refs := make([]string, n)
@@ -79,7 +79,7 @@ func TestRestoreManager_CollectMetadata_FetchesConcurrently(t *testing.T) {
 	dest := setupBackupForRestore(t)
 
 	tracker := &concurrencyTrackingStore{ObjectStore: dest}
-	rsMgr := NewRestoreManager(tracker, ui.NewNoOpReporter())
+	rsMgr := NewRestoreManager(Deps{Store: tracker, Reporter: ui.NewNoOpReporter()})
 
 	snap, _, err := rsMgr.resolveSnapshot(ctx, "")
 	if err != nil {
@@ -117,13 +117,13 @@ func TestRestoreManager_MultiChunkFile_RoundTrips(t *testing.T) {
 	src.AddFile("big.bin", "id1", content)
 
 	raw := NewMockStore()
-	bkMgr := NewBackupManager(src, raw, ui.NewNoOpReporter(), nil, nil)
+	bkMgr := NewBackupManager(Deps{Store: raw, Reporter: ui.NewNoOpReporter()}, src)
 	if _, err := bkMgr.Run(ctx); err != nil {
 		t.Fatalf("backup: %v", err)
 	}
 
 	tracker := &concurrencyTrackingStore{ObjectStore: storelayer.NewCompressedStore(raw)}
-	rsMgr := NewRestoreManager(tracker, ui.NewNoOpReporter())
+	rsMgr := NewRestoreManager(Deps{Store: tracker, Reporter: ui.NewNoOpReporter()})
 
 	var buf bytes.Buffer
 	if _, err := rsMgr.Run(ctx, NewZipRestoreWriter(&buf), ""); err != nil {

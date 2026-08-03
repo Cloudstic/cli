@@ -100,10 +100,7 @@ func TestSnapshotCatalogAdd_RoundTripsProvenance(t *testing.T) {
 // is therefore closed at the point user metadata enters.
 func TestBackup_RejectsReservedMetadataKeys(t *testing.T) {
 	src := NewMockSource()
-	mgr := NewBackupManager(src, NewMockStore(), ui.NewNoOpReporter(), nil, nil,
-		WithMeta("host", "laptop"),
-		WithMeta(core.MetaKeyCopyFromSnapshot, "snapshot/forged"),
-	)
+	mgr := NewBackupManager(Deps{Store: NewMockStore(), Reporter: ui.NewNoOpReporter()}, src, WithMeta("host", "laptop"), WithMeta(core.MetaKeyCopyFromSnapshot, "snapshot/forged"))
 
 	_, err := mgr.Run(context.Background())
 	if err == nil {
@@ -119,10 +116,7 @@ func TestBackup_RejectsReservedMetadataKeys(t *testing.T) {
 
 func TestBackup_AllowsOrdinaryMetadataKeys(t *testing.T) {
 	src := NewMockSource()
-	mgr := NewBackupManager(src, NewMockStore(), ui.NewNoOpReporter(), nil, nil,
-		WithMeta("host", "laptop"),
-		WithMeta("cloudstic", "not-the-prefix"),
-	)
+	mgr := NewBackupManager(Deps{Store: NewMockStore(), Reporter: ui.NewNoOpReporter()}, src, WithMeta("host", "laptop"), WithMeta("cloudstic", "not-the-prefix"))
 
 	if _, err := mgr.Run(context.Background()); err != nil {
 		t.Fatalf("backup rejected ordinary metadata: %v", err)

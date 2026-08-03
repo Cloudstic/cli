@@ -87,7 +87,7 @@ func TestRestoreRejectsTamperedFileMeta(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new writer: %v", err)
 	}
-	rm := NewRestoreManager(dest, ui.NewNoOpReporter())
+	rm := NewRestoreManager(Deps{Store: dest, Reporter: ui.NewNoOpReporter()})
 	_, err = rm.Run(context.Background(), writer, "latest")
 
 	if err == nil {
@@ -131,7 +131,7 @@ func TestRestoreRejectsTamperedSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new writer: %v", err)
 	}
-	rm := NewRestoreManager(dest, ui.NewNoOpReporter())
+	rm := NewRestoreManager(Deps{Store: dest, Reporter: ui.NewNoOpReporter()})
 	if _, err := rm.Run(ctx, writer, "latest"); err == nil {
 		t.Fatal("restore accepted a snapshot that does not hash to its key")
 	} else if !strings.Contains(err.Error(), "integrity check") {
@@ -148,7 +148,7 @@ func TestCheckReportsTamperedFileMeta(t *testing.T) {
 		fm.Size = 999999
 	})
 
-	cm := NewCheckManager(dest, ui.NewNoOpReporter(), nil)
+	cm := NewCheckManager(Deps{Store: dest, Reporter: ui.NewNoOpReporter()})
 	res, err := cm.Run(context.Background(), WithReadData())
 	if err != nil {
 		t.Fatalf("check: %v", err)
@@ -171,7 +171,7 @@ func TestCheckReportsTamperedInlineContent(t *testing.T) {
 	dest := NewMockStore()
 	src.AddFile("small.txt", "id1", []byte("small enough to store inline"))
 
-	bm := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, nil)
+	bm := NewBackupManager(Deps{Store: dest, Reporter: ui.NewNoOpReporter()}, src)
 	if _, err := bm.Run(context.Background()); err != nil {
 		t.Fatalf("backup: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestCheckReportsTamperedInlineContent(t *testing.T) {
 		t.Fatalf("put forged content: %v", err)
 	}
 
-	cm := NewCheckManager(dest, ui.NewNoOpReporter(), nil)
+	cm := NewCheckManager(Deps{Store: dest, Reporter: ui.NewNoOpReporter()})
 	res, err := cm.Run(ctx, WithReadData())
 	if err != nil {
 		t.Fatalf("check: %v", err)

@@ -33,21 +33,21 @@ func TestSnapshotReadersDoNotListForFullHash(t *testing.T) {
 		{
 			name: "restore",
 			resolve: func(selector string) error {
-				_, _, err := NewRestoreManager(s, ui.NewNoOpReporter()).resolveSnapshot(ctx, selector)
+				_, _, err := NewRestoreManager(Deps{Store: s, Reporter: ui.NewNoOpReporter()}).resolveSnapshot(ctx, selector)
 				return err
 			},
 		},
 		{
 			name: "ls",
 			resolve: func(selector string) error {
-				_, _, err := NewLsSnapshotManager(s, nil).resolveSnapshot(ctx, selector)
+				_, _, err := NewLsSnapshotManager(Deps{Store: s}).resolveSnapshot(ctx, selector)
 				return err
 			},
 		},
 		{
 			name: "diff",
 			resolve: func(selector string) error {
-				_, err := NewDiffManager(s, nil).resolveSnapshot(ctx, selector)
+				_, err := NewDiffManager(Deps{Store: s}).resolveSnapshot(ctx, selector)
 				return err
 			},
 		},
@@ -84,21 +84,21 @@ func TestSnapshotReadersResolveUniqueHashPrefix(t *testing.T) {
 		{
 			name: "restore",
 			resolve: func(selector string) (string, error) {
-				_, resolved, err := NewRestoreManager(s, ui.NewNoOpReporter()).resolveSnapshot(ctx, selector)
+				_, resolved, err := NewRestoreManager(Deps{Store: s, Reporter: ui.NewNoOpReporter()}).resolveSnapshot(ctx, selector)
 				return resolved, err
 			},
 		},
 		{
 			name: "ls",
 			resolve: func(selector string) (string, error) {
-				_, resolved, err := NewLsSnapshotManager(s, nil).resolveSnapshot(ctx, selector)
+				_, resolved, err := NewLsSnapshotManager(Deps{Store: s}).resolveSnapshot(ctx, selector)
 				return resolved, err
 			},
 		},
 		{
 			name: "diff",
 			resolve: func(selector string) (string, error) {
-				return NewDiffManager(s, nil).resolveSnapshot(ctx, selector)
+				return NewDiffManager(Deps{Store: s}).resolveSnapshot(ctx, selector)
 			},
 		},
 	}
@@ -138,21 +138,21 @@ func TestSnapshotReadersRejectAmbiguousHashPrefix(t *testing.T) {
 		{
 			name: "restore",
 			resolve: func(selector string) error {
-				_, _, err := NewRestoreManager(s, ui.NewNoOpReporter()).resolveSnapshot(ctx, selector)
+				_, _, err := NewRestoreManager(Deps{Store: s, Reporter: ui.NewNoOpReporter()}).resolveSnapshot(ctx, selector)
 				return err
 			},
 		},
 		{
 			name: "ls",
 			resolve: func(selector string) error {
-				_, _, err := NewLsSnapshotManager(s, nil).resolveSnapshot(ctx, selector)
+				_, _, err := NewLsSnapshotManager(Deps{Store: s}).resolveSnapshot(ctx, selector)
 				return err
 			},
 		},
 		{
 			name: "diff",
 			resolve: func(selector string) error {
-				_, err := NewDiffManager(s, nil).resolveSnapshot(ctx, selector)
+				_, err := NewDiffManager(Deps{Store: s}).resolveSnapshot(ctx, selector)
 				return err
 			},
 		},
@@ -185,21 +185,21 @@ func TestSnapshotReadersReturnNotFoundSentinel(t *testing.T) {
 		{
 			name: "restore",
 			resolve: func(selector string) error {
-				_, _, err := NewRestoreManager(s, ui.NewNoOpReporter()).resolveSnapshot(ctx, selector)
+				_, _, err := NewRestoreManager(Deps{Store: s, Reporter: ui.NewNoOpReporter()}).resolveSnapshot(ctx, selector)
 				return err
 			},
 		},
 		{
 			name: "ls",
 			resolve: func(selector string) error {
-				_, _, err := NewLsSnapshotManager(s, nil).resolveSnapshot(ctx, selector)
+				_, _, err := NewLsSnapshotManager(Deps{Store: s}).resolveSnapshot(ctx, selector)
 				return err
 			},
 		},
 		{
 			name: "diff",
 			resolve: func(selector string) error {
-				_, _, err := NewDiffManager(s, nil).loadRoot(ctx, selector)
+				_, _, err := NewDiffManager(Deps{Store: s}).loadRoot(ctx, selector)
 				return err
 			},
 		},

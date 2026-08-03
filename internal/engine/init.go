@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"time"
 
 	"github.com/cloudstic/cli/internal/core"
@@ -63,8 +62,8 @@ type InitManager struct {
 
 // NewInitManager creates an InitManager that operates on the raw (undecorated)
 // object store.
-func NewInitManager(s store.ObjectStore, logWriter io.Writer) *InitManager {
-	return &InitManager{store: s, log: defaultInitLog.To(logWriter)}
+func NewInitManager(d Deps) *InitManager {
+	return &InitManager{store: d.Store, log: defaultInitLog.To(d.LogSink)}
 }
 
 const configKey = "config"

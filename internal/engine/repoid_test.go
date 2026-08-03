@@ -25,11 +25,11 @@ func loadMarker(t *testing.T, s *MockStore, encryptionKey []byte) *core.RepoConf
 
 func TestInitManager_AssignsRepositoryID(t *testing.T) {
 	first := NewMockStore()
-	if _, err := NewInitManager(first, nil).Run(context.Background(), WithInitNoEncryption()); err != nil {
+	if _, err := NewInitManager(Deps{Store: first}).Run(context.Background(), WithInitNoEncryption()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 	second := NewMockStore()
-	if _, err := NewInitManager(second, nil).Run(context.Background(), WithInitNoEncryption()); err != nil {
+	if _, err := NewInitManager(Deps{Store: second}).Run(context.Background(), WithInitNoEncryption()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
@@ -49,7 +49,7 @@ func TestInitManager_AssignsRepositoryIDToEncryptedRepo(t *testing.T) {
 	// survive a seal/unseal round trip rather than only a plain marshal.
 	s := NewMockStore()
 	chain := keychain.Chain{keychain.WithPassword("test-password")}
-	if _, err := NewInitManager(s, nil).Run(context.Background(), WithInitCredentials(chain)); err != nil {
+	if _, err := NewInitManager(Deps{Store: s}).Run(context.Background(), WithInitCredentials(chain)); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
@@ -78,12 +78,12 @@ func TestInitManager_AdoptPreservesRepositoryID(t *testing.T) {
 	// out of it elsewhere record the old id as provenance, and a new one would
 	// make the next `copy` import the entire history again.
 	s := NewMockStore()
-	if _, err := NewInitManager(s, nil).Run(context.Background(), WithInitNoEncryption()); err != nil {
+	if _, err := NewInitManager(Deps{Store: s}).Run(context.Background(), WithInitNoEncryption()); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 	original := loadMarker(t, s, nil).ID
 
-	if _, err := NewInitManager(s, nil).Run(
+	if _, err := NewInitManager(Deps{Store: s}).Run(
 		context.Background(), WithInitNoEncryption(), WithInitAdoptSlots(),
 	); err != nil {
 		t.Fatalf("re-init: %v", err)
@@ -107,7 +107,7 @@ func TestInitManager_AdoptAssignsIDToLegacyRepository(t *testing.T) {
 		t.Fatalf("seed legacy marker: %v", err)
 	}
 
-	if _, err := NewInitManager(s, nil).Run(
+	if _, err := NewInitManager(Deps{Store: s}).Run(
 		context.Background(), WithInitNoEncryption(), WithInitAdoptSlots(),
 	); err != nil {
 		t.Fatalf("adopt: %v", err)

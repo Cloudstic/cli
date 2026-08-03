@@ -15,7 +15,7 @@ type ListOption = engine.ListOption
 type ListResult = engine.ListResult
 
 func (c *Client) List(ctx context.Context, opts ...ListOption) (*ListResult, error) {
-	mgr := engine.NewListManager(c.store, c.logWriter)
+	mgr := engine.NewListManager(c.engineDeps())
 	return mgr.Run(ctx, opts...)
 }
 
@@ -29,7 +29,7 @@ type LsSnapshotResult = engine.LsSnapshotResult
 // LsSnapshot lists a snapshot selected by latest, full hash, or unambiguous
 // hash prefix. An ambiguous prefix is rejected.
 func (c *Client) LsSnapshot(ctx context.Context, snapshotID string, opts ...LsSnapshotOption) (*LsSnapshotResult, error) {
-	mgr := engine.NewLsSnapshotManager(c.store, c.logWriter)
+	mgr := engine.NewLsSnapshotManager(c.engineDeps())
 	return mgr.Run(ctx, snapshotID, opts...)
 }
 
@@ -73,7 +73,7 @@ var (
 // storable, loggable, sendable — which a closure over a private struct is not.
 // Use FindQuery.SetPattern for a positional pattern, which routes by shape.
 func (c *Client) Find(ctx context.Context, q FindQuery) (*FindResult, error) {
-	mgr := engine.NewFindManager(c.store, c.logWriter)
+	mgr := engine.NewFindManager(c.engineDeps())
 	return mgr.Run(ctx, q)
 }
 
@@ -99,7 +99,7 @@ const (
 // Diff compares snapshots selected by latest, full hashes, or unambiguous hash
 // prefixes. An ambiguous prefix is rejected.
 func (c *Client) Diff(ctx context.Context, snap1, snap2 string, opts ...DiffOption) (*DiffResult, error) {
-	mgr := engine.NewDiffManager(c.store, c.logWriter)
+	mgr := engine.NewDiffManager(c.engineDeps())
 	return mgr.Run(ctx, snap1, snap2, opts...)
 }
 

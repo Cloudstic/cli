@@ -3,11 +3,9 @@ package engine
 import (
 	"context"
 	"fmt"
-	"io"
 	"sort"
 	"strings"
 
-	"github.com/cloudstic/cli/internal/storelayer"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/store"
 )
@@ -113,12 +111,13 @@ type ForgetManager struct {
 	catalog  snapshotCatalog
 }
 
-func NewForgetManager(s store.ObjectStore, reporter ui.Reporter, logWriter io.Writer) *ForgetManager {
+func NewForgetManager(d Deps) *ForgetManager {
 	return &ForgetManager{
-		store:    s,
-		reporter: reporter,
-		catalog:  newSnapshotCatalog(s, logWriter),
-		pruner:   NewPruneManager(storelayer.NewMeteredStore(s), reporter),
+		store:    d.Store,
+		reporter: d.Reporter,
+		catalog:  newSnapshotCatalog(d.Store, d.LogSink),
+		// NewPruneManager meters the store itself, so d is handed over as-is.
+		pruner: NewPruneManager(d),
 	}
 }
 

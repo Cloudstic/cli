@@ -61,7 +61,7 @@ func TestListManager_LogsProgressToTheCallersWriter(t *testing.T) {
 	}))
 
 	var log bytes.Buffer
-	mgr := NewListManager(s, &log)
+	mgr := NewListManager(Deps{Store: s, LogSink: &log})
 	result, err := mgr.Run(ctx)
 	if err != nil {
 		t.Fatalf("List: %v", err)
@@ -90,7 +90,7 @@ func TestListManager_NoWriterMeansNoOutput(t *testing.T) {
 	}))
 
 	out := captureStderr(t, func() {
-		if _, err := NewListManager(s, nil).Run(ctx); err != nil {
+		if _, err := NewListManager(Deps{Store: s}).Run(ctx); err != nil {
 			t.Fatalf("List: %v", err)
 		}
 	})
@@ -110,7 +110,7 @@ func TestLsSnapshotManager_LogsProgressToTheCallersWriter(t *testing.T) {
 	_ = s.Put(ctx, "index/latest", createIndex(ref, 1))
 
 	var log bytes.Buffer
-	if _, err := NewLsSnapshotManager(s, &log).Run(ctx, ref); err != nil {
+	if _, err := NewLsSnapshotManager(Deps{Store: s, LogSink: &log}).Run(ctx, ref); err != nil {
 		t.Fatalf("LsSnapshot: %v", err)
 	}
 	if !strings.Contains(log.String(), "Resolving snapshot") {
@@ -136,7 +136,7 @@ func TestLsSnapshotManager_LogsTheCollectedSummaryOnce(t *testing.T) {
 	ref := saveSnapshot(ctx, s, &snap)
 
 	var log bytes.Buffer
-	if _, err := NewLsSnapshotManager(s, &log).Run(ctx, ref); err != nil {
+	if _, err := NewLsSnapshotManager(Deps{Store: s, LogSink: &log}).Run(ctx, ref); err != nil {
 		t.Fatalf("LsSnapshot: %v", err)
 	}
 
@@ -160,7 +160,7 @@ func TestDiffManager_LogsProgressToTheCallersWriter(t *testing.T) {
 	ref2 := saveSnapshot(ctx, s, &snap2)
 
 	var log bytes.Buffer
-	if _, err := NewDiffManager(s, &log).Run(ctx, ref1, ref2); err != nil {
+	if _, err := NewDiffManager(Deps{Store: s, LogSink: &log}).Run(ctx, ref1, ref2); err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
 	if !strings.Contains(log.String(), "Resolving snapshot") {

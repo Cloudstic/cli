@@ -68,7 +68,7 @@ func setupBackupForRestore(t *testing.T) *MockStore {
 		Content: []byte("deep content"),
 	}
 
-	bkMgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, nil)
+	bkMgr := NewBackupManager(Deps{Store: dest, Reporter: ui.NewNoOpReporter()}, src)
 	if _, err := bkMgr.Run(context.Background()); err != nil {
 		t.Fatalf("Backup setup failed: %v", err)
 	}
@@ -120,12 +120,12 @@ func TestRestoreManager_Run(t *testing.T) {
 		Content: []byte("nested content"),
 	}
 
-	bkMgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, nil)
+	bkMgr := NewBackupManager(Deps{Store: dest, Reporter: ui.NewNoOpReporter()}, src)
 	if _, err := bkMgr.Run(context.Background()); err != nil {
 		t.Fatalf("Backup setup failed: %v", err)
 	}
 
-	rsMgr := NewRestoreManager(storelayer.NewCompressedStore(dest), ui.NewNoOpReporter())
+	rsMgr := NewRestoreManager(Deps{Store: storelayer.NewCompressedStore(dest), Reporter: ui.NewNoOpReporter()})
 
 	var buf bytes.Buffer
 	result, err := rsMgr.Run(context.Background(), NewZipRestoreWriter(&buf), "")
@@ -175,7 +175,7 @@ func TestRestoreManager_Run(t *testing.T) {
 
 func TestRestoreManager_PathFilter_SingleFile(t *testing.T) {
 	dest := setupBackupForRestore(t)
-	rsMgr := NewRestoreManager(storelayer.NewCompressedStore(dest), ui.NewNoOpReporter())
+	rsMgr := NewRestoreManager(Deps{Store: storelayer.NewCompressedStore(dest), Reporter: ui.NewNoOpReporter()})
 
 	var buf bytes.Buffer
 	result, err := rsMgr.Run(context.Background(), NewZipRestoreWriter(&buf), "", WithRestorePath("subdir/nested.txt"))
@@ -211,7 +211,7 @@ func TestRestoreManager_PathFilter_SingleFile(t *testing.T) {
 
 func TestRestoreManager_RunToDir(t *testing.T) {
 	dest := setupBackupForRestore(t)
-	rsMgr := NewRestoreManager(storelayer.NewCompressedStore(dest), ui.NewNoOpReporter())
+	rsMgr := NewRestoreManager(Deps{Store: storelayer.NewCompressedStore(dest), Reporter: ui.NewNoOpReporter()})
 
 	outDir := filepath.Join(t.TempDir(), "restored")
 	writer, err := NewFSRestoreWriter(outDir)
@@ -249,7 +249,7 @@ func TestRestoreManager_RunToDir(t *testing.T) {
 
 func TestRestoreManager_RunToDir_PathFilter(t *testing.T) {
 	dest := setupBackupForRestore(t)
-	rsMgr := NewRestoreManager(storelayer.NewCompressedStore(dest), ui.NewNoOpReporter())
+	rsMgr := NewRestoreManager(Deps{Store: storelayer.NewCompressedStore(dest), Reporter: ui.NewNoOpReporter()})
 
 	outDir := filepath.Join(t.TempDir(), "restored")
 	writer, err := NewFSRestoreWriter(outDir)
@@ -274,7 +274,7 @@ func TestRestoreManager_RunToDir_PathFilter(t *testing.T) {
 
 func TestRestoreManager_RunToDir_SkipsExistingFiles(t *testing.T) {
 	dest := setupBackupForRestore(t)
-	rsMgr := NewRestoreManager(storelayer.NewCompressedStore(dest), ui.NewNoOpReporter())
+	rsMgr := NewRestoreManager(Deps{Store: storelayer.NewCompressedStore(dest), Reporter: ui.NewNoOpReporter()})
 
 	outDir := filepath.Join(t.TempDir(), "restored")
 	if err := os.MkdirAll(filepath.Join(outDir, "subdir"), 0o755); err != nil {
@@ -331,7 +331,7 @@ func TestFSRestoreWriter_WarnDedupf(t *testing.T) {
 
 func TestRestoreManager_RunToDir_DryRun_NoWrites(t *testing.T) {
 	dest := setupBackupForRestore(t)
-	rsMgr := NewRestoreManager(storelayer.NewCompressedStore(dest), ui.NewNoOpReporter())
+	rsMgr := NewRestoreManager(Deps{Store: storelayer.NewCompressedStore(dest), Reporter: ui.NewNoOpReporter()})
 
 	outDir := filepath.Join(t.TempDir(), "dry-run-out")
 	writer, err := NewFSRestoreWriter(outDir)
@@ -352,7 +352,7 @@ func TestRestoreManager_RunToDir_DryRun_NoWrites(t *testing.T) {
 
 func TestRestoreManager_Run_NilWriter(t *testing.T) {
 	dest := setupBackupForRestore(t)
-	rsMgr := NewRestoreManager(storelayer.NewCompressedStore(dest), ui.NewNoOpReporter())
+	rsMgr := NewRestoreManager(Deps{Store: storelayer.NewCompressedStore(dest), Reporter: ui.NewNoOpReporter()})
 
 	if _, err := rsMgr.Run(context.Background(), nil, ""); err == nil {
 		t.Fatal("expected error for nil writer")
@@ -411,7 +411,7 @@ func TestSecureRestorePath(t *testing.T) {
 
 func TestRestoreManager_PathFilter_Subtree(t *testing.T) {
 	dest := setupBackupForRestore(t)
-	rsMgr := NewRestoreManager(storelayer.NewCompressedStore(dest), ui.NewNoOpReporter())
+	rsMgr := NewRestoreManager(Deps{Store: storelayer.NewCompressedStore(dest), Reporter: ui.NewNoOpReporter()})
 
 	var buf bytes.Buffer
 	result, err := rsMgr.Run(context.Background(), NewZipRestoreWriter(&buf), "", WithRestorePath("subdir/"))
@@ -447,7 +447,7 @@ func TestRestoreManager_PathFilter_Subtree(t *testing.T) {
 
 func TestRestoreManager_PathFilter_NoMatch(t *testing.T) {
 	dest := setupBackupForRestore(t)
-	rsMgr := NewRestoreManager(storelayer.NewCompressedStore(dest), ui.NewNoOpReporter())
+	rsMgr := NewRestoreManager(Deps{Store: storelayer.NewCompressedStore(dest), Reporter: ui.NewNoOpReporter()})
 
 	var buf bytes.Buffer
 	result, err := rsMgr.Run(context.Background(), NewZipRestoreWriter(&buf), "", WithRestorePath("nonexistent.txt"))
@@ -468,7 +468,7 @@ func TestRestoreManager_PathFilter_NoMatch(t *testing.T) {
 // the immediate parent.
 func TestRestoreManager_PathFilter_DeepSingleFile(t *testing.T) {
 	dest := setupBackupForRestore(t)
-	rsMgr := NewRestoreManager(storelayer.NewCompressedStore(dest), ui.NewNoOpReporter())
+	rsMgr := NewRestoreManager(Deps{Store: storelayer.NewCompressedStore(dest), Reporter: ui.NewNoOpReporter()})
 
 	var buf bytes.Buffer
 	result, err := rsMgr.Run(context.Background(), NewZipRestoreWriter(&buf), "", WithRestorePath("subdir/deep/file.txt"))
@@ -576,13 +576,13 @@ func TestRestoreManager_PathFilter_CloudLikeIDs(t *testing.T) {
 		Content: []byte("mp3-data"),
 	}
 
-	bkMgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, nil)
+	bkMgr := NewBackupManager(Deps{Store: dest, Reporter: ui.NewNoOpReporter()}, src)
 	if _, err := bkMgr.Run(context.Background()); err != nil {
 		t.Fatalf("Backup failed: %v", err)
 	}
 
 	t.Run("subtree filter", func(t *testing.T) {
-		rsMgr := NewRestoreManager(storelayer.NewCompressedStore(dest), ui.NewNoOpReporter())
+		rsMgr := NewRestoreManager(Deps{Store: storelayer.NewCompressedStore(dest), Reporter: ui.NewNoOpReporter()})
 		var buf bytes.Buffer
 		result, err := rsMgr.Run(context.Background(), NewZipRestoreWriter(&buf), "", WithRestorePath("My Documents/"))
 		if err != nil {
@@ -606,7 +606,7 @@ func TestRestoreManager_PathFilter_CloudLikeIDs(t *testing.T) {
 	})
 
 	t.Run("single deep file", func(t *testing.T) {
-		rsMgr := NewRestoreManager(storelayer.NewCompressedStore(dest), ui.NewNoOpReporter())
+		rsMgr := NewRestoreManager(Deps{Store: storelayer.NewCompressedStore(dest), Reporter: ui.NewNoOpReporter()})
 		var buf bytes.Buffer
 		result, err := rsMgr.Run(context.Background(), NewZipRestoreWriter(&buf), "", WithRestorePath("My Documents/Photos/img.jpg"))
 		if err != nil {
@@ -637,7 +637,7 @@ func TestRestoreManager_PathFilter_CloudLikeIDs(t *testing.T) {
 
 func TestRestoreManager_PathFilter_DryRun(t *testing.T) {
 	dest := setupBackupForRestore(t)
-	rsMgr := NewRestoreManager(storelayer.NewCompressedStore(dest), ui.NewNoOpReporter())
+	rsMgr := NewRestoreManager(Deps{Store: storelayer.NewCompressedStore(dest), Reporter: ui.NewNoOpReporter()})
 
 	var buf bytes.Buffer
 	result, err := rsMgr.Run(context.Background(), NewZipRestoreWriter(&buf), "", WithRestorePath("subdir/"), WithRestoreDryRun())
@@ -727,7 +727,7 @@ func TestRestoreManager_PathFilter_MixedLegacyAndNormalizedFileMeta(t *testing.T
 		t.Fatalf("put latest index: %v", err)
 	}
 
-	rsMgr := NewRestoreManager(dest, ui.NewNoOpReporter())
+	rsMgr := NewRestoreManager(Deps{Store: dest, Reporter: ui.NewNoOpReporter()})
 	var buf bytes.Buffer
 	result, err := rsMgr.Run(ctx, NewZipRestoreWriter(&buf), "latest", WithRestorePath("docs/guide.txt"))
 	if err != nil {

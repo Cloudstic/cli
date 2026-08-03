@@ -46,7 +46,12 @@ type flagSpec struct {
 	// bind registers the flag on a flag set, using only the built-in default.
 	// Environment values are applied after parsing so that help output can
 	// never render a live environment value (see applyEnvDefaults).
-	bind func(fs *flag.FlagSet)
+	//
+	// It takes the name and usage to register under rather than closing over
+	// them, so that a spec can be renamed after construction — which is what
+	// lets `copy` derive its -from-* mirrors from the existing groups instead
+	// of restating every repository flag. See prefixed.
+	bind func(fs *flag.FlagSet, name, usage string)
 	// setValue sets the flag's target from a raw string, returning an
 	// actionable error when the value cannot be parsed. It serves both of the
 	// after-parsing resolution steps — environment values and late defaults —
@@ -127,8 +132,8 @@ func applyOpts(s *flagSpec, opts []flagOpt) *flagSpec {
 func stringFlag(target *string, name, def, usage string, opts ...flagOpt) flagSpec {
 	s := applyOpts(&flagSpec{name: name, usage: usage}, opts)
 	spec := *s
-	spec.bind = func(fs *flag.FlagSet) {
-		fs.StringVar(target, name, def, spec.bindUsage())
+	spec.bind = func(fs *flag.FlagSet, name, usage string) {
+		fs.StringVar(target, name, def, usage)
 	}
 	spec.setValue = func(raw string) error {
 		*target = raw
@@ -141,8 +146,8 @@ func stringFlag(target *string, name, def, usage string, opts ...flagOpt) flagSp
 func boolFlag(target *bool, name string, def bool, usage string, opts ...flagOpt) flagSpec {
 	s := applyOpts(&flagSpec{name: name, usage: usage, isBool: true}, opts)
 	spec := *s
-	spec.bind = func(fs *flag.FlagSet) {
-		fs.BoolVar(target, name, def, spec.bindUsage())
+	spec.bind = func(fs *flag.FlagSet, name, usage string) {
+		fs.BoolVar(target, name, def, usage)
 	}
 	spec.setValue = func(raw string) error {
 		parsed, err := strconv.ParseBool(raw)
@@ -159,8 +164,8 @@ func boolFlag(target *bool, name string, def bool, usage string, opts ...flagOpt
 func intFlag(target *int, name string, def int, usage string, opts ...flagOpt) flagSpec {
 	s := applyOpts(&flagSpec{name: name, usage: usage}, opts)
 	spec := *s
-	spec.bind = func(fs *flag.FlagSet) {
-		fs.IntVar(target, name, def, spec.bindUsage())
+	spec.bind = func(fs *flag.FlagSet, name, usage string) {
+		fs.IntVar(target, name, def, usage)
 	}
 	spec.setValue = func(raw string) error {
 		parsed, err := strconv.Atoi(raw)
@@ -178,8 +183,8 @@ func intFlag(target *int, name string, def int, usage string, opts ...flagOpt) f
 func valueFlag(target flag.Value, name, usage string, opts ...flagOpt) flagSpec {
 	s := applyOpts(&flagSpec{name: name, usage: usage}, opts)
 	spec := *s
-	spec.bind = func(fs *flag.FlagSet) {
-		fs.Var(target, name, spec.bindUsage())
+	spec.bind = func(fs *flag.FlagSet, name, usage string) {
+		fs.Var(target, name, usage)
 	}
 	return spec
 }
@@ -287,10 +292,52 @@ func applyLateDefaults(specs []flagSpec, origins map[string]flagOrigin) error {
 	return nil
 }
 
+// prefixed returns specs renamed with the given prefix and re-described with
+// the given label, for a command that addresses a second instance of something
+// the global flags already describe — `copy`, which needs a whole second
+// repository (RFC 0017 §2).
+//
+// The label is appended to each usage string because the original text is
+// written for the only repository a command usually has: left alone, the mirror
+// of -store-sftp-password would read "SFTP store password" next to a -source-*
+// flag that means something else entirely.
+//
+// Deriving the mirrors rather than restating them is what keeps the two sets
+// from drifting: a repository flag added later is mirrored without a matching
+// edit here, which is not true of a hand-written list. The original specs are
+// left untouched; flagSpec is copied by value and its closures write to the
+// targets bound at construction, so a caller mirrors a group built over a
+// *different* destination struct.
+//
+// Environment bindings are deliberately dropped. CLOUDSTIC_PASSWORD means "the
+// repository I am operating on", and silently applying one ambient value to
+// both repositories of a two-repository command is how an operator unlocks the
+// wrong one — or believes they did. Ambient variables configure the
+// destination; the source is named explicitly, or through a profile whose
+// entry may carry env:// secret references like any other.
+//
+// Late defaults are dropped for the same reason they exist: one computes a path
+// inside -config-dir, which is not mirrored, so a mirrored late default would
+// resolve against a struct that has no config directory set.
+func prefixed(prefix, label string, specs []flagSpec) []flagSpec {
+	out := make([]flagSpec, 0, len(specs))
+	for _, s := range specs {
+		s.name = prefix + s.name
+		s.env = ""
+		s.lateDefault = nil
+		s.usage = s.usage + " (" + label + ")"
+		if s.shortUsage != "" {
+			s.shortUsage = s.shortUsage + " (" + label + ")"
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
 // bindFlags registers every spec on fs, in declaration order.
 func bindFlags(fs *flag.FlagSet, specs []flagSpec) {
 	for _, s := range specs {
-		s.bind(fs)
+		s.bind(fs, s.name, s.bindUsage())
 	}
 }
 

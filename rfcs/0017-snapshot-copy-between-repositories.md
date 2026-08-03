@@ -275,10 +275,41 @@ For each selected source snapshot, in order:
 
 **The remap table is per-run, not per-snapshot**, and is keyed on source refs at
 the filemeta, content and chunk levels. Snapshots in one run share the
-overwhelming majority of their graph; a per-snapshot table would re-read and
-re-encrypt every unchanged file once per snapshot. This is the difference
-between a copy that is proportional to the repository and one that is
-proportional to (repository × snapshots).
+overwhelming majority of their graph; a per-snapshot table would re-read every
+file that appears in more than one snapshot.
+
+**Snapshots after the first of a lineage are applied as a diff**, not as a full
+re-walk. `Tree.Diff` between the previous source root and this one yields just
+the added, modified and removed entries, which are applied to the destination
+tree the previous snapshot produced. Re-filing every entry instead is correct
+but expensive in a way that read volume does not reveal: `Txn.Insert` rewrites a
+leaf entry unconditionally, so re-inserting an identical value still dirties the
+spine and `Commit` rewrites the tree — one full tree rewrite per snapshot.
+
+A diff is also the only way to carry **deletions** across. A tree reused and
+merely inserted over keeps every file deleted since, so the destination's copy
+of a snapshot would contain files that snapshot does not. Reuse and diffing are
+therefore the same decision: a destination tree may only be reused when the
+source tree it was translated from is known.
+
+That pairing is recovered across runs from provenance the destination already
+records — a copied snapshot names its source snapshot, and the source catalog
+still knows that snapshot's root — so a scheduled copy does not rebuild a whole
+tree before it can go incremental.
+
+Measured on a 2000-file tree (`copy_bench_test.go`):
+
+| Change | Effect |
+|--------|--------|
+| Per-snapshot instead of per-run remap tables | 2.2 MB → 7.1 MB read, 89 ms → 198 ms, at 8 snapshots |
+| Full re-walk instead of a source diff | 4.1 MB → 14.8 MB written, 115 ms → 370 ms, at 64 snapshots |
+| No cross-run pairing (scheduled catch-up of one snapshot) | 1.6 KB → 707 KB read, 7.6 KB → 217 KB written |
+
+Note that bulk data is protected independently of all this: `copyContent`
+checks the destination before reading anything, so chunk data is never re-read
+even with no table at all. What these optimisations govern is metadata reads,
+destination round trips, and tree rewrites — which is exactly the part that a
+benchmark measuring bytes transferred would miss.
 
 #### 4.3 Chunk and content rebuild
 
@@ -319,6 +350,15 @@ parameters against this RFC.
 Copy acquires a **shared** repository lock on the source, then a shared lock on
 the destination (`internal/engine/repolock.go`), and holds both for the
 duration.
+
+**The source lock is best-effort, and only because taking one is itself a
+write.** This RFC lists read-only source credentials as supported, and placing a
+lock contradicts that — so a source that refuses the write is copied from
+anyway, with the loss of protection logged. Finding a lock *already held* is
+different and still fatal: it means a `prune` or `forget` is running and objects
+are being collected as the walk proceeds. The distinction is available because
+`ErrRepoLocked` is wrapped into "held by another operation" and not into an I/O
+failure.
 
 - The source lock stops a concurrent `prune`/`forget` from collecting objects
   out from under an in-flight walk.
@@ -707,8 +747,26 @@ what would be copied without writing.
 
 ### 11. Guards
 
-- **Same repository.** If source and destination resolve to the same repository
-  id (or, for legacy repositories, the same store URI and prefix), copy refuses.
+- **Same repository.** Copy refuses. This matters more than it sounds: a
+  self-copy is not a no-op, because each source snapshot is rewritten as a *new*
+  snapshot object carrying provenance. No data is duplicated — every object
+  re-addresses to the ref it already has — but the history doubles, and
+  retention grouping, `latest` and every count are wrong afterwards.
+
+  Repository ids settle it when both sides have one. When either does not, the
+  two stores are **probed**: a uniquely named object is written to the
+  destination and looked for through the source. Cheaper tests were tried and
+  are not sufficient — comparing store URIs misses `local:/srv/repo` against
+  `local:/srv/repo/.`, a symlink, a bind mount, or one bucket reachable under
+  two endpoints; comparing the stored markers collides in practice, because
+  once the id is stripped two repositories created in the same second are
+  byte-identical, which refuses legitimate copies between distinct id-less
+  repositories. The probe writes only to the destination and removes what it
+  wrote, so read-only source credentials remain sufficient.
+
+  The CLI additionally compares the two resolved store URIs, which catches the
+  common slip before either repository is opened and so before any credential
+  prompt. That check is an early convenience, not the guarantee.
 - **Uninitialized destination.** Refuse, pointing at `cloudstic init`.
 - **Empty selection.** Exit 0 with an explicit "no snapshots selected" line, not
   silently.

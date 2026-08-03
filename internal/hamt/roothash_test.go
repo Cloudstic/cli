@@ -58,14 +58,31 @@ func rootHashScenarios() []scenario {
 		}
 	}
 
-	// Grow past several splits, then delete most of it so collapse-on-delete and
-	// the single-leaf promotion path are covered.
+	// Grow past several splits, then delete half. Sixty entries survive, which
+	// is more than a leaf holds, so the tree stays internal: this pins the
+	// empty-slot and single-leaf-promotion paths without reaching the general
+	// collapse below.
 	var collapse []op
 	for i := 0; i < 120; i++ {
 		collapse = append(collapse, ins("", fmt.Sprintf("k%03d", i), fmt.Sprintf("filemeta/v%03d", i)))
 	}
 	for i := 0; i < 120; i += 2 {
 		collapse = append(collapse, del("", fmt.Sprintf("k%03d", i)))
+	}
+
+	// The same growth, then deleted past the point where a leaf could hold what
+	// remains. Twenty entries survive, so every internal node re-merges and the
+	// tree becomes the single leaf a fresh build of those entries would produce.
+	//
+	// This is the scenario the canonical collapse exists for. Without it the
+	// golden pins only trees too large to collapse, and the rule that decides
+	// the shape of a shrinking tree would be unpinned.
+	var collapseDeep []op
+	for i := 0; i < 120; i++ {
+		collapseDeep = append(collapseDeep, ins("", fmt.Sprintf("k%03d", i), fmt.Sprintf("filemeta/v%03d", i)))
+	}
+	for i := 20; i < 120; i++ {
+		collapseDeep = append(collapseDeep, del("", fmt.Sprintf("k%03d", i)))
 	}
 
 	// Overwrites and deletes of absent keys must not perturb the root.
@@ -82,6 +99,7 @@ func rootHashScenarios() []scenario {
 		{name: "flat-200-no-parent", ops: flat},
 		{name: "affinity-10-dirs-30-files", ops: affinity},
 		{name: "insert-120-delete-even", ops: collapse},
+		{name: "insert-120-delete-to-20", ops: collapseDeep},
 		{name: "overwrite-and-absent-delete", ops: updates},
 	}
 }

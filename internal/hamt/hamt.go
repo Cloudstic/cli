@@ -472,7 +472,7 @@ func (tx *Txn) delete(ctx context.Context, c child, r routing, key string, level
 
 	if !newChild.isZero() {
 		owned.children[pos] = newChild
-		return child{node: owned}, true, nil
+		return tx.collapse(ctx, owned, level)
 	}
 
 	// Child became empty; drop the slot.
@@ -483,12 +483,85 @@ func (tx *Txn) delete(ctx context.Context, c child, r routing, key string, level
 	owned.children = slices.Delete(owned.children, pos, pos+1)
 
 	// Collapse: if a single leaf remains, promote it in place of this node.
+	// This subsumes the general rule below for a leaf that has outgrown
+	// maxLeafSize, which only happens at maxDepth where a leaf may not split.
 	if len(owned.children) == 1 {
 		if only, err := tx.resolve(ctx, owned.children[0]); err == nil && only.leaf {
 			return owned.children[0], true, nil
 		}
 	}
-	return child{node: owned}, true, nil
+	return tx.collapse(ctx, owned, level)
+}
+
+// collapse turns an internal node back into a leaf once its subtree holds few
+// enough entries to be one, so that a tree's shape depends on its contents and
+// not on the history that produced them.
+//
+// Insertion is already history-independent: buildNode is a pure function of the
+// entry set, and a leaf splits at exactly the size buildNode would stop at.
+// Deletion was not. It dropped empty slots and promoted a lone remaining leaf,
+// but never re-merged several under-full leaves, so a subtree that split under
+// load and then shrank stayed split. Equal content reached by different
+// histories then produced different roots, which costs node-level deduplication
+// between repositories and leaves delete-heavy trees carrying nodes they no
+// longer need.
+//
+// The invariant restored here is buildNode's own: an internal node exists only
+// where the entries beneath it exceed maxLeafSize. Applying it as the recursion
+// unwinds lets a collapse cascade — a parent reconsiders itself once a child has
+// collapsed — without a second pass.
+//
+// Cost is bounded by the collapse actually being possible: subtreeEntries stops
+// as soon as it has seen more entries than a leaf could hold, so a large subtree
+// is rejected after a handful of node loads rather than a full traversal.
+func (tx *Txn) collapse(ctx context.Context, n *node, level int) (child, bool, error) {
+	entries, ok, err := tx.subtreeEntries(ctx, child{node: n}, level)
+	if err != nil {
+		return child{}, false, err
+	}
+	if !ok {
+		return child{node: n}, true, nil
+	}
+	sortEntries(entries)
+	return child{node: &node{leaf: true, entries: entries}}, true, nil
+}
+
+// subtreeEntries returns every entry beneath c when there are few enough to
+// fit in one leaf, reporting false as soon as that stops being possible.
+//
+// The budget is what keeps this affordable on a hot path: a subtree too large
+// to collapse is abandoned after at most maxLeafSize+1 entries have been seen,
+// which for a wide tree means reading a couple of nodes rather than all of them.
+func (tx *Txn) subtreeEntries(ctx context.Context, c child, depth int) ([]leafEntry, bool, error) {
+	if depth > maxTreeDepth {
+		return nil, false, errTooDeep(depth)
+	}
+	n, err := tx.resolve(ctx, c)
+	if err != nil {
+		return nil, false, err
+	}
+	if n.leaf {
+		if len(n.entries) > maxLeafSize {
+			return nil, false, nil
+		}
+		return slices.Clone(n.entries), true, nil
+	}
+
+	var out []leafEntry
+	for _, sub := range n.children {
+		entries, ok, err := tx.subtreeEntries(ctx, sub, depth+1)
+		if err != nil {
+			return nil, false, err
+		}
+		if !ok {
+			return nil, false, nil
+		}
+		out = append(out, entries...)
+		if len(out) > maxLeafSize {
+			return nil, false, nil
+		}
+	}
+	return out, true, nil
 }
 
 // ---------------------------------------------------------------------------

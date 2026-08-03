@@ -1,0 +1,8 @@
+copying from local:/tmp/cloudstic-src
+            to s3:dest-bucket/prod
+dry run: nothing will be written
+
+skipping snapshot 4e5d5487, already copied as snapshot e5f6a7b8
+would copy snapshot 410b18a2 of [local:/Users/ada/Documents] at 2026-04-01 18:15:03 +0000
+
+would copy 1 snapshot, skip 1 snapshot

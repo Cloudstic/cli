@@ -23,4 +23,5 @@ type cloudsticClient interface {
 	Check(ctx context.Context, opts ...cloudstic.CheckOption) (*cloudstic.CheckResult, error)
 	Cat(ctx context.Context, keys ...string) ([]*cloudstic.CatResult, error)
 	BreakLock(ctx context.Context) ([]*cloudstic.RepoLock, error)
+	CopyFrom(ctx context.Context, src *cloudstic.Client, opts ...cloudstic.CopyOption) (*cloudstic.CopyResult, error)
 }

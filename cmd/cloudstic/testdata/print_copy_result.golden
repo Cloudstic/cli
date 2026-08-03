@@ -1,0 +1,8 @@
+copying from local:/tmp/cloudstic-src
+            to s3:dest-bucket/prod
+
+skipping snapshot 4e5d5487, already copied as snapshot e5f6a7b8
+snapshot 410b18a2 of [local:/Users/ada/Documents] at 2026-04-01 18:15:03 +0000
+snapshot a1b2c3d4 saved
+
+copied 1 snapshot, skipped 1 snapshot (read 4.2 GiB, wrote 1.1 GiB) in 1m32s

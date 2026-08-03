@@ -13,6 +13,8 @@ import (
 // stubClient is a test double that implements cloudsticClient.
 // Each field pair holds the value to return and an optional error.
 type stubClient struct {
+	copyResult      *cloudstic.CopyResult
+	copyErr         error
 	backupResult    *cloudstic.BackupResult
 	backupErr       error
 	setupPlan       *workstation.SetupPlan
@@ -98,4 +100,8 @@ func (s *stubClient) Cat(_ context.Context, _ ...string) ([]*cloudstic.CatResult
 
 func (s *stubClient) BreakLock(_ context.Context) ([]*cloudstic.RepoLock, error) {
 	return s.breakLockResult, s.breakLockErr
+}
+
+func (s *stubClient) CopyFrom(_ context.Context, _ *cloudstic.Client, _ ...cloudstic.CopyOption) (*cloudstic.CopyResult, error) {
+	return s.copyResult, s.copyErr
 }

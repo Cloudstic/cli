@@ -33,10 +33,10 @@ var objectPrefixes = []string{"chunk/", "content/", "filemeta/", "node/", "snaps
 
 // PruneManager implements mark-and-sweep garbage collection over the object store.
 type PruneManager struct {
-	store     *storelayer.MeteredStore
-	tree      *hamt.Tree
-	reporter  ui.Reporter
-	metaCache map[string]core.FileMeta
+	store    *storelayer.MeteredStore
+	tree     *hamt.Tree
+	reporter ui.Reporter
+	metas    *metaLoader
 }
 
 func NewPruneManager(s store.ObjectStore, reporter ui.Reporter) *PruneManager {
@@ -45,6 +45,7 @@ func NewPruneManager(s store.ObjectStore, reporter ui.Reporter) *PruneManager {
 		store:    meteredStore,
 		tree:     hamt.NewTree(meteredStore),
 		reporter: reporter,
+		metas:    newMetaLoader(meteredStore),
 	}
 }
 
@@ -62,8 +63,6 @@ func (pm *PruneManager) Run(ctx context.Context, opts ...PruneOption) (*PruneRes
 		defer lock.Release()
 		ctx = lockedCtx
 	}
-
-	pm.metaCache = make(map[string]core.FileMeta)
 
 	markPhase := pm.reporter.StartPhase("Marking reachable objects", 0, false)
 	reachable, err := pm.mark(ctx, markPhase)
@@ -231,7 +230,7 @@ func (pm *PruneManager) markFileMeta(ctx context.Context, ref string, reachable 
 	}
 	reachable[ref] = true
 
-	meta, err := pm.loadMeta(ctx, ref)
+	meta, err := pm.metas.load(ctx, ref)
 	if err != nil {
 		return err
 	}
@@ -328,20 +327,4 @@ func (pm *PruneManager) loadSnapshot(ctx context.Context, ref string) (*core.Sna
 		return nil, err
 	}
 	return &s, nil
-}
-
-func (pm *PruneManager) loadMeta(ctx context.Context, ref string) (*core.FileMeta, error) {
-	if fm, ok := pm.metaCache[ref]; ok {
-		return &fm, nil
-	}
-	data, err := getVerified(ctx, pm.store, ref)
-	if err != nil {
-		return nil, fmt.Errorf("get filemeta %s: %w", ref, err)
-	}
-	var fm core.FileMeta
-	if err := json.Unmarshal(data, &fm); err != nil {
-		return nil, err
-	}
-	pm.metaCache[ref] = fm
-	return &fm, nil
 }

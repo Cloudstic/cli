@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"sort"
 
@@ -31,13 +30,14 @@ type LsSnapshotResult struct {
 
 // LsSnapshotManager lists the file tree of a single snapshot.
 //
-// Unlike DiffManager and PruneManager it holds no filemeta cache, because it
-// cannot benefit from one: a HAMT key is derived from meta.FileID, which is
+// Unlike DiffManager and PruneManager its loader does not memoize, because it
+// could never get a hit: a HAMT key is derived from meta.FileID, which is
 // itself a FileMeta field, so no two keys share a filemeta ref. Walking a
 // single root therefore reaches every ref exactly once.
 type LsSnapshotManager struct {
 	store store.ObjectStore
 	tree  *hamt.Tree
+	metas *metaLoader
 	// log is where progress detail goes; see DiffManager.log.
 	log *logger.Logger
 }
@@ -47,6 +47,7 @@ func NewLsSnapshotManager(s store.ObjectStore, logWriter io.Writer) *LsSnapshotM
 		store: s,
 		log:   defaultLsLog.To(logWriter),
 		tree:  hamt.NewTree(s),
+		metas: newUncachedMetaLoader(s),
 	}
 }
 
@@ -113,7 +114,7 @@ func (lm *LsSnapshotManager) resolveSnapshot(ctx context.Context, id string) (*c
 func (lm *LsSnapshotManager) collectMeta(ctx context.Context, root string) (map[string]core.FileMeta, error) {
 	refToMeta := make(map[string]core.FileMeta)
 	err := lm.tree.Walk(ctx, root, func(_, valueRef string) error {
-		fm, err := lm.loadMeta(ctx, valueRef)
+		fm, err := lm.metas.load(ctx, valueRef)
 		if err != nil {
 			return err
 		}
@@ -121,18 +122,6 @@ func (lm *LsSnapshotManager) collectMeta(ctx context.Context, root string) (map[
 		return nil
 	})
 	return refToMeta, err
-}
-
-func (lm *LsSnapshotManager) loadMeta(ctx context.Context, ref string) (*core.FileMeta, error) {
-	data, err := getVerified(ctx, lm.store, ref)
-	if err != nil {
-		return nil, err
-	}
-	var fm core.FileMeta
-	if err := json.Unmarshal(data, &fm); err != nil {
-		return nil, err
-	}
-	return &fm, nil
 }
 
 // buildHierarchy returns sorted root refs and a parent->children map.

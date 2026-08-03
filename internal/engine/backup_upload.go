@@ -29,11 +29,16 @@ var inlineBufferPool = sync.Pool{
 	},
 }
 
+// uploadResult is what one worker reports back about a single file.
+//
+// It carries no core.FileMeta. The upload phase has no reader for one — the
+// paths built during the scan are already persisted, and newMetas is released
+// before upload begins — so returning a 216-byte struct by value through the
+// results channel would cost memory for every file to no end.
 type uploadResult struct {
 	fileID        string
 	parentID      string // primary parent's raw fileID (for the affinity routing key)
 	ref           string
-	meta          core.FileMeta
 	contentRef    string   // content key to cache (empty when dedup'd)
 	contentChunks []string // chunk refs for the content entry (nil for inline)
 	err           error
@@ -97,7 +102,6 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 			phase.Error()
 			return fmt.Errorf("hamt insert: %w", err)
 		}
-		bm.newMetas[res.ref] = res.meta
 	}
 
 	phase.Done()
@@ -130,7 +134,6 @@ func (bm *BackupManager) processFile(ctx context.Context, meta core.FileMeta, ph
 		fileID:        meta.FileID,
 		parentID:      primaryParentID(&meta),
 		ref:           metaRef,
-		meta:          meta,
 		contentRef:    contentRef,
 		contentChunks: contentChunks,
 	}

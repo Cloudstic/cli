@@ -82,7 +82,16 @@ type Client struct {
 	// openCfg is the config NewClient read, held so the first raiseRepoFormat
 	// of this client does not immediately re-read it. It is consumed on first
 	// use (swapped for the noRepoConfig sentinel) and never consulted again.
-	openCfg        atomic.Pointer[RepoConfig]
+	openCfg atomic.Pointer[RepoConfig]
+	// repoIDCache holds the repository identifier NewClient read, including the
+	// empty string for a repository that has none — nil means "not read yet",
+	// which is why this is a pointer rather than a string.
+	//
+	// It exists so that ensureRepoID costs nothing on the overwhelmingly common
+	// path where an identifier is already present. Without it, every backup,
+	// prune and forget would fetch the marker again purely to learn there was
+	// nothing to do.
+	repoIDCache    atomic.Pointer[string]
 	storedMeter    *storelayer.MeteredStore
 	encryptionKey  []byte
 	hmacKey        []byte
@@ -167,6 +176,8 @@ func NewClient(ctx context.Context, base store.ObjectStore, opts ...ClientOption
 	if cfg != nil {
 		c.repoFormat.Store(int64(cfg.Version))
 		c.openCfg.Store(cfg)
+		id := cfg.ID
+		c.repoIDCache.Store(&id)
 	}
 	c.store = storelayer.NewCompressedStore(inner, storelayer.WithFrameGate(c.framingEnabled))
 	c.storedMeter = storedMeter

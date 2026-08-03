@@ -164,7 +164,15 @@ func sameRepository(ctx context.Context, src, dst *Client, srcID, dstID string) 
 // repoID returns this repository's identifier, or "" for a repository written
 // before the marker carried one — including one whose marker an older build
 // has since rewritten, dropping the field.
+//
+// A cached non-empty value is authoritative: an identifier is assigned once and
+// never changed, so it cannot go stale. An empty one is re-read, because a peer
+// may have assigned one since this client opened, and copying against a stale
+// "no identifier" would fall back to probing for no reason.
 func (c *Client) repoID(ctx context.Context) (string, error) {
+	if cached := c.repoIDCache.Load(); cached != nil && *cached != "" {
+		return *cached, nil
+	}
 	cfg, _, err := c.openRepoConfig(ctx, c.base)
 	if err != nil {
 		return "", err
@@ -172,5 +180,6 @@ func (c *Client) repoID(ctx context.Context) (string, error) {
 	if cfg == nil {
 		return "", fmt.Errorf("repository not initialized")
 	}
+	c.repoIDCache.Store(&cfg.ID)
 	return cfg.ID, nil
 }

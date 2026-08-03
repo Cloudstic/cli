@@ -114,11 +114,13 @@ func WithExcludeHash(hash string) BackupOption {
 type BackupManager struct {
 	// log is this manager's debug sink, and snapLog the snapshot-catalog one
 	// it passes to the free functions in snapshots.go.
-	log        *logger.Logger
-	snapLog    *logger.Logger
-	source     source.Source
-	store      store.ObjectStore
-	keyCache   *storelayer.KeyCacheStore
+	log     *logger.Logger
+	snapLog *logger.Logger
+	source  source.Source
+	// store is the key-cached view of the destination, and the only store this
+	// manager writes through. It is held at its concrete type so PreloadKeys
+	// stays reachable; every other use goes through store.ObjectStore.
+	store      *storelayer.KeyCacheStore
 	tree       *hamt.Tree
 	txn        *hamt.Txn // working tree; opened by scanSource, written by Commit
 	chunker    *Chunker
@@ -151,7 +153,6 @@ func NewBackupManager(src source.Source, dest store.ObjectStore, reporter ui.Rep
 		snapLog:      SnapshotLogger(logWriter),
 		source:       src,
 		store:        keyCache,
-		keyCache:     keyCache,
 		tree:         hamt.NewTree(keyCache, hamt.WithLogger(logWriter)),
 		chunker:      NewChunker(keyCache, hmacKey),
 		reporter:     reporter,
@@ -282,7 +283,7 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 	}
 
 	// Wait for key cache to finish preloading from inner lists.
-	if err := bm.keyCache.PreloadKeys(ctx, "chunk/", "content/", "node/"); err != nil {
+	if err := bm.store.PreloadKeys(ctx, "chunk/", "content/", "node/"); err != nil {
 		return nil, fmt.Errorf("preload key cache: %w", err)
 	}
 

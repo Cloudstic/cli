@@ -55,6 +55,15 @@ type SnapshotEntry struct {
 	Ref     string
 	Snap    core.Snapshot
 	Created time.Time
+
+	// CopiedFrom carries the catalog's provenance cache through to callers.
+	//
+	// It is not folded into Snap.Meta, because an entry loaded from the catalog
+	// has no Meta at all — the catalog does not store it — and a Meta holding
+	// only provenance would read as a complete map that had lost every other
+	// key. Empty here means "the catalog does not know", which is not the same
+	// as "this snapshot was not copied"; see RFC 0017 §5.3 for the fallback.
+	CopiedFrom string
 }
 
 // KeepReason pairs a snapshot with the reasons it was kept.

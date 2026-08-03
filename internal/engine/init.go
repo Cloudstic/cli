@@ -305,24 +305,43 @@ func (m *InitManager) writeRepoConfig(ctx context.Context, encrypted bool, encry
 	// mistaken for "no existing config" — that would silently move the floor
 	// down instead of leaving it alone.
 	version := core.RepoFormatVersion
+	id := ""
 	existingData, err := m.store.Get(ctx, configKey)
 	switch {
 	case err == nil:
 		// Decode rather than unmarshal, so a sealed marker's version is read
 		// too. A marker that cannot be opened leaves the floor where it is,
 		// which is the same conservative outcome as an unparseable one.
-		if existing, derr := repoconfig.Decode(existingData, encryptionKey); derr == nil &&
-			existing.Version > version {
-			version = existing.Version
+		if existing, derr := repoconfig.Decode(existingData, encryptionKey); derr == nil {
+			if existing.Version > version {
+				version = existing.Version
+			}
+			// Adopting a repository must not re-identify it. Snapshots copied
+			// out of it elsewhere record this identifier as their provenance,
+			// and minting a fresh one would make those copies look unrelated —
+			// so the next `copy` would import the whole history again.
+			id = existing.ID
 		}
 	case !errors.Is(err, store.ErrNotFound):
 		return fmt.Errorf("read existing repository config: %w", err)
+	}
+
+	// A repository predating RepoConfig.ID reaches here with id still empty
+	// only when its marker could not be decoded, in which case it is being
+	// re-initialized anyway. An adopted repository that genuinely has no
+	// identifier gains one here, which is safe: it had no provenance to
+	// invalidate.
+	if id == "" {
+		if id, err = core.NewRepoID(); err != nil {
+			return err
+		}
 	}
 
 	cfg := core.RepoConfig{
 		Version:   version,
 		Created:   time.Now().UTC().Format(time.RFC3339),
 		Encrypted: encrypted,
+		ID:        id,
 	}
 	data, err := repoconfig.Encode(cfg, encryptionKey)
 	if err != nil {

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -69,8 +71,36 @@ func WithGenerator(name string) BackupOption {
 }
 
 // WithMeta adds a key-value pair to the snapshot metadata.
+//
+// Keys under core.ReservedMetaPrefix belong to Cloudstic and are rejected when
+// the backup runs. The option itself cannot report that, being a plain
+// mutator, which is why validateMeta runs first thing in Run.
 func WithMeta(key, value string) BackupOption {
 	return func(cfg *backupConfig) { cfg.meta[key] = value }
+}
+
+// validateMeta rejects user metadata that would impersonate metadata Cloudstic
+// writes about a snapshot.
+//
+// The namespace has to be defended at the point of entry rather than filtered
+// on the way out: `copy` decides whether it has already copied a snapshot by
+// reading these keys, so a snapshot carrying forged provenance is one that
+// `copy` will skip having never copied it — a silent hole in the destination.
+func (cfg backupConfig) validateMeta() error {
+	keys := make([]string, 0, len(cfg.meta))
+	for key := range cfg.meta {
+		if core.IsReservedMetaKey(key) {
+			keys = append(keys, key)
+		}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	sort.Strings(keys)
+	return fmt.Errorf(
+		"snapshot metadata key %s is reserved: keys beginning with %q are written by Cloudstic itself",
+		strings.Join(keys, ", "), core.ReservedMetaPrefix,
+	)
 }
 
 // WithExcludeHash records the hash of the active exclude patterns. When this
@@ -158,6 +188,10 @@ type RunResult struct {
 // Run executes a full backup: scan the source for changes, upload new/modified
 // files, build a new HAMT root, and persist a snapshot.
 func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
+	if err := bm.cfg.validateMeta(); err != nil {
+		return nil, err
+	}
+
 	if !bm.cfg.dryRun {
 		lock, lockedCtx, err := AcquireSharedLock(ctx, bm.store, "backup")
 		if err != nil {

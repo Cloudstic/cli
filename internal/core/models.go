@@ -68,6 +68,19 @@ type SnapshotSummary struct {
 	Tags        []string    `json:"tags,omitempty"`
 	ChangeToken string      `json:"change_token,omitempty"`
 	ExcludeHash string      `json:"exclude_hash,omitempty"`
+
+	// CopiedFrom denormalizes CopyProvenance out of the snapshot's Meta so
+	// that `copy` can decide what it has already copied by reading the catalog
+	// alone. The authoritative record stays in Meta, which the catalog does not
+	// carry; without this field the skip check would have to fetch every
+	// destination snapshot object on every run, which is the cost the catalog
+	// exists to avoid.
+	//
+	// It is a cache, and is rebuilt from Meta whenever the catalog is
+	// reconciled — so a build predating this field that rebuilds the catalog
+	// drops the value rather than corrupting it, and the next `copy` recovers
+	// it. See RFC 0017 §5.3.
+	CopiedFrom string `json:"copied_from,omitempty"` // CopyProvenance.String()
 }
 
 // RepoConfig is the repository marker written by "init". It is stored as
@@ -124,6 +137,23 @@ type RepoConfig struct {
 	Version   int    `json:"version"`
 	Created   string `json:"created"` // ISO8601
 	Encrypted bool   `json:"encrypted"`
+
+	// ID names this repository, so that an operation spanning two of them can
+	// say which one a piece of data came from. `copy` records it as snapshot
+	// provenance (RFC 0017 §5.1); nothing else reads it.
+	//
+	// It is random rather than derived, because every derivable candidate
+	// moves: the sealed marker is re-encrypted with a fresh nonce on each
+	// UpgradeRepoFormat, Version moves on upgrade, and Created is reset by
+	// `init --adopt`. A provenance key that changes underneath a repository is
+	// worse than none — it fails by silently duplicating history rather than by
+	// declining to skip — so repositories written before this field simply do
+	// not have one, and callers must handle "" rather than invent a value.
+	//
+	// Adding it needed no format bump: the marker is JSON decoded with
+	// json.Unmarshal and is not content-addressed, so older builds ignore it.
+	// Sealing covers it automatically, being applied to whatever JSON it wraps.
+	ID string `json:"id,omitempty"`
 }
 
 // The source-facing domain types are defined in pkg/source and aliased here.

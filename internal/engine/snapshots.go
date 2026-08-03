@@ -126,7 +126,8 @@ func LoadSnapshotCatalog(s store.ObjectStore, log *logger.Logger) ([]SnapshotEnt
 				ChangeToken: cs.ChangeToken,
 				ExcludeHash: cs.ExcludeHash,
 			},
-			Created: created,
+			Created:    created,
+			CopiedFrom: cs.CopiedFrom,
 		})
 		if needRebuild {
 			updatedCatalog = append(updatedCatalog, cs)
@@ -218,7 +219,7 @@ func RemoveFromSnapshotCatalog(s store.ObjectStore, log *logger.Logger, refs ...
 
 // snapshotToSummary converts a full Snapshot and its ref into a SnapshotSummary.
 func snapshotToSummary(ref string, snap core.Snapshot) core.SnapshotSummary {
-	return core.SnapshotSummary{
+	summary := core.SnapshotSummary{
 		Ref:         ref,
 		Seq:         snap.Seq,
 		Created:     snap.Created,
@@ -228,6 +229,14 @@ func snapshotToSummary(ref string, snap core.Snapshot) core.SnapshotSummary {
 		ChangeToken: snap.ChangeToken,
 		ExcludeHash: snap.ExcludeHash,
 	}
+	// Deriving CopiedFrom here, rather than at the one call site that writes a
+	// copied snapshot, is what makes the field self-healing: this function is
+	// also the catalog's rebuild path, so a value dropped by an older build is
+	// restored the next time the catalog reconciles against LIST snapshot/.
+	if prov, ok := core.CopyProvenanceFromMeta(snap.Meta); ok {
+		summary.CopiedFrom = prov.String()
+	}
+	return summary
 }
 
 // ---------------------------------------------------------------------------

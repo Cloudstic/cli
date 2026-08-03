@@ -6,6 +6,7 @@ import (
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/engine"
+	"github.com/cloudstic/cli/internal/repoconfig"
 	"github.com/cloudstic/cli/internal/storelayer"
 	"github.com/cloudstic/cli/pkg/secretref"
 	"github.com/cloudstic/cli/pkg/source"
@@ -85,6 +86,91 @@ func (c *Client) stampWriteFormat(ctx context.Context) {
 	if err := c.raiseRepoFormat(ctx); err != nil {
 		c.log.Debugf("could not stamp repository format: %v", err)
 	}
+	c.ensureRepoID(ctx)
+}
+
+// ensureRepoID gives a repository an identifier if it has none, so that one
+// written before RepoConfig.ID existed — or one whose marker an older build
+// rewrote, dropping the field — acquires one by being used rather than by the
+// operator knowing to re-run `init`.
+//
+// It runs on mutations only, following the same rule as the format stamp: a
+// read that quietly rewrote the marker would be a surprising side effect of
+// listing snapshots, and would fail against the read-only credentials that
+// reading a repository is meant to need.
+//
+// Best-effort, deliberately. An identifier only makes `copy` cheaper and more
+// precise — provenance falls back to matching on the source snapshot ref
+// without one — so it is never worth failing a completed mutation over. The
+// format stamp is fatal before a backup for a reason that does not apply here:
+// it decides how bytes are written, and this decides nothing.
+//
+// Two machines mutating one repository at the same moment can each mint an
+// identifier, and the later write wins. The cost is bounded and self-correcting:
+// snapshots copied under the losing identifier recorded it, a later copy
+// computes the winner, CopyProvenance.Matches declines to match two known and
+// different repositories, and that history is imported once more before
+// settling. That is the same failure this design already accepts from an older
+// build stripping the field, which is why matching treats an absent identifier
+// as unknown rather than as a distinguishing value.
+func (c *Client) ensureRepoID(ctx context.Context) {
+	if c.base == nil {
+		return
+	}
+	if cached := c.repoIDCache.Load(); cached != nil && *cached != "" {
+		return
+	}
+
+	// Re-read rather than trusting the cache's empty value. The marker is read
+	// immediately before it is written, so a peer that assigned an identifier
+	// since this client opened is seen and left alone.
+	raw, err := fetchRepoConfigBytes(ctx, c.base)
+	if err != nil {
+		c.log.Debugf("could not read repository config to assign an id: %v", err)
+		return
+	}
+	if raw == nil {
+		return // not initialized; init assigns the identifier
+	}
+
+	// Assigning an identifier must change nothing else about the repository,
+	// and for a marker that is plaintext on an encrypted repository it cannot:
+	// writing it back would seal it, and a sealed marker cannot be read by
+	// builds that predate sealing. That is a version-gated decision about who
+	// can still open the repository, which belongs to the format stamp and not
+	// to this. Such a marker acquires an identifier once something else seals
+	// it; until then `copy` matches provenance on the snapshot ref alone, which
+	// is the documented fallback.
+	if !repoconfig.IsSealed(raw) && len(c.encryptionKey) > 0 {
+		cfg, decErr := repoconfig.Decode(raw, nil)
+		if decErr == nil && cfg.Encrypted {
+			c.log.Debugf("leaving the plaintext marker of an encrypted repository alone rather than sealing it to assign an id")
+			return
+		}
+	}
+
+	cfg, err := repoconfig.Decode(raw, c.encryptionKey)
+	if err != nil {
+		c.log.Debugf("could not decode repository config to assign an id: %v", err)
+		return
+	}
+	if cfg.ID != "" {
+		c.repoIDCache.Store(&cfg.ID)
+		return
+	}
+
+	id, err := core.NewRepoID()
+	if err != nil {
+		c.log.Debugf("could not generate a repository id: %v", err)
+		return
+	}
+	cfg.ID = id
+	if err := putRepoConfig(ctx, c.base, *cfg, c.encryptionKey); err != nil {
+		c.log.Debugf("could not assign a repository id: %v", err)
+		return
+	}
+	c.repoIDCache.Store(&id)
+	c.log.Debugf("assigned repository id %s", id)
 }
 
 func (c *Client) Backup(ctx context.Context, src source.Source, opts ...BackupOption) (*BackupResult, error) {
@@ -111,6 +197,13 @@ func (c *Client) Backup(ctx context.Context, src source.Source, opts ...BackupOp
 	result, err := mgr.Run(ctx)
 	if err != nil {
 		return nil, err
+	}
+
+	// Backup stamps the format before writing rather than after, so it does not
+	// pass through stampWriteFormat and has to ask for the identifier itself.
+	// A dry run wrote nothing and must not start here.
+	if !result.DryRun {
+		c.ensureRepoID(ctx)
 	}
 
 	result.BytesAddedRaw = rawMeter.BytesWritten()

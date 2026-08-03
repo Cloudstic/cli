@@ -109,7 +109,7 @@ func TestRestoreManager_RunToDir_ReplaysXattrs(t *testing.T) {
 		Meta:    core.FileMeta{FileID: "id_file", Name: "file.txt", Parents: []string{"id_dir"}, Xattrs: map[string][]byte{"user.file": []byte("f")}},
 		Content: []byte("content"),
 	}
-	bkMgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, nil)
+	bkMgr := NewBackupManager(Deps{Store: dest, Reporter: ui.NewNoOpReporter()}, src)
 	if _, err := bkMgr.Run(t.Context()); err != nil {
 		t.Fatalf("backup setup failed: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestRestoreManager_RunToDir_ReplaysXattrs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFSRestoreWriter: %v", err)
 	}
-	rsMgr := NewRestoreManager(storelayer.NewCompressedStore(dest), ui.NewNoOpReporter())
+	rsMgr := NewRestoreManager(Deps{Store: storelayer.NewCompressedStore(dest), Reporter: ui.NewNoOpReporter()})
 	if _, err := rsMgr.Run(t.Context(), writer, ""); err != nil {
 		t.Fatalf("Run: %v", err)
 	}

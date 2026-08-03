@@ -61,7 +61,7 @@ func TestListManager_LogsProgressToTheCallersWriter(t *testing.T) {
 	}))
 
 	var log bytes.Buffer
-	mgr := NewListManager(s, &log)
+	mgr := NewListManager(Deps{Store: s, LogSink: &log})
 	result, err := mgr.Run(ctx)
 	if err != nil {
 		t.Fatalf("List: %v", err)
@@ -90,7 +90,7 @@ func TestListManager_NoWriterMeansNoOutput(t *testing.T) {
 	}))
 
 	out := captureStderr(t, func() {
-		if _, err := NewListManager(s, nil).Run(ctx); err != nil {
+		if _, err := NewListManager(Deps{Store: s}).Run(ctx); err != nil {
 			t.Fatalf("List: %v", err)
 		}
 	})
@@ -110,11 +110,41 @@ func TestLsSnapshotManager_LogsProgressToTheCallersWriter(t *testing.T) {
 	_ = s.Put(ctx, "index/latest", createIndex(ref, 1))
 
 	var log bytes.Buffer
-	if _, err := NewLsSnapshotManager(s, &log).Run(ctx, ref); err != nil {
+	if _, err := NewLsSnapshotManager(Deps{Store: s, LogSink: &log}).Run(ctx, ref); err != nil {
 		t.Fatalf("LsSnapshot: %v", err)
 	}
 	if !strings.Contains(log.String(), "Resolving snapshot") {
 		t.Errorf("log does not mention resolving the snapshot; got:\n%s", log.String())
+	}
+}
+
+// The collected-entries line summarises the whole walk, so it belongs after the
+// counting loop rather than inside it. Emitting it per entry turned a one-line
+// summary into one line per file, which on a real snapshot buries every other
+// diagnostic in the debug log.
+func TestLsSnapshotManager_LogsTheCollectedSummaryOnce(t *testing.T) {
+	ctx := context.Background()
+	s := NewMockStore()
+
+	metas := []string{
+		createMeta(ctx, s, "file1.txt", 100),
+		createMeta(ctx, s, "file2.txt", 200),
+		createMeta(ctx, s, "file3.txt", 300),
+	}
+	root := createHamt(ctx, t, s, []string{"file1", "file2", "file3"}, metas)
+	snap := core.Snapshot{Seq: 1, Root: root, Created: "2025-01-01T00:00:00Z"}
+	ref := saveSnapshot(ctx, s, &snap)
+
+	var log bytes.Buffer
+	if _, err := NewLsSnapshotManager(Deps{Store: s, LogSink: &log}).Run(ctx, ref); err != nil {
+		t.Fatalf("LsSnapshot: %v", err)
+	}
+
+	if got := strings.Count(log.String(), "Collected "); got != 1 {
+		t.Errorf("collected summary logged %d times, want 1; got:\n%s", got, log.String())
+	}
+	if !strings.Contains(log.String(), "Collected 3 files, 0 directories") {
+		t.Errorf("summary does not report the final totals; got:\n%s", log.String())
 	}
 }
 
@@ -130,10 +160,68 @@ func TestDiffManager_LogsProgressToTheCallersWriter(t *testing.T) {
 	ref2 := saveSnapshot(ctx, s, &snap2)
 
 	var log bytes.Buffer
-	if _, err := NewDiffManager(s, &log).Run(ctx, ref1, ref2); err != nil {
+	if _, err := NewDiffManager(Deps{Store: s, LogSink: &log}).Run(ctx, ref1, ref2); err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
 	if !strings.Contains(log.String(), "Resolving snapshot") {
 		t.Errorf("log does not mention resolving the snapshots; got:\n%s", log.String())
+	}
+}
+
+// Like ls, diff's change summary describes the whole comparison and belongs
+// after the counting loop rather than inside it.
+func TestDiffManager_LogsTheChangeSummaryOnce(t *testing.T) {
+	ctx := context.Background()
+	s := NewMockStore()
+
+	m1 := createMeta(ctx, s, "file1.txt", 100)
+	m2 := createMeta(ctx, s, "file2.txt", 200)
+	m3 := createMeta(ctx, s, "file3.txt", 300)
+
+	// file1 is unchanged between the two, so the diff is exactly two additions.
+	before := createHamt(ctx, t, s, []string{"file1"}, []string{m1})
+	after := createHamt(ctx, t, s, []string{"file1", "file2", "file3"}, []string{m1, m2, m3})
+	ref1 := saveSnapshot(ctx, s, &core.Snapshot{Seq: 1, Root: before, Created: "2025-01-01T00:00:00Z"})
+	ref2 := saveSnapshot(ctx, s, &core.Snapshot{Seq: 2, Root: after, Created: "2025-01-02T00:00:00Z"})
+
+	var log bytes.Buffer
+	res, err := NewDiffManager(Deps{Store: s, LogSink: &log}).Run(ctx, ref1, ref2)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if len(res.Changes) != 2 {
+		t.Fatalf("got %d changes, want 2", len(res.Changes))
+	}
+	if got := strings.Count(log.String(), "Found "); got != 1 {
+		t.Errorf("change summary logged %d times, want 1; got:\n%s", got, log.String())
+	}
+	if !strings.Contains(log.String(), "Found 2 changes: 2 added, 0 removed, 0 modified") {
+		t.Errorf("summary does not report the final totals; got:\n%s", log.String())
+	}
+}
+
+// A snapshot with no source info is still a snapshot the caller was handed, so
+// it must appear in the debug listing. The per-entry line used to sit inside
+// the branch that formats the source suffix, so those rows vanished.
+func TestListManager_LogsSnapshotsWithoutSourceInfo(t *testing.T) {
+	ctx := context.Background()
+	s := NewMockStore()
+
+	withSource := core.Snapshot{
+		Seq: 1, Root: "node/1", Created: "2025-01-01T00:00:00Z",
+		Source: &core.SourceInfo{Type: "local", Account: "acct", Path: "/data"},
+	}
+	withoutSource := core.Snapshot{Seq: 2, Root: "node/2", Created: "2025-01-02T00:00:00Z"}
+	ref1 := saveSnapshot(ctx, s, &withSource)
+	ref2 := saveSnapshot(ctx, s, &withoutSource)
+
+	var log bytes.Buffer
+	if _, err := NewListManager(Deps{Store: s, LogSink: &log}).Run(ctx); err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	for _, ref := range []string{ref1, ref2} {
+		if !strings.Contains(log.String(), ref) {
+			t.Errorf("log omits snapshot %s; got:\n%s", ref, log.String())
+		}
 	}
 }

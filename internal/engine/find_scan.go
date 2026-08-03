@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -29,6 +28,11 @@ type findScanner struct {
 	tree  *hamt.Tree
 	pred  *findPredicate
 	out   *findCollector
+	// metas reads through on every call rather than memoizing: a full scan
+	// crosses every snapshot in the repository, and holding each filemeta it
+	// decodes would grow without bound. The evaluated map below is the bounded
+	// memo that makes the repeats cheap instead.
+	metas *metaLoader
 	// log receives the scan heartbeat. It replaced a verbose flag writing
 	// straight to os.Stderr, which no library caller could redirect.
 	log *logger.Logger
@@ -97,6 +101,7 @@ func newFindScanner(s store.ObjectStore, tree *hamt.Tree, pred *findPredicate, o
 		pred:      pred,
 		out:       out,
 		log:       log,
+		metas:     newUncachedMetaLoader(s),
 		evaluated: make(map[[16]byte]findRefEval),
 	}
 }
@@ -366,19 +371,15 @@ func (s *findScanner) eval(ctx context.Context, ref string) (findRefEval, error)
 }
 
 func (s *findScanner) loadMeta(ctx context.Context, ref string) (*core.FileMeta, error) {
-	data, err := getVerified(ctx, s.store, ref)
+	meta, err := s.metas.load(ctx, ref)
 	if err != nil {
-		return nil, fmt.Errorf("load %s: %w", ref, err)
+		return nil, err
 	}
 	s.metaFetched++
 	if s.metaFetched%10000 == 0 {
 		s.log.Debugf("  read %d metadata objects", s.metaFetched)
 	}
-	var meta core.FileMeta
-	if err := json.Unmarshal(data, &meta); err != nil {
-		return nil, fmt.Errorf("decode %s: %w", ref, err)
-	}
-	return &meta, nil
+	return meta, nil
 }
 
 func resolveCandidatePaths(state *lineageState, meta core.FileMeta) []string {

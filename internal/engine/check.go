@@ -69,12 +69,12 @@ type CheckManager struct {
 }
 
 // NewCheckManager creates a CheckManager.
-func NewCheckManager(s store.ObjectStore, reporter ui.Reporter, hmacKey []byte) *CheckManager {
+func NewCheckManager(d Deps) *CheckManager {
 	return &CheckManager{
-		store:    s,
-		tree:     hamt.NewTree(s),
-		reporter: reporter,
-		hmacKey:  hmacKey,
+		store:    d.Store,
+		tree:     hamt.NewTree(d.Store),
+		reporter: d.Reporter,
+		hmacKey:  d.HMACKey,
 	}
 }
 

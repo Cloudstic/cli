@@ -126,7 +126,7 @@ func TestWriteChunks_KeepsFetchesInFlightWhileWriting(t *testing.T) {
 		gate:        newFetchGate(),
 		hold:        func(key string) bool { return key != refs[0] },
 	}
-	rm := NewRestoreManager(bs, ui.NewNoOpReporter())
+	rm := NewRestoreManager(Deps{Store: bs, Reporter: ui.NewNoOpReporter()})
 
 	const wantInFlight = 2
 	w := &handshakeWriter{inFlight: &bs.inFlight, gate: bs.gate, want: wantInFlight}
@@ -205,7 +205,7 @@ func TestRunWithWriter_RestoresFilesConcurrently(t *testing.T) {
 	dest := setupBackupForRestore(t)
 
 	bs := &blockingStore{ObjectStore: dest, delay: 5 * time.Millisecond}
-	rm := NewRestoreManager(bs, ui.NewNoOpReporter())
+	rm := NewRestoreManager(Deps{Store: bs, Reporter: ui.NewNoOpReporter()})
 
 	// Plan and write are driven separately so the peak can be reset in
 	// between. prepareRestore fetches file metadata concurrently on its own,

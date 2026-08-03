@@ -86,14 +86,7 @@ func (c *Client) CopyFrom(ctx context.Context, src *Client, opts ...CopyOption) 
 		)
 	}
 
-	mgr := engine.NewCopyManager(
-		engine.CopySide{Store: src.store, RepoID: srcID},
-		c.store,
-		c.hmacKey,
-		dstID,
-		c.reporter,
-		c.logWriter,
-	)
+	mgr := engine.NewCopyManager(c.engineDeps(), engine.CopySide{Store: src.store, RepoID: srcID}, dstID)
 
 	// Bytes written are metered as they land in the backend — after compression
 	// and encryption — which is the number that matches what the destination is

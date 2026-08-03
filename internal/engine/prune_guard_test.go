@@ -37,7 +37,7 @@ func TestPruneManager_AbortsWhenSnapshotsVanishButObjectsRemain(t *testing.T) {
 	}
 
 	metered := storelayer.NewMeteredStore(&hiddenSnapshotStore{ObjectStore: mockStore})
-	pm := NewPruneManager(metered, ui.NewNoOpReporter())
+	pm := NewPruneManager(Deps{Store: metered, Reporter: ui.NewNoOpReporter()})
 
 	result, err := pm.Run(ctx)
 	if err == nil {
@@ -57,7 +57,7 @@ func TestPruneManager_EmptyRepositorySucceeds(t *testing.T) {
 	mockStore := NewMockStore()
 
 	metered := storelayer.NewMeteredStore(mockStore)
-	pm := NewPruneManager(metered, ui.NewNoOpReporter())
+	pm := NewPruneManager(Deps{Store: metered, Reporter: ui.NewNoOpReporter()})
 
 	result, err := pm.Run(ctx)
 	if err != nil {

@@ -32,7 +32,7 @@ var (
 func InitRepo(ctx context.Context, rawStore store.ObjectStore, opts ...InitOption) (*InitResult, error) {
 	// No client exists here to carry a sink, so init's one debug line goes to
 	// the process-wide fallback. See RFC 0022 §8.
-	mgr := engine.NewInitManager(rawStore, nil)
+	mgr := engine.NewInitManager(engine.Deps{Store: rawStore})
 	return mgr.Run(ctx, opts...)
 }
 

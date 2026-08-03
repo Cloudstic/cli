@@ -153,7 +153,7 @@ func (bm *BackupManager) lookupDeleteParentID(ctx context.Context, fileID string
 		return "", nil
 	}
 
-	oldMeta, err := bm.loadMeta(ctx, ref)
+	oldMeta, err := bm.metas.load(ctx, ref)
 	if err != nil {
 		return "", fmt.Errorf("load old file metadata for delete %s: %w", fileID, err)
 	}
@@ -175,7 +175,7 @@ func (bm *BackupManager) detectChange(ctx context.Context, oldRoot string, meta 
 		return true, "", nil
 	}
 
-	oldMeta, err := bm.loadMeta(ctx, oldRef)
+	oldMeta, err := bm.metas.load(ctx, oldRef)
 	if err != nil {
 		return false, "", err
 	}
@@ -272,10 +272,7 @@ func (bm *BackupManager) insertFolder(ctx context.Context, meta *core.FileMeta, 
 	if err != nil {
 		return err
 	}
-	bm.metaCacheMu.RLock()
-	_, inCache := bm.metaCache[metaRef]
-	bm.metaCacheMu.RUnlock()
-	if !inCache {
+	if !bm.metas.cached(metaRef) {
 		bm.pendingMetas[metaRef] = metaData
 	}
 	bm.trackFileMeta(metaRef, *meta)
@@ -375,7 +372,7 @@ func (bm *BackupManager) lookupMetaByFileID(ctx context.Context, fileID string) 
 	if fm, ok := bm.newMetas[ref]; ok {
 		return &fm
 	}
-	fm, err := bm.loadMeta(ctx, ref)
+	fm, err := bm.metas.load(ctx, ref)
 	if err != nil {
 		return nil
 	}
@@ -390,7 +387,7 @@ func (bm *BackupManager) countRemoved(ctx context.Context, oldRoot string) error
 	}
 	return bm.txn.DiffFrom(ctx, oldRoot, func(d hamt.DiffEntry) error {
 		if d.OldValue != "" && d.NewValue == "" {
-			meta, err := bm.loadMeta(ctx, d.OldValue)
+			meta, err := bm.metas.load(ctx, d.OldValue)
 			if err != nil {
 				return err
 			}

@@ -1,18 +1,17 @@
 package engine
 
 import (
-	"io"
-
 	"context"
 	"fmt"
 	"time"
 
-	"github.com/cloudstic/cli/internal/logger"
-
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
+	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/pkg/store"
 )
+
+var defaultFindLog = logger.New("find", logger.ColorCyan)
 
 // defaultFindMaxResults bounds how many distinct files one query reports.
 // Scanning continues past the cap so the counters stay accurate; only
@@ -223,18 +222,24 @@ func (q *FindQuery) SetPattern(pattern string) {
 // It is a pure read path: no lock is taken, nothing is written, and the
 // repository format is not stamped.
 type FindManager struct {
-	store store.ObjectStore
-	tree  *hamt.Tree
-	// log is the snapshot-catalog sink this manager passes to the free
-	// functions in snapshots.go.
+	store   store.ObjectStore
+	tree    *hamt.Tree
+	catalog snapshotCatalog
+	// log is this manager's own debug sink, handed to the scanner for its
+	// progress reporting.
 	log *logger.Logger
 }
 
-func NewFindManager(s store.ObjectStore, logWriter io.Writer) *FindManager {
+func NewFindManager(d Deps) *FindManager {
 	// One Tree serves every snapshot root and shares a single node cache
 	// between them, which is what makes the delta scan's structural sharing
 	// pay off rather than re-reading the same nodes per snapshot.
-	return &FindManager{store: s, tree: hamt.NewTree(s), log: SnapshotLogger(logWriter)}
+	return &FindManager{
+		store:   d.Store,
+		tree:    hamt.NewTree(d.Store),
+		catalog: newSnapshotCatalog(d.Store, d.LogSink),
+		log:     defaultFindLog.To(d.LogSink),
+	}
 }
 
 // Run executes the query.
@@ -255,7 +260,7 @@ func (fm *FindManager) Run(ctx context.Context, q FindQuery) (*FindResult, error
 
 	start := time.Now()
 	fm.log.Debugf("Loading snapshot catalog...")
-	catalog, err := LoadSnapshotCatalog(fm.store, fm.log)
+	catalog, err := fm.catalog.load()
 	if err != nil {
 		return nil, fmt.Errorf("load snapshot catalog: %w", err)
 	}

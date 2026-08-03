@@ -147,11 +147,11 @@ func (r *findRepo) runFind(q FindQuery) *FindResult {
 	r.t.Helper()
 	ctx := context.Background()
 
-	delta, err := NewFindManager(r.store, nil).Run(ctx, q)
+	delta, err := NewFindManager(Deps{Store: r.store}).Run(ctx, q)
 	if err != nil {
 		r.t.Fatalf("find (delta): %v", err)
 	}
-	full, err := NewFindManager(r.store, nil).Run(ctx, withNoDelta(q))
+	full, err := NewFindManager(Deps{Store: r.store}).Run(ctx, withNoDelta(q))
 	if err != nil {
 		r.t.Fatalf("find (no-delta): %v", err)
 	}
@@ -658,7 +658,7 @@ func TestFind_SnapshotSelectors(t *testing.T) {
 	})
 
 	t.Run("unknown snapshot is an error", func(t *testing.T) {
-		_, err := NewFindManager(r.store, nil).Run(context.Background(),
+		_, err := NewFindManager(Deps{Store: r.store}).Run(context.Background(),
 			FindQuery{Name: "notes.txt", Snapshots: []string{"deadbeef"}})
 		if err == nil {
 			t.Fatal("want an error for an unknown snapshot")
@@ -716,7 +716,7 @@ func TestFind_MaxResultsTruncatesButKeepsCountersAccurate(t *testing.T) {
 
 func TestFind_EmptyQueryIsRejected(t *testing.T) {
 	r := newFindRepo(t)
-	if _, err := NewFindManager(r.store, nil).Run(context.Background(), FindQuery{}); err == nil {
+	if _, err := NewFindManager(Deps{Store: r.store}).Run(context.Background(), FindQuery{}); err == nil {
 		t.Fatal("a query with no predicate must be refused rather than dumping the repository")
 	}
 }
@@ -729,7 +729,7 @@ func TestFind_InvalidPatternsFailBeforeScanning(t *testing.T) {
 		{Type: "symlink"},
 		{Newer: "not-a-time"},
 	} {
-		if _, err := NewFindManager(r.store, nil).Run(context.Background(), q); err == nil {
+		if _, err := NewFindManager(Deps{Store: r.store}).Run(context.Background(), q); err == nil {
 			t.Error("want a compile error before the scan starts")
 		}
 	}
@@ -761,7 +761,7 @@ func TestFind_MissingMetadataObjectIsAnError(t *testing.T) {
 			break
 		}
 	}
-	if _, err := NewFindManager(r.store, nil).Run(context.Background(), patternQuery("*.txt")); err == nil {
+	if _, err := NewFindManager(Deps{Store: r.store}).Run(context.Background(), patternQuery("*.txt")); err == nil {
 		t.Fatal("want an error when a referenced filemeta cannot be read")
 	}
 }
@@ -791,11 +791,11 @@ func TestFind_DeltaScanReadsFarFewerObjectsThanFullScan(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	delta, err := NewFindManager(r.store, nil).Run(ctx, patternQuery("*.txt"))
+	delta, err := NewFindManager(Deps{Store: r.store}).Run(ctx, patternQuery("*.txt"))
 	if err != nil {
 		t.Fatalf("delta: %v", err)
 	}
-	full, err := NewFindManager(r.store, nil).Run(ctx, withNoDelta(patternQuery("*.txt")))
+	full, err := NewFindManager(Deps{Store: r.store}).Run(ctx, withNoDelta(patternQuery("*.txt")))
 	if err != nil {
 		t.Fatalf("full: %v", err)
 	}

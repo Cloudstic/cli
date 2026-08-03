@@ -2,12 +2,9 @@ package engine
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"sort"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -19,7 +16,6 @@ import (
 	"github.com/cloudstic/cli/internal/storelayer"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/source"
-	"github.com/cloudstic/cli/pkg/store"
 )
 
 var defaultBackupLog = logger.New("backup", logger.ColorGreen)
@@ -112,13 +108,14 @@ func WithExcludeHash(hash string) BackupOption {
 // BackupManager orchestrates a backup: scanning a source for changes, uploading
 // new or modified files, and persisting a snapshot backed by a Merkle-HAMT.
 type BackupManager struct {
-	// log is this manager's debug sink, and snapLog the snapshot-catalog one
-	// it passes to the free functions in snapshots.go.
-	log        *logger.Logger
-	snapLog    *logger.Logger
-	source     source.Source
-	store      store.ObjectStore
-	keyCache   *storelayer.KeyCacheStore
+	// log is this manager's debug sink; the snapshot catalog carries its own.
+	log     *logger.Logger
+	catalog snapshotCatalog
+	source  source.Source
+	// store is the key-cached view of the destination, and the only store this
+	// manager writes through. It is held at its concrete type so PreloadKeys
+	// stays reachable; every other use goes through store.ObjectStore.
+	store      *storelayer.KeyCacheStore
 	tree       *hamt.Tree
 	txn        *hamt.Txn // working tree; opened by scanSource, written by Commit
 	chunker    *Chunker
@@ -128,14 +125,13 @@ type BackupManager struct {
 	cfg        backupConfig
 
 	newMetas     map[string]core.FileMeta
-	metaCacheMu  sync.RWMutex
-	metaCache    map[string]core.FileMeta
+	metas        *metaLoader
 	pendingMetas map[string][]byte // deferred filemeta PUTs (ref → JSON)
 	parentIndex  map[string]string // fileID → primary parent fileID (for AffinityKey lookups)
 	hmacKey      []byte
 }
 
-func NewBackupManager(src source.Source, dest store.ObjectStore, reporter ui.Reporter, hmacKey []byte, logWriter io.Writer, opts ...BackupOption) *BackupManager {
+func NewBackupManager(d Deps, src source.Source, opts ...BackupOption) *BackupManager {
 	cfg := backupConfig{
 		generator: "cloudstic-cli",
 		meta:      map[string]string{},
@@ -145,23 +141,22 @@ func NewBackupManager(src source.Source, dest store.ObjectStore, reporter ui.Rep
 	}
 
 	sourceInfo := src.Info()
-	keyCache := storelayer.NewKeyCacheStore(dest)
+	keyCache := storelayer.NewKeyCacheStore(d.Store)
 	return &BackupManager{
-		log:          defaultBackupLog.To(logWriter),
-		snapLog:      SnapshotLogger(logWriter),
+		log:          defaultBackupLog.To(d.LogSink),
+		catalog:      newSnapshotCatalog(keyCache, d.LogSink),
 		source:       src,
 		store:        keyCache,
-		keyCache:     keyCache,
-		tree:         hamt.NewTree(keyCache, hamt.WithLogger(logWriter)),
-		chunker:      NewChunker(keyCache, hmacKey),
-		reporter:     reporter,
+		tree:         hamt.NewTree(keyCache, hamt.WithLogger(d.LogSink)),
+		chunker:      NewChunker(keyCache, d.HMACKey),
+		reporter:     d.Reporter,
 		sourceInfo:   sourceInfo,
 		cfg:          cfg,
 		newMetas:     make(map[string]core.FileMeta),
-		metaCache:    make(map[string]core.FileMeta),
+		metas:        newMetaLoader(keyCache),
 		pendingMetas: make(map[string][]byte),
 		parentIndex:  make(map[string]string),
-		hmacKey:      hmacKey,
+		hmacKey:      d.HMACKey,
 	}
 }
 
@@ -282,7 +277,7 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 	}
 
 	// Wait for key cache to finish preloading from inner lists.
-	if err := bm.keyCache.PreloadKeys(ctx, "chunk/", "content/", "node/"); err != nil {
+	if err := bm.store.PreloadKeys(ctx, "chunk/", "content/", "node/"); err != nil {
 		return nil, fmt.Errorf("preload key cache: %w", err)
 	}
 
@@ -333,7 +328,7 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 	}
 
 	// Update snapshot catalog (best-effort).
-	AppendSnapshotCatalog(bm.store, snapshotToSummary(snapRef, snap), bm.snapLog)
+	bm.catalog.add(snapshotToSummary(snapRef, snap))
 
 	r := bm.buildResult()
 	r.SnapshotHash = snapHash
@@ -372,7 +367,7 @@ func (bm *BackupManager) loadLatestSeq() (int, error) {
 // silently downgrade an incremental backup to a full rescan and reset the
 // sequence number.
 func (bm *BackupManager) findPreviousSnapshot(info core.SourceInfo) (*core.Snapshot, error) {
-	entries, err := LoadSnapshotCatalog(bm.store, bm.snapLog)
+	entries, err := bm.catalog.load()
 	if err != nil {
 		return nil, err
 	}
@@ -456,25 +451,4 @@ func (bm *BackupManager) writeSnapshotObject(ctx context.Context, root string, s
 
 func (bm *BackupManager) trackFileMeta(ref string, fm core.FileMeta) {
 	bm.newMetas[ref] = fm
-}
-
-func (bm *BackupManager) loadMeta(ctx context.Context, ref string) (*core.FileMeta, error) {
-	bm.metaCacheMu.RLock()
-	fm, ok := bm.metaCache[ref]
-	bm.metaCacheMu.RUnlock()
-	if ok {
-		return &fm, nil
-	}
-
-	data, err := getVerified(ctx, bm.store, ref)
-	if err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal(data, &fm); err != nil {
-		return nil, err
-	}
-	bm.metaCacheMu.Lock()
-	bm.metaCache[ref] = fm
-	bm.metaCacheMu.Unlock()
-	return &fm, nil
 }

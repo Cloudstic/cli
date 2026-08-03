@@ -28,7 +28,7 @@ func setupBackupForRestoreLarge(t *testing.T) *MockStore {
 	}
 	src.AddFile("big.txt", "id_big", content)
 
-	bkMgr := NewBackupManager(src, dest, ui.NewNoOpReporter(), nil, nil)
+	bkMgr := NewBackupManager(Deps{Store: dest, Reporter: ui.NewNoOpReporter()}, src)
 	if _, err := bkMgr.Run(context.Background()); err != nil {
 		t.Fatalf("Backup setup failed: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestRestore_RejectsTamperedChunk(t *testing.T) {
 	dest := setupBackupForRestoreLarge(t)
 	tamperChunk(t, dest, []byte("attacker controlled content"))
 
-	rsMgr := NewRestoreManager(storelayer.NewCompressedStore(dest), ui.NewNoOpReporter())
+	rsMgr := NewRestoreManager(Deps{Store: storelayer.NewCompressedStore(dest), Reporter: ui.NewNoOpReporter()})
 	outDir := filepath.Join(t.TempDir(), "restored")
 	writer, err := NewFSRestoreWriter(outDir)
 	if err != nil {
@@ -91,7 +91,7 @@ func TestRestore_NoVerifyStillWritesTamperedChunk(t *testing.T) {
 	dest := setupBackupForRestoreLarge(t)
 	tamperChunk(t, dest, []byte("attacker controlled content"))
 
-	rsMgr := NewRestoreManager(storelayer.NewCompressedStore(dest), ui.NewNoOpReporter())
+	rsMgr := NewRestoreManager(Deps{Store: storelayer.NewCompressedStore(dest), Reporter: ui.NewNoOpReporter()})
 	outDir := filepath.Join(t.TempDir(), "restored")
 	writer, err := NewFSRestoreWriter(outDir)
 	if err != nil {
@@ -117,7 +117,7 @@ func TestRestore_NoVerifyStillWritesTamperedChunk(t *testing.T) {
 // Verification must not fire on healthy data.
 func TestRestore_VerifiesCleanRestore(t *testing.T) {
 	dest := setupBackupForRestore(t)
-	rsMgr := NewRestoreManager(storelayer.NewCompressedStore(dest), ui.NewNoOpReporter())
+	rsMgr := NewRestoreManager(Deps{Store: storelayer.NewCompressedStore(dest), Reporter: ui.NewNoOpReporter()})
 
 	outDir := filepath.Join(t.TempDir(), "restored")
 	writer, err := NewFSRestoreWriter(outDir)
@@ -179,7 +179,7 @@ func TestRestore_VerifiesInlineContent(t *testing.T) {
 	dest.Data[contentKey] = tampered
 	dest.mu.Unlock()
 
-	rsMgr := NewRestoreManager(storelayer.NewCompressedStore(dest), ui.NewNoOpReporter())
+	rsMgr := NewRestoreManager(Deps{Store: storelayer.NewCompressedStore(dest), Reporter: ui.NewNoOpReporter()})
 	outDir := filepath.Join(t.TempDir(), "restored")
 	writer, err := NewFSRestoreWriter(outDir)
 	if err != nil {

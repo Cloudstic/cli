@@ -2,8 +2,6 @@ package engine
 
 import (
 	"context"
-	"encoding/json"
-	"io"
 	"sort"
 
 	"github.com/cloudstic/cli/internal/core"
@@ -11,6 +9,8 @@ import (
 	"github.com/cloudstic/cli/internal/logger"
 	"github.com/cloudstic/cli/pkg/store"
 )
+
+var defaultDiffLog = logger.New("diff", logger.ColorCyan)
 
 // ChangeType describes how a file differs between two snapshots.
 type ChangeType string
@@ -43,19 +43,20 @@ type DiffResult struct {
 
 // DiffManager compares two snapshots and reports file-level changes.
 type DiffManager struct {
-	store     store.ObjectStore
-	tree      *hamt.Tree
-	metaCache map[string]core.FileMeta
+	store store.ObjectStore
+	tree  *hamt.Tree
+	metas *metaLoader
 	// log is where progress detail goes. It used to be written straight to
 	// os.Stderr, which a library caller could neither capture nor silence.
 	log *logger.Logger
 }
 
-func NewDiffManager(s store.ObjectStore, logWriter io.Writer) *DiffManager {
+func NewDiffManager(d Deps) *DiffManager {
 	return &DiffManager{
-		log:   SnapshotLogger(logWriter),
-		store: s,
-		tree:  hamt.NewTree(s),
+		log:   defaultDiffLog.To(d.LogSink),
+		store: d.Store,
+		tree:  hamt.NewTree(d.Store),
+		metas: newMetaLoader(d.Store),
 	}
 }
 
@@ -65,8 +66,6 @@ func (dm *DiffManager) Run(ctx context.Context, snapID1, snapID2 string, opts ..
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-
-	dm.metaCache = make(map[string]core.FileMeta)
 
 	dm.log.Debugf("Resolving snapshot %q...", snapID1)
 	root1, ref1, err := dm.loadRoot(ctx, snapID1)
@@ -99,8 +98,8 @@ func (dm *DiffManager) Run(ctx context.Context, snapID1, snapID2 string, opts ..
 		case ChangeModified:
 			modified++
 		}
-		dm.log.Debugf("Found %d changes: %d added, %d removed, %d modified", len(changes), added, removed, modified)
 	}
+	dm.log.Debugf("Found %d changes: %d added, %d removed, %d modified", len(changes), added, removed, modified)
 
 	return &DiffResult{Ref1: ref1, Ref2: ref2, Changes: changes}, nil
 }
@@ -160,7 +159,7 @@ func (dm *DiffManager) diffRoots(ctx context.Context, root1, root2 string) ([]Fi
 func (dm *DiffManager) toFileChange(ctx context.Context, d hamt.DiffEntry, oldByID, newByID map[string]core.FileMeta) (FileChange, error) {
 	ct, metaRef := classifyEntry(d)
 
-	meta, err := dm.loadMeta(ctx, metaRef)
+	meta, err := dm.metas.load(ctx, metaRef)
 	if err != nil {
 		return FileChange{}, err
 	}
@@ -189,29 +188,10 @@ func classifyEntry(d hamt.DiffEntry) (ChangeType, string) {
 	}
 }
 
-func (dm *DiffManager) loadMeta(ctx context.Context, ref string) (*core.FileMeta, error) {
-	if dm.metaCache == nil {
-		dm.metaCache = make(map[string]core.FileMeta)
-	}
-	if fm, ok := dm.metaCache[ref]; ok {
-		return &fm, nil
-	}
-	data, err := getVerified(ctx, dm.store, ref)
-	if err != nil {
-		return nil, err
-	}
-	var fm core.FileMeta
-	if err := json.Unmarshal(data, &fm); err != nil {
-		return nil, err
-	}
-	dm.metaCache[ref] = fm
-	return &fm, nil
-}
-
 func (dm *DiffManager) collectMetadata(ctx context.Context, root string) (map[string]core.FileMeta, error) {
 	byID := make(map[string]core.FileMeta)
 	err := dm.tree.Walk(ctx, root, func(_, valueRef string) error {
-		fm, err := dm.loadMeta(ctx, valueRef)
+		fm, err := dm.metas.load(ctx, valueRef)
 		if err != nil {
 			return err
 		}

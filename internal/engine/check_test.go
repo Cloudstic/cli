@@ -72,7 +72,7 @@ func TestCheckManager_HealthyRepo(t *testing.T) {
 	mockStore := NewMockStore()
 	buildTestRepo(t, mockStore)
 
-	cm := NewCheckManager(mockStore, ui.NewNoOpReporter(), nil)
+	cm := NewCheckManager(Deps{Store: mockStore, Reporter: ui.NewNoOpReporter()})
 	result, err := cm.Run(ctx)
 	if err != nil {
 		t.Fatalf("Check failed: %v", err)
@@ -93,7 +93,7 @@ func TestCheckManager_HealthyRepoWithReadData(t *testing.T) {
 	mockStore := NewMockStore()
 	buildTestRepo(t, mockStore)
 
-	cm := NewCheckManager(mockStore, ui.NewNoOpReporter(), nil)
+	cm := NewCheckManager(Deps{Store: mockStore, Reporter: ui.NewNoOpReporter()})
 	result, err := cm.Run(ctx, WithReadData())
 	if err != nil {
 		t.Fatalf("Check failed: %v", err)
@@ -111,7 +111,7 @@ func TestCheckManager_MissingChunk(t *testing.T) {
 	// Delete the chunk
 	_ = mockStore.Delete(ctx, chunkRef)
 
-	cm := NewCheckManager(mockStore, ui.NewNoOpReporter(), nil)
+	cm := NewCheckManager(Deps{Store: mockStore, Reporter: ui.NewNoOpReporter()})
 	result, err := cm.Run(ctx)
 	if err != nil {
 		t.Fatalf("Check failed: %v", err)
@@ -134,7 +134,7 @@ func TestCheckManager_MissingContent(t *testing.T) {
 
 	_ = mockStore.Delete(ctx, contentRef)
 
-	cm := NewCheckManager(mockStore, ui.NewNoOpReporter(), nil)
+	cm := NewCheckManager(Deps{Store: mockStore, Reporter: ui.NewNoOpReporter()})
 	result, err := cm.Run(ctx)
 	if err != nil {
 		t.Fatalf("Check failed: %v", err)
@@ -157,7 +157,7 @@ func TestCheckManager_MissingFileMeta(t *testing.T) {
 
 	_ = mockStore.Delete(ctx, metaRef)
 
-	cm := NewCheckManager(mockStore, ui.NewNoOpReporter(), nil)
+	cm := NewCheckManager(Deps{Store: mockStore, Reporter: ui.NewNoOpReporter()})
 	result, err := cm.Run(ctx)
 	if err != nil {
 		t.Fatalf("Check failed: %v", err)
@@ -177,7 +177,7 @@ func TestCheckManager_MissingHAMTNode(t *testing.T) {
 
 	_ = mockStore.Delete(ctx, rootRef)
 
-	cm := NewCheckManager(mockStore, ui.NewNoOpReporter(), nil)
+	cm := NewCheckManager(Deps{Store: mockStore, Reporter: ui.NewNoOpReporter()})
 	result, err := cm.Run(ctx)
 	if err != nil {
 		t.Fatalf("Check failed: %v", err)
@@ -207,7 +207,7 @@ func TestCheckManager_CorruptChunk_ReadData(t *testing.T) {
 	// Corrupt the chunk data
 	_ = mockStore.Put(ctx, chunkRef, []byte("corrupted data"))
 
-	cm := NewCheckManager(mockStore, ui.NewNoOpReporter(), nil)
+	cm := NewCheckManager(Deps{Store: mockStore, Reporter: ui.NewNoOpReporter()})
 	result, err := cm.Run(ctx, WithReadData())
 	if err != nil {
 		t.Fatalf("Check failed: %v", err)
@@ -238,7 +238,7 @@ func TestCheckManager_CorruptChunk_WithoutReadData(t *testing.T) {
 	// Corrupt the chunk data — should NOT be detected without --read-data
 	_ = mockStore.Put(ctx, chunkRef, []byte("corrupted data"))
 
-	cm := NewCheckManager(mockStore, ui.NewNoOpReporter(), nil)
+	cm := NewCheckManager(Deps{Store: mockStore, Reporter: ui.NewNoOpReporter()})
 	result, err := cm.Run(ctx)
 	if err != nil {
 		t.Fatalf("Check failed: %v", err)
@@ -253,7 +253,7 @@ func TestCheckManager_SingleSnapshot(t *testing.T) {
 	mockStore := NewMockStore()
 	snapRef, _, _, _, _ := buildTestRepo(t, mockStore)
 
-	cm := NewCheckManager(mockStore, ui.NewNoOpReporter(), nil)
+	cm := NewCheckManager(Deps{Store: mockStore, Reporter: ui.NewNoOpReporter()})
 	result, err := cm.Run(ctx, WithSnapshotRef(snapRef))
 	if err != nil {
 		t.Fatalf("Check failed: %v", err)
@@ -271,7 +271,7 @@ func TestCheckManager_SnapshotLatestAlias(t *testing.T) {
 	mockStore := NewMockStore()
 	buildTestRepo(t, mockStore)
 
-	cm := NewCheckManager(mockStore, ui.NewNoOpReporter(), nil)
+	cm := NewCheckManager(Deps{Store: mockStore, Reporter: ui.NewNoOpReporter()})
 	result, err := cm.Run(ctx, WithSnapshotRef("latest"))
 	if err != nil {
 		t.Fatalf("Check failed: %v", err)
@@ -329,7 +329,7 @@ func TestCheckManager_ContentRef_HMACPath(t *testing.T) {
 	idxData, _ := json.Marshal(idx)
 	_ = mockStore.Put(ctx, "index/latest", idxData)
 
-	cm := NewCheckManager(mockStore, ui.NewNoOpReporter(), hmacKey)
+	cm := NewCheckManager(Deps{Store: mockStore, Reporter: ui.NewNoOpReporter(), HMACKey: hmacKey})
 	result, err := cm.Run(ctx)
 	if err != nil {
 		t.Fatalf("Check failed: %v", err)
@@ -386,7 +386,7 @@ func TestCheckManager_CorruptChunk_HMACReadData(t *testing.T) {
 	// Now corrupt the chunk
 	_ = mockStore.Put(ctx, chunkRef, []byte("corrupted!"))
 
-	cm := NewCheckManager(mockStore, ui.NewNoOpReporter(), hmacKey)
+	cm := NewCheckManager(Deps{Store: mockStore, Reporter: ui.NewNoOpReporter(), HMACKey: hmacKey})
 	result, err := cm.Run(ctx, WithReadData())
 	if err != nil {
 		t.Fatalf("Check failed: %v", err)

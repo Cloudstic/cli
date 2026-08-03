@@ -1,16 +1,11 @@
 package engine
 
 import (
-	"io"
-
 	"context"
 	"fmt"
 	"sort"
 	"strings"
 
-	"github.com/cloudstic/cli/internal/logger"
-
-	"github.com/cloudstic/cli/internal/storelayer"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/store"
 )
@@ -113,17 +108,16 @@ type ForgetManager struct {
 	store    store.ObjectStore
 	reporter ui.Reporter
 	pruner   *PruneManager
-	// log is the snapshot-catalog sink this manager passes to the free
-	// functions in snapshots.go.
-	log *logger.Logger
+	catalog  snapshotCatalog
 }
 
-func NewForgetManager(s store.ObjectStore, reporter ui.Reporter, logWriter io.Writer) *ForgetManager {
+func NewForgetManager(d Deps) *ForgetManager {
 	return &ForgetManager{
-		store:    s,
-		reporter: reporter,
-		log:      SnapshotLogger(logWriter),
-		pruner:   NewPruneManager(storelayer.NewMeteredStore(s), reporter),
+		store:    d.Store,
+		reporter: d.Reporter,
+		catalog:  newSnapshotCatalog(d.Store, d.LogSink),
+		// NewPruneManager meters the store itself, so d is handed over as-is.
+		pruner: NewPruneManager(d),
 	}
 }
 
@@ -159,7 +153,7 @@ func (fm *ForgetManager) Run(ctx context.Context, snapshotID string, opts ...For
 	}
 
 	// Update snapshot catalog (best-effort).
-	RemoveFromSnapshotCatalog(fm.store, fm.log, targetRef)
+	fm.catalog.remove(targetRef)
 
 	if err := fm.fixupLatest(targetRef); err != nil {
 		phase.Error()
@@ -221,7 +215,7 @@ func (fm *ForgetManager) fixupLatest(deletedRef string) error {
 		return nil
 	}
 
-	entries, err := LoadSnapshotCatalog(fm.store, fm.log)
+	entries, err := fm.catalog.load()
 	if err != nil {
 		return err
 	}
@@ -271,7 +265,7 @@ func (fm *ForgetManager) RunPolicy(ctx context.Context, opts ...ForgetOption) (*
 		return nil, fmt.Errorf("empty policy: specify at least one -keep-* option or a tag/source/account/path filter")
 	}
 
-	entries, err := LoadSnapshotCatalog(fm.store, fm.log)
+	entries, err := fm.catalog.load()
 	if err != nil {
 		return nil, err
 	}
@@ -352,10 +346,10 @@ func (fm *ForgetManager) forgetBatch(ctx context.Context, entries []SnapshotEntr
 	}
 
 	// Update snapshot catalog (best-effort).
-	RemoveFromSnapshotCatalog(fm.store, fm.log, removedRefs...)
+	fm.catalog.remove(removedRefs...)
 
 	// Elect new latest from the remaining snapshots.
-	remaining, err := LoadSnapshotCatalog(fm.store, fm.log)
+	remaining, err := fm.catalog.load()
 	if err != nil {
 		return err
 	}

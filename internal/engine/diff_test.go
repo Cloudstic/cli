@@ -24,7 +24,7 @@ func TestDiffManager_Run(t *testing.T) {
 	snap2Ref := saveSnapshotRef(ctx, store, root2, 2)
 	_ = store.Put(ctx, "index/latest", createIndex(snap2Ref, 2))
 
-	dm := NewDiffManager(store, nil)
+	dm := NewDiffManager(Deps{Store: store})
 
 	changes, err := dm.diffRoots(ctx, root1, root2)
 	if err != nil {
@@ -93,7 +93,7 @@ func TestDiffManager_DerivesPathsFromParentsWithoutPersistedPaths(t *testing.T) 
 	root1 := createHamt(ctx, t, store, []string{"dir", "file"}, []string{rootDir, oldFile})
 	root2 := createHamt(ctx, t, store, []string{"dir", "file"}, []string{rootDir, newFile})
 
-	dm := NewDiffManager(store, nil)
+	dm := NewDiffManager(Deps{Store: store})
 	changes, err := dm.diffRoots(ctx, root1, root2)
 	if err != nil {
 		t.Fatalf("Diff failed: %v", err)

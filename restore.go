@@ -29,7 +29,7 @@ var (
 // snapshotRef can be "", "latest", a bare hash or unambiguous hash prefix, or
 // "snapshot/<hash-or-prefix>". An ambiguous prefix is rejected.
 func (c *Client) Restore(ctx context.Context, w io.Writer, snapshotRef string, opts ...RestoreOption) (*RestoreResult, error) {
-	mgr := engine.NewRestoreManager(c.store, c.reporter)
+	mgr := engine.NewRestoreManager(c.engineDeps())
 	return mgr.Run(ctx, engine.NewZipRestoreWriter(w), snapshotRef, opts...)
 }
 
@@ -37,7 +37,7 @@ func (c *Client) Restore(ctx context.Context, w io.Writer, snapshotRef string, o
 // snapshotRef can be "", "latest", a bare hash or unambiguous hash prefix, or
 // "snapshot/<hash-or-prefix>". An ambiguous prefix is rejected.
 func (c *Client) RestoreToDir(ctx context.Context, outputDir, snapshotRef string, opts ...RestoreOption) (*RestoreResult, error) {
-	mgr := engine.NewRestoreManager(c.store, c.reporter)
+	mgr := engine.NewRestoreManager(c.engineDeps())
 	writer, err := engine.NewFSRestoreWriter(outputDir)
 	if err != nil {
 		return nil, err

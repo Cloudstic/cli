@@ -106,15 +106,17 @@ const restoreMemoryBudget = 128 * 1024 * 1024
 type RestoreManager struct {
 	store     store.ObjectStore
 	tree      *hamt.Tree
+	metas     *metaLoader
 	reporter  ui.Reporter
 	memBudget *semaphore.Weighted
 }
 
-func NewRestoreManager(s store.ObjectStore, reporter ui.Reporter) *RestoreManager {
+func NewRestoreManager(d Deps) *RestoreManager {
 	return &RestoreManager{
-		store:     s,
-		tree:      hamt.NewTree(s),
-		reporter:  reporter,
+		store:     d.Store,
+		tree:      hamt.NewTree(d.Store),
+		metas:     newUncachedMetaLoader(d.Store),
+		reporter:  d.Reporter,
 		memBudget: semaphore.NewWeighted(restoreMemoryBudget),
 	}
 }
@@ -767,7 +769,7 @@ func (rm *RestoreManager) collectMetadata(ctx context.Context, root string) (map
 	g.SetLimit(store.GetConcurrencyHint(rm.store, 10))
 	for _, ref := range refs {
 		g.Go(func() error {
-			fm, err := rm.loadMeta(gCtx, ref)
+			fm, err := rm.metas.load(gCtx, ref)
 			if err != nil {
 				return err
 			}
@@ -784,18 +786,6 @@ func (rm *RestoreManager) collectMetadata(ctx context.Context, root string) (map
 	}
 	phase.Done()
 	return byID, nil
-}
-
-func (rm *RestoreManager) loadMeta(ctx context.Context, ref string) (*core.FileMeta, error) {
-	data, err := getVerified(ctx, rm.store, ref)
-	if err != nil {
-		return nil, err
-	}
-	var fm core.FileMeta
-	if err := json.Unmarshal(data, &fm); err != nil {
-		return nil, err
-	}
-	return &fm, nil
 }
 
 // ---------------------------------------------------------------------------

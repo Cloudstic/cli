@@ -125,3 +125,13 @@ Dedup is content-addressed at two levels:
 This means a "new" file with identical content to a previously backed-up file
 produces zero additional chunk/content bytes — only a new filemeta and
 possibly new HAMT nodes are written.
+
+## In-process caching
+
+Several layers cache in memory: the pack layer holds a catalog and an LRU of
+recently read packfiles, the HAMT holds decoded nodes, and the engine holds
+decoded filemetas. A `KeyCacheStore` wraps the whole chain from above during a
+backup — it is not part of the chain itself.
+
+See `docs/caching.md` for the full inventory, the lifetime and bound of each
+cache, and why none is redundant with another.

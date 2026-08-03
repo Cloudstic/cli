@@ -87,6 +87,50 @@ func TestBackupManager_ResolvesPathsForOpaqueIDs(t *testing.T) {
 	checkNoStoredPath("FOLDER_B", "FILE_C")
 }
 
+// newMetas answers parent lookups for filemetas whose bytes are still queued in
+// pendingMetas, which only happens while scanning. It used to be carried
+// through upload — and written to there — holding a core.FileMeta per scanned
+// file for a map nothing read, across the longest phase of a backup.
+//
+// TestBackupManager_ResolvesPathsForOpaqueIDs covers the other side of this:
+// releasing the map too early breaks parent resolution for a tree whose entries
+// carry no Paths.
+func TestBackupManager_ReleasesScanFilemetasBeforeUpload(t *testing.T) {
+	newSrc := func() *MockSource {
+		src := NewMockSource()
+		src.Files["FOLDER_A"] = MockFile{Meta: core.FileMeta{
+			FileID: "FOLDER_A", Name: "Documents", Type: core.FileTypeFolder,
+		}}
+		src.Files["FILE_B"] = MockFile{
+			Meta:    core.FileMeta{FileID: "FILE_B", Name: "notes.txt", Parents: []string{"FOLDER_A"}},
+			Content: []byte("hello"),
+		}
+		return src
+	}
+
+	for _, tc := range []struct {
+		name string
+		opts []BackupOption
+	}{
+		{name: "full"},
+		{name: "dry-run", opts: []BackupOption{WithBackupDryRun()}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr := NewBackupManager(
+				Deps{Store: NewMockStore(), Reporter: ui.NewNoOpReporter()},
+				newSrc(), tc.opts...,
+			)
+			if _, err := mgr.Run(context.Background()); err != nil {
+				t.Fatalf("Backup failed: %v", err)
+			}
+			if mgr.newMetas != nil {
+				t.Errorf("newMetas still holds %d entries after Run; it is scan-phase only",
+					len(mgr.newMetas))
+			}
+		})
+	}
+}
+
 func TestBackupManager_Run(t *testing.T) {
 	ctx := context.Background()
 	src := NewMockSource()

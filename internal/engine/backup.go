@@ -124,6 +124,10 @@ type BackupManager struct {
 	sourceInfo core.SourceInfo
 	cfg        backupConfig
 
+	// newMetas holds filemetas produced by the current scan, whose bytes are
+	// still queued in pendingMetas and so cannot be read back through metas.
+	// It is scan-phase only: Run releases it once scanSource returns, so
+	// nothing after that point may read or write it.
 	newMetas     map[string]core.FileMeta
 	metas        *metaLoader
 	pendingMetas map[string][]byte // deferred filemeta PUTs (ref → JSON)
@@ -253,6 +257,17 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// newMetas exists to answer parent lookups for entries whose filemeta has
+	// not been written yet, which only happens while scanning. Its last reader
+	// returned with scanSource, so it is released here rather than carried
+	// through upload — the longest and most allocation-heavy phase, where it
+	// would hold a core.FileMeta per scanned file for nothing.
+	//
+	// Releasing by nilling is deliberate: a nil map still reads as empty, but a
+	// write to one panics, so a lookup reintroduced below this line fails
+	// loudly instead of quietly repopulating a map nothing consumes.
+	bm.newMetas = nil
 
 	if bm.cfg.dryRun {
 		if usedFullScan {

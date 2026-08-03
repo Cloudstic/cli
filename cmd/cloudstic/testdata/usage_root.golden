@@ -28,6 +28,7 @@ COMMANDS
   prune              Remove unused data chunks from the repository
   forget             Remove a specific snapshot from history
   diff               Compare two snapshots or a snapshot against latest
+  copy               Copy snapshots from another repository into this one
   break-lock         Remove a stale repository lock left by a crashed process
   key list           List all encryption key slots in the repository
   key add-recovery   Generate a 24-word recovery key for an encrypted repository

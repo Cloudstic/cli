@@ -1,0 +1,57 @@
+# `copy` moves snapshot history between two repositories that share no key.
+#
+# The interesting property is that nothing is transferred verbatim: object names
+# are derived from each repository's own master key, so the destination graph is
+# rebuilt. What the user should see is that the history survives anyway —
+# timestamps, tags and file contents intact — and that running it twice is a
+# no-op rather than a duplication.
+
+exec cloudstic init -store local:$WORK/src -password src-pw
+exec cloudstic init -store local:$WORK/dst -password dst-pw
+
+exec cloudstic backup -store local:$WORK/src -password src-pw -source local:$WORK/data -tag nightly
+stdout 'saved'
+
+# A dry run reports the selection and writes nothing.
+exec cloudstic copy -store local:$WORK/dst -password dst-pw -from-store local:$WORK/src -from-password src-pw -dry-run
+stdout 'dry run: nothing will be written'
+stdout 'would copy 1 snapshot'
+exec cloudstic list -store local:$WORK/dst -password dst-pw
+! stdout 'local'
+
+# The real run names both repositories before it writes anything, so a mistyped
+# destination is visible while it is still cheap.
+exec cloudstic copy -store local:$WORK/dst -password dst-pw -from-store local:$WORK/src -from-password src-pw
+stdout 'copying from local:'
+stdout 'snapshot .* saved'
+stdout 'copied 1 snapshot, skipped 0 snapshots'
+
+# The copied snapshot is an ordinary snapshot of the destination afterwards:
+# listable, verifiable and restorable, with its tag carried over.
+exec cloudstic list -store local:$WORK/dst -password dst-pw
+stdout 'nightly'
+
+exec cloudstic check -store local:$WORK/dst -password dst-pw -read-data
+stderr 'No errors found'
+
+exec cloudstic restore -store local:$WORK/dst -password dst-pw -output $WORK/restored
+exists $WORK/restored/notes.txt
+grep 'hello from the source' $WORK/restored/notes.txt
+
+# Rerunning skips rather than duplicating, and does so without re-reading the
+# source: that is what the recorded provenance buys.
+exec cloudstic copy -store local:$WORK/dst -password dst-pw -from-store local:$WORK/src -from-password src-pw
+stdout 'already copied as snapshot'
+stdout 'copied 0 snapshots, skipped 1 snapshot'
+stdout 'read 0 B'
+
+# Naming one repository on both sides is refused before either is opened.
+! exec cloudstic copy -store local:$WORK/dst -password dst-pw -from-store local:$WORK/dst
+stderr 'name the same repository'
+
+# The source repository has to be named at all.
+! exec cloudstic copy -store local:$WORK/dst -password dst-pw
+stderr '-from-store or -from-profile'
+
+-- data/notes.txt --
+hello from the source repository

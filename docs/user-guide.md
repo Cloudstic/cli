@@ -23,6 +23,7 @@ Cloudstic is a content-addressable backup tool that creates encrypted, deduplica
   - [ls](#ls)
   - [find](#find)
   - [diff](#diff)
+  - [copy](#copy)
   - [forget](#forget)
   - [prune](#prune)
   - [break-lock](#break-lock)
@@ -1052,6 +1053,91 @@ Each hash may be shortened to any unambiguous prefix. Cloudstic reports an error
 instead of choosing a snapshot when a prefix is ambiguous.
 
 Shows added, modified, and removed files between the two snapshots.
+
+---
+
+### copy
+
+Copy snapshot history from another repository into this one — to seed a new
+repository, migrate between backends, or promote local snapshots into a remote.
+
+```bash
+# Copy every snapshot from one repository into another
+cloudstic copy -store s3:dest-bucket/prod \
+  -from-store local:/tmp/cloudstic-src -from-password <source-password>
+
+# Copy one profile's repository into another profile's repository
+cloudstic copy -profile remote-prod -from-profile laptop-local
+
+# Copy only selected snapshots
+cloudstic copy -profile archive -from-profile laptop-local 410b18a2 4e5d5487 latest
+```
+
+The destination is configured exactly as for any other command. The source
+repository gets a parallel set of `-from-*` flags — `-from-store`,
+`-from-profile`, `-from-password`, `-from-s3-*`, `-from-b2-*`,
+`-from-store-sftp-*`, `-from-kms-*` and so on — mirroring every flag that
+locates or unlocks a repository.
+
+**The `-from-*` flags read no environment variables.** `CLOUDSTIC_PASSWORD` and
+friends configure the destination only, so one ambient value can never silently
+unlock both repositories. For non-interactive use, name the source with
+`-from-profile`; a profile entry may carry `env://` secret references like any
+other. The source must always be named explicitly — unlike `-store`, it has no
+default.
+
+Nothing is written to the source, so read-only source credentials are enough.
+
+| Flag | Description |
+|------|-------------|
+| `-from-store <uri>` | Source repository URI |
+| `-from-profile <name>` | Source repository from a profile |
+| `-dry-run` | Report what would be copied, write nothing |
+| `-source <uri>` | Copy only snapshots of this source |
+| `-account <id>` | Copy only snapshots of this account |
+| `-tag <tag>` | Copy only snapshots with this tag (repeatable) |
+| `-since <time>` | Copy only snapshots created at or after this time |
+| `-allow-copied` | Allow copying snapshots that were themselves copied |
+
+Both repositories are named before anything is written, since a mistyped
+destination is the one mistake a rerun cannot undo:
+
+```text
+copying from local:/tmp/cloudstic-src
+            to s3:dest-bucket/prod
+
+snapshot 410b18a2 of [local:/Users/ada/Documents] at 2026-04-01 18:15:03 +0000
+snapshot a1b2c3d4 saved
+
+copied 1 snapshot, skipped 0 snapshots (read 4.2 GiB, wrote 1.1 GiB) in 1m32s
+```
+
+**What is preserved.** Creation time, tags, source identity, path lineage and
+file metadata all carry over — a copy is history, not a re-backup. Sequence
+numbers are reassigned, because they record write order within a repository
+rather than being part of a snapshot's identity.
+
+**Rerunning is safe.** Each copied snapshot records where it came from, so a
+second run skips what it already copied without re-reading the source. This also
+makes an interrupted copy cheap to resume: rerun it and only the unfinished work
+is repeated.
+
+**Cost.** Copying is far more expensive than an incremental backup. Object names
+are derived from each repository's own encryption key, so nothing can be moved
+verbatim: every object in the selected snapshots is read and decrypted through
+the source, then re-encrypted and written to the destination. Data the
+destination already holds is still recognised and skipped, so copying into a
+repository that shares content with the source is much cheaper than copying into
+an empty one.
+
+**Retention.** A copy re-imports any selected snapshot the destination does not
+currently have — including one the destination deliberately forgot. For a
+scheduled copy, pass `-since` with the previous run's start time so that
+destination retention is not undone on the next run.
+
+The source and destination need not share a password, key slots, or encryption
+at all. Copying between an encrypted and an unencrypted repository works in
+either direction.
 
 ---
 

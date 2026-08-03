@@ -530,7 +530,7 @@ The HAMT is a **Merkle Hash Array Mapped Trie** with 5 bits per level (32-way br
 
 All mutations are purely functional — `Insert` returns a new root reference while the old root remains valid. This enables structural sharing between snapshots.
 
-A `TransactionalStore` buffers new nodes in memory during a backup and flushes only the reachable subset to the persistent store at the end, avoiding upload of intermediate superseded nodes.
+A `Txn` holds new nodes in memory during a backup and writes nothing until `Commit`, which serializes only the dirty spine reachable from the final root — so nodes superseded mid-transaction are never uploaded. See `docs/caching.md` for how this relates to the in-process caches.
 
 ### Affinity Model (HAMTv2)
 

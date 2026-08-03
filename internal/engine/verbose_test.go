@@ -167,3 +167,61 @@ func TestDiffManager_LogsProgressToTheCallersWriter(t *testing.T) {
 		t.Errorf("log does not mention resolving the snapshots; got:\n%s", log.String())
 	}
 }
+
+// Like ls, diff's change summary describes the whole comparison and belongs
+// after the counting loop rather than inside it.
+func TestDiffManager_LogsTheChangeSummaryOnce(t *testing.T) {
+	ctx := context.Background()
+	s := NewMockStore()
+
+	m1 := createMeta(ctx, s, "file1.txt", 100)
+	m2 := createMeta(ctx, s, "file2.txt", 200)
+	m3 := createMeta(ctx, s, "file3.txt", 300)
+
+	// file1 is unchanged between the two, so the diff is exactly two additions.
+	before := createHamt(ctx, t, s, []string{"file1"}, []string{m1})
+	after := createHamt(ctx, t, s, []string{"file1", "file2", "file3"}, []string{m1, m2, m3})
+	ref1 := saveSnapshot(ctx, s, &core.Snapshot{Seq: 1, Root: before, Created: "2025-01-01T00:00:00Z"})
+	ref2 := saveSnapshot(ctx, s, &core.Snapshot{Seq: 2, Root: after, Created: "2025-01-02T00:00:00Z"})
+
+	var log bytes.Buffer
+	res, err := NewDiffManager(Deps{Store: s, LogSink: &log}).Run(ctx, ref1, ref2)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if len(res.Changes) != 2 {
+		t.Fatalf("got %d changes, want 2", len(res.Changes))
+	}
+	if got := strings.Count(log.String(), "Found "); got != 1 {
+		t.Errorf("change summary logged %d times, want 1; got:\n%s", got, log.String())
+	}
+	if !strings.Contains(log.String(), "Found 2 changes: 2 added, 0 removed, 0 modified") {
+		t.Errorf("summary does not report the final totals; got:\n%s", log.String())
+	}
+}
+
+// A snapshot with no source info is still a snapshot the caller was handed, so
+// it must appear in the debug listing. The per-entry line used to sit inside
+// the branch that formats the source suffix, so those rows vanished.
+func TestListManager_LogsSnapshotsWithoutSourceInfo(t *testing.T) {
+	ctx := context.Background()
+	s := NewMockStore()
+
+	withSource := core.Snapshot{
+		Seq: 1, Root: "node/1", Created: "2025-01-01T00:00:00Z",
+		Source: &core.SourceInfo{Type: "local", Account: "acct", Path: "/data"},
+	}
+	withoutSource := core.Snapshot{Seq: 2, Root: "node/2", Created: "2025-01-02T00:00:00Z"}
+	ref1 := saveSnapshot(ctx, s, &withSource)
+	ref2 := saveSnapshot(ctx, s, &withoutSource)
+
+	var log bytes.Buffer
+	if _, err := NewListManager(Deps{Store: s, LogSink: &log}).Run(ctx); err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	for _, ref := range []string{ref1, ref2} {
+		if !strings.Contains(log.String(), ref) {
+			t.Errorf("log omits snapshot %s; got:\n%s", ref, log.String())
+		}
+	}
+}

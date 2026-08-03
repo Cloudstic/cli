@@ -98,8 +98,8 @@ func (dm *DiffManager) Run(ctx context.Context, snapID1, snapID2 string, opts ..
 		case ChangeModified:
 			modified++
 		}
-		dm.log.Debugf("Found %d changes: %d added, %d removed, %d modified", len(changes), added, removed, modified)
 	}
+	dm.log.Debugf("Found %d changes: %d added, %d removed, %d modified", len(changes), added, removed, modified)
 
 	return &DiffResult{Ref1: ref1, Ref2: ref2, Changes: changes}, nil
 }

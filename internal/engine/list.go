@@ -51,8 +51,11 @@ func (lm *ListManager) Run(ctx context.Context, opts ...ListOption) (*ListResult
 					source += fmt.Sprintf(" path_id=%s", e.Snap.Source.PathID)
 				}
 			}
-			lm.catalog.debugf("  %s seq=%d created=%s%s", e.Ref, e.Snap.Seq, e.Snap.Created, source)
 		}
+		// Logged for every snapshot, not only those carrying source info: the
+		// suffix is what varies, and skipping the line entirely made a listing
+		// that silently omitted rows the caller had just been handed.
+		lm.catalog.debugf("  %s seq=%d created=%s%s", e.Ref, e.Snap.Seq, e.Snap.Created, source)
 	}
 	return &ListResult{Snapshots: entries}, nil
 }

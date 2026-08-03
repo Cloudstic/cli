@@ -14,12 +14,14 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	cloudstic "github.com/cloudstic/cli"
 )
 
-// TestMain sets up a shared GOCOVERDIR for coverage tracking.
+// TestMain sets up the coverage directory tree. Each child process gets its own
+// directory beneath it — see cleanEnv for why sharing one is not safe.
 func TestMain(m *testing.M) {
 	coverDir := os.Getenv("GOCOVERDIR")
 	ownsDir := coverDir == ""
@@ -30,16 +32,13 @@ func TestMain(m *testing.M) {
 			fmt.Fprintf(os.Stderr, "e2e: failed to create GOCOVERDIR: %v\n", err)
 			os.Exit(1)
 		}
-		if err := os.Setenv("GOCOVERDIR", coverDir); err != nil {
-			fmt.Fprintf(os.Stderr, "e2e: failed to set GOCOVERDIR: %v\n", err)
-			os.Exit(1)
-		}
 	}
+	coverBase = coverDir
 
 	code := m.Run()
 
 	if outFile := os.Getenv("E2E_COVERAGE_OUT"); outFile != "" {
-		cmd := exec.Command("go", "tool", "covdata", "textfmt", "-i="+coverDir, "-o="+outFile)
+		cmd := exec.Command("go", "tool", "covdata", "textfmt", "-i="+coverInputs(coverDir), "-o="+outFile)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			fmt.Fprintf(os.Stderr, "e2e: coverage conversion failed: %v\n%s\n", err, out)
 		}
@@ -90,14 +89,81 @@ func buildBinary(t *testing.T) string {
 	return buildPath
 }
 
+// coverBase is the directory the per-process coverage directories live under,
+// and coverSeq names them apart. Both are set by TestMain.
+var (
+	coverBase string
+	coverSeq  atomic.Int64
+)
+
+// cleanEnv builds the environment for a child cloudstic process: the test
+// process's own, minus anything that would leak configuration into it, plus a
+// coverage directory belonging to that child alone.
+//
+// The private coverage directory is what stops a Go runtime race from failing
+// unrelated tests. A -cover binary rewrites covmeta.<hash> on every exit —
+// it does not skip the write when the file is already there — via a temporary
+// file named for the meta hash and the clock, with no pid in it. macOS
+// quantizes UnixNano to microseconds, so two of these processes exiting in the
+// same microsecond choose the same temporary path; one renames it away and the
+// other fails:
+//
+//	coverage meta-data emit failed: ... rename ...: no such file or directory
+//
+// The binary writes that to stderr, and the run helpers fold stderr into the
+// string a test asserts on, so it surfaced as an unrelated assertion failing
+// with output the command never produced — a diff test reporting a coverage
+// error. It reproduced in 5 of 25 attempts at 24 concurrent processes sharing
+// one directory, and CI runs e2e with -parallel 8.
+//
+// Giving each process its own directory removes the shared path the race needs.
+//
+// Only the failure goes away, not a gap in the data: counter files are named
+// with the pid and never collided, and every process writes identical meta
+// content, so one winner was always enough. Measured before and after, the
+// suite reports the same 38.4%.
 func cleanEnv() []string {
 	var env []string
 	for _, e := range os.Environ() {
-		if !strings.HasPrefix(e, "CLOUDSTIC_") {
-			env = append(env, e)
+		if strings.HasPrefix(e, "CLOUDSTIC_") || strings.HasPrefix(e, "GOCOVERDIR=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	if coverBase == "" {
+		return env
+	}
+	dir := filepath.Join(coverBase, strconv.FormatInt(coverSeq.Add(1), 10))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		// Coverage is reporting, not correctness: a test must not fail because
+		// its counters could not be placed.
+		return env
+	}
+	return append(env, "GOCOVERDIR="+dir)
+}
+
+// coverInputs lists the per-process directories for `go tool covdata`, which
+// takes a comma-separated set rather than a tree to walk.
+//
+// A full run produces around 400 of them: roughly 74 KB of argument, against an
+// ARG_MAX near 1 MB, and about 50 MB of temporary files that TestMain removes.
+// Both have an order of magnitude of headroom; past that this would need to
+// merge in batches rather than pass every directory at once.
+func coverInputs(base string) string {
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return base
+	}
+	dirs := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			dirs = append(dirs, filepath.Join(base, e.Name()))
 		}
 	}
-	return env
+	if len(dirs) == 0 {
+		return base
+	}
+	return strings.Join(dirs, ",")
 }
 
 func run(t *testing.T, bin string, args ...string) string {

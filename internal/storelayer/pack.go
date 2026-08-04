@@ -3,7 +3,6 @@ package storelayer
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -311,26 +310,18 @@ func (s *PackStore) Get(ctx context.Context, key string) ([]byte, error) {
 		return data, nil
 	}
 
-	// 2. Is it in our catalog?
-	entry, inCatalog := s.catalog[key]
 	s.mu.RUnlock()
 
-	// If not in catalog, wait: we might need to load the catalog from the remote store first,
-	// or it's just a normal large object.
+	// 2. Is it in our catalog? A failed streaming decode may have inserted
+	// entries before encountering the error, so catalogEntry never exposes the
+	// map until the complete catalog has loaded successfully.
+	entry, inCatalog, err := s.catalogEntry(ctx, key)
+	if err != nil {
+		return nil, err
+	}
 	if !inCatalog {
-		if key != indexPacksKey && !strings.HasPrefix(key, packPrefix) {
-			if err := s.ensureCatalogLoaded(ctx); err != nil {
-				return nil, err
-			}
-			s.mu.RLock()
-			entry, inCatalog = s.catalog[key]
-			s.mu.RUnlock()
-		}
-
-		if !inCatalog {
-			// It's a large object or an object not in a packfile; get it directly.
-			return s.ObjectStore.Get(ctx, key)
-		}
+		// It's a large object or an object not in a packfile; get it directly.
+		return s.ObjectStore.Get(ctx, key)
 	}
 
 	// 3. We know it's in a pack. Do we have the pack in the LRU cache?
@@ -369,12 +360,11 @@ func (s *PackStore) Exists(ctx context.Context, key string) (bool, error) {
 		s.mu.RUnlock()
 		return true, nil
 	}
-	if _, ok := s.catalog[key]; ok {
-		s.mu.RUnlock()
-		return true, nil
-	}
 	s.mu.RUnlock()
 
+	if _, ok, err := s.catalogEntry(ctx, key); err != nil || ok {
+		return ok, err
+	}
 	return s.ObjectStore.Exists(ctx, key)
 }
 
@@ -516,14 +506,15 @@ func (s *PackStore) loadCatalogLocked(ctx context.Context) error {
 	}
 
 	s.debugf("loading pack catalog")
+	refs := newPackRefInterner(s.catalog)
 
 	// The monolithic catalog is the pre-shard layout. It is still read so that
 	// repositories written before sharding stay readable, but nothing writes it
 	// any more; compaction folds it into a shard and removes it.
-	if err := s.loadLegacyCatalogLocked(ctx); err != nil {
+	if err := s.loadLegacyCatalogLocked(ctx, refs); err != nil {
 		return err
 	}
-	if _, err := s.loadShardsLocked(ctx); err != nil {
+	if _, err := s.loadShardsLocked(ctx, refs); err != nil {
 		return err
 	}
 
@@ -542,7 +533,7 @@ func (s *PackStore) loadCatalogLocked(ctx context.Context) error {
 
 // loadLegacyCatalogLocked merges the pre-shard monolithic catalog, if the
 // repository still has one. mu must be held.
-func (s *PackStore) loadLegacyCatalogLocked(ctx context.Context) error {
+func (s *PackStore) loadLegacyCatalogLocked(ctx context.Context, refs packRefInterner) error {
 	// A fresh repository legitimately has no catalog. Establish that up front so
 	// a missing object is never conflated with an unreadable one; backends do
 	// not expose a typed not-found error, so an existence check is the only
@@ -572,7 +563,7 @@ func (s *PackStore) loadLegacyCatalogLocked(ctx context.Context) error {
 		return fmt.Errorf("open pack catalog %s: %w", indexPacksKey, err)
 	}
 
-	if err := json.Unmarshal(data, &s.catalog); err != nil {
+	if err := mergePackIndex(data, s.catalog, refs); err != nil {
 		return fmt.Errorf("unmarshal packs catalog: %w", err)
 	}
 	s.mergedIndex[indexPacksKey] = true
@@ -606,6 +597,35 @@ func (s *PackStore) ensureCatalogLoaded(ctx context.Context) error {
 	defer s.mu.Unlock()
 	// Another goroutine may have loaded it while we waited for the lock.
 	return s.loadCatalogLocked(ctx)
+}
+
+// catalogEntry returns an entry only after the entire stored catalog has been
+// loaded successfully. mergePackIndex streams directly into s.catalog to avoid
+// a shard-sized temporary map, so a decode error can leave entries in the map;
+// catalogLoaded is the commit bit that keeps that partial state invisible.
+func (s *PackStore) catalogEntry(ctx context.Context, key string) (PackEntry, bool, error) {
+	// PackStore's physical index and pack objects cannot themselves be packed.
+	// Other currently-unpacked keys still need the lookup for compatibility with
+	// repositories written before the packable-prefix restriction existed.
+	if key == indexPacksKey || strings.HasPrefix(key, packPrefix) {
+		return PackEntry{}, false, nil
+	}
+
+	s.mu.RLock()
+	loaded := s.catalogLoaded
+	entry, ok := s.catalog[key]
+	s.mu.RUnlock()
+	if loaded {
+		return entry, ok, nil
+	}
+
+	if err := s.ensureCatalogLoaded(ctx); err != nil {
+		return PackEntry{}, false, err
+	}
+	s.mu.RLock()
+	entry, ok = s.catalog[key]
+	s.mu.RUnlock()
+	return entry, ok, nil
 }
 
 // Delete removes an object. For packed objects, it just removes it from the catalog.
@@ -645,12 +665,13 @@ func (s *PackStore) Size(ctx context.Context, key string) (int64, error) {
 		s.mu.RUnlock()
 		return entry.Length, nil
 	}
-	if entry, ok := s.catalog[key]; ok {
-		s.mu.RUnlock()
-		return entry.Length, nil
-	}
 	s.mu.RUnlock()
 
+	if entry, ok, err := s.catalogEntry(ctx, key); err != nil {
+		return 0, err
+	} else if ok {
+		return entry.Length, nil
+	}
 	return s.ObjectStore.Size(ctx, key)
 }
 

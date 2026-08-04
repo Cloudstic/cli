@@ -1,9 +1,11 @@
 package storelayer
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 
 	"github.com/cloudstic/cli/internal/core"
 )
@@ -30,6 +32,85 @@ import (
 //
 // See RFC 0018 and docs/compatibility.md.
 const shardPrefix = "index/packmap/"
+
+// packRefInterner keeps the one canonical copy of each pack name while index
+// objects are decoded. It is needed only for the duration of a catalog load:
+// the catalog entries retain the canonical strings after this map is released.
+type packRefInterner map[string]string
+
+func newPackRefInterner(catalog map[string]PackEntry) packRefInterner {
+	refs := make(packRefInterner)
+	for key, entry := range catalog {
+		if ref, ok := refs[entry.PackRef]; ok {
+			entry.PackRef = ref
+			catalog[key] = entry
+			continue
+		}
+		refs[entry.PackRef] = entry.PackRef
+	}
+	return refs
+}
+
+func (i packRefInterner) intern(ref string) string {
+	if existing, ok := i[ref]; ok {
+		return existing
+	}
+	i[ref] = ref
+	return ref
+}
+
+// mergePackIndex decodes one JSON index object directly into catalog. Decoding
+// an entry before deciding whether to insert it keeps duplicate keys harmless,
+// while avoiding an intermediate map proportional to the whole shard.
+func mergePackIndex(data []byte, catalog map[string]PackEntry, refs packRefInterner) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	start, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if start != json.Delim('{') {
+		return fmt.Errorf("pack index must be a JSON object")
+	}
+
+	for dec.More() {
+		keyToken, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return fmt.Errorf("pack index key is not a string")
+		}
+
+		var entry PackEntry
+		if err := dec.Decode(&entry); err != nil {
+			return err
+		}
+		if _, exists := catalog[key]; exists {
+			continue
+		}
+		entry.PackRef = refs.intern(entry.PackRef)
+		catalog[key] = entry
+	}
+
+	end, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if end != json.Delim('}') {
+		return fmt.Errorf("pack index is missing its closing object delimiter")
+	}
+
+	// json.Unmarshal rejects trailing values, so retain that validation while
+	// using the streaming decoder.
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("pack index has trailing data")
+		}
+		return err
+	}
+	return nil
+}
 
 // writeShard persists entries as a new immutable shard, named by the hash of
 // its own contents. Two runs that happen to produce identical shards write the
@@ -64,7 +145,7 @@ func (s *PackStore) writeShard(ctx context.Context, entries map[string]PackEntry
 // A shard that cannot be read fails the caller. Continuing with a partial merge
 // would produce a catalog that looks complete and is not, which is how a prune
 // deletes objects it simply could not see.
-func (s *PackStore) loadShardsLocked(ctx context.Context) (int, error) {
+func (s *PackStore) loadShardsLocked(ctx context.Context, refs packRefInterner) (int, error) {
 	keys, err := s.ObjectStore.List(ctx, shardPrefix)
 	if err != nil {
 		return 0, fmt.Errorf("list pack index shards: %w", err)
@@ -80,14 +161,8 @@ func (s *PackStore) loadShardsLocked(ctx context.Context) (int, error) {
 			return 0, fmt.Errorf("open pack index shard %s: %w", key, err)
 		}
 
-		var entries map[string]PackEntry
-		if err := json.Unmarshal(plain, &entries); err != nil {
+		if err := mergePackIndex(plain, s.catalog, refs); err != nil {
 			return 0, fmt.Errorf("unmarshal pack index shard %s: %w", key, err)
-		}
-		for k, entry := range entries {
-			if _, exists := s.catalog[k]; !exists {
-				s.catalog[k] = entry
-			}
 		}
 		s.mergedIndex[key] = true
 	}

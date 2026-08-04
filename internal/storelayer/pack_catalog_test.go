@@ -5,10 +5,12 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/cloudstic/cli/pkg/store"
 	"github.com/cloudstic/cli/pkg/store/local"
+	"github.com/cloudstic/cli/pkg/store/storetest"
 )
 
 // faultyCatalogStore fails reads of the pack catalog a bounded number of times,
@@ -129,6 +131,76 @@ func TestPackStore_GetFailsWhenCatalogUnreadable(t *testing.T) {
 
 	if _, err := ps.Get(ctx, "filemeta/a"); err == nil {
 		t.Fatal("Get succeeded; want an error when the catalog is unreadable")
+	}
+}
+
+// Streaming avoids a shard-sized temporary map, which means entries decoded
+// before malformed data remain in the private map. catalogLoaded is the commit
+// bit: concurrent readers must all fail rather than observe that partial state.
+func TestPackStore_PartialDecodeIsInvisibleToConcurrentReaders(t *testing.T) {
+	ctx := context.Background()
+	inner := storetest.NewMemStore()
+	malformed := []byte(`{
+		"filemeta/visible":{"p":"packs/one","o":0,"l":1},
+		"node/bad":{"p":[],"o":1,"l":1}
+	}`)
+	if err := inner.Put(ctx, shardPrefix+"malformed", malformed); err != nil {
+		t.Fatal(err)
+	}
+
+	ps := newPackStoreT(t, inner)
+	if _, err := ps.Get(ctx, "filemeta/visible"); err == nil {
+		t.Fatal("initial Get succeeded despite the malformed shard")
+	}
+	ps.mu.RLock()
+	_, partiallyDecoded := ps.catalog["filemeta/visible"]
+	loaded := ps.catalogLoaded
+	ps.mu.RUnlock()
+	if !partiallyDecoded || loaded {
+		t.Fatalf("test setup did not leave an uncommitted entry (present=%v, loaded=%v)", partiallyDecoded, loaded)
+	}
+
+	operations := map[string]func() error{
+		"get": func() error {
+			_, err := ps.Get(ctx, "filemeta/visible")
+			return err
+		},
+		"exists": func() error {
+			_, err := ps.Exists(ctx, "filemeta/visible")
+			return err
+		},
+		"size": func() error {
+			_, err := ps.Size(ctx, "filemeta/visible")
+			return err
+		},
+		"list": func() error {
+			_, err := ps.List(ctx, "filemeta/")
+			return err
+		},
+	}
+
+	type result struct {
+		name string
+		err  error
+	}
+	results := make(chan result, len(operations))
+	var wg sync.WaitGroup
+	for name, operation := range operations {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results <- result{name: name, err: operation()}
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	for result := range results {
+		if result.err == nil {
+			t.Errorf("%s exposed a partially decoded catalog entry", result.name)
+		} else if !strings.Contains(result.err.Error(), "unmarshal pack index shard") {
+			t.Errorf("%s returned the wrong error: %v", result.name, result.err)
+		}
 	}
 }
 

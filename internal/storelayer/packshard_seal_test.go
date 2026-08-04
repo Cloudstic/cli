@@ -24,7 +24,7 @@ func TestSealShardFor_MatchesMarshallingAnEquivalentMap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gotRef, gotBytes, err := s.sealShardFor(catalog, pending)
+	gotRef, gotBytes, err := s.sealShardFor(catalogOf(catalog), pending)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestSealShardFor_SkipsKeysMissingFromTheCatalog(t *testing.T) {
 	catalog := map[string]PackEntry{"filemeta/a": {PackRef: "packs/one", Length: 2}}
 	pending := map[string]struct{}{"filemeta/a": {}, "filemeta/gone": {}}
 
-	_, data, err := s.sealShardFor(catalog, pending)
+	_, data, err := s.sealShardFor(catalogOf(catalog), pending)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestSealShardFor_EmptyPendingSetWritesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref, data, err := s.sealShardFor(map[string]PackEntry{"a": {}}, nil)
+	ref, data, err := s.sealShardFor(catalogOf(map[string]PackEntry{"a": {}}), nil)
 	if err != nil || ref != "" || data != nil {
 		t.Fatalf("got (%q, %v, %v), want (\"\", nil, nil)", ref, data, err)
 	}

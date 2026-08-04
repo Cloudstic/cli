@@ -45,7 +45,7 @@ func TestPackStore_DoesNotReEncryptObjectBytes(t *testing.T) {
 	}
 
 	pack.mu.RLock()
-	entry := pack.catalog["filemeta/a"]
+	entry := mustCatalogGet(t, pack.catalog, "filemeta/a")
 	pack.mu.RUnlock()
 
 	raw, err := base.Get(ctx, entry.PackRef)

@@ -41,13 +41,13 @@ func TestPackStore_LoadShardsInternsPackRefs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	a := reader.catalog["filemeta/a"].PackRef
-	b := reader.catalog["filemeta/b"].PackRef
-	c := reader.catalog["node/c"].PackRef
+	a := mustCatalogGet(t, reader.catalog, "filemeta/a").PackRef
+	b := mustCatalogGet(t, reader.catalog, "filemeta/b").PackRef
+	c := mustCatalogGet(t, reader.catalog, "node/c").PackRef
 	if unsafe.StringData(a) != unsafe.StringData(b) || unsafe.StringData(a) != unsafe.StringData(c) {
 		t.Fatal("entries sharing a pack ref retained separate string allocations")
 	}
-	if unsafe.StringData(a) == unsafe.StringData(reader.catalog["node/d"].PackRef) {
+	if unsafe.StringData(a) == unsafe.StringData(mustCatalogGet(t, reader.catalog, "node/d").PackRef) {
 		t.Fatal("distinct pack refs unexpectedly share storage")
 	}
 }
@@ -62,16 +62,20 @@ func TestMergePackIndex_IsFirstWriterWinsOrderIndependentAndIdempotent(t *testin
 		"filemeta/shared":{"p":"packs/one","o":1,"l":1}
 	}`)
 
+	// The result is compared as a plain map, not as a *packCatalog: the catalog
+	// interns pack refs in encounter order, so two equivalent catalogs built from
+	// shards in different orders differ in a field that carries no meaning.
 	merge := func(parts ...[]byte) map[string]PackEntry {
 		t.Helper()
-		catalog := make(map[string]PackEntry)
-		refs := newPackRefInterner(catalog)
+		catalog := newPackCatalog()
 		for _, part := range parts {
-			if _, err := mergePackIndex(part, catalog, refs); err != nil {
+			if _, err := mergePackIndex(part, catalog); err != nil {
 				t.Fatal(err)
 			}
 		}
-		return catalog
+		out := make(map[string]PackEntry, catalog.Len())
+		catalog.Each(func(key string, entry PackEntry) { out[key] = entry })
+		return out
 	}
 
 	forward := merge(first, second)
@@ -84,11 +88,11 @@ func TestMergePackIndex_IsFirstWriterWinsOrderIndependentAndIdempotent(t *testin
 	}
 
 	winner := PackEntry{PackRef: "packs/winner", Offset: 7, Length: 9}
-	catalog := map[string]PackEntry{"filemeta/shared": winner}
-	if _, err := mergePackIndex(first, catalog, newPackRefInterner(catalog)); err != nil {
+	catalog := catalogOf(map[string]PackEntry{"filemeta/shared": winner})
+	if _, err := mergePackIndex(first, catalog); err != nil {
 		t.Fatal(err)
 	}
-	if got := catalog["filemeta/shared"]; got != winner {
+	if got := mustCatalogGet(t, catalog, "filemeta/shared"); got != winner {
 		t.Fatalf("later shard replaced the first entry: got %#v, want %#v", got, winner)
 	}
 }
@@ -104,8 +108,8 @@ func TestMergePackIndex_RejectsMalformedInput(t *testing.T) {
 	}
 	for name, input := range tests {
 		t.Run(name, func(t *testing.T) {
-			catalog := make(map[string]PackEntry)
-			if _, err := mergePackIndex([]byte(input), catalog, newPackRefInterner(catalog)); err == nil {
+			catalog := newPackCatalog()
+			if _, err := mergePackIndex([]byte(input), catalog); err == nil {
 				t.Fatal("merge succeeded for malformed input")
 			}
 		})

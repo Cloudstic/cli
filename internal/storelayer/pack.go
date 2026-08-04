@@ -40,7 +40,7 @@ type PackStore struct {
 	packKeys   map[string]PackEntry
 
 	// The stateless JSON catalog mapped from index/packs
-	catalog       map[string]PackEntry
+	catalog       *packCatalog
 	catalogLoaded bool
 
 	// Set when entries have been removed from the in-memory catalog. Shards are
@@ -121,7 +121,7 @@ func NewPackStore(inner store.ObjectStore, opts ...PackOption) (*PackStore, erro
 		ObjectStore: inner,
 		packBuffer:  new(bytes.Buffer),
 		packKeys:    make(map[string]PackEntry),
-		catalog:     make(map[string]PackEntry),
+		catalog:     newPackCatalog(),
 		pendingKeys: make(map[string]struct{}),
 		mergedIndex: make(map[string]bool),
 		packCache:   cache,
@@ -229,13 +229,17 @@ func (s *PackStore) discardPack(packRef string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for key, entry := range s.catalog {
+	var stale []string
+	s.catalog.Each(func(key string, entry PackEntry) {
 		if entry.PackRef == packRef {
-			delete(s.catalog, key)
+			stale = append(stale, key)
 		}
+	})
+	for _, key := range stale {
+		s.catalog.Delete(key)
 	}
 	for key := range s.pendingKeys {
-		if entry, ok := s.catalog[key]; !ok || entry.PackRef == packRef {
+		if entry, ok := s.catalog.Get(key); !ok || entry.PackRef == packRef {
 			delete(s.pendingKeys, key)
 		}
 	}
@@ -306,7 +310,7 @@ func (s *PackStore) prepareFlushLocked() (string, []byte, error) {
 	// Assign the PackRef to all entries that were bundled and move to catalog
 	for key, entry := range s.packKeys {
 		entry.PackRef = packRef
-		s.catalog[key] = entry
+		s.catalog.Set(key, entry)
 		s.pendingKeys[key] = struct{}{}
 	}
 
@@ -331,7 +335,7 @@ func (s *PackStore) Get(ctx context.Context, key string) ([]byte, error) {
 	}
 
 	// 2. Is it in our catalog?
-	entry, inCatalog := s.catalog[key]
+	entry, inCatalog := s.catalog.Get(key)
 	s.mu.RUnlock()
 
 	// If not in catalog, wait: we might need to load the catalog from the remote store first,
@@ -342,7 +346,7 @@ func (s *PackStore) Get(ctx context.Context, key string) ([]byte, error) {
 				return nil, err
 			}
 			s.mu.RLock()
-			entry, inCatalog = s.catalog[key]
+			entry, inCatalog = s.catalog.Get(key)
 			s.mu.RUnlock()
 		}
 
@@ -480,7 +484,7 @@ func (s *PackStore) Exists(ctx context.Context, key string) (bool, error) {
 		s.mu.RUnlock()
 		return true, nil
 	}
-	if _, ok := s.catalog[key]; ok {
+	if s.catalog.Has(key) {
 		s.mu.RUnlock()
 		return true, nil
 	}
@@ -508,11 +512,11 @@ func (s *PackStore) List(ctx context.Context, prefix string) ([]string, error) {
 
 	s.mu.RLock()
 	var packedKeys []string
-	for key := range s.catalog {
+	s.catalog.Each(func(key string, _ PackEntry) {
 		if strings.HasPrefix(key, prefix) {
 			packedKeys = append(packedKeys, key)
 		}
-	}
+	})
 	for key := range s.packKeys {
 		if strings.HasPrefix(key, prefix) {
 			packedKeys = append(packedKeys, key)
@@ -562,7 +566,7 @@ func (s *PackStore) Flush(ctx context.Context) error {
 	// erase them. See packshard.go.
 	pending := s.pendingKeys
 	s.pendingKeys = make(map[string]struct{})
-	totalEntries := len(s.catalog)
+	totalEntries := s.catalog.Len()
 	// Seal here, under the lock that already guards catalog, so the shard is
 	// rendered straight from it. Materialising the pending entries into a map
 	// first would reinstate the duplicate this change removes — pending is a
@@ -643,16 +647,15 @@ func (s *PackStore) loadCatalogLocked(ctx context.Context) (err error) {
 	}()
 
 	s.debugf("loading pack catalog")
-	refs := newPackRefInterner(s.catalog)
 
 	// The monolithic catalog is the pre-shard layout. It is still read so that
 	// repositories written before sharding stay readable, but nothing writes it
 	// any more; compaction folds it into a shard and removes it.
-	legacyEntries, err := s.loadLegacyCatalogLocked(ctx, refs)
+	legacyEntries, err := s.loadLegacyCatalogLocked(ctx)
 	if err != nil {
 		return err
 	}
-	shardEntries, err := s.loadShardsLocked(ctx, refs)
+	shardEntries, err := s.loadShardsLocked(ctx)
 	if err != nil {
 		return err
 	}
@@ -675,7 +678,7 @@ func (s *PackStore) loadCatalogLocked(ctx context.Context) (err error) {
 	}
 
 	s.catalogLoaded = true
-	s.debugf("loaded %d entries into the pack catalog", len(s.catalog))
+	s.debugf("loaded %d entries into the pack catalog", s.catalog.Len())
 	return nil
 }
 
@@ -684,10 +687,10 @@ func (s *PackStore) loadCatalogLocked(ctx context.Context) (err error) {
 // entries named by pendingKeys, whether locally written or recovered from a pack
 // footer. mu must be held.
 func (s *PackStore) resetCatalogAfterLoadFailureLocked() {
-	catalog := make(map[string]PackEntry, len(s.pendingKeys))
+	catalog := newPackCatalog()
 	for key := range s.pendingKeys {
-		if entry, ok := s.catalog[key]; ok {
-			catalog[key] = entry
+		if entry, ok := s.catalog.Get(key); ok {
+			catalog.Set(key, entry)
 		}
 	}
 	s.catalog = catalog
@@ -701,7 +704,7 @@ func (s *PackStore) resetCatalogAfterLoadFailureLocked() {
 // The count, rather than a found/not-found flag, is what loadCatalogLocked needs:
 // a catalog object that exists and lists nothing leaves the repository just as
 // unindexed as one that was deleted.
-func (s *PackStore) loadLegacyCatalogLocked(ctx context.Context, refs packRefInterner) (int, error) {
+func (s *PackStore) loadLegacyCatalogLocked(ctx context.Context) (int, error) {
 	// A fresh repository legitimately has no catalog. Establish that up front so
 	// a missing object is never conflated with an unreadable one; backends do
 	// not expose a typed not-found error, so an existence check is the only
@@ -731,7 +734,7 @@ func (s *PackStore) loadLegacyCatalogLocked(ctx context.Context, refs packRefInt
 		return 0, fmt.Errorf("open pack catalog %s: %w", indexPacksKey, err)
 	}
 
-	decoded, err := mergePackIndex(data, s.catalog, refs)
+	decoded, err := mergePackIndex(data, s.catalog)
 	if err != nil {
 		return 0, fmt.Errorf("unmarshal packs catalog: %w", err)
 	}
@@ -789,8 +792,8 @@ func (s *PackStore) Delete(ctx context.Context, key string) error {
 
 	// 2. Remove from catalog. Shards are append-only, so this is durable only
 	// once the index is compacted — see CompactCatalog.
-	if _, ok := s.catalog[key]; ok {
-		delete(s.catalog, key)
+	if s.catalog.Has(key) {
+		s.catalog.Delete(key)
 		s.needsCompaction = true
 		return nil
 	}
@@ -805,7 +808,7 @@ func (s *PackStore) Size(ctx context.Context, key string) (int64, error) {
 		s.mu.RUnlock()
 		return entry.Length, nil
 	}
-	if entry, ok := s.catalog[key]; ok {
+	if entry, ok := s.catalog.Get(key); ok {
 		s.mu.RUnlock()
 		return entry.Length, nil
 	}
@@ -830,10 +833,10 @@ func (s *PackStore) Repack(ctx context.Context, maxWastedRatio float64) (int64, 
 	// Calculate active bytes per pack and map keys to packs
 	packActiveSizes := make(map[string]int64)
 	packToKeys := make(map[string][]string)
-	for key, entry := range s.catalog {
+	s.catalog.Each(func(key string, entry PackEntry) {
 		packActiveSizes[entry.PackRef] += entry.Length
 		packToKeys[entry.PackRef] = append(packToKeys[entry.PackRef], key)
-	}
+	})
 	s.mu.RUnlock()
 
 	// List all physical packfiles
@@ -915,7 +918,7 @@ func (s *PackStore) Repack(ctx context.Context, maxWastedRatio float64) (int64, 
 			keys := packToKeys[packRef]
 			for _, key := range keys {
 				s.mu.RLock()
-				entry, ok := s.catalog[key]
+				entry, ok := s.catalog.Get(key)
 				s.mu.RUnlock()
 
 				if !ok || entry.PackRef != packRef {
@@ -973,12 +976,13 @@ func (s *PackStore) Repack(ctx context.Context, maxWastedRatio float64) (int64, 
 func (s *PackStore) packIsReferenced(packRef string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	for _, entry := range s.catalog {
+	referenced := false
+	s.catalog.Each(func(_ string, entry PackEntry) {
 		if entry.PackRef == packRef {
-			return true
+			referenced = true
 		}
-	}
-	return false
+	})
+	return referenced
 }
 
 func (s *PackStore) TotalSize(ctx context.Context) (int64, error) {

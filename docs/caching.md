@@ -21,7 +21,7 @@ event (`docs/compatibility.md`).
 
 | Cache | Where | Key → value | Lifetime | Bound |
 |---|---|---|---|---|
-| `KeyCacheStore.knownKeys` | `internal/storelayer/keycache.go` | object key → exists | one `backup` run | every key under the preloaded prefixes |
+| `KeyCacheStore.knownDigests` / `knownKeys` | `internal/storelayer/keycache.go` | raw digest (fallback: object key) → exists | one `backup` run | every key under the preloaded prefixes |
 | `PackStore.catalog` / `packKeys` | `internal/storelayer/pack.go` | object key → pack ref + offset | `Client` | one entry per packed object |
 | `PackStore.packCache` | `internal/storelayer/pack.go` | pack ref → raw packfile bytes | `Client` | LRU, 4 packs (~32 MB at 8 MB/pack) |
 | `NodeStore.cache` | `internal/hamt/nodestore.go` | node ref → decoded `*node` | `hamt.Tree` | LRU, 4096 nodes |
@@ -141,10 +141,20 @@ transaction are never serialized at all.
 Most of these are explicitly bounded. Two are not, and both are bounded by the
 work rather than by a constant:
 
-- `KeyCacheStore.knownKeys` holds every key under `chunk/`, `content/` and
-  `node/` after `PreloadKeys`. On a large repository that is a set of millions
-  of short strings, live for the length of one backup. This is the deliberate
-  trade — one `List` per prefix instead of an `Exists` per object.
+- `KeyCacheStore.knownDigests` holds every key under `chunk/`, `content/` and
+  `node/` after `PreloadKeys` — millions of entries on a large repository, live
+  for the length of one backup. This is the deliberate trade — one `List` per
+  prefix instead of an `Exists` per object. The set is keyed by the raw
+  32-byte digest decoded from each key's hex suffix, one map per preloaded
+  prefix, rather than by the hex string itself (issue #430): a
+  `map[[32]byte]struct{}` has no pointer in its key, so the GC does not scan
+  it, and it does not need a separately retained string backing array the way
+  a `map[string]struct{}` does. Measured via
+  `BenchmarkKeySetShapeRetained` (`internal/storelayer/keycache_bench_test.go`)
+  at 500k entries: 136 B/entry retained for the string-keyed set versus 84
+  B/entry for the digest-keyed one. A key whose suffix isn't a well-formed
+  64-hex-char digest falls back to `knownKeys`, keyed by the full string, so
+  it is still tracked correctly rather than mis-filed or dropped.
 - `metaLoader.cache`, where enabled, grows with the number of distinct
   filemetas an operation touches. Only `backup` and `diff` enable it, because
   they are the two that read the same ref more than once — `diff` walks both
@@ -229,7 +239,7 @@ change and a cached entry can never go stale.
 The exceptions are the mutable keys, and they are handled explicitly:
 
 - `KeyCacheStore.Put` only elides writes for keys under a listed
-  content-addressed prefix (`isContentAddressed`). Mutable keys such as
+  content-addressed prefix (`contentAddressedPrefix`). Mutable keys such as
   `index/latest` are always written through.
 - `KeyCacheStore.Delete` and `PackStore`'s delete and repack paths evict.
 - `secretref.Resolver` caches only the interactive native backends, where the

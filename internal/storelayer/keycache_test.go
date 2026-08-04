@@ -2,6 +2,7 @@ package storelayer
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -198,6 +199,79 @@ func TestKeyCacheStore_PutMakesExistsTrue(t *testing.T) {
 	}
 	if inner.exists.Load() != 0 {
 		t.Error("should resolve from cache after put")
+	}
+}
+
+func TestKeyCacheStore_DigestKeyExistsAfterPreload(t *testing.T) {
+	ctx := context.Background()
+	inner := newCountingStore()
+	digestKey := "chunk/" + strings.Repeat("ab", 32)
+	_ = inner.Put(ctx, digestKey, []byte("data"))
+	inner.exists.Store(0)
+
+	kc := NewKeyCacheStore(inner)
+	if err := kc.PreloadKeys(ctx, "chunk/"); err != nil {
+		t.Fatal(err)
+	}
+
+	ok, _ := kc.Exists(ctx, digestKey)
+	if !ok {
+		t.Error("digest key should exist after preload")
+	}
+	if inner.exists.Load() != 0 {
+		t.Error("Exists should not have called backend for known digest key")
+	}
+
+	// A different digest under the same prefix must not collide.
+	otherKey := "chunk/" + strings.Repeat("cd", 32)
+	ok, _ = kc.Exists(ctx, otherKey)
+	if ok {
+		t.Error("distinct digest key should not exist")
+	}
+}
+
+func TestKeyCacheStore_NonHexKeyUnderListedPrefixFallsBack(t *testing.T) {
+	ctx := context.Background()
+	inner := newCountingStore()
+	// A key under a listed prefix whose suffix is not a 64-char hex digest
+	// (e.g. malformed or legacy) must not be mis-filed into the digest map for
+	// a different key.
+	nonHexKey := "chunk/not-a-valid-digest"
+	_ = inner.Put(ctx, nonHexKey, []byte("data"))
+	inner.exists.Store(0)
+
+	kc := NewKeyCacheStore(inner)
+	if err := kc.PreloadKeys(ctx, "chunk/"); err != nil {
+		t.Fatal(err)
+	}
+
+	ok, _ := kc.Exists(ctx, nonHexKey)
+	if !ok {
+		t.Error("non-hex key should exist after preload via fallback")
+	}
+	if inner.exists.Load() != 0 {
+		t.Error("Exists should not have called backend for known non-hex key")
+	}
+
+	// Put-elision and Delete must also work through the fallback path.
+	inner.puts.Store(0)
+	if err := kc.Put(ctx, nonHexKey, []byte("data")); err != nil {
+		t.Fatal(err)
+	}
+	if inner.puts.Load() != 0 {
+		t.Error("Put should have been elided for already-known non-hex key")
+	}
+
+	if err := kc.Delete(ctx, nonHexKey); err != nil {
+		t.Fatal(err)
+	}
+	inner.exists.Store(0)
+	ok, _ = kc.Exists(ctx, nonHexKey)
+	if ok {
+		t.Error("non-hex key should not exist after delete")
+	}
+	if inner.exists.Load() != 0 {
+		t.Error("should resolve from cache (listed prefix, absent key)")
 	}
 }
 

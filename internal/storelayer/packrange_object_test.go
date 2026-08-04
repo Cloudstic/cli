@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"testing"
 
 	"github.com/cloudstic/cli/pkg/store"
@@ -92,8 +93,11 @@ func TestPackStore_PromotesToWholePackWhenScanning(t *testing.T) {
 	if counting.rangeGets >= len(keys) {
 		t.Errorf("ranged reads = %d for %d objects; the scan never promoted", counting.rangeGets, len(keys))
 	}
-	if counting.rangeGets > packPromoteAfter {
-		t.Errorf("ranged reads = %d, want at most %d before promotion", counting.rangeGets, packPromoteAfter)
+	// Exactly the configured boundary: fewer would mean promotion fired early
+	// (and zero would mean ranging never happened at all, which these checks
+	// must not accept), more would mean it never fired.
+	if want := packPromoteAfter - 1; counting.rangeGets != want {
+		t.Errorf("ranged reads before promotion = %d, want %d", counting.rangeGets, want)
 	}
 }
 
@@ -187,3 +191,79 @@ func TestPackStore_FallsBackToWholePackWithoutRangeGetter(t *testing.T) {
 type noRangeStore struct{ store.ObjectStore }
 
 func (n *noRangeStore) Unwrap() store.ObjectStore { return nil }
+
+// A DebugStore over a backend that cannot range satisfies store.RangeGetter but
+// emulates it with a full transfer. Treating that as native would make every
+// miss before promotion download the whole pack *and* skip the body cache --
+// worse than never ranging. The whole-pack path must be taken instead.
+func TestPackStore_DoesNotRangeThroughAnEmulatingWrapper(t *testing.T) {
+	ctx := context.Background()
+
+	base, err := local.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// noRangeStore hides local's GetRange; DebugStore then re-declares it and
+	// emulates, which is exactly the shape being guarded against.
+	emulating := store.NewDebugStore(&noRangeStore{ObjectStore: base}, io.Discard)
+	if _, ok := interface{}(emulating).(store.RangeGetter); !ok {
+		t.Fatal("fixture is wrong: DebugStore should satisfy RangeGetter")
+	}
+	if rangesNatively(emulating) {
+		t.Fatal("emulated ranging was reported as native")
+	}
+
+	counting := &countingRangeStore{ObjectStore: emulating}
+	writer, err := NewPackStore(counting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := fmt.Sprintf("filemeta/%064x", 3)
+	payload := bytes.Repeat([]byte("w"), 16*1024)
+	if err := writer.Put(ctx, key, payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	reader, err := NewPackStore(counting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counting.fullGets, counting.rangeGets, counting.bytesRead = 0, 0, 0
+
+	got, err := reader.Get(ctx, key)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("got %d bytes, want %d", len(got), len(payload))
+	}
+	if counting.rangeGets != 0 {
+		t.Errorf("ranged reads = %d through an emulating wrapper, want 0", counting.rangeGets)
+	}
+	if counting.fullGets != 1 {
+		t.Errorf("whole-pack transfers = %d, want 1", counting.fullGets)
+	}
+
+	// And the pack must be cached, so a second read costs nothing.
+	if _, err := reader.Get(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	if counting.fullGets != 1 {
+		t.Errorf("whole-pack transfers = %d after a second read; the pack was not cached", counting.fullGets)
+	}
+}
+
+// A native ranger behind a DebugStore is still native -- --debug must not turn
+// ranged reads off any more than it should turn them on.
+func TestPackStore_RangesThroughADebugStoreOverANativeRanger(t *testing.T) {
+	base, err := local.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rangesNatively(store.NewDebugStore(base, io.Discard)) {
+		t.Error("a native ranger behind DebugStore was reported as emulated")
+	}
+}

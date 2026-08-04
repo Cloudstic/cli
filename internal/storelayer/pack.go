@@ -385,6 +385,35 @@ const (
 	packMissWindow = 64
 )
 
+// rangesNatively reports whether a ranged read on s reaches a backend that
+// serves it as a ranged read, rather than one that emulates it by transferring
+// the whole object and slicing.
+//
+// Implementing store.RangeGetter is not the same claim. DebugStore declares the
+// method unconditionally and falls back to a full Get over an inner store that
+// cannot range, which is right for the footer path — there the fallback costs
+// exactly what not ranging would have cost anyway. It is wrong here, because
+// this decides *whether* to range: emulated ranging would transfer the whole
+// pack on every one of the first packPromoteAfter misses and never populate the
+// body cache, which is worse than not ranging at all.
+//
+// So walk to the bottom of the wrapper chain and ask the backend itself.
+func rangesNatively(s store.ObjectStore) bool {
+	for {
+		u, ok := s.(store.Unwrapper)
+		if !ok {
+			break
+		}
+		inner := u.Unwrap()
+		if inner == nil {
+			break
+		}
+		s = inner
+	}
+	_, ok := s.(store.RangeGetter)
+	return ok
+}
+
 // resolveFromPack returns one object from a pack that is not in the body cache.
 //
 // Reading the whole pack to return a slice of it is right when the pack is being
@@ -393,6 +422,7 @@ const (
 // that keeps missing is fetched whole and cached -- see packPromoteAfter.
 func (s *PackStore) resolveFromPack(ctx context.Context, key string, entry PackEntry) ([]byte, error) {
 	ranger, canRange := s.ObjectStore.(store.RangeGetter)
+	canRange = canRange && rangesNatively(s.ObjectStore)
 
 	misses := 0
 	if n, ok := s.packMisses.Get(entry.PackRef); ok {

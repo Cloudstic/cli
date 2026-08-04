@@ -19,6 +19,10 @@ type countingRangeStore struct {
 	rangeCalls []int64
 }
 
+// Unwrap exposes the inner store, as every wrapper in this codebase does. It is
+// what lets rangesNatively see past a counter to the backend underneath.
+func (c *countingRangeStore) Unwrap() store.ObjectStore { return c.ObjectStore }
+
 func (c *countingRangeStore) Get(ctx context.Context, key string) ([]byte, error) {
 	data, err := c.ObjectStore.Get(ctx, key)
 	if strings.HasPrefix(key, packPrefix) {

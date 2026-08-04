@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strconv"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/cloudstic/cli/pkg/store"
@@ -134,14 +134,14 @@ func TestPackStore_GetFailsWhenCatalogUnreadable(t *testing.T) {
 	}
 }
 
-// Streaming avoids a shard-sized temporary map, which means entries decoded
-// before malformed data remain in the private map. catalogLoaded is the commit
-// bit: concurrent readers must all fail rather than observe that partial state.
-func TestPackStore_PartialDecodeIsInvisibleToConcurrentReaders(t *testing.T) {
+// Auto-flush adds authoritative local entries before the stored catalog is
+// loaded. A later load failure must discard only streamed remote entries: the
+// local objects remain readable without depending on an unrelated bad shard.
+func TestPackStore_FailedCatalogLoadPreservesAutoFlushedEntries(t *testing.T) {
 	ctx := context.Background()
 	inner := storetest.NewMemStore()
 	malformed := []byte(`{
-		"filemeta/visible":{"p":"packs/one","o":0,"l":1},
+		"filemeta/partial":{"p":"packs/missing","o":0,"l":1},
 		"node/bad":{"p":[],"o":1,"l":1}
 	}`)
 	if err := inner.Put(ctx, shardPrefix+"malformed", malformed); err != nil {
@@ -149,58 +149,39 @@ func TestPackStore_PartialDecodeIsInvisibleToConcurrentReaders(t *testing.T) {
 	}
 
 	ps := newPackStoreT(t, inner)
-	if _, err := ps.Get(ctx, "filemeta/visible"); err == nil {
-		t.Fatal("initial Get succeeded despite the malformed shard")
-	}
-	ps.mu.RLock()
-	_, partiallyDecoded := ps.catalog["filemeta/visible"]
-	loaded := ps.catalogLoaded
-	ps.mu.RUnlock()
-	if !partiallyDecoded || loaded {
-		t.Fatalf("test setup did not leave an uncommitted entry (present=%v, loaded=%v)", partiallyDecoded, loaded)
-	}
-
-	operations := map[string]func() error{
-		"get": func() error {
-			_, err := ps.Get(ctx, "filemeta/visible")
-			return err
-		},
-		"exists": func() error {
-			_, err := ps.Exists(ctx, "filemeta/visible")
-			return err
-		},
-		"size": func() error {
-			_, err := ps.Size(ctx, "filemeta/visible")
-			return err
-		},
-		"list": func() error {
-			_, err := ps.List(ctx, "filemeta/")
-			return err
-		},
-	}
-
-	type result struct {
-		name string
-		err  error
-	}
-	results := make(chan result, len(operations))
-	var wg sync.WaitGroup
-	for name, operation := range operations {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			results <- result{name: name, err: operation()}
-		}()
-	}
-	wg.Wait()
-	close(results)
-
-	for result := range results {
-		if result.err == nil {
-			t.Errorf("%s exposed a partially decoded catalog entry", result.name)
-		} else if !strings.Contains(result.err.Error(), "unmarshal pack index shard") {
-			t.Errorf("%s returned the wrong error: %v", result.name, result.err)
+	payload := make([]byte, maxObjectSize)
+	const firstKey = "chunk/local-0"
+	for i := 0; i < maxPackSize/maxObjectSize; i++ {
+		key := "chunk/local-" + strconv.Itoa(i)
+		if err := ps.Put(ctx, key, payload); err != nil {
+			t.Fatalf("put %s: %v", key, err)
 		}
+	}
+
+	assertLocalReadable := func() {
+		t.Helper()
+		if got, err := ps.Get(ctx, firstKey); err != nil || len(got) != len(payload) {
+			t.Errorf("Get(local) = %d bytes, %v; want %d bytes, nil", len(got), err, len(payload))
+		}
+		if ok, err := ps.Exists(ctx, firstKey); err != nil || !ok {
+			t.Errorf("Exists(local) = %v, %v; want true, nil", ok, err)
+		}
+		if size, err := ps.Size(ctx, firstKey); err != nil || size != int64(len(payload)) {
+			t.Errorf("Size(local) = %d, %v; want %d, nil", size, err, len(payload))
+		}
+	}
+	assertLocalReadable()
+
+	if _, err := ps.List(ctx, "filemeta/"); err == nil {
+		t.Fatal("List succeeded despite the malformed shard")
+	}
+	assertLocalReadable()
+
+	if err := inner.Delete(ctx, shardPrefix+"malformed"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := ps.Exists(ctx, "filemeta/partial"); err != nil || ok {
+		t.Errorf("Exists(partial) = %v, %v; want false, nil", ok, err)
 	}
 }
 

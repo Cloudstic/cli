@@ -93,6 +93,25 @@ func TestMergePackIndex_IsFirstWriterWinsOrderIndependentAndIdempotent(t *testin
 	}
 }
 
+func TestMergePackIndex_RejectsMalformedInput(t *testing.T) {
+	tests := map[string]string{
+		"empty":          "",
+		"not an object":  `[]`,
+		"truncated":      `{"filemeta/a":{"p":"packs/one","o":0,"l":1}`,
+		"bad entry type": `{"filemeta/a":{"p":[],"o":0,"l":1}}`,
+		"trailing value": `{} {}`,
+		"trailing junk":  `{} x`,
+	}
+	for name, input := range tests {
+		t.Run(name, func(t *testing.T) {
+			catalog := make(map[string]PackEntry)
+			if err := mergePackIndex([]byte(input), catalog, newPackRefInterner(catalog)); err == nil {
+				t.Fatal("merge succeeded for malformed input")
+			}
+		})
+	}
+}
+
 // The race the shard layout exists to remove: two writers sharing a repository.
 //
 // With a single mutable catalog both loaded the same object, appended their own

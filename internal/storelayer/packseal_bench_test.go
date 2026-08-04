@@ -75,7 +75,8 @@ func BenchmarkPackCatalogFlush(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
 					ps.mu.Lock()
-					ps.pendingShard = entries
+					ps.catalog = entries
+					ps.pendingKeys = keySetOf(entries)
 					ps.mu.Unlock()
 					if err := ps.Flush(ctx); err != nil {
 						b.Fatal(err)
@@ -113,7 +114,7 @@ func BenchmarkPackCatalogLoad(b *testing.B) {
 				entries := benchEntries(n)
 				writer.mu.Lock()
 				writer.catalog = entries
-				writer.pendingShard = entries
+				writer.pendingKeys = keySetOf(entries)
 				writer.catalogLoaded = true
 				writer.mu.Unlock()
 				if err := writer.Flush(ctx); err != nil {
@@ -133,4 +134,14 @@ func BenchmarkPackCatalogLoad(b *testing.B) {
 			})
 		}
 	}
+}
+
+// keySetOf names every entry in a catalog, as pendingKeys does for the entries a
+// run has added.
+func keySetOf(entries map[string]PackEntry) map[string]struct{} {
+	keys := make(map[string]struct{}, len(entries))
+	for key := range entries {
+		keys[key] = struct{}{}
+	}
+	return keys
 }

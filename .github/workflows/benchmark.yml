@@ -6,6 +6,10 @@ name: Benchmark
 # four tools and may change for that reason, which would silently move the
 # numbers tracked here. See scripts/benchmark/cloudstic.sh.
 
+# Two ways in, matching the Memory scaling workflow: dispatch it by hand
+# against any ref, or put the `benchmark` label on a pull request. The same
+# label drives both workflows, so labelling a PR once asks for the whole
+# performance picture rather than half of it.
 on:
   workflow_dispatch:
     inputs:
@@ -14,6 +18,8 @@ on:
         required: false
         default: main
         type: string
+  pull_request:
+    types: [labeled, synchronize]
 
 permissions:
   contents: read
@@ -24,6 +30,12 @@ concurrency:
 
 jobs:
   benchmark:
+    # On a pull request this runs only while the `benchmark` label is on it, so
+    # an unrelated label does not start the job, and pushing more commits to an
+    # already-labelled PR re-measures without another click.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'benchmark')
     name: Cloudstic local benchmark
     runs-on: macos-latest
     steps:

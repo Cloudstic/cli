@@ -2,8 +2,15 @@
 
 Cloudstic caches in several places, at different layers, with different
 lifetimes. This document is the inventory: what each cache holds, how long it
-lives, what bounds it, and — the question that keeps coming up — why none of
-them is redundant with any other.
+lives, what bounds it, and — the question that keeps coming up — which of them
+overlap.
+
+The first version of this document claimed none was redundant. That was wrong
+about one: `prune` memoized filemetas behind a `reachable` set that already
+guaranteed one load per ref, so its cache could never return a hit. It has been
+removed. The lesson is in how it was found — by counting hits rather than
+reading the code, which is why the benchmarks in
+`internal/engine/metaloader_bench_test.go` now exist.
 
 None of these caches is persistent. Every one lives in process memory and dies
 with the `Client` or the operation that created it. Nothing here is part of the
@@ -18,7 +25,7 @@ event (`docs/compatibility.md`).
 | `PackStore.catalog` / `packKeys` | `internal/storelayer/pack.go` | object key → pack ref + offset | `Client` | one entry per packed object |
 | `PackStore.packCache` | `internal/storelayer/pack.go` | pack ref → raw packfile bytes | `Client` | LRU, 4 packs (~32 MB at 8 MB/pack) |
 | `NodeStore.cache` | `internal/hamt/nodestore.go` | node ref → decoded `*node` | `hamt.Tree` | LRU, 4096 nodes |
-| `metaLoader.cache` | `internal/engine/metaloader.go` | filemeta ref → decoded `core.FileMeta` | manager | unbounded; opt-in per constructor |
+| `metaLoader.cache` | `internal/engine/metaloader.go` | filemeta ref → decoded `core.FileMeta` | manager | unbounded; enabled only for `backup` and `diff` |
 | `findScanner.evaluated` | `internal/engine/find_scan.go` | 16-byte ref digest → match verdict | one `find` run | one small entry per distinct filemeta ref |
 | `Resolver.cache` | `pkg/secretref/secretref.go` | `scheme://path` → secret | `Resolver` | only `keychain`, `wincred`, `secret-service` |
 | `Client.repoIDCache`, `openCfg` | `client.go` | — → repository marker fields | `Client` | one value each |
@@ -53,9 +60,11 @@ would mean paying for the work before discovering it was unnecessary.
 The engine's own caches sit above the chain entirely, holding decoded objects:
 `NodeStore` for `node/`, `metaLoader` for `filemeta/`.
 
-## Why none of them is redundant
+## Which ones overlap
 
-The pairs that look like they overlap, and why each is a distinct job.
+The pairs that look like they duplicate each other, and why each surviving one
+is a distinct job. (The one that genuinely was redundant, `prune`'s, is gone —
+see the note at the top.)
 
 ### `KeyCacheStore` vs `PackStore`'s catalog
 
@@ -137,15 +146,78 @@ work rather than by a constant:
   of short strings, live for the length of one backup. This is the deliberate
   trade — one `List` per prefix instead of an `Exists` per object.
 - `metaLoader.cache`, where enabled, grows with the number of distinct
-  filemetas an operation touches. `backup`, `diff` and `prune` enable it
-  because they cross several snapshots, where an unchanged file keeps its
-  filemeta from one snapshot to the next and the same ref recurs. `ls`,
-  `restore` and `find` do not.
+  filemetas an operation touches. Only `backup` and `diff` enable it, because
+  they are the two that read the same ref more than once — `diff` walks both
+  roots, and an unchanged file keeps its filemeta from one snapshot to the
+  next. `ls`, `restore`, `find` and `prune` read through.
 
-`ls` is worth a note: it takes an uncached loader not to save memory but because
-a cache there could never hit. A HAMT key derives from `meta.FileID`, which is
-itself a `FileMeta` field, so no two keys share a filemeta ref and a single-root
-walk reaches every ref exactly once.
+Two operations take an uncached loader for reasons worth stating, since both
+look at first glance like they should memoize:
+
+- `ls` walks a single root. A HAMT key derives from `meta.FileID`, which is
+  itself a `FileMeta` field, so no two keys share a filemeta ref and the walk
+  reaches every ref exactly once. A cache could not hit.
+- `prune` guards every load behind its `reachable` set — `markFileMeta` returns
+  early for a ref it has already marked — so it too reads each ref at most once
+  per run, no matter how many snapshots share it. This was measured, not
+  assumed: over four snapshots of one 2000-file tree the loader ended with 2000
+  entries and zero hits.
+
+### Why an LRU is the wrong bound here
+
+The obvious fix for an unbounded cache is to cap it the way `NodeStore` caps
+its node cache at 4096. Measurement says otherwise, and the reason generalises.
+
+`NodeStore` works under a bound because a HAMT descent re-touches the root and
+the upper levels on every single lookup — real temporal locality, and a small
+cache captures nearly all of it. A filemeta traversal has none: it sweeps each
+ref exactly once per snapshot, uniformly. Under a cyclic sweep, LRU evicts
+precisely the entry the next sweep is about to ask for, so the hit rate does
+not degrade gracefully — it collapses.
+
+Hit rate over eight sweeps, from `BenchmarkMetaLoaderDiffPattern`:
+
+| working set | cache 1024 | cache 4096 | cache 16384 |
+|---|---:|---:|---:|
+| 1,000 files | 87.5% | 87.5% | 87.5% |
+| 10,000 files | 0.0% | 0.0% | 87.5% |
+
+At 10,000 files a 4096-entry cache turns 10,000 store reads into 80,000. Any
+fixed bound has this cliff; it only moves with the number. So the cache stays
+unbounded, and the memory was taken out of the traversals instead — see below.
+
+### Measured footprints
+
+From `BenchmarkMetaLoaderRetained` and the tests in
+`internal/engine/metaloader_memory_test.go`. "Before" is the state prior to the
+two changes described above: `prune` memoizing, and `diff` retaining every entry
+in its parent lookup rather than only folders.
+
+`prune`, heap retained after a run:
+
+| files | before | after |
+|---|---:|---:|
+| 5,000 | 3.3 MB | 1.3 MB |
+| 20,000 | 12.7 MB | 2.9 MB |
+| 50,000 | 28.1 MB | 4.0 MB |
+| 100,000 | 54.6 MB | 6.7 MB |
+
+`diff`, peak heap while both parent lookups are live, on a tree with one folder
+per twenty files:
+
+| files | parent entries before | after | peak before | peak after |
+|---|---:|---:|---:|---:|
+| 5,000 | 10,504 | 504 | 11.7 MB | 8.6 MB |
+| 20,000 | 42,004 | 2,004 | 67.8 MB | 55.5 MB |
+| 50,000 | 105,004 | 5,004 | 148.2 MB | 119.3 MB |
+| 100,000 | 210,004 | 10,004 | 275.5 MB | 217.6 MB |
+
+Neither change costs a single extra store read, which is what distinguishes
+them from bounding the cache.
+
+`diff`'s remaining peak is dominated by the loader cache, which is `O(tree)` by
+design for the reason given above. Reducing it further means not walking both
+roots in full, which is a change to the algorithm rather than to a cache.
 
 ## Invalidation
 

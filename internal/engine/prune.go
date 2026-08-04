@@ -45,7 +45,10 @@ func NewPruneManager(d Deps) *PruneManager {
 		store:    meteredStore,
 		tree:     hamt.NewTree(meteredStore),
 		reporter: d.Reporter,
-		metas:    newMetaLoader(meteredStore),
+		// Uncached: markFileMeta guards every load behind the reachable set, so
+		// a ref is read at most once per run and a cache could never hit. Holding
+		// one would cost a core.FileMeta per object in the repository for nothing.
+		metas: newUncachedMetaLoader(meteredStore),
 	}
 }
 

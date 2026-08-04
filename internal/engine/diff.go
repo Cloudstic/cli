@@ -188,6 +188,16 @@ func classifyEntry(d hamt.DiffEntry) (ChangeType, string) {
 	}
 }
 
+// collectMetadata builds the parent lookup toFileChange resolves paths through.
+//
+// It keeps folders and nothing else. The map is read at exactly one place —
+// byID[parentID] in toFileChange — and a parent is a folder, so retaining a
+// file's metadata here held a core.FileMeta per file that nothing ever read.
+// On a 50k-file tree that was most of two maps.
+//
+// An entry naming a non-folder parent is not an error: collectMetaPaths already
+// ends a chain at the deepest ancestor it can resolve, which is the most that
+// can honestly be said about that entry's location.
 func (dm *DiffManager) collectMetadata(ctx context.Context, root string) (map[string]core.FileMeta, error) {
 	byID := make(map[string]core.FileMeta)
 	err := dm.tree.Walk(ctx, root, func(_, valueRef string) error {
@@ -195,7 +205,9 @@ func (dm *DiffManager) collectMetadata(ctx context.Context, root string) (map[st
 		if err != nil {
 			return err
 		}
-		byID[fm.FileID] = *fm
+		if fm.Type == core.FileTypeFolder {
+			byID[fm.FileID] = *fm
+		}
 		return nil
 	})
 	return byID, err

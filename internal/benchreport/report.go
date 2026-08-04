@@ -172,6 +172,17 @@ func (r *Report) find(tool, op string, scale int) (Row, bool) {
 	return Row{}, false
 }
 
+// hasRepoDelta reports whether any row measured repository growth. The memory
+// sweep does not, so its table must not grow an empty column.
+func (r *Report) hasRepoDelta() bool {
+	for _, row := range r.Rows {
+		if row.RepoDelta != "" && row.RepoDelta != "-" {
+			return true
+		}
+	}
+	return false
+}
+
 // Metric selects which measurement a table or chart reports.
 type Metric struct {
 	Name  string // column heading

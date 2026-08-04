@@ -67,7 +67,7 @@ func TestMergePackIndex_IsFirstWriterWinsOrderIndependentAndIdempotent(t *testin
 		catalog := make(map[string]PackEntry)
 		refs := newPackRefInterner(catalog)
 		for _, part := range parts {
-			if err := mergePackIndex(part, catalog, refs); err != nil {
+			if _, err := mergePackIndex(part, catalog, refs); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -85,7 +85,7 @@ func TestMergePackIndex_IsFirstWriterWinsOrderIndependentAndIdempotent(t *testin
 
 	winner := PackEntry{PackRef: "packs/winner", Offset: 7, Length: 9}
 	catalog := map[string]PackEntry{"filemeta/shared": winner}
-	if err := mergePackIndex(first, catalog, newPackRefInterner(catalog)); err != nil {
+	if _, err := mergePackIndex(first, catalog, newPackRefInterner(catalog)); err != nil {
 		t.Fatal(err)
 	}
 	if got := catalog["filemeta/shared"]; got != winner {
@@ -105,7 +105,7 @@ func TestMergePackIndex_RejectsMalformedInput(t *testing.T) {
 	for name, input := range tests {
 		t.Run(name, func(t *testing.T) {
 			catalog := make(map[string]PackEntry)
-			if err := mergePackIndex([]byte(input), catalog, newPackRefInterner(catalog)); err == nil {
+			if _, err := mergePackIndex([]byte(input), catalog, newPackRefInterner(catalog)); err == nil {
 				t.Fatal("merge succeeded for malformed input")
 			}
 		})

@@ -62,30 +62,38 @@ func (i packRefInterner) intern(ref string) string {
 // mergePackIndex decodes one JSON index object directly into catalog. Decoding
 // an entry before deciding whether to insert it keeps duplicate keys harmless,
 // while avoiding an intermediate map proportional to the whole shard.
-func mergePackIndex(data []byte, catalog map[string]PackEntry, refs packRefInterner) error {
+//
+// It reports how many entries the object contained, not how many were inserted.
+// The two differ whenever a key is already present, and the caller's question —
+// did the stored index describe anything — is answered by the former. Counting
+// insertions instead would read a healthy index as empty whenever the entries it
+// names were already in the catalog, which is what auto-flush leaves behind.
+func mergePackIndex(data []byte, catalog map[string]PackEntry, refs packRefInterner) (int, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	start, err := dec.Token()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if start != json.Delim('{') {
-		return fmt.Errorf("pack index must be a JSON object")
+		return 0, fmt.Errorf("pack index must be a JSON object")
 	}
 
+	decoded := 0
 	for dec.More() {
 		keyToken, err := dec.Token()
 		if err != nil {
-			return err
+			return decoded, err
 		}
 		key, ok := keyToken.(string)
 		if !ok {
-			return fmt.Errorf("pack index key is not a string")
+			return decoded, fmt.Errorf("pack index key is not a string")
 		}
 
 		var entry PackEntry
 		if err := dec.Decode(&entry); err != nil {
-			return err
+			return decoded, err
 		}
+		decoded++
 		if _, exists := catalog[key]; exists {
 			continue
 		}
@@ -95,21 +103,21 @@ func mergePackIndex(data []byte, catalog map[string]PackEntry, refs packRefInter
 
 	end, err := dec.Token()
 	if err != nil {
-		return err
+		return decoded, err
 	}
 	if end != json.Delim('}') {
-		return fmt.Errorf("pack index is missing its closing object delimiter")
+		return decoded, fmt.Errorf("pack index is missing its closing object delimiter")
 	}
 
 	// json.Unmarshal rejects trailing values, so retain that validation while
 	// using the streaming decoder.
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		if err == nil {
-			return fmt.Errorf("pack index has trailing data")
+			return decoded, fmt.Errorf("pack index has trailing data")
 		}
-		return err
+		return decoded, err
 	}
-	return nil
+	return decoded, nil
 }
 
 // writeShard persists entries as a new immutable shard, named by the hash of
@@ -140,7 +148,11 @@ func (s *PackStore) writeShard(ctx context.Context, entries map[string]PackEntry
 }
 
 // loadShardsLocked merges every shard into the in-memory catalog and returns
-// how many were read. mu must be held.
+// how many entries those shards described. mu must be held.
+//
+// The count is of entries rather than of shards because it feeds the decision in
+// loadCatalogLocked about whether the stored index is lost. A shard that exists
+// and describes nothing leaves the catalog exactly as empty as no shard at all.
 //
 // A shard that cannot be read fails the caller. Continuing with a partial merge
 // would produce a catalog that looks complete and is not, which is how a prune
@@ -151,6 +163,7 @@ func (s *PackStore) loadShardsLocked(ctx context.Context, refs packRefInterner) 
 		return 0, fmt.Errorf("list pack index shards: %w", err)
 	}
 
+	entries := 0
 	for _, key := range keys {
 		data, err := s.ObjectStore.Get(ctx, key)
 		if err != nil {
@@ -161,16 +174,18 @@ func (s *PackStore) loadShardsLocked(ctx context.Context, refs packRefInterner) 
 			return 0, fmt.Errorf("open pack index shard %s: %w", key, err)
 		}
 
-		if err := mergePackIndex(plain, s.catalog, refs); err != nil {
+		decoded, err := mergePackIndex(plain, s.catalog, refs)
+		if err != nil {
 			return 0, fmt.Errorf("unmarshal pack index shard %s: %w", key, err)
 		}
+		entries += decoded
 		s.mergedIndex[key] = true
 	}
 
 	if len(keys) > 0 {
-		s.debugf("pack: merged %d shards", len(keys))
+		s.debugf("pack: merged %d entries from %d shards", entries, len(keys))
 	}
-	return len(keys), nil
+	return entries, nil
 }
 
 // CompactCatalog folds every shard, and the legacy monolithic catalog, into a

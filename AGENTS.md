@@ -462,7 +462,7 @@ One or two sentences on the desired end state.
 
 **Labels** — apply exactly one *type* label plus one or more `area/*` labels:
 
-- Type (pick one): `bug`, `enhancement`, `refactor`, `tech debt`, `chore`, `test`, `documentation`, `rfc`, `tracking`
+- Type (pick one): `bug`, `enhancement`, `refactor`, `tech debt`, `chore`, `test`, `documentation`, `perf`, `rfc`, `tracking`
 - Area: `area/cli`, `area/core`, `area/tui`, `area/completion`, `area/onboarding`, `area/ci`
 
 **Titles** — see Naming Conventions above. In short: no conventional-commit prefix (the label carries the type), lead with an imperative verb or an `Area:` scanning prefix, no trailing period.

@@ -34,9 +34,16 @@ type restoreConfig struct {
 	noVerify   bool
 }
 
+// restorePlan is what a restore walks. byID owns the metadata; sorted is an
+// ordering over it, naming entries by FileID rather than repeating them.
+//
+// The two used to be independent copies of the same tree. A core.FileMeta is 216
+// bytes, so a snapshot's metadata was held twice over before a byte was written.
+// An ordering of IDs costs one string header each and shares the ID already
+// stored as byID's key.
 type restorePlan struct {
 	cfg         restoreConfig
-	sorted      []core.FileMeta
+	sorted      []string
 	byID        map[string]core.FileMeta
 	snapshotRef string
 	root        string
@@ -211,7 +218,8 @@ func (rm *RestoreManager) runWithWriter(ctx context.Context, plan restorePlan, w
 		}
 	}
 
-	for _, meta := range plan.sorted {
+	for _, id := range plan.sorted {
+		meta := plan.byID[id]
 		rel := buildRestorePath(meta, plan.byID)
 
 		if meta.Type == core.FileTypeFolder {
@@ -581,13 +589,14 @@ func checkSymlinkPath(p string) error {
 	return nil
 }
 
-func (rm *RestoreManager) dryRunRestore(sorted []core.FileMeta, byID map[string]core.FileMeta, snapshotRef, root string) *RestoreResult {
+func (rm *RestoreManager) dryRunRestore(sorted []string, byID map[string]core.FileMeta, snapshotRef, root string) *RestoreResult {
 	result := &RestoreResult{
 		SnapshotRef: snapshotRef,
 		Root:        root,
 		DryRun:      true,
 	}
-	for _, meta := range sorted {
+	for _, id := range sorted {
+		meta := byID[id]
 		if meta.Type == core.FileTypeFolder {
 			result.DirsWritten++
 		} else if meta.ContentHash != "" {
@@ -661,33 +670,30 @@ func buildRestorePath(meta core.FileMeta, byID map[string]core.FileMeta) string 
 // If the filter ends with "/", it matches all entries under that subtree.
 // Otherwise it matches only the entry with the exact path.
 // Ancestor directories of matched entries are always included.
-func filterByPath(sorted []core.FileMeta, byID map[string]core.FileMeta, pathFilter string) []core.FileMeta {
+func filterByPath(sorted []string, byID map[string]core.FileMeta, pathFilter string) []string {
 	isSubtree := strings.HasSuffix(pathFilter, "/")
 	prefix := pathFilter
 	if isSubtree {
 		prefix = strings.TrimSuffix(pathFilter, "/")
 	}
 
-	// Build a set of restore paths for each entry.
-	restorePaths := make(map[string]string, len(sorted))
-	for _, meta := range sorted {
-		restorePaths[meta.FileID] = buildRestorePath(meta, byID)
-	}
-
-	// Determine which entries are matched.
+	// Determine which entries are matched. The path is built once per entry and
+	// tested immediately rather than being kept in a map for a second pass: the
+	// only thing the second pass needed was the path, and nothing after this
+	// reads it.
 	matched := make(map[string]bool)
-	for _, meta := range sorted {
-		p := restorePaths[meta.FileID]
+	for _, id := range sorted {
+		p := buildRestorePath(byID[id], byID)
 		if isSubtree {
 			// Match the directory itself and anything under it.
 			if p == prefix || strings.HasPrefix(p, prefix+"/") {
-				matched[meta.FileID] = true
+				matched[id] = true
 			}
 		} else {
 			// Exact match, or — when the target is a folder — include
 			// everything under it so the user doesn't need a trailing "/".
 			if p == pathFilter || strings.HasPrefix(p, pathFilter+"/") {
-				matched[meta.FileID] = true
+				matched[id] = true
 			}
 		}
 	}
@@ -710,16 +716,16 @@ func filterByPath(sorted []core.FileMeta, byID map[string]core.FileMeta, pathFil
 			}
 		}
 	}
-	for _, meta := range sorted {
-		if matched[meta.FileID] {
-			walkAncestors(meta.FileID)
+	for _, id := range sorted {
+		if matched[id] {
+			walkAncestors(id)
 		}
 	}
 
-	var filtered []core.FileMeta
-	for _, meta := range sorted {
-		if matched[meta.FileID] {
-			filtered = append(filtered, meta)
+	var filtered []string
+	for _, id := range sorted {
+		if matched[id] {
+			filtered = append(filtered, id)
 		}
 	}
 	return filtered
@@ -792,10 +798,14 @@ func (rm *RestoreManager) collectMetadata(ctx context.Context, root string) (map
 // Ordering
 // ---------------------------------------------------------------------------
 
-// topoSort returns entries in parent-before-child order so that directories
-// are created before the files they contain. Parents contain FileIDs.
-func topoSort(byID map[string]core.FileMeta) []core.FileMeta {
-	var out []core.FileMeta
+// topoSort returns FileIDs in parent-before-child order so that directories are
+// created before the files they contain. Parents contain FileIDs.
+//
+// It orders byID rather than copying out of it: the caller already holds every
+// entry, and a second slice of core.FileMeta doubled a snapshot's metadata for
+// the sake of sequencing it.
+func topoSort(byID map[string]core.FileMeta) []string {
+	out := make([]string, 0, len(byID))
 	visited := make(map[string]bool, len(byID))
 
 	var visit func(core.FileMeta)
@@ -803,13 +813,16 @@ func topoSort(byID map[string]core.FileMeta) []core.FileMeta {
 		if visited[meta.FileID] {
 			return
 		}
+		// Marked before recursing, not after: a parent cycle would otherwise
+		// revisit this entry forever. Marking first makes a cycle terminate with
+		// the entry emitted once, in an order the cycle itself does not define.
+		visited[meta.FileID] = true
 		for _, parentID := range meta.Parents {
 			if parent, ok := byID[parentID]; ok {
 				visit(parent)
 			}
 		}
-		visited[meta.FileID] = true
-		out = append(out, meta)
+		out = append(out, meta.FileID)
 	}
 
 	for _, meta := range byID {

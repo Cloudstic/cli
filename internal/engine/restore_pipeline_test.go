@@ -216,7 +216,8 @@ func TestRunWithWriter_RestoresFilesConcurrently(t *testing.T) {
 		t.Fatalf("prepareRestore: %v", err)
 	}
 	files := 0
-	for _, m := range plan.sorted {
+	for _, id := range plan.sorted {
+		m := plan.byID[id]
 		if m.Type != core.FileTypeFolder && m.ContentHash != "" {
 			files++
 		}

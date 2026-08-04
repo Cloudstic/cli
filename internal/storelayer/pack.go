@@ -72,7 +72,7 @@ type PackStore struct {
 	pendingKeys map[string]struct{}
 
 	// LRU cache for recently downloaded packfiles to accelerate Get() and HAMT walks
-	packCache *lru.Cache[string, []byte]
+	packCache *packBodyCache
 
 	// Misses per pack since it was last cached, used to decide when reading one
 	// object at a time is no longer the cheaper option. See resolveFromPack.
@@ -107,7 +107,7 @@ func WithPackIndexKey(key []byte) PackOption {
 // NewPackStore initializes a new MicroPackStore over an existing store.ObjectStore.
 func NewPackStore(inner store.ObjectStore, opts ...PackOption) (*PackStore, error) {
 	// Keep up to 30 MB of packfiles in memory (around 4 packs) to speed up reads
-	cache, err := lru.New[string, []byte](4)
+	cache, err := newPackBodyCache(packBodyCacheBudget)
 	if err != nil {
 		return nil, fmt.Errorf("pack cache init: %w", err)
 	}
@@ -132,7 +132,7 @@ func NewPackStore(inner store.ObjectStore, opts ...PackOption) (*PackStore, erro
 	}
 	// Logged after the options are applied so it reaches the sink the caller
 	// asked for rather than the process-wide fallback.
-	s.debugf("init packstore: LRU size=%d", 4)
+	s.debugf("init packstore: pack body budget=%d bytes", packBodyCacheBudget)
 	return s, nil
 }
 

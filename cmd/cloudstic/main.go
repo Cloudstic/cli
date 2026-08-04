@@ -14,15 +14,15 @@ func main() {
 }
 
 func run() int {
-	cpuprofile, memprofile := parseProfileFlags()
+	prof := parseProfileFlags()
 
 	if len(os.Args) < 2 {
 		printUsage(os.Stdout)
 		return 1
 	}
 
-	if cpuprofile != "" {
-		stop := startCPUProfile(cpuprofile)
+	if prof.cpuProfile != "" {
+		stop := startCPUProfile(prof.cpuProfile)
 		defer stop()
 	}
 
@@ -34,8 +34,11 @@ func run() int {
 
 	exitCode := runCmd(newRunner(os.Args[2:]), ctx, os.Args[1])
 
-	if memprofile != "" {
-		writeMemProfile(memprofile)
+	if prof.memProfile != "" {
+		writeMemProfile(prof.memProfile)
+	}
+	if prof.memStats != "" {
+		writeMemStats(prof.memStats)
 	}
 
 	return exitCode

@@ -21,13 +21,63 @@ import (
 // varies. The memory sweep holds Tool constant and varies Scale; the
 // competitive run holds Scale constant and varies Tool. Kind() reads that off
 // the data rather than being told.
+//
+// A row is one *sample*, not one point. Several rows may share
+// (Tool, Operation, Scale) — the memory sweep writes one per repetition, and
+// the report reduces them with cell(). Keeping the samples in the CSV rather
+// than collapsing them at write time means the artifact still shows how noisy a
+// point was, which a median alone hides.
 type Row struct {
 	Tool      string // cloudstic, restic, borg, duplicacy
 	Operation string // "backup-initial", "Initial Backup", …
 	Scale     int    // files in tree; 0 when the harness has only one size
 	Seconds   float64
 	PeakMB    float64
-	RepoDelta string // human-formatted, passed through untouched
+	AllocMB   float64 // cumulative bytes allocated, including freed; 0 when unmeasured
+	RepoDelta string  // human-formatted, passed through untouched
+}
+
+// Stat summarises repeated samples of one measurement.
+//
+// The median is reported rather than the mean because the noise here is
+// one-sided: a run perturbed by another process on the runner is slow and
+// memory-hungry, never the reverse, so a single bad sample drags a mean and
+// leaves a median alone. Min and Max are carried alongside so a point whose
+// samples disagree is visible as a wide band rather than hidden behind a
+// confident-looking middle value.
+type Stat struct {
+	Median float64
+	Min    float64
+	Max    float64
+	N      int
+}
+
+// Spread is the distance between the extremes — the width of the noise band a
+// difference has to clear before it means anything.
+func (s Stat) Spread() float64 { return s.Max - s.Min }
+
+func newStat(vs []float64) Stat {
+	if len(vs) == 0 {
+		return Stat{}
+	}
+	sorted := append([]float64(nil), vs...)
+	sort.Float64s(sorted)
+
+	mid := len(sorted) / 2
+	median := sorted[mid]
+	if len(sorted)%2 == 0 {
+		median = (sorted[mid-1] + sorted[mid]) / 2
+	}
+	return Stat{Median: median, Min: sorted[0], Max: sorted[len(sorted)-1], N: len(sorted)}
+}
+
+// Cell is every sample for one (tool, operation, scale) point, reduced.
+type Cell struct {
+	Seconds   Stat
+	PeakMB    Stat
+	AllocMB   Stat
+	HasAlloc  bool
+	RepoDelta string
 }
 
 // Report is a parsed measurement set.
@@ -108,6 +158,11 @@ func Parse(r io.Reader) (*Report, error) {
 				return nil, fmt.Errorf("row %d: peak_mb %q: %w", n+2, v, err)
 			}
 		}
+		if v := get(rec, "alloc_mb"); v != "" {
+			if row.AllocMB, err = strconv.ParseFloat(v, 64); err != nil {
+				return nil, fmt.Errorf("row %d: alloc_mb %q: %w", n+2, v, err)
+			}
+		}
 		rep.Rows = append(rep.Rows, row)
 	}
 	if len(rep.Rows) == 0 {
@@ -160,16 +215,37 @@ func distinct(rows []Row, key func(Row) string) []string {
 	return out
 }
 
-// find returns the row for one cell, and whether it was measured. A missing
-// cell is normal: a tool may not support an operation, or a sweep may skip a
-// size.
-func (r *Report) find(tool, op string, scale int) (Row, bool) {
+// cell reduces every sample for one point, and reports whether any was
+// measured. A missing cell is normal: a tool may not support an operation, or a
+// sweep may skip a size.
+//
+// A harness taking one sample per point gets a Stat whose median, min and max
+// are that sample, so the single-sample and repeated-sample paths are the same
+// code.
+func (r *Report) cell(tool, op string, scale int) (Cell, bool) {
+	var seconds, peak, alloc []float64
+	var c Cell
 	for _, row := range r.Rows {
-		if row.Operation == op && row.Scale == scale && (tool == "" || row.Tool == tool) {
-			return row, true
+		if row.Operation != op || row.Scale != scale || (tool != "" && row.Tool != tool) {
+			continue
+		}
+		seconds = append(seconds, row.Seconds)
+		peak = append(peak, row.PeakMB)
+		// An unmeasured allocation total is absent, not zero: averaging a real
+		// 300 MB with a placeholder 0 would report 150 MB and look plausible.
+		if row.AllocMB > 0 {
+			alloc = append(alloc, row.AllocMB)
+		}
+		if row.RepoDelta != "" {
+			c.RepoDelta = row.RepoDelta
 		}
 	}
-	return Row{}, false
+	if len(peak) == 0 {
+		return Cell{}, false
+	}
+	c.Seconds, c.PeakMB, c.AllocMB = newStat(seconds), newStat(peak), newStat(alloc)
+	c.HasAlloc = len(alloc) > 0
+	return c, true
 }
 
 // hasRepoDelta reports whether any row measured repository growth. The memory
@@ -183,14 +259,42 @@ func (r *Report) hasRepoDelta() bool {
 	return false
 }
 
+// hasAlloc reports whether any row carries an allocation total. Only the memory
+// sweep measures it, and only for cloudstic, so the competitive table must not
+// grow an empty column because of it.
+func (r *Report) hasAlloc() bool {
+	for _, row := range r.Rows {
+		if row.AllocMB > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// Samples reports the largest number of repetitions behind any single point,
+// which is what the prose quotes when explaining the median.
+func (r *Report) Samples() int {
+	counts := map[string]int{}
+	most := 0
+	for _, row := range r.Rows {
+		k := fmt.Sprintf("%s\x00%s\x00%d", row.Tool, row.Operation, row.Scale)
+		counts[k]++
+		if counts[k] > most {
+			most = counts[k]
+		}
+	}
+	return most
+}
+
 // Metric selects which measurement a table or chart reports.
 type Metric struct {
 	Name  string // column heading
 	Unit  string
-	Value func(Row) float64
+	Value func(Cell) Stat
 }
 
 var (
-	PeakMB  = Metric{Name: "Peak RSS", Unit: "MB", Value: func(r Row) float64 { return r.PeakMB }}
-	Seconds = Metric{Name: "Time", Unit: "s", Value: func(r Row) float64 { return r.Seconds }}
+	PeakMB  = Metric{Name: "Peak RSS", Unit: "MB", Value: func(c Cell) Stat { return c.PeakMB }}
+	AllocMB = Metric{Name: "Total allocated", Unit: "MB", Value: func(c Cell) Stat { return c.AllocMB }}
+	Seconds = Metric{Name: "Time", Unit: "s", Value: func(c Cell) Stat { return c.Seconds }}
 )

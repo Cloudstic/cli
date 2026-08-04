@@ -62,6 +62,7 @@ func runCmd(args []string) error {
 	scale := fs.Int("scale", 0, "dataset size this step ran against")
 	out := fs.String("out", "", "CSV to append to (required)")
 	repoDelta := fs.String("repo-delta", "", "repository growth, pre-formatted")
+	allocFrom := fs.String("alloc-from", "", "read the allocation total from this cloudstic -memstats file")
 	quiet := fs.Bool("quiet", false, "discard the measured command's output")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -84,12 +85,25 @@ func runCmd(args []string) error {
 		return err
 	}
 
+	// The measured process writes this itself, so it is read after the run
+	// rather than derived from anything the parent can observe. A missing or
+	// unreadable file is fatal: silently recording no allocation total would
+	// leave a hole in the column that reads as "this operation allocates
+	// nothing".
+	var allocMB float64
+	if *allocFrom != "" {
+		if allocMB, err = benchreport.ReadAllocMB(*allocFrom); err != nil {
+			return err
+		}
+	}
+
 	if err := benchreport.AppendRow(*out, benchreport.Row{
 		Tool:      *tool,
 		Operation: *op,
 		Scale:     *scale,
 		Seconds:   seconds,
 		PeakMB:    peakMB,
+		AllocMB:   allocMB,
 		RepoDelta: *repoDelta,
 	}); err != nil {
 		return err
@@ -97,7 +111,11 @@ func runCmd(args []string) error {
 
 	// Echo the row so a script's own console output stays readable without it
 	// having to re-read the CSV it just appended to.
-	fmt.Printf("  %-28s %10s  %8.1f MB  %7.2fs\n", *op, scaleLabel(*scale), peakMB, seconds)
+	alloc := ""
+	if allocMB > 0 {
+		alloc = fmt.Sprintf("  %8.1f MB alloc", allocMB)
+	}
+	fmt.Printf("  %-28s %10s  %8.1f MB peak  %7.2fs%s\n", *op, scaleLabel(*scale), peakMB, seconds, alloc)
 	return nil
 }
 

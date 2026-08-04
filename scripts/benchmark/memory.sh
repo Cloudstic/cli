@@ -1,33 +1,71 @@
 #!/usr/bin/env bash
 #
-# Peak memory as a function of repository size.
+# Memory as a function of repository size.
 #
-# scripts/benchmark/run.sh already reports peak RSS, but at one dataset size,
-# and a single point cannot distinguish memory that is constant from memory
-# that grows with the repository. That difference is the whole question: an
-# operation holding a fixed working set is fine at any scale, one holding a
+# scripts/benchmark/cloudstic.sh already reports peak RSS, but at one dataset
+# size, and a single point cannot distinguish memory that is constant from
+# memory that grows with the repository. That difference is the whole question:
+# an operation holding a fixed working set is fine at any scale, one holding a
 # per-file structure eventually meets a repository it cannot open. Telling them
 # apart needs the same operation measured at several sizes.
 #
-# The dataset is therefore many small files rather than run.sh's gigabyte of
-# large ones: the independent variable is the number of entries, and file size
-# is held down so throughput does not drown out per-entry cost.
+# The dataset is therefore many small files rather than cloudstic.sh's gigabyte
+# of large ones: the independent variable is the number of entries, and file
+# size is held down so throughput does not drown out per-entry cost.
+#
+# Two measurements per point, because peak RSS alone was not enough:
+#
+#   peak RSS   the largest amount live at once — what decides whether an
+#              operation fits in the memory available.
+#   allocated  cumulative bytes allocated, freed or not. Peak RSS is a
+#              high-water mark and cannot see churn the collector reclaims, so
+#              a change removing tens of MB of transient garbage moves it by
+#              nothing measurable. PR #449 removed 36 MB of allocation from
+#              CompactCatalog and shifted peak RSS by 5 MB, well inside the
+#              noise. This column is the one that moved.
+#
+# And SAMPLES repetitions per point, reported as a median with its min–max
+# band. Repeated runs of one binary on one machine gave 408/405/352 MB — a
+# ±60 MB spread, wider than most of the improvements being chased. A single
+# sample cannot tell a 40 MB win from a lucky run; three and a median can.
+# Every operation here mutates the repository, so a sample repeats the whole
+# pipeline against a fresh repository rather than re-running one command.
 #
 # Usage:
-#   scripts/benchmark/memory.sh                   # default sizes
-#   SIZES="1000 5000" scripts/benchmark/memory.sh # override
+#   scripts/benchmark/memory.sh                     # defaults
+#   SIZES="1000 5000" scripts/benchmark/memory.sh   # override sizes
+#   SAMPLES=5 scripts/benchmark/memory.sh           # more repetitions
 #   OUT=/tmp/mem.csv scripts/benchmark/memory.sh
 
 set -euo pipefail
 
 SIZES=${SIZES:-"5000 20000 50000"}
+SAMPLES=${SAMPLES:-3}
 OUT=${OUT:-benchmark-results/memory.csv}
 KEEP=${KEEP:-0} # keep scratch dirs for inspection
 
+case "$SAMPLES" in
+    '' | *[!0-9]* | 0)
+        echo "SAMPLES must be a positive integer, got '$SAMPLES'" >&2
+        exit 2
+        ;;
+esac
+
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-CLOUDSTIC_BIN="$REPO_ROOT/bin/cloudstic"
 BENCHREPORT="$REPO_ROOT/bin/benchreport"
 PASSWORD=${BENCH_REPO_PASSWORD:-benchmark-password}
+
+# A prebuilt binary to measure instead of this checkout's.
+#
+# The question this harness gets asked is almost always "did that change help",
+# which means measuring two commits. Building each into its own path and
+# pointing the sweep at them in turn compares like with like — the alternative,
+# checking out the other commit, also swaps out the harness doing the measuring.
+#
+# It has to be a binary built from a tree carrying -memstats (cmd/cloudstic/
+# profiling.go); anything built before that flag existed will not write the
+# file measure() expects and the sweep will fail on its first row.
+CLOUDSTIC_BIN=${BENCH_CLOUDSTIC_BIN:-"$REPO_ROOT/bin/cloudstic"}
 
 WORK=$(mktemp -d -t cloudstic-mem-XXXXXX)
 cleanup() { [ "$KEEP" = "1" ] || rm -rf "$WORK"; }
@@ -37,6 +75,10 @@ trap cleanup EXIT
 # Measurement
 # ---------------------------------------------------------------------------
 
+# Where the measured process drops its allocation counters. Rewritten by every
+# run and read back immediately, so one path serves the whole sweep.
+MEMSTATS="$WORK/memstats.json"
+
 # measure <operation> <files> <command...>
 #
 # Delegates to benchreport, which takes peak RSS from the wait4 rusage the
@@ -44,11 +86,23 @@ trap cleanup EXIT
 # and unit all differ between BSD and GNU, and which is absent on a minimal
 # Linux image. It appends the CSV row and echoes a console line.
 #
+# -memstats is appended to the measured command rather than threaded through
+# its arguments: cloudstic strips that flag from os.Args before any command
+# parsing, so its position does not matter. The allocation total has to come
+# from inside the process — the parent can observe a high-water mark through
+# rusage, but not bytes that were allocated and freed again.
+#
+# One row is appended per sample rather than one per point. The median is
+# computed at render time, which keeps every sample in the CSV where a reader
+# can see how noisy a point actually was.
+#
 # A failing command is fatal: a curve with a hole in it is worse than no curve.
 measure() {
     local op=$1 files=$2
     shift 2
-    "$BENCHREPORT" run -op "$op" -scale "$files" -out "$OUT" -quiet -- "$@"
+    rm -f "$MEMSTATS"
+    "$BENCHREPORT" run -op "$op" -scale "$files" -out "$OUT" \
+        -alloc-from "$MEMSTATS" -quiet -- "$@" -memstats "$MEMSTATS"
 }
 
 # ---------------------------------------------------------------------------
@@ -76,15 +130,21 @@ generate_tree() {
     done
 }
 
-# touch_fraction <root> <count> <denominator>
+# touch_fraction <root> <count> <denominator> <generation>
 #
 # Rewrites every Nth file so the follow-up backup has real work to do. An
 # incremental over an unchanged tree measures the scan path only; changing a
 # slice exercises upload and the HAMT rewrite too.
+#
+# The generation is in the written bytes so that repeated samples over one tree
+# stay honest. Without it the second sample would rewrite the same files with
+# the same content, content-address to the objects already there, and measure
+# an incremental backup that uploads nothing.
 touch_fraction() {
-    local root=$1 count=$2 denom=$3
+    local root=$1 count=$2 denom=$3 gen=$4
     for (( i = 0; i < count; i += denom )); do
-        printf 'cloudstic benchmark entry %d modified\n' "$i" > "$root/dir-$(( i / 100 ))/file-$i.txt"
+        printf 'cloudstic benchmark entry %d modified %d\n' "$i" "$gen" \
+            > "$root/dir-$(( i / 100 ))/file-$i.txt"
     done
 }
 
@@ -92,8 +152,17 @@ touch_fraction() {
 # Run
 # ---------------------------------------------------------------------------
 
-echo "Building cloudstic and benchreport..."
-( cd "$REPO_ROOT" && go build -o bin/cloudstic ./cmd/cloudstic )
+if [ -n "${BENCH_CLOUDSTIC_BIN:-}" ]; then
+    echo "Measuring prebuilt $CLOUDSTIC_BIN"
+    if [ ! -x "$CLOUDSTIC_BIN" ]; then
+        echo "BENCH_CLOUDSTIC_BIN is not an executable file: $CLOUDSTIC_BIN" >&2
+        exit 2
+    fi
+else
+    echo "Building cloudstic..."
+    ( cd "$REPO_ROOT" && go build -o bin/cloudstic ./cmd/cloudstic )
+fi
+echo "Building benchreport..."
 ( cd "$REPO_ROOT" && go build -o bin/benchreport ./internal/cmd/benchreport )
 
 # benchreport writes the header itself on first append, so a stale CSV must go
@@ -102,23 +171,29 @@ mkdir -p "$(dirname "$OUT")"
 rm -f "$OUT"
 
 echo ""
-echo "=== Peak memory vs repository size ==="
-echo "sizes: $SIZES"
+echo "=== Memory vs repository size ==="
+echo "sizes:   $SIZES"
+echo "samples: $SAMPLES per point (median reported)"
 echo ""
 
 export CLOUDSTIC_PASSWORD="$PASSWORD"
 
-for size in $SIZES; do
-    echo "--- $size files ---"
-    data="$WORK/data-$size"
-    repo="$WORK/repo-$size"
-    restore="$WORK/restore-$size"
-    mkdir -p "$data" "$repo" "$restore"
+# run_pipeline <data> <size> <generation>
+#
+# One full sample: every operation once, over a repository built from scratch.
+#
+# The repository is rebuilt per sample because every operation here mutates it.
+# Re-running `prune` against an already-pruned repository, or `backup-initial`
+# against a populated one, measures a different operation that happens to share
+# a name — so the unit of repetition has to be the pipeline, not the command.
+run_pipeline() {
+    local data=$1 size=$2 gen=$3
+    local repo="$WORK/repo" restore="$WORK/restore"
 
-    printf '  generating %d files... ' "$size"
-    generate_tree "$data" "$size"
-    echo "done"
+    rm -rf "$repo" "$restore"
+    mkdir -p "$repo" "$restore"
 
+    local store_flags source_flags
     store_flags=(-store "local:$repo")
     source_flags=(-source "local:$data")
 
@@ -127,7 +202,7 @@ for size in $SIZES; do
     measure backup-initial "$size" \
         "$CLOUDSTIC_BIN" backup "${store_flags[@]}" "${source_flags[@]}" -quiet
 
-    touch_fraction "$data" "$size" 20
+    touch_fraction "$data" "$size" 20 "$gen"
 
     measure backup-incremental "$size" \
         "$CLOUDSTIC_BIN" backup "${store_flags[@]}" "${source_flags[@]}" -quiet
@@ -135,6 +210,7 @@ for size in $SIZES; do
     # diff needs two explicit refs, and list reports newest first. Written
     # without mapfile or a negative array index: macOS still ships bash 3.2,
     # where both are syntax errors rather than graceful failures.
+    local refs newest oldest
     refs=$("$CLOUDSTIC_BIN" list "${store_flags[@]}" -json 2>/dev/null \
         | grep -o 'snapshot/[a-f0-9]\{64\}')
     newest=$(printf '%s\n' "$refs" | head -1)
@@ -151,9 +227,28 @@ for size in $SIZES; do
     measure prune "$size" \
         "$CLOUDSTIC_BIN" prune "${store_flags[@]}" -quiet
 
+    rm -rf "$repo" "$restore"
+}
+
+for size in $SIZES; do
+    data="$WORK/data-$size"
+    mkdir -p "$data"
+
+    # Generated once and reused across the samples of this size. Regenerating
+    # would add dataset variation to the very noise the samples exist to
+    # measure; the tree is an input, not part of what is under test.
+    printf -- '--- %d files: generating... ' "$size"
+    generate_tree "$data" "$size"
+    echo "done"
+
+    for (( sample = 1; sample <= SAMPLES; sample++ )); do
+        echo "  sample $sample/$SAMPLES"
+        run_pipeline "$data" "$size" "$sample"
+    done
+
     # Reclaim before the next size so the scratch dir does not grow without
     # bound over the sweep; each size is independent anyway.
-    rm -rf "$data" "$repo" "$restore"
+    rm -rf "$data"
     echo ""
 done
 

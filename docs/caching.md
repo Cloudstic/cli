@@ -152,9 +152,12 @@ work rather than by a constant:
   a `map[string]struct{}` does. Measured via
   `BenchmarkKeySetShapeRetained` (`internal/storelayer/keycache_bench_test.go`)
   at 500k entries: 136 B/entry retained for the string-keyed set versus 84
-  B/entry for the digest-keyed one. A key whose suffix isn't a well-formed
-  64-hex-char digest falls back to `knownKeys`, keyed by the full string, so
-  it is still tracked correctly rather than mis-filed or dropped.
+  B/entry for the digest-keyed one. Only the canonical lowercase hex spelling
+  decodes into the digest map — the one `core.ComputeHash` ever produces; a
+  key whose suffix isn't that exact shape (wrong length, uppercase, or any
+  other non-digest suffix) falls back to `knownKeys`, keyed by the full
+  string, so it is still tracked correctly, byte-exact, rather than mis-filed
+  or aliased with a differently-cased key that names a different object.
 - `metaLoader.cache`, where enabled, grows with the number of distinct
   filemetas an operation touches. Only `backup` and `diff` enable it, because
   they are the two that read the same ref more than once — `diff` walks both

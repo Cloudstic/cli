@@ -230,14 +230,15 @@ func TestKeyCacheStore_DigestKeyExistsAfterPreload(t *testing.T) {
 	}
 }
 
-func TestKeyCacheStore_NonHexKeyUnderListedPrefixFallsBack(t *testing.T) {
+// TestKeyCacheStore_CaseVariantDigestKeyDoesNotAlias guards against decoding
+// both hex cases into one digest: that would let a Put for one spelling be
+// elided because the other, byte-distinct, key was already known.
+func TestKeyCacheStore_CaseVariantDigestKeyDoesNotAlias(t *testing.T) {
 	ctx := context.Background()
 	inner := newCountingStore()
-	// A key under a listed prefix whose suffix is not a 64-char hex digest
-	// (e.g. malformed or legacy) must not be mis-filed into the digest map for
-	// a different key.
-	nonHexKey := "chunk/not-a-valid-digest"
-	_ = inner.Put(ctx, nonHexKey, []byte("data"))
+	lower := "chunk/" + strings.Repeat("ab", 32)
+	upper := "chunk/" + strings.Repeat("AB", 32)
+	_ = inner.Put(ctx, lower, []byte("data"))
 	inner.exists.Store(0)
 
 	kc := NewKeyCacheStore(inner)
@@ -245,33 +246,107 @@ func TestKeyCacheStore_NonHexKeyUnderListedPrefixFallsBack(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ok, _ := kc.Exists(ctx, nonHexKey)
-	if !ok {
-		t.Error("non-hex key should exist after preload via fallback")
-	}
-	if inner.exists.Load() != 0 {
-		t.Error("Exists should not have called backend for known non-hex key")
-	}
-
-	// Put-elision and Delete must also work through the fallback path.
-	inner.puts.Store(0)
-	if err := kc.Put(ctx, nonHexKey, []byte("data")); err != nil {
-		t.Fatal(err)
-	}
-	if inner.puts.Load() != 0 {
-		t.Error("Put should have been elided for already-known non-hex key")
-	}
-
-	if err := kc.Delete(ctx, nonHexKey); err != nil {
-		t.Fatal(err)
-	}
-	inner.exists.Store(0)
-	ok, _ = kc.Exists(ctx, nonHexKey)
+	// The uppercase spelling is a different object key and must not read as
+	// known just because the lowercase one was preloaded.
+	ok, _ := kc.Exists(ctx, upper)
 	if ok {
-		t.Error("non-hex key should not exist after delete")
+		t.Error("uppercase-hex key must not alias the preloaded lowercase key")
+	}
+
+	// Put for the uppercase key must go through, not be elided.
+	inner.puts.Store(0)
+	if err := kc.Put(ctx, upper, []byte("other data")); err != nil {
+		t.Fatal(err)
+	}
+	if inner.puts.Load() != 1 {
+		t.Errorf("Put for distinct uppercase-hex key should not be elided, got %d puts", inner.puts.Load())
+	}
+
+	// Both keys are now independently known via the fallback (non-canonical)
+	// and digest paths respectively.
+	inner.exists.Store(0)
+	if ok, _ := kc.Exists(ctx, lower); !ok {
+		t.Error("lowercase key should still exist")
+	}
+	if ok, _ := kc.Exists(ctx, upper); !ok {
+		t.Error("uppercase key should exist after being put")
 	}
 	if inner.exists.Load() != 0 {
-		t.Error("should resolve from cache (listed prefix, absent key)")
+		t.Error("both keys should resolve from cache")
+	}
+}
+
+// TestKeyCacheStore_OverlappingPrefixesResolveLongestMatch guards
+// contentAddressedPrefix's tie-break: a key matching two listed prefixes must
+// consistently resolve to the longer, more specific one everywhere, not
+// whichever the map happens to iterate first.
+func TestKeyCacheStore_OverlappingPrefixesResolveLongestMatch(t *testing.T) {
+	ctx := context.Background()
+	inner := newCountingStore()
+	kc := NewKeyCacheStore(inner)
+	if err := kc.PreloadKeys(ctx, "chunk/", "chunk/a"); err != nil {
+		t.Fatal(err)
+	}
+
+	key := "chunk/a" + strings.Repeat("b", digestHexLen)
+	for range 20 {
+		prefix, ok := kc.contentAddressedPrefix(key)
+		if !ok || prefix != "chunk/a" {
+			t.Fatalf("contentAddressedPrefix(%q) = (%q, %v), want (\"chunk/a\", true)", key, prefix, ok)
+		}
+	}
+}
+
+func TestKeyCacheStore_NonHexKeyUnderListedPrefixFallsBack(t *testing.T) {
+	// A key under a listed prefix whose suffix does not decode to a digest
+	// must not be mis-filed into the digest map for a different key. Cover
+	// both ways decodeDigest can say no: wrong length, and right length with
+	// a character that isn't a hex nibble.
+	cases := map[string]string{
+		"wrong-length": "chunk/not-a-valid-digest",
+		"bad-nibble":   "chunk/" + strings.Repeat("a", digestHexLen-1) + "g",
+	}
+	for name, nonHexKey := range cases {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			inner := newCountingStore()
+			_ = inner.Put(ctx, nonHexKey, []byte("data"))
+			inner.exists.Store(0)
+
+			kc := NewKeyCacheStore(inner)
+			if err := kc.PreloadKeys(ctx, "chunk/"); err != nil {
+				t.Fatal(err)
+			}
+
+			ok, _ := kc.Exists(ctx, nonHexKey)
+			if !ok {
+				t.Error("non-hex key should exist after preload via fallback")
+			}
+			if inner.exists.Load() != 0 {
+				t.Error("Exists should not have called backend for known non-hex key")
+			}
+
+			// Put-elision and Delete must also work through the fallback path.
+			inner.puts.Store(0)
+			if err := kc.Put(ctx, nonHexKey, []byte("data")); err != nil {
+				t.Fatal(err)
+			}
+			if inner.puts.Load() != 0 {
+				t.Error("Put should have been elided for already-known non-hex key")
+			}
+
+			if err := kc.Delete(ctx, nonHexKey); err != nil {
+				t.Fatal(err)
+			}
+			inner.exists.Store(0)
+			ok, _ = kc.Exists(ctx, nonHexKey)
+			if ok {
+				t.Error("non-hex key should not exist after delete")
+			}
+			if inner.exists.Load() != 0 {
+				t.Error("should resolve from cache (listed prefix, absent key)")
+			}
+		})
 	}
 }
 

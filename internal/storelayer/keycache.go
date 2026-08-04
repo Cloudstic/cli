@@ -105,15 +105,25 @@ func (s *KeyCacheStore) Put(ctx context.Context, key string, data []byte) error 
 // means key is immutable (same key = same data) and eligible for existence
 // caching and write elision. Mutable keys like index/* were never listed and
 // must always be written through.
+//
+// listedPrefixes is a map, so iteration order is undefined; today's callers
+// only ever list "chunk/", "content/" and "node/", none a prefix of another,
+// so this can't actually pick two different answers for one key. It resolves
+// the longest match anyway rather than leaving that an unstated assumption:
+// a key matching two listed prefixes must consistently resolve to the same
+// one across Exists, Put and Delete, or a write can be elided for a key the
+// backend was never told about.
 func (s *KeyCacheStore) contentAddressedPrefix(key string) (string, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	var longest string
+	var matched bool
 	for prefix := range s.listedPrefixes {
-		if strings.HasPrefix(key, prefix) {
-			return prefix, true
+		if strings.HasPrefix(key, prefix) && (!matched || len(prefix) > len(longest)) {
+			longest, matched = prefix, true
 		}
 	}
-	return "", false
+	return longest, matched
 }
 
 // knows reports whether key, known to fall under prefix, has been recorded
@@ -156,9 +166,18 @@ func (s *KeyCacheStore) forgetLocked(prefix, key string) {
 }
 
 // decodeDigest decodes the suffix of key after prefix as a raw sha256 digest.
-// It returns ok=false for any key that isn't exactly "<prefix><64 hex
-// chars>", so callers fall back to string-keyed storage instead of mis-filing
-// a key that doesn't have that shape.
+// It returns ok=false for any key that isn't exactly "<prefix><64 lowercase
+// hex chars>", so callers fall back to string-keyed storage instead of
+// mis-filing a key that doesn't have that shape.
+//
+// Only the canonical lowercase spelling decodes. core.ComputeHash always
+// produces lowercase hex, so every key this store ever writes or preloads
+// takes that form; a decoder that also accepted uppercase would fold two
+// byte-distinct object keys ("aa..." and "AA...") into one digest and let a
+// write for one be elided because the other was seen — the exact "permissive
+// direction" failure the prefix matching above is written to avoid. A
+// non-canonical key simply isn't recognized as a digest and falls back to the
+// string map, where it stays byte-exact.
 //
 // This is called on every Exists and Put for a content-addressed key, so it
 // decodes by hand rather than through hex.DecodeString: that call allocates a
@@ -170,8 +189,8 @@ func decodeDigest(prefix, key string) (digest [32]byte, ok bool) {
 		return digest, false
 	}
 	for i := range 32 {
-		hi, ok1 := hexNibble(suffix[2*i])
-		lo, ok2 := hexNibble(suffix[2*i+1])
+		hi, ok1 := lowerHexNibble(suffix[2*i])
+		lo, ok2 := lowerHexNibble(suffix[2*i+1])
 		if !ok1 || !ok2 {
 			return digest, false
 		}
@@ -180,14 +199,14 @@ func decodeDigest(prefix, key string) (digest [32]byte, ok bool) {
 	return digest, true
 }
 
-func hexNibble(c byte) (byte, bool) {
+// lowerHexNibble decodes a single canonical (lowercase) hex digit. It
+// deliberately rejects 'A'-'F': see decodeDigest.
+func lowerHexNibble(c byte) (byte, bool) {
 	switch {
 	case c >= '0' && c <= '9':
 		return c - '0', true
 	case c >= 'a' && c <= 'f':
 		return c - 'a' + 10, true
-	case c >= 'A' && c <= 'F':
-		return c - 'A' + 10, true
 	default:
 		return 0, false
 	}

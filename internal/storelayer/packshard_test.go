@@ -20,13 +20,13 @@ func TestPackStore_LoadShardsInternsPackRefs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writer.writeShard(ctx, map[string]PackEntry{
+	if _, err := writer.writeShard(ctx, map[string]PackEntry{
 		"filemeta/a": {PackRef: "packs/shared", Offset: 0, Length: 1},
 		"filemeta/b": {PackRef: "packs/shared", Offset: 1, Length: 1},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := writer.writeShard(ctx, map[string]PackEntry{
+	if _, err := writer.writeShard(ctx, map[string]PackEntry{
 		"node/c": {PackRef: "packs/shared", Offset: 2, Length: 1},
 		"node/d": {PackRef: "packs/other", Offset: 0, Length: 1},
 	}); err != nil {

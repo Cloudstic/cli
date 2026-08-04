@@ -120,31 +120,51 @@ func mergePackIndex(data []byte, catalog map[string]PackEntry, refs packRefInter
 	return decoded, nil
 }
 
-// writeShard persists entries as a new immutable shard, named by the hash of
-// its own contents. Two runs that happen to produce identical shards write the
-// same object, which is harmless.
-func (s *PackStore) writeShard(ctx context.Context, entries map[string]PackEntry) error {
+// sealShard renders entries as the object a shard is stored as, returning the
+// key it belongs under and the bytes to write. An empty set has no shard and
+// returns an empty key.
+//
+// It performs no I/O, so a caller holding mu can seal the catalog in place and
+// release the lock before writing. That is what lets CompactCatalog avoid
+// copying the whole catalog purely to get it out from under the lock.
+func (s *PackStore) sealShard(entries map[string]PackEntry) (string, []byte, error) {
 	if len(entries) == 0 {
-		return nil
+		return "", nil, nil
 	}
 
 	plain, err := json.Marshal(entries)
 	if err != nil {
-		return fmt.Errorf("marshal pack index shard: %w", err)
+		return "", nil, fmt.Errorf("marshal pack index shard: %w", err)
 	}
 	sealed, err := sealIndex(plain, s.indexKey)
 	if err != nil {
-		return fmt.Errorf("seal pack index shard: %w", err)
+		return "", nil, fmt.Errorf("seal pack index shard: %w", err)
 	}
 
 	// Name by the plaintext hash so the key is stable regardless of the nonce a
 	// sealed shard carries.
-	key := shardPrefix + core.ComputeHash(plain)
+	return shardPrefix + core.ComputeHash(plain), sealed, nil
+}
+
+// writeShard persists entries as a new immutable shard and returns the key it
+// wrote, or an empty key when there was nothing to write. Two runs that happen
+// to produce identical shards write the same object, which is harmless.
+//
+// The key is returned rather than recomputed by the caller. Deriving it a second
+// time meant marshalling the whole map again, and a caller that derived it
+// differently — from a marshal that failed, say — would name an object that was
+// never written and then delete the shards it was meant to replace.
+func (s *PackStore) writeShard(ctx context.Context, entries map[string]PackEntry) (string, error) {
+	key, sealed, err := s.sealShard(entries)
+	if err != nil || key == "" {
+		return "", err
+	}
+
 	if err := s.ObjectStore.Put(ctx, key, sealed); err != nil {
-		return fmt.Errorf("write pack index shard %s: %w", key, err)
+		return "", fmt.Errorf("write pack index shard %s: %w", key, err)
 	}
 	s.debugf("pack: wrote shard %s with %d entries", key, len(entries))
-	return nil
+	return key, nil
 }
 
 // loadShardsLocked merges every shard into the in-memory catalog and returns
@@ -208,29 +228,45 @@ func (s *PackStore) CompactCatalog(ctx context.Context) (int, error) {
 	// Listing the prefix instead would put a shard written by someone else since
 	// we loaded into the delete set, and we would remove it without ever having
 	// read it.
+	//
+	// The catalog is sealed here, under the same lock, rather than copied out and
+	// marshalled afterwards. Sealing does no I/O, so the lock is held only for the
+	// marshal, and a repository large enough for compaction to matter is exactly
+	// the one whose catalog is expensive to duplicate.
 	s.mu.RLock()
 	absorbed := make([]string, 0, len(s.mergedIndex))
 	for key := range s.mergedIndex {
 		absorbed = append(absorbed, key)
 	}
 	pendingRemoval := s.needsCompaction
-	merged := make(map[string]PackEntry, len(s.catalog))
-	for k, v := range s.catalog {
-		merged[k] = v
+	shouldCompact := len(absorbed) > 1 || pendingRemoval
+	var consolidated string
+	var sealed []byte
+	var err error
+	if shouldCompact {
+		consolidated, sealed, err = s.sealShard(s.catalog)
 	}
 	s.mu.RUnlock()
 
 	// Consolidating a single object gains nothing — but a deletion is only
 	// durable once the index is rewritten, so a pending removal makes the
 	// rewrite necessary rather than merely useful.
-	if len(absorbed) <= 1 && !pendingRemoval {
+	if !shouldCompact {
 		return 0, nil
 	}
-
-	if err := s.writeShard(ctx, merged); err != nil {
+	if err != nil {
 		return 0, err
 	}
-	consolidated := shardPrefix + core.ComputeHash(mustMarshal(merged))
+
+	// An empty catalog has no consolidated shard to write. The inputs are still
+	// removed: every entry they named is gone, which is the deletion this
+	// compaction exists to make durable.
+	if consolidated != "" {
+		if err := s.ObjectStore.Put(ctx, consolidated, sealed); err != nil {
+			return 0, fmt.Errorf("write pack index shard %s: %w", consolidated, err)
+		}
+		s.debugf("pack: wrote consolidated shard %s", consolidated)
+	}
 
 	// Only now remove the inputs. Anything that fails to delete merges to the
 	// same result, so a later compaction reclaims it.
@@ -247,19 +283,12 @@ func (s *PackStore) CompactCatalog(ctx context.Context) (int, error) {
 
 	s.mu.Lock()
 	s.needsCompaction = false
-	s.mergedIndex = map[string]bool{consolidated: true}
+	s.mergedIndex = make(map[string]bool, 1)
+	if consolidated != "" {
+		s.mergedIndex[consolidated] = true
+	}
 	s.mu.Unlock()
 
 	s.debugf("pack: compacted %d index objects into %s", removed, consolidated)
 	return removed, nil
-}
-
-// mustMarshal reproduces the shard key for an already-validated map. The map
-// came from writeShard, which marshalled it successfully a moment earlier.
-func mustMarshal(entries map[string]PackEntry) []byte {
-	data, err := json.Marshal(entries)
-	if err != nil {
-		return nil
-	}
-	return data
 }

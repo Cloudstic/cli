@@ -471,7 +471,7 @@ func (s *PackStore) Flush(ctx context.Context) error {
 	}
 
 	if len(pending) > 0 {
-		if err := s.writeShard(ctx, pending); err != nil {
+		if _, err := s.writeShard(ctx, pending); err != nil {
 			s.mu.Lock()
 			for k, v := range pending {
 				s.pendingShard[k] = v

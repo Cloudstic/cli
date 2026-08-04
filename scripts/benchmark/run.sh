@@ -61,6 +61,20 @@ echo "Building cloudstic binary..."
 go build -o /tmp/cloudstic ./cmd/cloudstic
 export CLOUDSTIC_BIN="/tmp/cloudstic"
 
+# benchreport owns the CSV schema, so the competitive run and the memory sweep
+# cannot drift into two different formats. This harness keeps its own timing:
+# it compares four tools, and a tool that is not installed has to leave a gap
+# rather than abort the comparison.
+go build -o /tmp/benchreport ./internal/cmd/benchreport
+export BENCHREPORT_BIN="/tmp/benchreport"
+BENCH_CSV=${BENCH_CSV:-benchmark-results/run.csv}
+mkdir -p "$(dirname "$BENCH_CSV")"
+rm -f "$BENCH_CSV"
+export BENCH_CSV
+
+# Which tool the next run_bench belongs to. Each benchmark_* function sets it.
+CURRENT_TOOL="cloudstic"
+
 # Ensure benchmark runs are not affected by operator shell defaults.
 # In particular, a pre-set CLOUDSTIC_KMS_KEY_ARN would make `cloudstic init`
 # try AWS KMS even for local/local runs.
@@ -269,6 +283,10 @@ run_bench() {
         fi
         
         printf "| %-30s | %10s s | %10.2f MB | %12s |\n" "$step_name" "$real_time" "$mem_mb" "$repo_added"
+
+        "$BENCHREPORT_BIN" row -out "$BENCH_CSV" -tool "$CURRENT_TOOL" \
+            -op "$step_name" -seconds "$real_time" -peak-mb "$mem_mb" \
+            -repo-delta "$repo_added" || true
         
         if [ -n "$DEBUG_FLAG" ]; then
             echo "  [debug] $step_name stdout:" >&2
@@ -321,6 +339,7 @@ export DUPLICACY_DEFAULT_PASSWORD="$REPO_PASSWORD"
 # Cloudstic
 # ---------------------------------------------------------------------------
 benchmark_cloudstic() {
+    CURRENT_TOOL="cloudstic"
     echo "### Cloudstic"
     print_table_header
     
@@ -388,6 +407,7 @@ benchmark_cloudstic() {
 # Restic
 # ---------------------------------------------------------------------------
 benchmark_restic() {
+    CURRENT_TOOL="restic"
     echo "### Restic"
     if ! command -v restic &> /dev/null; then
         echo "Restic not found, skipping."
@@ -459,6 +479,7 @@ benchmark_restic() {
 # Borg
 # ---------------------------------------------------------------------------
 benchmark_borg() {
+    CURRENT_TOOL="borg"
     echo "### Borg"
     if ! command -v borg &> /dev/null; then
         echo "Borg not found, skipping."
@@ -522,6 +543,7 @@ benchmark_borg() {
 # Duplicacy
 # ---------------------------------------------------------------------------
 benchmark_duplicacy() {
+    CURRENT_TOOL="duplicacy"
     echo "### Duplicacy"
     if ! command -v duplicacy &> /dev/null; then
         echo "Duplicacy not found, skipping."

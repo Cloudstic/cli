@@ -46,9 +46,23 @@ Three layers, in cost order:
   several tree sizes. This is the one that answers "does this grow with the
   repository", which a single measurement cannot: an operation holding a fixed
   working set is fine at any scale, one holding a per-entry structure
-  eventually meets a repository it cannot open. `render-memory.sh` turns its
-  CSV into a Markdown table and charts for a job summary; the `Memory scaling`
-  workflow runs both on demand or on a pull request labelled `benchmark`.
+  eventually meets a repository it cannot open. The `Memory scaling` workflow
+  runs it on demand or on a pull request labelled `benchmark`.
+
+Both scripts write the same CSV schema and render through
+`internal/cmd/benchreport`, which is where the analysis lives:
+
+```bash
+go run ./internal/cmd/benchreport render -in benchmark-results/run.csv -title "Local benchmark"
+```
+
+The split is deliberate. Shell orchestrates — it builds datasets and launches
+cloudstic, restic, borg and duplicacy, which is what shell is for. Everything
+after that is Go: `benchreport run` measures a child process (peak RSS comes
+from the wait4 rusage rather than parsing `/usr/bin/time`, whose flag, label
+and unit all differ between BSD and GNU), `benchreport row` accepts numbers a
+harness measured itself, and `benchreport render` produces the table and
+charts. That half is unit-tested; the same logic in awk and bc was not.
 
 Retention bugs are invisible to `B/op` — see `docs/caching.md` for a worked
 example where the allocation delta understated the cost roughly fivefold.

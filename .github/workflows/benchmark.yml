@@ -1,5 +1,15 @@
 name: Benchmark
 
+# Cloudstic measured on its own terms, on a mixed dataset.
+#
+# Deliberately not compare.sh: that script's dataset exists to be fair across
+# four tools and may change for that reason, which would silently move the
+# numbers tracked here. See scripts/benchmark/cloudstic.sh.
+
+# Two ways in, matching the Memory scaling workflow: dispatch it by hand
+# against any ref, or put the `benchmark` label on a pull request. The same
+# label drives both workflows, so labelling a PR once asks for the whole
+# performance picture rather than half of it.
 on:
   workflow_dispatch:
     inputs:
@@ -8,6 +18,8 @@ on:
         required: false
         default: main
         type: string
+  pull_request:
+    types: [labeled, synchronize]
 
 permissions:
   contents: read
@@ -18,7 +30,13 @@ concurrency:
 
 jobs:
   benchmark:
-    name: Cloudstic local/local benchmark
+    # On a pull request this runs only while the `benchmark` label is on it, so
+    # an unrelated label does not start the job, and pushing more commits to an
+    # already-labelled PR re-measures without another click.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'benchmark')
+    name: Cloudstic local benchmark
     runs-on: macos-latest
     steps:
       - name: Checkout target ref
@@ -36,21 +54,21 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p benchmark-results
-          ./scripts/benchmark/run.sh local local cloudstic | tee benchmark-results/local-local-cloudstic.txt
+          ./scripts/benchmark/cloudstic.sh local | tee benchmark-results/cloudstic.log
 
       - name: Publish summary
         shell: bash
         run: |
           set -euo pipefail
           go run ./internal/cmd/benchreport render \
-            -in benchmark-results/run.csv \
-            -title "Local benchmark" >> "$GITHUB_STEP_SUMMARY"
+            -in benchmark-results/cloudstic.csv \
+            -title "Cloudstic benchmark" >> "$GITHUB_STEP_SUMMARY"
           {
             echo ""
             echo "<details><summary>Run log</summary>"
             echo ""
             echo '```text'
-            cat benchmark-results/local-local-cloudstic.txt
+            cat benchmark-results/cloudstic.log
             echo '```'
             echo ""
             echo "</details>"
@@ -61,7 +79,7 @@ jobs:
       - name: Upload benchmark artifact
         uses: actions/upload-artifact@v7
         with:
-          name: local-local-cloudstic-benchmark
+          name: cloudstic-benchmark
           path: |
-            benchmark-results/local-local-cloudstic.txt
-            benchmark-results/run.csv
+            benchmark-results/cloudstic.log
+            benchmark-results/cloudstic.csv

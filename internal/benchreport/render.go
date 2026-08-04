@@ -26,9 +26,15 @@ func Render(w io.Writer, rep *Report, title string) error {
 			"cannot open.\n\n")
 		renderScalingTable(b, rep)
 	case KindComparison:
-		b.WriteString("Each tool over the same dataset. Times on a shared runner carry several\n" +
-			"percent of noise, so read the column for its order of magnitude rather than\n" +
-			"its last digit.\n\n")
+		if len(rep.Tools()) > 1 {
+			b.WriteString("Each tool over the same dataset. Times on a shared runner carry several\n" +
+				"percent of noise, so read the column for its order of magnitude rather than\n" +
+				"its last digit.\n\n")
+		} else {
+			b.WriteString("One pass over a mixed dataset. Times on a shared runner carry several\n" +
+				"percent of noise, so read them for their order of magnitude rather than\n" +
+				"their last digit; the bytes added are exact.\n\n")
+		}
 		renderComparisonTable(b, rep)
 	}
 
@@ -88,26 +94,46 @@ func renderScalingTable(b *strings.Builder, rep *Report) {
 
 func renderComparisonTable(b *strings.Builder, rep *Report) {
 	tools := rep.Tools()
+	scale := rep.Scales()[0]
+
+	// Repository growth is only shown for a single-tool run. Across tools it
+	// would invite a comparison the number cannot support — each writes a
+	// different format, so "bytes added" is not measuring the same thing twice.
+	withDelta := len(tools) == 1 && rep.hasRepoDelta()
 
 	b.WriteString("| Operation |")
 	for _, t := range tools {
 		fmt.Fprintf(b, " %s |", t)
 	}
+	if withDelta {
+		b.WriteString(" Repo added |")
+	}
 	b.WriteString("\n|---|")
 	for range tools {
+		b.WriteString("---:|")
+	}
+	if withDelta {
 		b.WriteString("---:|")
 	}
 	b.WriteString("\n")
 
 	for _, op := range rep.Operations() {
 		fmt.Fprintf(b, "| `%s` |", op)
+		var delta string
 		for _, t := range tools {
-			row, ok := rep.find(t, op, rep.Scales()[0])
+			row, ok := rep.find(t, op, scale)
 			if !ok {
 				b.WriteString(" - |")
 				continue
 			}
 			fmt.Fprintf(b, " %ss · %s MB |", trim(row.Seconds), trim(row.PeakMB))
+			delta = row.RepoDelta
+		}
+		if withDelta {
+			if delta == "" {
+				delta = "-"
+			}
+			fmt.Fprintf(b, " %s |", delta)
 		}
 		b.WriteString("\n")
 	}

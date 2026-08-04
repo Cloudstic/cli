@@ -39,15 +39,30 @@ Three layers, in cost order:
   Compare runs with `benchstat`; `-benchmem` reports `B/op`, which measures
   allocation *volume* and cannot distinguish memory that is freed from memory
   that is retained.
-- **`scripts/benchmark/run.sh`** — the real binary against other tools
-  (restic, borg, duplicacy), reporting time, peak RSS and repository size at
-  one dataset size.
+- **`scripts/benchmark/cloudstic.sh`** — this product on its own terms, over a
+  mixed dataset: throughput, incremental cost at one and at a thousand changed
+  files, deduplication, and the stored-to-logical ratio. What the `Benchmark`
+  workflow runs.
+- **`scripts/benchmark/compare.sh`** — the same binary against restic, borg and
+  duplicacy. Manual, and needs those tools installed.
+
+  CI does **not** use `compare.sh`, and the split is not cosmetic. Its dataset
+  exists to be fair across four tools and may legitimately change for that
+  reason — which would silently move numbers a trend line is built on. The two
+  share `lib.sh` for measurement mechanics and nothing else; in particular
+  their datasets are separate, which is the whole point.
 - **`scripts/benchmark/memory.sh`** — peak RSS for each operation across
   several tree sizes. This is the one that answers "does this grow with the
   repository", which a single measurement cannot: an operation holding a fixed
   working set is fine at any scale, one holding a per-entry structure
-  eventually meets a repository it cannot open. The `Memory scaling` workflow
-  runs it on demand or on a pull request labelled `benchmark`.
+  eventually meets a repository it cannot open. What the `Memory scaling`
+  workflow runs.
+
+Both workflows trigger the same two ways: dispatched by hand against any ref,
+or by putting the `benchmark` label on a pull request. One label asks for the
+whole performance picture rather than half of it, and `synchronize` means
+pushing to an already-labelled PR re-measures without another click. Neither
+runs unlabelled, because both cost minutes rather than seconds.
 
 Both scripts write the same CSV schema and render through
 `internal/cmd/benchreport`, which is where the analysis lives:

@@ -224,6 +224,59 @@ func TestAppendRowOmitsZeroScale(t *testing.T) {
 	}
 }
 
+// A single-tool run is a self-benchmark, not a comparison, and its prose has to
+// say so — "each tool over the same dataset" reads as a missing column.
+func TestSingleToolRunIsNotDescribedAsAComparison(t *testing.T) {
+	csv := "tool,operation,scale,seconds,peak_mb,repo_delta\ncloudstic,Initial Backup,,0.70,534.4,344.0 MB\n"
+	var b strings.Builder
+	if err := Render(&b, parse(t, csv), "T"); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(b.String(), "Each tool") {
+		t.Errorf("one tool described as a cross-tool comparison:\n%s", b.String())
+	}
+}
+
+// Repository growth is the column that shows deduplication working, so a
+// self-benchmark must surface it.
+func TestSingleToolTableShowsRepoGrowth(t *testing.T) {
+	csv := "tool,operation,scale,seconds,peak_mb,repo_delta\n" +
+		"cloudstic,Deduplicated Backup,,0.54,343.4,40 KB\n"
+	var b strings.Builder
+	if err := Render(&b, parse(t, csv), "T"); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	out := b.String()
+	if !strings.Contains(out, "Repo added") || !strings.Contains(out, "40 KB") {
+		t.Errorf("repository growth missing from a single-tool table:\n%s", out)
+	}
+}
+
+// Across tools the same column would invite a comparison it cannot support:
+// each writes a different format, so "bytes added" is not the same measurement
+// twice.
+func TestComparisonTableOmitsRepoGrowth(t *testing.T) {
+	var b strings.Builder
+	if err := Render(&b, parse(t, comparisonCSV), "T"); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(b.String(), "Repo added") {
+		t.Errorf("repository growth shown across tools, which compares different formats:\n%s", b.String())
+	}
+}
+
+// The memory sweep records no repository growth; its table must not grow an
+// empty column because of it.
+func TestScalingTableHasNoRepoColumn(t *testing.T) {
+	var b strings.Builder
+	if err := Render(&b, parse(t, scalingCSV), "T"); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(b.String(), "Repo added") {
+		t.Errorf("scaling table grew a column it has no data for:\n%s", b.String())
+	}
+}
+
 func lineContaining(t *testing.T, s, want string) string {
 	t.Helper()
 	for _, line := range strings.Split(s, "\n") {

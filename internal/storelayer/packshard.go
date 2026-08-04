@@ -34,32 +34,6 @@ import (
 // See RFC 0018 and docs/compatibility.md.
 const shardPrefix = "index/packmap/"
 
-// packRefInterner keeps the one canonical copy of each pack name while index
-// objects are decoded. It is needed only for the duration of a catalog load:
-// the catalog entries retain the canonical strings after this map is released.
-type packRefInterner map[string]string
-
-func newPackRefInterner(catalog map[string]PackEntry) packRefInterner {
-	refs := make(packRefInterner)
-	for key, entry := range catalog {
-		if ref, ok := refs[entry.PackRef]; ok {
-			entry.PackRef = ref
-			catalog[key] = entry
-			continue
-		}
-		refs[entry.PackRef] = entry.PackRef
-	}
-	return refs
-}
-
-func (i packRefInterner) intern(ref string) string {
-	if existing, ok := i[ref]; ok {
-		return existing
-	}
-	i[ref] = ref
-	return ref
-}
-
 // mergePackIndex decodes one JSON index object directly into catalog. Decoding
 // an entry before deciding whether to insert it keeps duplicate keys harmless,
 // while avoiding an intermediate map proportional to the whole shard.
@@ -69,7 +43,7 @@ func (i packRefInterner) intern(ref string) string {
 // did the stored index describe anything — is answered by the former. Counting
 // insertions instead would read a healthy index as empty whenever the entries it
 // names were already in the catalog, which is what auto-flush leaves behind.
-func mergePackIndex(data []byte, catalog map[string]PackEntry, refs packRefInterner) (int, error) {
+func mergePackIndex(data []byte, catalog *packCatalog) (int, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	start, err := dec.Token()
 	if err != nil {
@@ -95,11 +69,10 @@ func mergePackIndex(data []byte, catalog map[string]PackEntry, refs packRefInter
 			return decoded, err
 		}
 		decoded++
-		if _, exists := catalog[key]; exists {
+		if catalog.Has(key) {
 			continue
 		}
-		entry.PackRef = refs.intern(entry.PackRef)
-		catalog[key] = entry
+		catalog.Set(key, entry)
 	}
 
 	end, err := dec.Token()
@@ -155,14 +128,14 @@ func (s *PackStore) sealShard(entries map[string]PackEntry) (string, []byte, err
 // what marshalling an equivalent map would produce.
 //
 // The caller must hold mu: catalog and keys are both read here.
-func (s *PackStore) sealShardFor(catalog map[string]PackEntry, keys map[string]struct{}) (string, []byte, error) {
+func (s *PackStore) sealShardFor(catalog *packCatalog, keys map[string]struct{}) (string, []byte, error) {
 	if len(keys) == 0 {
 		return "", nil, nil
 	}
 
 	ordered := make([]string, 0, len(keys))
 	for key := range keys {
-		if _, ok := catalog[key]; ok {
+		if catalog.Has(key) {
 			ordered = append(ordered, key)
 		}
 	}
@@ -183,7 +156,8 @@ func (s *PackStore) sealShardFor(catalog map[string]PackEntry, keys map[string]s
 		}
 		buf.Write(name)
 		buf.WriteByte(':')
-		entry, err := json.Marshal(catalog[key])
+		located, _ := catalog.Get(key)
+		entry, err := json.Marshal(located)
 		if err != nil {
 			return "", nil, fmt.Errorf("marshal pack index shard entry: %w", err)
 		}
@@ -230,7 +204,7 @@ func (s *PackStore) writeShard(ctx context.Context, entries map[string]PackEntry
 // A shard that cannot be read fails the caller. Continuing with a partial merge
 // would produce a catalog that looks complete and is not, which is how a prune
 // deletes objects it simply could not see.
-func (s *PackStore) loadShardsLocked(ctx context.Context, refs packRefInterner) (int, error) {
+func (s *PackStore) loadShardsLocked(ctx context.Context) (int, error) {
 	keys, err := s.ObjectStore.List(ctx, shardPrefix)
 	if err != nil {
 		return 0, fmt.Errorf("list pack index shards: %w", err)
@@ -247,7 +221,7 @@ func (s *PackStore) loadShardsLocked(ctx context.Context, refs packRefInterner) 
 			return 0, fmt.Errorf("open pack index shard %s: %w", key, err)
 		}
 
-		decoded, err := mergePackIndex(plain, s.catalog, refs)
+		decoded, err := mergePackIndex(plain, s.catalog)
 		if err != nil {
 			return 0, fmt.Errorf("unmarshal pack index shard %s: %w", key, err)
 		}
@@ -297,7 +271,7 @@ func (s *PackStore) CompactCatalog(ctx context.Context) (int, error) {
 	var sealed []byte
 	var err error
 	if shouldCompact {
-		consolidated, sealed, err = s.sealShard(s.catalog)
+		consolidated, sealed, err = s.sealShardFor(s.catalog, keySetOfCatalog(s.catalog))
 	}
 	s.mu.RUnlock()
 
@@ -344,4 +318,12 @@ func (s *PackStore) CompactCatalog(ctx context.Context) (int, error) {
 
 	s.debugf("pack: compacted %d index objects into %s", removed, consolidated)
 	return removed, nil
+}
+
+// keySetOfCatalog names every entry, for a compaction that seals the whole
+// catalog rather than one flush's worth of it.
+func keySetOfCatalog(c *packCatalog) map[string]struct{} {
+	keys := make(map[string]struct{}, c.Len())
+	c.Each(func(key string, _ PackEntry) { keys[key] = struct{}{} })
+	return keys
 }

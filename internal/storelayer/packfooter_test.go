@@ -192,7 +192,7 @@ func TestPackStore_WritesFooterMatchingCatalog(t *testing.T) {
 			continue
 		}
 		ps.mu.RLock()
-		catalogEntry := ps.catalog[key]
+		catalogEntry := mustCatalogGet(t, ps.catalog, key)
 		ps.mu.RUnlock()
 		if footerEntry != catalogEntry {
 			t.Errorf("%s: footer %+v != catalog %+v", key, footerEntry, catalogEntry)
@@ -372,7 +372,7 @@ func TestPackStore_FooterIsInertToOffsetBasedReaders(t *testing.T) {
 	}
 
 	ps.mu.RLock()
-	entry := ps.catalog["filemeta/a"]
+	entry := mustCatalogGet(t, ps.catalog, "filemeta/a")
 	ps.mu.RUnlock()
 
 	// Read the way a pre-footer client does: raw pack bytes, sliced by the

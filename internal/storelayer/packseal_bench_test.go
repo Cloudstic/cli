@@ -68,14 +68,14 @@ func BenchmarkPackCatalogFlush(b *testing.B) {
 				}
 				entries := benchEntries(n)
 				ps.mu.Lock()
-				ps.catalog = entries
+				ps.catalog = catalogOf(entries)
 				ps.catalogLoaded = true
 				ps.mu.Unlock()
 
 				b.ReportAllocs()
 				for b.Loop() {
 					ps.mu.Lock()
-					ps.catalog = entries
+					ps.catalog = catalogOf(entries)
 					ps.pendingKeys = keySetOf(entries)
 					ps.mu.Unlock()
 					if err := ps.Flush(ctx); err != nil {
@@ -113,7 +113,7 @@ func BenchmarkPackCatalogLoad(b *testing.B) {
 				}
 				entries := benchEntries(n)
 				writer.mu.Lock()
-				writer.catalog = entries
+				writer.catalog = catalogOf(entries)
 				writer.pendingKeys = keySetOf(entries)
 				writer.catalogLoaded = true
 				writer.mu.Unlock()

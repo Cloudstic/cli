@@ -145,7 +145,7 @@ func TestPackStore_DoesNotHealWhenIndexEntriesAreAlreadyKnown(t *testing.T) {
 	// Pre-populate the catalog the way an auto-flush would, so every entry the
 	// stored shard names is already present and none of them is inserted.
 	fresh.mu.Lock()
-	fresh.catalog[key] = entry
+	fresh.catalog.Set(key, entry)
 	fresh.pendingKeys[key] = struct{}{}
 	fresh.mu.Unlock()
 
@@ -188,18 +188,18 @@ func shardEntryFor(t *testing.T, ctx context.Context, mem *storetest.MemStore, k
 	if err != nil {
 		t.Fatalf("list pack index shards under %s: %v", shardPrefix, err)
 	}
-	catalog := make(map[string]PackEntry)
+	catalog := newPackCatalog()
 	for _, k := range keys {
 		data, err := mem.Get(ctx, k)
 		if err != nil {
 			t.Fatalf("read pack index shard %s: %v", k, err)
 		}
-		if _, err := mergePackIndex(data, catalog, newPackRefInterner(catalog)); err != nil {
+		if _, err := mergePackIndex(data, catalog); err != nil {
 			t.Fatalf("merge pack index shard %s: %v", k, err)
 		}
 	}
 
-	entry, ok := catalog[key]
+	entry, ok := catalog.Get(key)
 	if !ok {
 		t.Fatalf("no shard records an entry for %s; the fixture never indexed it", key)
 	}
@@ -211,8 +211,8 @@ func shardEntryFor(t *testing.T, ctx context.Context, mem *storetest.MemStore, k
 func TestMergePackIndex_CountsDecodedEntriesNotInsertions(t *testing.T) {
 	shard := []byte(`{"filemeta/a":{"p":"packs/one","o":0,"l":1},"filemeta/b":{"p":"packs/one","o":1,"l":1}}`)
 
-	catalog := make(map[string]PackEntry)
-	decoded, err := mergePackIndex(shard, catalog, newPackRefInterner(catalog))
+	catalog := newPackCatalog()
+	decoded, err := mergePackIndex(shard, catalog)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func TestMergePackIndex_CountsDecodedEntriesNotInsertions(t *testing.T) {
 
 	// Same object into a catalog that already holds both keys: nothing is
 	// inserted, but the object still described two entries.
-	again, err := mergePackIndex(shard, catalog, newPackRefInterner(catalog))
+	again, err := mergePackIndex(shard, catalog)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,8 +230,8 @@ func TestMergePackIndex_CountsDecodedEntriesNotInsertions(t *testing.T) {
 		t.Fatalf("decoded on re-merge = %d, want 2 (insertions would be 0)", again)
 	}
 
-	empty := make(map[string]PackEntry)
-	if n, err := mergePackIndex([]byte("{}"), empty, newPackRefInterner(empty)); err != nil || n != 0 {
+	empty := newPackCatalog()
+	if n, err := mergePackIndex([]byte("{}"), empty); err != nil || n != 0 {
 		t.Fatalf("empty object: got (%d, %v), want (0, nil)", n, err)
 	}
 }

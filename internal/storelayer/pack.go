@@ -63,6 +63,10 @@ type PackStore struct {
 
 	// LRU cache for recently downloaded packfiles to accelerate Get() and HAMT walks
 	packCache *lru.Cache[string, []byte]
+
+	// Misses per pack since it was last cached, used to decide when reading one
+	// object at a time is no longer the cheaper option. See resolveFromPack.
+	packMisses *lru.Cache[string, int]
 }
 
 // PackEntry represents the location of a small object within a packfile.
@@ -98,6 +102,11 @@ func NewPackStore(inner store.ObjectStore, opts ...PackOption) (*PackStore, erro
 		return nil, fmt.Errorf("pack cache init: %w", err)
 	}
 
+	misses, err := lru.New[string, int](packMissWindow)
+	if err != nil {
+		return nil, fmt.Errorf("pack miss counter init: %w", err)
+	}
+
 	s := &PackStore{
 		ObjectStore:  inner,
 		packBuffer:   new(bytes.Buffer),
@@ -106,6 +115,7 @@ func NewPackStore(inner store.ObjectStore, opts ...PackOption) (*PackStore, erro
 		pendingShard: make(map[string]PackEntry),
 		mergedIndex:  make(map[string]bool),
 		packCache:    cache,
+		packMisses:   misses,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -343,14 +353,106 @@ func (s *PackStore) Get(ctx context.Context, key string) ([]byte, error) {
 		return data, nil
 	}
 
-	s.debugf("get %s: downloading pack %s", key, entry.PackRef)
-	// 4. Download the entire packfile, cache it, and return the slice
+	return s.resolveFromPack(ctx, key, entry)
+}
+
+const (
+	// packPromoteAfter is how many times a pack may be read one object at a time
+	// before the whole thing is fetched and cached instead.
+	//
+	// The two access patterns this sits between were measured (RFC 0023). A scan
+	// -- check, ls, prune -- walks a pack's objects consecutively, so one transfer
+	// serves thousands of reads and ranged reads would be thousands of round
+	// trips instead of one. A scattered read -- restore's write phase, or a cat
+	// of a single file -- touches a pack once or twice, so fetching up to
+	// maxPackSize to return a few hundred bytes is nearly all waste.
+	//
+	// The threshold is asymmetric in what it costs each pattern, which is why it
+	// is not 2. A scan pays at most packPromoteAfter-1 extra small requests per
+	// pack visit -- a few hundred across a repository, against transfers it makes
+	// anyway. A scattered read pays one whole pack per packPromoteAfter misses,
+	// which is bytes, and bytes are what a remote backend bills for.
+	//
+	// Measured on a 51-pack tree, restore's whole-pack transfers against this
+	// value: 2857 at 2, 1419 at 4, 719 at 8, 358 at 16, 179 at 32. Most of the
+	// benefit is captured by 8, and beyond it the round trips traded away start
+	// to matter more than the bytes saved.
+	packPromoteAfter = 8
+
+	// packMissWindow bounds the miss counter. It only has to span the packs in
+	// flight around a given moment, and it must not become a second unbounded
+	// per-repository structure -- which is the thing RFC 0023 is about.
+	packMissWindow = 64
+)
+
+// rangesNatively reports whether a ranged read on s reaches a backend that
+// serves it as a ranged read, rather than one that emulates it by transferring
+// the whole object and slicing.
+//
+// Implementing store.RangeGetter is not the same claim. DebugStore declares the
+// method unconditionally and falls back to a full Get over an inner store that
+// cannot range, which is right for the footer path — there the fallback costs
+// exactly what not ranging would have cost anyway. It is wrong here, because
+// this decides *whether* to range: emulated ranging would transfer the whole
+// pack on every one of the first packPromoteAfter misses and never populate the
+// body cache, which is worse than not ranging at all.
+//
+// So walk to the bottom of the wrapper chain and ask the backend itself.
+func rangesNatively(s store.ObjectStore) bool {
+	for {
+		u, ok := s.(store.Unwrapper)
+		if !ok {
+			break
+		}
+		inner := u.Unwrap()
+		if inner == nil {
+			break
+		}
+		s = inner
+	}
+	_, ok := s.(store.RangeGetter)
+	return ok
+}
+
+// resolveFromPack returns one object from a pack that is not in the body cache.
+//
+// Reading the whole pack to return a slice of it is right when the pack is being
+// scanned and wrong when it is being sampled, and the two are indistinguishable
+// at the first miss. So the first misses are served by ranged reads, and a pack
+// that keeps missing is fetched whole and cached -- see packPromoteAfter.
+func (s *PackStore) resolveFromPack(ctx context.Context, key string, entry PackEntry) ([]byte, error) {
+	ranger, canRange := s.ObjectStore.(store.RangeGetter)
+	canRange = canRange && rangesNatively(s.ObjectStore)
+
+	misses := 0
+	if n, ok := s.packMisses.Get(entry.PackRef); ok {
+		misses = n
+	}
+	misses++
+	s.packMisses.Add(entry.PackRef, misses)
+
+	if canRange && misses < packPromoteAfter {
+		data, err := ranger.GetRange(ctx, entry.PackRef, entry.Offset, entry.Length)
+		if err != nil {
+			return nil, fmt.Errorf("read %s from pack %s: %w", key, entry.PackRef, err)
+		}
+		if int64(len(data)) != entry.Length {
+			return nil, fmt.Errorf("ranged read of %s from pack %s returned %d bytes, want %d",
+				key, entry.PackRef, len(data), entry.Length)
+		}
+		s.debugf("get %s: ranged read from pack %s (len=%d)", key, entry.PackRef, entry.Length)
+		return data, nil
+	}
+
+	s.debugf("get %s: downloading pack %s (miss %d)", key, entry.PackRef, misses)
 	packData, err := s.ObjectStore.Get(ctx, entry.PackRef)
 	if err != nil {
 		return nil, fmt.Errorf("fetch pack %s for key %s: %w", entry.PackRef, key, err)
 	}
 
 	s.packCache.Add(entry.PackRef, packData)
+	// The pack is cached now, so the misses that led here are spent.
+	s.packMisses.Remove(entry.PackRef)
 
 	if int64(len(packData)) < entry.Offset+entry.Length {
 		return nil, fmt.Errorf("downloaded packfile %s is too small", entry.PackRef)

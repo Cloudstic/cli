@@ -140,6 +140,9 @@ func TestPackStore_GetFailsWhenCatalogUnreadable(t *testing.T) {
 func TestPackStore_FailedCatalogLoadPreservesAutoFlushedEntries(t *testing.T) {
 	ctx := context.Background()
 	inner := storetest.NewMemStore()
+	seedPackedRepo(t, inner, "filemeta/preexisting")
+	dropIndexObjects(t, inner)
+
 	malformed := []byte(`{
 		"filemeta/partial":{"p":"packs/missing","o":0,"l":1},
 		"node/bad":{"p":[],"o":1,"l":1}
@@ -182,6 +185,13 @@ func TestPackStore_FailedCatalogLoadPreservesAutoFlushedEntries(t *testing.T) {
 	}
 	if ok, err := ps.Exists(ctx, "filemeta/partial"); err != nil || ok {
 		t.Errorf("Exists(partial) = %v, %v; want false, nil", ok, err)
+	}
+	got, err := ps.Get(ctx, "filemeta/preexisting")
+	if err != nil {
+		t.Fatalf("Get(preexisting) after index recovery: %v", err)
+	}
+	if want := "payload for filemeta/preexisting"; string(got) != want {
+		t.Errorf("Get(preexisting) = %q, want %q", got, want)
 	}
 }
 

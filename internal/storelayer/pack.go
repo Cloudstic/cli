@@ -529,17 +529,21 @@ func (s *PackStore) loadCatalogLocked(ctx context.Context) (err error) {
 	// The monolithic catalog is the pre-shard layout. It is still read so that
 	// repositories written before sharding stay readable, but nothing writes it
 	// any more; compaction folds it into a shard and removes it.
-	if err := s.loadLegacyCatalogLocked(ctx, refs); err != nil {
+	legacyFound, err := s.loadLegacyCatalogLocked(ctx, refs)
+	if err != nil {
 		return err
 	}
-	if _, err := s.loadShardsLocked(ctx, refs); err != nil {
+	shardCount, err := s.loadShardsLocked(ctx, refs)
+	if err != nil {
 		return err
 	}
 
-	// Nothing found. On a fresh repository that is correct; on one that has
-	// packfiles it means the index was lost, so rebuild from the packs' own
-	// footers rather than proceeding as though nothing were packed.
-	if len(s.catalog) == 0 {
+	// No stored index found. On a fresh repository that is correct; on one that
+	// has packfiles it means the index was lost, so rebuild from the packs' own
+	// footers rather than proceeding as though nothing were packed. The decision
+	// must not use len(s.catalog): auto-flush can populate it with local entries
+	// before the remote catalog has ever been loaded.
+	if !legacyFound && shardCount == 0 {
 		if err := s.healMissingCatalogLocked(ctx); err != nil {
 			return err
 		}
@@ -564,18 +568,18 @@ func (s *PackStore) resetCatalogAfterLoadFailureLocked() {
 }
 
 // loadLegacyCatalogLocked merges the pre-shard monolithic catalog, if the
-// repository still has one. mu must be held.
-func (s *PackStore) loadLegacyCatalogLocked(ctx context.Context, refs packRefInterner) error {
+// repository still has one, and reports whether it was found. mu must be held.
+func (s *PackStore) loadLegacyCatalogLocked(ctx context.Context, refs packRefInterner) (bool, error) {
 	// A fresh repository legitimately has no catalog. Establish that up front so
 	// a missing object is never conflated with an unreadable one; backends do
 	// not expose a typed not-found error, so an existence check is the only
 	// reliable way to tell the two apart.
 	exists, err := s.ObjectStore.Exists(ctx, indexPacksKey)
 	if err != nil {
-		return fmt.Errorf("check pack catalog %s: %w", indexPacksKey, err)
+		return false, fmt.Errorf("check pack catalog %s: %w", indexPacksKey, err)
 	}
 	if !exists {
-		return nil
+		return false, nil
 	}
 
 	data, err := s.ObjectStore.Get(ctx, indexPacksKey)
@@ -583,24 +587,24 @@ func (s *PackStore) loadLegacyCatalogLocked(ctx context.Context, refs packRefInt
 		// Tolerate a backend that reports absence only on read (or that raced
 		// with a concurrent write), but treat every other error as fatal.
 		if isNotFoundErr(err) {
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("load pack catalog %s: %w", indexPacksKey, err)
+		return false, fmt.Errorf("load pack catalog %s: %w", indexPacksKey, err)
 	}
 
 	// A catalog written before sealing, or by a repository without encryption,
 	// is plaintext and passes through unchanged.
 	data, err = openIndex(data, s.indexKey)
 	if err != nil {
-		return fmt.Errorf("open pack catalog %s: %w", indexPacksKey, err)
+		return false, fmt.Errorf("open pack catalog %s: %w", indexPacksKey, err)
 	}
 
 	if err := mergePackIndex(data, s.catalog, refs); err != nil {
-		return fmt.Errorf("unmarshal packs catalog: %w", err)
+		return false, fmt.Errorf("unmarshal packs catalog: %w", err)
 	}
 	s.mergedIndex[indexPacksKey] = true
 	s.debugf("merged %d entries from the legacy catalog", len(s.catalog))
-	return nil
+	return true, nil
 }
 
 // isNotFoundErr reports whether err indicates a missing object. Backends do not

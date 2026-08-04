@@ -3,11 +3,114 @@ package storelayer
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sync"
 	"testing"
+	"unsafe"
 
 	"github.com/cloudstic/cli/pkg/store/local"
+	"github.com/cloudstic/cli/pkg/store/storetest"
 )
+
+func TestPackStore_LoadShardsInternsPackRefs(t *testing.T) {
+	ctx := context.Background()
+	base := storetest.NewMemStore()
+
+	writer, err := NewPackStore(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.writeShard(ctx, map[string]PackEntry{
+		"filemeta/a": {PackRef: "packs/shared", Offset: 0, Length: 1},
+		"filemeta/b": {PackRef: "packs/shared", Offset: 1, Length: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.writeShard(ctx, map[string]PackEntry{
+		"node/c": {PackRef: "packs/shared", Offset: 2, Length: 1},
+		"node/d": {PackRef: "packs/other", Offset: 0, Length: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	reader, err := NewPackStore(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reader.ensureCatalogLoaded(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	a := reader.catalog["filemeta/a"].PackRef
+	b := reader.catalog["filemeta/b"].PackRef
+	c := reader.catalog["node/c"].PackRef
+	if unsafe.StringData(a) != unsafe.StringData(b) || unsafe.StringData(a) != unsafe.StringData(c) {
+		t.Fatal("entries sharing a pack ref retained separate string allocations")
+	}
+	if unsafe.StringData(a) == unsafe.StringData(reader.catalog["node/d"].PackRef) {
+		t.Fatal("distinct pack refs unexpectedly share storage")
+	}
+}
+
+func TestMergePackIndex_IsFirstWriterWinsOrderIndependentAndIdempotent(t *testing.T) {
+	first := []byte(`{
+		"filemeta/a":{"p":"packs/one","o":0,"l":1},
+		"filemeta/shared":{"p":"packs/one","o":1,"l":1}
+	}`)
+	second := []byte(`{
+		"node/b":{"p":"packs/two","o":0,"l":1},
+		"filemeta/shared":{"p":"packs/one","o":1,"l":1}
+	}`)
+
+	merge := func(parts ...[]byte) map[string]PackEntry {
+		t.Helper()
+		catalog := make(map[string]PackEntry)
+		refs := newPackRefInterner(catalog)
+		for _, part := range parts {
+			if err := mergePackIndex(part, catalog, refs); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return catalog
+	}
+
+	forward := merge(first, second)
+	reverse := merge(second, first)
+	if !reflect.DeepEqual(forward, reverse) {
+		t.Fatalf("merge depends on shard order:\nforward: %#v\nreverse: %#v", forward, reverse)
+	}
+	if twice := merge(first, second, first, second); !reflect.DeepEqual(forward, twice) {
+		t.Fatalf("merge is not idempotent:\nonce: %#v\ntwice: %#v", forward, twice)
+	}
+
+	winner := PackEntry{PackRef: "packs/winner", Offset: 7, Length: 9}
+	catalog := map[string]PackEntry{"filemeta/shared": winner}
+	if err := mergePackIndex(first, catalog, newPackRefInterner(catalog)); err != nil {
+		t.Fatal(err)
+	}
+	if got := catalog["filemeta/shared"]; got != winner {
+		t.Fatalf("later shard replaced the first entry: got %#v, want %#v", got, winner)
+	}
+}
+
+func TestMergePackIndex_RejectsMalformedInput(t *testing.T) {
+	tests := map[string]string{
+		"empty":          "",
+		"not an object":  `[]`,
+		"truncated":      `{"filemeta/a":{"p":"packs/one","o":0,"l":1}`,
+		"bad entry type": `{"filemeta/a":{"p":[],"o":0,"l":1}}`,
+		"trailing value": `{} {}`,
+		"trailing junk":  `{} x`,
+	}
+	for name, input := range tests {
+		t.Run(name, func(t *testing.T) {
+			catalog := make(map[string]PackEntry)
+			if err := mergePackIndex([]byte(input), catalog, newPackRefInterner(catalog)); err == nil {
+				t.Fatal("merge succeeded for malformed input")
+			}
+		})
+	}
+}
 
 // The race the shard layout exists to remove: two writers sharing a repository.
 //

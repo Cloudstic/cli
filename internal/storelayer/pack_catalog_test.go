@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/cloudstic/cli/pkg/store"
 	"github.com/cloudstic/cli/pkg/store/local"
+	"github.com/cloudstic/cli/pkg/store/storetest"
 )
 
 // faultyCatalogStore fails reads of the pack catalog a bounded number of times,
@@ -129,6 +131,67 @@ func TestPackStore_GetFailsWhenCatalogUnreadable(t *testing.T) {
 
 	if _, err := ps.Get(ctx, "filemeta/a"); err == nil {
 		t.Fatal("Get succeeded; want an error when the catalog is unreadable")
+	}
+}
+
+// Auto-flush adds authoritative local entries before the stored catalog is
+// loaded. A later load failure must discard only streamed remote entries: the
+// local objects remain readable without depending on an unrelated bad shard.
+func TestPackStore_FailedCatalogLoadPreservesAutoFlushedEntries(t *testing.T) {
+	ctx := context.Background()
+	inner := storetest.NewMemStore()
+	seedPackedRepo(t, inner, "filemeta/preexisting")
+	dropIndexObjects(t, inner)
+
+	malformed := []byte(`{
+		"filemeta/partial":{"p":"packs/missing","o":0,"l":1},
+		"node/bad":{"p":[],"o":1,"l":1}
+	}`)
+	if err := inner.Put(ctx, shardPrefix+"malformed", malformed); err != nil {
+		t.Fatal(err)
+	}
+
+	ps := newPackStoreT(t, inner)
+	payload := make([]byte, maxObjectSize)
+	const firstKey = "chunk/local-0"
+	for i := 0; i < maxPackSize/maxObjectSize; i++ {
+		key := "chunk/local-" + strconv.Itoa(i)
+		if err := ps.Put(ctx, key, payload); err != nil {
+			t.Fatalf("put %s: %v", key, err)
+		}
+	}
+
+	assertLocalReadable := func() {
+		t.Helper()
+		if got, err := ps.Get(ctx, firstKey); err != nil || len(got) != len(payload) {
+			t.Errorf("Get(local) = %d bytes, %v; want %d bytes, nil", len(got), err, len(payload))
+		}
+		if ok, err := ps.Exists(ctx, firstKey); err != nil || !ok {
+			t.Errorf("Exists(local) = %v, %v; want true, nil", ok, err)
+		}
+		if size, err := ps.Size(ctx, firstKey); err != nil || size != int64(len(payload)) {
+			t.Errorf("Size(local) = %d, %v; want %d, nil", size, err, len(payload))
+		}
+	}
+	assertLocalReadable()
+
+	if _, err := ps.List(ctx, "filemeta/"); err == nil {
+		t.Fatal("List succeeded despite the malformed shard")
+	}
+	assertLocalReadable()
+
+	if err := inner.Delete(ctx, shardPrefix+"malformed"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := ps.Exists(ctx, "filemeta/partial"); err != nil || ok {
+		t.Errorf("Exists(partial) = %v, %v; want false, nil", ok, err)
+	}
+	got, err := ps.Get(ctx, "filemeta/preexisting")
+	if err != nil {
+		t.Fatalf("Get(preexisting) after index recovery: %v", err)
+	}
+	if want := "payload for filemeta/preexisting"; string(got) != want {
+		t.Errorf("Get(preexisting) = %q, want %q", got, want)
 	}
 }
 

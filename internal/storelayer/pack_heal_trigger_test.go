@@ -2,9 +2,11 @@ package storelayer
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/pkg/store"
 	"github.com/cloudstic/cli/pkg/store/storetest"
 )
 
@@ -96,6 +98,34 @@ func TestPackStore_HealsWhenShardsDescribeNothing(t *testing.T) {
 	}
 }
 
+// listSpyStore records the prefixes listed through it. Whether the heal ran is
+// otherwise invisible from outside: it is the only thing in a plain Get that
+// lists packPrefix, and on a repository whose packs are intact it would repair
+// nothing and return no error, so its effect cannot be observed in the result.
+type listSpyStore struct {
+	store.ObjectStore
+	mu       sync.Mutex
+	prefixes []string
+}
+
+func (s *listSpyStore) List(ctx context.Context, prefix string) ([]string, error) {
+	s.mu.Lock()
+	s.prefixes = append(s.prefixes, prefix)
+	s.mu.Unlock()
+	return s.ObjectStore.List(ctx, prefix)
+}
+
+func (s *listSpyStore) listed(prefix string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, p := range s.prefixes {
+		if p == prefix {
+			return true
+		}
+	}
+	return false
+}
+
 // The case the entry count exists to distinguish from an empty index: a healthy
 // index whose keys are all already in the catalog because Put's auto-flush put
 // them there. Counting insertions rather than decoded entries would read this as
@@ -105,66 +135,75 @@ func TestPackStore_DoesNotHealWhenIndexEntriesAreAlreadyKnown(t *testing.T) {
 	mem := storetest.NewMemStore()
 
 	key, payload := seedPackedObject(t, ctx, mem)
+	entry := shardEntryFor(t, ctx, mem, key)
 
-	// Strip the footers so a heal, if one were triggered, could not quietly
-	// succeed and hide the misfire. A footerless pack makes healMissingCatalog
-	// fail loudly instead.
-	packs, err := mem.List(ctx, packPrefix)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(packs) == 0 {
-		t.Fatal("expected at least one pack")
-	}
-	for _, ref := range packs {
-		data, err := mem.Get(ctx, ref)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := mem.Put(ctx, ref, data[:len(data)/2]); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	fresh, err := NewPackStore(mem)
+	spy := &listSpyStore{ObjectStore: mem}
+	fresh, err := NewPackStore(spy)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Pre-populate the catalog the way an auto-flush would, so every entry the
 	// stored shard names is already present and none of them is inserted.
-	entry, err := shardEntryFor(ctx, mem, key)
-	if err != nil {
-		t.Fatal(err)
-	}
 	fresh.mu.Lock()
 	fresh.catalog[key] = entry
 	fresh.pendingShard[key] = entry
 	fresh.mu.Unlock()
 
-	if _, err := fresh.Get(ctx, key); err != nil {
-		t.Fatalf("Get healed (and failed) on a repository whose index was intact: %v", err)
+	// Read a key the catalog does not hold, so the load actually runs rather
+	// than being short-circuited by the seeded entry.
+	if _, err := fresh.Get(ctx, "filemeta/"+core.ComputeHash([]byte("absent"))); err == nil {
+		t.Fatal("expected a miss for an object that was never stored")
 	}
-	_ = payload
+
+	if spy.listed(packPrefix) {
+		t.Errorf("the heal ran on a repository whose index was intact: listed %q", packPrefix)
+	}
+
+	fresh.mu.RLock()
+	loaded := fresh.catalogLoaded
+	fresh.mu.RUnlock()
+	if !loaded {
+		t.Error("catalog did not finish loading")
+	}
+
+	got, err := fresh.Get(ctx, key)
+	if err != nil {
+		t.Fatalf("Get on the indexed key failed: %v", err)
+	}
+	if string(got) != string(payload) {
+		t.Fatalf("got %q, want %q", got, payload)
+	}
 }
 
 // shardEntryFor reads the stored shards and returns the entry recorded for key,
 // so a test can seed the catalog with exactly what the index already says.
-func shardEntryFor(ctx context.Context, mem *storetest.MemStore, key string) (PackEntry, error) {
+//
+// It fails the test directly rather than returning an error, matching the other
+// helpers here: every caller could only pass the error to t.Fatal, and naming
+// the shard at the point of failure is what makes a broken fixture diagnosable.
+func shardEntryFor(t *testing.T, ctx context.Context, mem *storetest.MemStore, key string) PackEntry {
+	t.Helper()
+
 	keys, err := mem.List(ctx, shardPrefix)
 	if err != nil {
-		return PackEntry{}, err
+		t.Fatalf("list pack index shards under %s: %v", shardPrefix, err)
 	}
 	catalog := make(map[string]PackEntry)
 	for _, k := range keys {
 		data, err := mem.Get(ctx, k)
 		if err != nil {
-			return PackEntry{}, err
+			t.Fatalf("read pack index shard %s: %v", k, err)
 		}
 		if _, err := mergePackIndex(data, catalog, newPackRefInterner(catalog)); err != nil {
-			return PackEntry{}, err
+			t.Fatalf("merge pack index shard %s: %v", k, err)
 		}
 	}
-	return catalog[key], nil
+
+	entry, ok := catalog[key]
+	if !ok {
+		t.Fatalf("no shard records an entry for %s; the fixture never indexed it", key)
+	}
+	return entry
 }
 
 // mergePackIndex reports what the object described, not what it inserted. The

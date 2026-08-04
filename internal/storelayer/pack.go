@@ -56,10 +56,20 @@ type PackStore struct {
 	// Key sealing the catalog and pack footers; empty leaves them in plaintext.
 	indexKey []byte
 
-	// Entries added since the last shard was written. Flushed as one immutable
-	// shard rather than merged into a shared object, so concurrent writers
-	// cannot erase each other. See packshard.go.
-	pendingShard map[string]PackEntry
+	// Keys added to the catalog since the last shard was written, flushed as one
+	// immutable shard rather than merged into a shared object so that concurrent
+	// writers cannot erase each other. See packshard.go.
+	//
+	// A key set rather than a second copy of the entries: the values are already
+	// in catalog, and holding them twice cost a whole duplicate of a run's worth
+	// of entries -- the largest single allocation in a backup. The strings are
+	// shared with catalog's keys, so an entry costs a header and a map slot.
+	//
+	// It also records which catalog entries are authoritative. loadCatalogLocked
+	// streams remote entries straight into catalog, so a failed load can leave
+	// entries behind; these are the ones that survive it, because nothing but a
+	// local write or a footer rebuild puts a key here.
+	pendingKeys map[string]struct{}
 
 	// LRU cache for recently downloaded packfiles to accelerate Get() and HAMT walks
 	packCache *lru.Cache[string, []byte]
@@ -108,14 +118,14 @@ func NewPackStore(inner store.ObjectStore, opts ...PackOption) (*PackStore, erro
 	}
 
 	s := &PackStore{
-		ObjectStore:  inner,
-		packBuffer:   new(bytes.Buffer),
-		packKeys:     make(map[string]PackEntry),
-		catalog:      make(map[string]PackEntry),
-		pendingShard: make(map[string]PackEntry),
-		mergedIndex:  make(map[string]bool),
-		packCache:    cache,
-		packMisses:   misses,
+		ObjectStore: inner,
+		packBuffer:  new(bytes.Buffer),
+		packKeys:    make(map[string]PackEntry),
+		catalog:     make(map[string]PackEntry),
+		pendingKeys: make(map[string]struct{}),
+		mergedIndex: make(map[string]bool),
+		packCache:   cache,
+		packMisses:  misses,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -224,9 +234,9 @@ func (s *PackStore) discardPack(packRef string) {
 			delete(s.catalog, key)
 		}
 	}
-	for key, entry := range s.pendingShard {
-		if entry.PackRef == packRef {
-			delete(s.pendingShard, key)
+	for key := range s.pendingKeys {
+		if entry, ok := s.catalog[key]; !ok || entry.PackRef == packRef {
+			delete(s.pendingKeys, key)
 		}
 	}
 	s.packCache.Remove(packRef)
@@ -297,7 +307,7 @@ func (s *PackStore) prepareFlushLocked() (string, []byte, error) {
 	for key, entry := range s.packKeys {
 		entry.PackRef = packRef
 		s.catalog[key] = entry
-		s.pendingShard[key] = entry
+		s.pendingKeys[key] = struct{}{}
 	}
 
 	// Reset active buffer
@@ -550,36 +560,43 @@ func (s *PackStore) Flush(ctx context.Context) error {
 	// Take this flush's entries. They are written as their own immutable shard
 	// rather than merged into a shared object, so a concurrent writer cannot
 	// erase them. See packshard.go.
-	pending := s.pendingShard
-	s.pendingShard = make(map[string]PackEntry)
+	pending := s.pendingKeys
+	s.pendingKeys = make(map[string]struct{})
 	totalEntries := len(s.catalog)
+	// Seal here, under the lock that already guards catalog, so the shard is
+	// rendered straight from it. Materialising the pending entries into a map
+	// first would reinstate the duplicate this change removes — pending is a
+	// whole run's worth of entries by the time a backup flushes.
+	shardRef, shardData, sealErr := s.sealShardFor(s.catalog, pending)
 	s.mu.Unlock()
+
+	restorePending := func() {
+		s.mu.Lock()
+		for k := range pending {
+			s.pendingKeys[k] = struct{}{}
+		}
+		s.mu.Unlock()
+	}
 
 	if packRef != "" {
 		if err := s.ObjectStore.Put(ctx, packRef, packData); err != nil {
-			// Restore the entries that belong to packs already written, and
-			// drop the ones that belong to this pack — it does not exist, so a
+			// Restore the keys that belong to packs already written; discardPack
+			// drops the ones belonging to this pack, which does not exist, so a
 			// shard naming it would point every one of its objects at nothing.
-			s.mu.Lock()
-			for k, v := range pending {
-				if v.PackRef != packRef {
-					s.pendingShard[k] = v
-				}
-			}
-			s.mu.Unlock()
+			restorePending()
 			s.discardPack(packRef)
 			return fmt.Errorf("flush pack %s: %w", packRef, err)
 		}
 	}
 
-	if len(pending) > 0 {
-		if _, err := s.writeShard(ctx, pending); err != nil {
-			s.mu.Lock()
-			for k, v := range pending {
-				s.pendingShard[k] = v
-			}
-			s.mu.Unlock()
-			return err
+	if sealErr != nil {
+		restorePending()
+		return sealErr
+	}
+	if shardRef != "" {
+		if err := s.ObjectStore.Put(ctx, shardRef, shardData); err != nil {
+			restorePending()
+			return fmt.Errorf("write pack index shard %s: %w", shardRef, err)
 		}
 		s.debugf("pack: flushed %d new entries (%d total)", len(pending), totalEntries)
 	}
@@ -618,7 +635,7 @@ func (s *PackStore) loadCatalogLocked(ctx context.Context) (err error) {
 
 	// Streaming writes directly into s.catalog. If any part of the load fails,
 	// remove those uncommitted remote entries before releasing mu while keeping
-	// authoritative entries tracked in pendingShard.
+	// authoritative entries named by pendingKeys.
 	defer func() {
 		if err != nil {
 			s.resetCatalogAfterLoadFailureLocked()
@@ -664,12 +681,14 @@ func (s *PackStore) loadCatalogLocked(ctx context.Context) (err error) {
 
 // resetCatalogAfterLoadFailureLocked discards entries streamed from an index
 // that did not load completely while retaining independently authoritative
-// entries in pendingShard, whether locally written or recovered from a pack
+// entries named by pendingKeys, whether locally written or recovered from a pack
 // footer. mu must be held.
 func (s *PackStore) resetCatalogAfterLoadFailureLocked() {
-	catalog := make(map[string]PackEntry, len(s.pendingShard))
-	for key, entry := range s.pendingShard {
-		catalog[key] = entry
+	catalog := make(map[string]PackEntry, len(s.pendingKeys))
+	for key := range s.pendingKeys {
+		if entry, ok := s.catalog[key]; ok {
+			catalog[key] = entry
+		}
 	}
 	s.catalog = catalog
 	s.mergedIndex = make(map[string]bool)

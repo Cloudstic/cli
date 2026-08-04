@@ -286,7 +286,7 @@ func (s *PackStore) rebuildFromPacksLocked(ctx context.Context, packRefs []strin
 				s.catalog[key] = entry
 				// Recovered entries are pending like any other, so the next
 				// flush persists them and the repair is paid for once.
-				s.pendingShard[key] = entry
+				s.pendingKeys[key] = struct{}{}
 				recovered++
 			}
 		}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 
 	"github.com/cloudstic/cli/internal/core"
 )
@@ -143,6 +144,58 @@ func (s *PackStore) sealShard(entries map[string]PackEntry) (string, []byte, err
 
 	// Name by the plaintext hash so the key is stable regardless of the nonce a
 	// sealed shard carries.
+	return shardPrefix + core.ComputeHash(plain), sealed, nil
+}
+
+// sealShardFor renders a shard containing exactly the catalog entries named by
+// keys, without building a map of them first.
+//
+// json.Marshal of a map sorts its keys, so the entries are sorted here too and
+// the bytes — and therefore the content-addressed shard key — are identical to
+// what marshalling an equivalent map would produce.
+//
+// The caller must hold mu: catalog and keys are both read here.
+func (s *PackStore) sealShardFor(catalog map[string]PackEntry, keys map[string]struct{}) (string, []byte, error) {
+	if len(keys) == 0 {
+		return "", nil, nil
+	}
+
+	ordered := make([]string, 0, len(keys))
+	for key := range keys {
+		if _, ok := catalog[key]; ok {
+			ordered = append(ordered, key)
+		}
+	}
+	if len(ordered) == 0 {
+		return "", nil, nil
+	}
+	sort.Strings(ordered)
+
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	for i, key := range ordered {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		name, err := json.Marshal(key)
+		if err != nil {
+			return "", nil, fmt.Errorf("marshal pack index shard key: %w", err)
+		}
+		buf.Write(name)
+		buf.WriteByte(':')
+		entry, err := json.Marshal(catalog[key])
+		if err != nil {
+			return "", nil, fmt.Errorf("marshal pack index shard entry: %w", err)
+		}
+		buf.Write(entry)
+	}
+	buf.WriteByte('}')
+
+	plain := buf.Bytes()
+	sealed, err := sealIndex(plain, s.indexKey)
+	if err != nil {
+		return "", nil, fmt.Errorf("seal pack index shard: %w", err)
+	}
 	return shardPrefix + core.ComputeHash(plain), sealed, nil
 }
 

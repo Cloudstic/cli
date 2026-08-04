@@ -146,7 +146,7 @@ func TestPackStore_DoesNotHealWhenIndexEntriesAreAlreadyKnown(t *testing.T) {
 	// stored shard names is already present and none of them is inserted.
 	fresh.mu.Lock()
 	fresh.catalog[key] = entry
-	fresh.pendingShard[key] = entry
+	fresh.pendingKeys[key] = struct{}{}
 	fresh.mu.Unlock()
 
 	// Read a key the catalog does not hold, so the load actually runs rather

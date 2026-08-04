@@ -114,6 +114,61 @@ pretending it finishes the job.
 Point lookups — `Get`, `Exists`, `Size` — are the only sites that a bounded
 cache serves directly. Every other site wants a full pass.
 
+### Measured access locality
+
+The first version of this document listed the miss rate as unmeasured and the
+central open question. It has since been measured, and the answer changes the
+proposal.
+
+Method: a throwaway build records the pack each catalog resolution lands in, in
+order, so an LRU of any size can be simulated offline from one run. `maxPackSize`
+was lowered to 512 KB so a 50,000-file tree produces 51 packs rather than 4 —
+with only 4 packs every cache holds everything and the curve is invisible. Cache
+sizes are therefore best read as a fraction of the repository's packs.
+
+Miss rate, which is exactly the rate of extra footer reads:
+
+| operation | lookups | LRU 1 | 2 | 4 | 8 | 16 | 32 |
+|---|---|---|---|---|---|---|---|
+| check | 127,789 | 20.41% | 13.35% | 10.12% | 5.18% | 0.40% | 0.25% |
+| ls | 59,597 | 29.47% | 16.16% | 12.09% | 7.02% | 0.84% | 0.52% |
+| prune | 118,693 | 21.98% | 14.37% | 10.90% | 5.57% | 0.43% | 0.26% |
+| restore | 109,597 | 57.21% | 50.86% | 46.91% | 39.39% | 28.04% | 9.98% |
+
+`check`, `ls` and `prune` behave: caching under a third of the packs costs well
+under 1% extra reads. `restore` does not. It still misses 28% of the time with 16
+of 51 packs cached, and 10% with 32 — nearly two thirds of the repository
+resident. At 109,597 lookups that is ~30,700 extra reads, which on a remote
+backend is minutes of added latency to save tens of megabytes.
+
+Two follow-ups locate the cause exactly.
+
+**Reordering the same lookups by pack costs 0.047%** — 51 reads, each pack
+exactly once, optimal. The lookups have perfect locality available; only the
+order destroys it.
+
+**Splitting the trace in half separates the phases**, and they could hardly be
+more different:
+
+| restore phase | miss rate at LRU 16 |
+|---|---|
+| metadata fetch | 0.62% |
+| write | 55.47% |
+
+So the concurrent metadata fetch is fine — refs arrive off the HAMT walk in the
+order backup wrote them, which is pack order. It is `topoSort`'s parent-before-
+child ordering in the write phase that scatters access across every pack.
+
+Both numbers reproduce across runs (39.39/28.04/9.98 against 39.21/28.01/9.91 at
+LRU 8/16/32), so this is structure, not noise.
+
+**The lever is restore's write order, not the cache size.** And there is room to
+move it: the topological constraint is that a folder precedes its contents, but a
+regular file is a leaf — nothing is ever restored *into* a file. If that holds
+across every source model, folders can be ordered topologically and files then
+ordered by pack, satisfying both. That should be confirmed against `pkg/source`
+before being relied on; it is stated here as the direction, not as a result.
+
 ## Goals
 
 - Peak memory for `check`, `restore`, `diff`, `ls` and `cat` is bounded by their
@@ -193,6 +248,46 @@ non-goal above.
 - Eviction must never lose a locally-written entry that has not yet been
   persisted to a shard, which is why §1 keeps those separate from the LRU.
 
+### 5. Restore writes in pack order
+
+Measured locality says the bound is not what decides restore's cost — the write
+order is. `topoSort` orders parent-before-child, which bears no relation to pack
+layout, and that alone takes restore from 0.62% misses in its metadata phase to
+55.47% in its write phase.
+
+The topological constraint is narrower than the current ordering assumes. A
+folder must precede its contents, but a regular file is a leaf: nothing is ever
+restored into a file. If that holds across every source model (open question 2),
+then ordering folders topologically and files by pack satisfies both constraints,
+and the same lookups cost 0.047% instead of 28%.
+
+This is worth doing **independently of the bound**, and probably before it — see
+the note below on what a body-cache miss currently costs.
+
+### 6. A prerequisite this uncovered
+
+`PackStore.Get` resolves an object by downloading the **whole packfile** and
+caching it in a 4-entry LRU:
+
+```go
+packData, err := s.ObjectStore.Get(ctx, entry.PackRef)
+```
+
+There is no ranged read on this path, although `readPackFooter` already uses the
+optional `RangeGetter` interface for exactly this reason. So an access pattern
+that misses the 4-pack body cache re-transfers up to `maxPackSize` to retrieve
+one small object.
+
+At the measured repository this is invisible — 4 packs of 8 MB, so the cache
+holds everything. It stops being invisible as soon as a repository has more packs
+than the cache, which is where scattered access and whole-pack downloads
+multiply: on a remote backend, egress proportional to lookups × pack size.
+
+That is a throughput and cost problem in its own right, not a memory one, and it
+is tracked separately. It is named here because it changes the priority: §5 helps
+today, under the existing unbounded catalog, and helps more once misses are
+served by ranged reads.
+
 ## Alternatives considered
 
 **Leave it, and cap repository size in documentation.** Rejected: the failure is
@@ -210,17 +305,23 @@ S3 or B2.
 
 ## Open questions
 
-1. **What is the miss rate in practice?** For `restore` of a whole snapshot the
-   working set is everything, so a bounded cache is pure overhead unless access
-   order has pack locality. Backup writes objects in walk order, so a
-   subsequent restore in the same order may have excellent locality — this is
-   measurable and nobody has measured it.
-2. **§2(a) or §2(b)?** Depends entirely on 1.
+1. ~~What is the miss rate in practice?~~ **Answered** — see "Measured access
+   locality". `check`, `ls` and `prune` are under 1% at a third of packs cached;
+   `restore` is 28% at the same size, entirely because of its write-phase
+   ordering.
+2. **Is a regular file ever a parent?** The reordering in §5 depends on it never
+   being one, across every source model — local, gdrive, onedrive, sftp. Google
+   Drive shortcuts are the case worth checking hardest.
 3. **What is the bound, and is it configurable?** A fixed pack count is simplest.
-   A byte budget is more honest given entries-per-pack varies with object size.
+   A byte budget is more honest given entries-per-pack varies with object size,
+   and the worst case — a pack full of the smallest packable objects — is roughly
+   twice the typical footer.
 4. **Does `prune` regress?** It streams instead of reading one resident map. On a
    remote backend that could be many more requests. It must be measured, not
    assumed, before this ships.
+5. **Does reordering cost restore anything else?** Grouping writes by pack means
+   touching many output directories in an interleaved fashion, which trades store
+   locality for filesystem locality. Probably a good trade, but it is a trade.
 
 ## Testing strategy
 
@@ -237,10 +338,12 @@ S3 or B2.
 
 ## Rollout plan
 
-1. Prototype §2(b) behind a build tag or an unexported option, purely to measure
-   the miss rate and the resulting request count for `restore`, `check` and
-   `prune` on a repository large enough to matter. No API changes.
-2. Decide §2 on those numbers. Record the decision in this RFC.
+1. ~~Prototype to measure the miss rate.~~ **Done** — recorded above. The
+   instrumentation was throwaway and is not proposed for merge.
+2. Confirm open question 2, then reorder restore's write phase (§5). This stands
+   on its own: `PackStore` keeps only 4 packfiles in its body cache and
+   re-downloads a whole packfile on a miss (§6), so scattered access already
+   costs transfer today, under the unbounded catalog.
 3. Convert the enumeration sites to a streaming pass. This is independently
    useful and can merge before the cache changes.
 4. Introduce the bound.

@@ -26,7 +26,32 @@ golangci-lint run ./...
 
 # Format
 go fmt ./...
+
+# Peak memory as a function of repository size (minutes, not seconds)
+SIZES="5000 20000" ./scripts/benchmark/memory.sh
 ```
+
+### Performance measurement
+
+Three layers, in cost order:
+
+- **Go benchmarks** (`*_bench_test.go`) — allocation and time per operation.
+  Compare runs with `benchstat`; `-benchmem` reports `B/op`, which measures
+  allocation *volume* and cannot distinguish memory that is freed from memory
+  that is retained.
+- **`scripts/benchmark/run.sh`** — the real binary against other tools
+  (restic, borg, duplicacy), reporting time, peak RSS and repository size at
+  one dataset size.
+- **`scripts/benchmark/memory.sh`** — peak RSS for each operation across
+  several tree sizes. This is the one that answers "does this grow with the
+  repository", which a single measurement cannot: an operation holding a fixed
+  working set is fine at any scale, one holding a per-entry structure
+  eventually meets a repository it cannot open. `render-memory.sh` turns its
+  CSV into a Markdown table and charts for a job summary; the `Memory scaling`
+  workflow runs both on demand or on a pull request labelled `benchmark`.
+
+Retention bugs are invisible to `B/op` — see `docs/caching.md` for a worked
+example where the allocation delta understated the cost roughly fivefold.
 
 ### E2E Test Modes
 

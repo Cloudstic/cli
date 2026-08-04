@@ -26,6 +26,7 @@ KEEP=${KEEP:-0} # keep scratch dirs for inspection
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 CLOUDSTIC_BIN="$REPO_ROOT/bin/cloudstic"
+BENCHREPORT="$REPO_ROOT/bin/benchreport"
 PASSWORD=${BENCH_REPO_PASSWORD:-benchmark-password}
 
 WORK=$(mktemp -d -t cloudstic-mem-XXXXXX)
@@ -33,60 +34,21 @@ cleanup() { [ "$KEEP" = "1" ] || rm -rf "$WORK"; }
 trap cleanup EXIT
 
 # ---------------------------------------------------------------------------
-# Peak RSS, portably
+# Measurement
 # ---------------------------------------------------------------------------
-
-# time(1) reports maximum resident set size in different units and under
-# different labels per platform: BSD/macOS `-l` gives bytes, GNU `-v` gives
-# kilobytes. Normalising here keeps the CSV in one unit.
-detect_time() {
-    if /usr/bin/time -l true >/dev/null 2>&1; then
-        echo "bsd"
-    elif /usr/bin/time -v true >/dev/null 2>&1; then
-        echo "gnu"
-    else
-        echo "none"
-    fi
-}
-TIME_FLAVOUR=$(detect_time)
-
-if [ "$TIME_FLAVOUR" = "none" ]; then
-    echo "Error: need BSD (/usr/bin/time -l) or GNU (/usr/bin/time -v) time." >&2
-    echo "On Debian/Ubuntu: apt-get install time" >&2
-    exit 1
-fi
 
 # measure <operation> <files> <command...>
 #
-# Appends one CSV row. A failing command is fatal: a partial run would produce
-# a curve with a hole in it, which is worse than no curve at all.
+# Delegates to benchreport, which takes peak RSS from the wait4 rusage the
+# kernel already returns rather than parsing /usr/bin/time — whose flag, label
+# and unit all differ between BSD and GNU, and which is absent on a minimal
+# Linux image. It appends the CSV row and echoes a console line.
+#
+# A failing command is fatal: a curve with a hole in it is worse than no curve.
 measure() {
     local op=$1 files=$2
     shift 2
-    local err out
-    err=$(mktemp)
-    out=$(mktemp)
-
-    local seconds peak_kb peak_mb
-    if [ "$TIME_FLAVOUR" = "bsd" ]; then
-        /usr/bin/time -l "$@" >"$out" 2>"$err" || { cat "$err" >&2; exit 1; }
-        peak_kb=$(( $(grep "maximum resident set size" "$err" | awk '{print $1}') / 1024 ))
-        seconds=$(grep -E "real" "$err" | tail -1 | awk '{print $1}')
-    else
-        /usr/bin/time -v "$@" >"$out" 2>"$err" || { cat "$err" >&2; exit 1; }
-        peak_kb=$(grep "Maximum resident set size" "$err" | awk '{print $NF}')
-        # GNU prints h:mm:ss or m:ss.ss; normalise to seconds.
-        seconds=$(grep "Elapsed (wall clock)" "$err" | awk '{print $NF}' | awk -F: '
-            {  if (NF == 3) print $1 * 3600 + $2 * 60 + $3;
-               else if (NF == 2) print $1 * 60 + $2;
-               else print $1 }')
-    fi
-    peak_mb=$(echo "scale=1; $peak_kb / 1024" | bc)
-
-    printf '%s,%d,%s,%s\n' "$op" "$files" "$peak_mb" "$seconds" >>"$OUT"
-    printf '  %-22s %8d files  %8s MB  %8ss\n' "$op" "$files" "$peak_mb" "$seconds"
-
-    rm -f "$err" "$out"
+    "$BENCHREPORT" run -op "$op" -scale "$files" -out "$OUT" -quiet -- "$@"
 }
 
 # ---------------------------------------------------------------------------
@@ -130,15 +92,18 @@ touch_fraction() {
 # Run
 # ---------------------------------------------------------------------------
 
-echo "Building cloudstic..."
+echo "Building cloudstic and benchreport..."
 ( cd "$REPO_ROOT" && go build -o bin/cloudstic ./cmd/cloudstic )
+( cd "$REPO_ROOT" && go build -o bin/benchreport ./internal/cmd/benchreport )
 
+# benchreport writes the header itself on first append, so a stale CSV must go
+# or the sweep appends to the previous run.
 mkdir -p "$(dirname "$OUT")"
-echo "operation,files,peak_mb,seconds" >"$OUT"
+rm -f "$OUT"
 
 echo ""
 echo "=== Peak memory vs repository size ==="
-echo "time(1): $TIME_FLAVOUR   sizes: $SIZES"
+echo "sizes: $SIZES"
 echo ""
 
 export CLOUDSTIC_PASSWORD="$PASSWORD"

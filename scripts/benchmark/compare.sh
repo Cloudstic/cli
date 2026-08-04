@@ -1,4 +1,15 @@
 #!/usr/bin/env bash
+#
+# Cloudstic against the other backup tools on the same dataset.
+#
+# The dataset here exists to be *fair across four tools*, which constrains it:
+# it can only exercise what restic, borg and duplicacy all expose, and it may
+# legitimately change when one of them is being penalised unfairly. That is why
+# CI does not use this script — a change made for cross-tool fairness would
+# silently move the numbers a trend line is built on. scripts/benchmark/cloudstic.sh
+# measures this product on its own terms and is what the Benchmark workflow runs.
+#
+# Usage: scripts/benchmark/compare.sh [local|gdrive] [local|s3] [cloudstic|restic|borg|duplicacy|all] [--debug]
 
 set -e
 
@@ -60,6 +71,7 @@ echo ""
 echo "Building cloudstic binary..."
 go build -o /tmp/cloudstic ./cmd/cloudstic
 export CLOUDSTIC_BIN="/tmp/cloudstic"
+
 
 # Ensure benchmark runs are not affected by operator shell defaults.
 # In particular, a pre-set CLOUDSTIC_KMS_KEY_ARN would make `cloudstic init`
@@ -207,106 +219,10 @@ reset_data_dir() {
     cp -a "$DATA_TEMPLATE"/ "$DATA_DIR/"
 }
 
-# Format KB into human-readable size
-format_size_kb() {
-    local kb=$1
-    if [ "$kb" -lt 1024 ]; then
-        echo "${kb} KB"
-    elif [ "$kb" -lt 1048576 ]; then
-        echo "$(echo "scale=1; $kb / 1024" | bc) MB"
-    else
-        echo "$(echo "scale=2; $kb / 1048576" | bc) GB"
-    fi
-}
-
-# Set BENCH_REPO_DIR (local) or BENCH_S3_PREFIX (s3://bucket/prefix/) to enable repo size tracking.
-BENCH_REPO_DIR=""
-BENCH_S3_PREFIX=""
-
-# Scratch directory for restore targets. Restore is measured on a fresh, empty
-# directory every time, and the result is discarded before the next step so a
-# partially-restored tree can never make a later step look faster.
-RESTORE_DIR=$(mktemp -d -t benchmark-restore-XXXXXX)
-
-fresh_restore_target() {
-    rm -rf "${RESTORE_DIR:?}"/*
-    echo "$RESTORE_DIR/out"
-}
-
-get_repo_size_kb() {
-    if [ -n "$BENCH_REPO_DIR" ] && [ -d "$BENCH_REPO_DIR" ]; then
-        du -sk "$BENCH_REPO_DIR" | awk '{print $1}'
-    elif [ -n "$BENCH_S3_PREFIX" ]; then
-        local bytes
-        bytes=$(aws s3 ls "$BENCH_S3_PREFIX" --summarize --recursive 2>/dev/null \
-            | grep "Total Size" | awk '{print $3}')
-        echo $(( ${bytes:-0} / 1024 ))
-    else
-        echo 0
-    fi
-}
-
-run_bench() {
-    local step_name="$1"
-    shift
-    local stdout_file=$(mktemp)
-    local stderr_file=$(mktemp)
-    
-    local size_before
-    size_before=$(get_repo_size_kb)
-    
-    if /usr/bin/time -l "$@" > "$stdout_file" 2> "$stderr_file"; then
-        local real_time=$(grep "real" "$stderr_file" | awk '{print $1}')
-        local mem_bytes=$(grep "maximum resident set size" "$stderr_file" | awk '{print $1}')
-        local mem_mb=$(echo "scale=2; $mem_bytes / 1024 / 1024" | bc)
-        
-        local repo_added="-"
-        local size_after
-        size_after=$(get_repo_size_kb)
-        if [ "$size_before" -gt 0 ] || [ "$size_after" -gt 0 ]; then
-            local delta_kb=$((size_after - size_before))
-            repo_added=$(format_size_kb $delta_kb)
-        fi
-        
-        printf "| %-30s | %10s s | %10.2f MB | %12s |\n" "$step_name" "$real_time" "$mem_mb" "$repo_added"
-        
-        if [ -n "$DEBUG_FLAG" ]; then
-            echo "  [debug] $step_name stdout:" >&2
-            cat "$stdout_file" >&2
-        fi
-    else
-        echo "" >&2
-        echo "ERROR: '$step_name' failed" >&2
-        echo "Command: $*" >&2
-        echo "--- stdout ---" >&2
-        cat "$stdout_file" >&2
-        echo "--- stderr ---" >&2
-        # Filter out /usr/bin/time statistics to show only command stderr
-        grep -v -E '^\s+[0-9].*( real | user | sys |maximum resident|page reclaims|page faults|voluntary context|involuntary context|swaps|block input|block output|messages sent|messages received|signals received|instructions retired|cycles elapsed|peak memory)' "$stderr_file" >&2 || true
-        echo "---" >&2
-    fi
-    rm -f "$stdout_file" "$stderr_file"
-}
-
-print_table_header() {
-    printf "| %-30s | %12s | %13s | %12s |\n" "Operation" "Time" "Peak Mem" "Repo Added"
-    echo "|--------------------------------|--------------|---------------|--------------|"        
-}
-
-print_repo_size() {
-    local size
-    if [ -n "$BENCH_REPO_DIR" ] && [ -d "$BENCH_REPO_DIR" ]; then
-        size=$(du -sh "$BENCH_REPO_DIR" | cut -f1 | xargs)
-    elif [ -n "$BENCH_S3_PREFIX" ]; then
-        local bytes
-        bytes=$(aws s3 ls "$BENCH_S3_PREFIX" --summarize --recursive 2>/dev/null \
-            | grep "Total Size" | awk '{print $3}')
-        size=$(format_size_kb $(( ${bytes:-0} / 1024 )))
-    else
-        size="-"
-    fi
-    printf "| %-30s | %12s | %13s | %12s |\n" "Final Repo Size" "$size" "-" "-"
-}
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+# shellcheck source=scripts/benchmark/lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+bench_init "${BENCH_CSV:-benchmark-results/compare.csv}"
 
 # Repository password used by all tools during benchmarks.
 # Override with: BENCH_REPO_PASSWORD='your-password' ./scripts/benchmark/run.sh ...
@@ -321,6 +237,7 @@ export DUPLICACY_DEFAULT_PASSWORD="$REPO_PASSWORD"
 # Cloudstic
 # ---------------------------------------------------------------------------
 benchmark_cloudstic() {
+    CURRENT_TOOL="cloudstic"
     echo "### Cloudstic"
     print_table_header
     
@@ -388,6 +305,7 @@ benchmark_cloudstic() {
 # Restic
 # ---------------------------------------------------------------------------
 benchmark_restic() {
+    CURRENT_TOOL="restic"
     echo "### Restic"
     if ! command -v restic &> /dev/null; then
         echo "Restic not found, skipping."
@@ -459,6 +377,7 @@ benchmark_restic() {
 # Borg
 # ---------------------------------------------------------------------------
 benchmark_borg() {
+    CURRENT_TOOL="borg"
     echo "### Borg"
     if ! command -v borg &> /dev/null; then
         echo "Borg not found, skipping."
@@ -522,6 +441,7 @@ benchmark_borg() {
 # Duplicacy
 # ---------------------------------------------------------------------------
 benchmark_duplicacy() {
+    CURRENT_TOOL="duplicacy"
     echo "### Duplicacy"
     if ! command -v duplicacy &> /dev/null; then
         echo "Duplicacy not found, skipping."

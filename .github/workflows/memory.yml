@@ -64,7 +64,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ./scripts/benchmark/render-memory.sh benchmark-results/memory.csv >> "$GITHUB_STEP_SUMMARY"
+          go run ./internal/cmd/benchreport render \
+            -in benchmark-results/memory.csv \
+            -title "Peak memory vs repository size" >> "$GITHUB_STEP_SUMMARY"
           {
             echo ""
             echo "<details><summary>Run log</summary>"

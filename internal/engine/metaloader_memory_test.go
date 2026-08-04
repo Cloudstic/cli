@@ -27,7 +27,7 @@ func TestPruneLoaderDoesNotMemoize(t *testing.T) {
 	}
 }
 
-// diff's parent lookup is consulted only as byID[parentID], and parents are
+// diff's parent lookup is consulted only as folderByID[parentID], and parents are
 // folders. Retaining files there cost a core.FileMeta each for entries nothing
 // read, which on a large tree was most of the map.
 func TestDiffParentLookupHoldsOnlyFolders(t *testing.T) {
@@ -46,16 +46,16 @@ func TestDiffParentLookupHoldsOnlyFolders(t *testing.T) {
 	root := createHamt(ctx, t, s, []string{"dir", "a", "b"}, []string{folder, fileA, fileB})
 
 	dm := NewDiffManager(Deps{Store: s})
-	byID, err := dm.collectMetadata(ctx, root)
+	folderByID, err := dm.collectFolders(ctx, root)
 	if err != nil {
-		t.Fatalf("collectMetadata: %v", err)
+		t.Fatalf("collectFolders: %v", err)
 	}
 
-	if len(byID) != 1 {
+	if len(folderByID) != 1 {
 		t.Errorf("parent lookup holds %d entries, want 1 (the folder); it retains "+
-			"entries no caller reads", len(byID))
+			"entries no caller reads", len(folderByID))
 	}
-	if _, ok := byID["dir"]; !ok {
+	if _, ok := folderByID["dir"]; !ok {
 		t.Error("parent lookup is missing the folder every file resolves through")
 	}
 }
@@ -120,11 +120,11 @@ func TestDiffRetentionGrowsWithFoldersNotFiles(t *testing.T) {
 		}
 		root := createHamt(ctx, t, s, ids, refs)
 
-		byID, err := NewDiffManager(Deps{Store: s}).collectMetadata(ctx, root)
+		folderByID, err := NewDiffManager(Deps{Store: s}).collectFolders(ctx, root)
 		if err != nil {
-			t.Fatalf("collectMetadata: %v", err)
+			t.Fatalf("collectFolders: %v", err)
 		}
-		return len(byID)
+		return len(folderByID)
 	}
 
 	small, large := build(10), build(400)

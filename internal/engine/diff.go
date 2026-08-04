@@ -136,17 +136,17 @@ func (dm *DiffManager) loadSnapshot(ctx context.Context, ref string) (*core.Snap
 
 func (dm *DiffManager) diffRoots(ctx context.Context, root1, root2 string) ([]FileChange, error) {
 	var changes []FileChange
-	oldByID, err := dm.collectMetadata(ctx, root1)
+	oldFolderByID, err := dm.collectFolders(ctx, root1)
 	if err != nil {
 		return nil, err
 	}
-	newByID, err := dm.collectMetadata(ctx, root2)
+	newFolderByID, err := dm.collectFolders(ctx, root2)
 	if err != nil {
 		return nil, err
 	}
 
 	err = dm.tree.Diff(ctx, root1, root2, func(d hamt.DiffEntry) error {
-		change, err := dm.toFileChange(ctx, d, oldByID, newByID)
+		change, err := dm.toFileChange(ctx, d, oldFolderByID, newFolderByID)
 		if err != nil {
 			return err
 		}
@@ -156,21 +156,21 @@ func (dm *DiffManager) diffRoots(ctx context.Context, root1, root2 string) ([]Fi
 	return changes, err
 }
 
-func (dm *DiffManager) toFileChange(ctx context.Context, d hamt.DiffEntry, oldByID, newByID map[string]core.FileMeta) (FileChange, error) {
+func (dm *DiffManager) toFileChange(ctx context.Context, d hamt.DiffEntry, oldFolderByID, newFolderByID map[string]core.FileMeta) (FileChange, error) {
 	ct, metaRef := classifyEntry(d)
 
 	meta, err := dm.metas.load(ctx, metaRef)
 	if err != nil {
 		return FileChange{}, err
 	}
-	byID := newByID
+	folderByID := newFolderByID
 	if ct == ChangeRemoved {
-		byID = oldByID
+		folderByID = oldFolderByID
 	}
 	return FileChange{
 		Type: ct,
 		Path: fileMetaPath(*meta, func(parentID string) (core.FileMeta, bool) {
-			parent, ok := byID[parentID]
+			parent, ok := folderByID[parentID]
 			return parent, ok
 		}),
 		Meta: *meta,
@@ -188,27 +188,32 @@ func classifyEntry(d hamt.DiffEntry) (ChangeType, string) {
 	}
 }
 
-// collectMetadata builds the parent lookup toFileChange resolves paths through.
+// collectFolders indexes root's folders by FileID, which is the lookup
+// toFileChange resolves a change's path through.
 //
-// It keeps folders and nothing else. The map is read at exactly one place —
-// byID[parentID] in toFileChange — and a parent is a folder, so retaining a
-// file's metadata here held a core.FileMeta per file that nothing ever read.
-// On a 50k-file tree that was most of two maps.
+// It keeps folders and nothing else, because that is all anyone asks it for:
+// the map is read at exactly one place — folderByID[parentID] in toFileChange —
+// and a parent is a folder. Retaining a file's metadata here held a
+// core.FileMeta per file that nothing ever read, which on a 100k-file tree was
+// 200,000 of the 210,004 entries across the two maps.
+//
+// Note that RestoreManager.collectMetadata, which looks like this one, is
+// deliberately not the same: restore writes every entry, so it needs them all.
 //
 // An entry naming a non-folder parent is not an error: collectMetaPaths already
 // ends a chain at the deepest ancestor it can resolve, which is the most that
 // can honestly be said about that entry's location.
-func (dm *DiffManager) collectMetadata(ctx context.Context, root string) (map[string]core.FileMeta, error) {
-	byID := make(map[string]core.FileMeta)
+func (dm *DiffManager) collectFolders(ctx context.Context, root string) (map[string]core.FileMeta, error) {
+	folderByID := make(map[string]core.FileMeta)
 	err := dm.tree.Walk(ctx, root, func(_, valueRef string) error {
 		fm, err := dm.metas.load(ctx, valueRef)
 		if err != nil {
 			return err
 		}
 		if fm.Type == core.FileTypeFolder {
-			byID[fm.FileID] = *fm
+			folderByID[fm.FileID] = *fm
 		}
 		return nil
 	})
-	return byID, err
+	return folderByID, err
 }

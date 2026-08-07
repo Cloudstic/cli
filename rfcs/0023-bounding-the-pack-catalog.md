@@ -1,6 +1,6 @@
 # RFC 0023: Bounding the Pack Catalog
 
-- **Status:** Draft
+- **Status:** §5–§6 implemented. §1–§2 withdrawn on measurement — see Outcome.
 - **Date:** 2026-08-04
 - **Affects:** `internal/storelayer`, `internal/engine`, `pkg/store`, docs
 
@@ -14,6 +14,80 @@ rather than to what the operation touches.
 This RFC proposes bounding that memory. It also argues that bounding the cache
 alone is not sufficient, because `ObjectStore.List` returns a slice and `prune`
 is built on it — so the catalog is only half of the O(repository) footprint.
+
+## Outcome
+
+This RFC's central proposal was **withdrawn on measurement**. What shipped from
+it is the two sections that were added late, after tracing; what it was written
+to argue for turned out to be the wrong trade. Recording that here rather than
+leaving the document reading as a plan.
+
+### What shipped
+
+| | |
+|---|---|
+| §5 restore writes in pack order | #455 — write-phase misses 55.5% → 0.74% |
+| §6 ranged reads for packed objects | #451, #452 |
+
+Both came out of the "Measured access locality" section, which was added to this
+document after the first draft. Neither was in the original proposal.
+
+Also shipped, from the *rejected* alternatives below: a compact catalog encoding
+(#457), 158 → 73 B/entry, `check` live heap 74.1 → 57.8 MB.
+
+### What was withdrawn, and why
+
+**§1 and §2 — footer-granular bounded residency.** The proposal was to hold a
+bounded number of pack footers and resolve a miss by reading one. Prototyping the
+same trade one level down, on the pack *body* cache, measured it as strictly
+worse:
+
+| body cache budget | packs held (of 4 × 9 MB) | `check` peak RSS |
+|---|---|---|
+| 16 MB | 1 | 249 MB |
+| 32 MB | 3 | 251 MB |
+| 48 MB | 4 | 163 MB |
+| unchanged (4 by count) | 4 | 167 MB |
+
+Peak RSS is driven by the transient cost of a re-transfer, not by the resident
+size of what was evicted. Trading residency for re-reads is only a good trade
+when the re-read is cheap, and a pack miss re-reads ~9 MB to return a few hundred
+bytes. There is no reason to expect the footer variant to behave differently.
+
+**The direction was inverted, not merely wrong.** The body cache turned out to be
+*undersized*: at 7 packs against a 4-pack cache, `check` re-read whole packfiles
+404 times and allocated 4.8 GB (#458). Sizing it to the working set took that to
+550 MB and peak RSS from 266 MB to 204 MB (#460). This RFC argued for holding
+less; the measurement said hold more.
+
+**§3 — streaming enumeration** was not attempted. It remains the right shape for
+the `prune` non-goal below.
+
+### Where the problem actually went
+
+Every structure this RFC and its issues tried to bound is O(objects): the
+catalog, the body cache, `CheckManager.verified`, `prune`'s reachable set,
+`ObjectStore.List`'s result. Bounding them individually produced diminishing and
+finally negative returns.
+
+[RFC 0024](0024-metadata-in-the-tree.md) takes the other route — reduce the
+object count itself, from 109,601 to about 9,100 for a 50,000-file snapshot — on
+the grounds that it makes every one of those structures small enough not to need
+bounding, and cuts round trips in the same motion.
+
+### Net effect of the work this RFC tracked
+
+Peak RSS growth from 5,000 to 50,000 files, across seven merged changes:
+
+| operation | before | after |
+|---|---|---|
+| check | +140 MB | +20 MB |
+| restore | +117 MB | +72 MB |
+| prune | +179 MB | +123 MB |
+| diff | +91 MB | +69 MB |
+| backup-incremental | +122 MB | +99 MB |
+| backup-initial | +200 MB | +179 MB |
+| **total** | **+849 MB** | **+562 MB** |
 
 ## Context
 
@@ -140,6 +214,8 @@ cache serves directly. Every other site wants a full pass.
 
 ### 1. Footer-granular resident state
 
+**Withdrawn — see Outcome.**
+
 Replace the unbounded `catalog map[string]PackEntry` with:
 
 - a bounded LRU keyed by **pack ref**, whose value is that pack's decoded footer
@@ -152,6 +228,8 @@ A lookup checks the active buffer, then local entries, then the LRU, then
 resolves through the shards/footers.
 
 ### 2. A key → pack index is still needed
+
+**Withdrawn with §1 — see Outcome.**
 
 A lookup by object key cannot find a footer without knowing which pack to read.
 Something must map key → pack ref, and that something is the thing this RFC is
@@ -174,6 +252,8 @@ with an unquantified latency cost. **Neither should be chosen without measuring
 the miss rate for real operations**, which is the prototype work below.
 
 ### 3. Enumeration becomes a streaming pass
+
+**Not attempted.** Still the right shape for the `prune` non-goal.
 
 The five enumeration sites above stop ranging over a resident map and instead
 iterate the index: every shard, then any footer for a pack the shards do not
@@ -203,6 +283,13 @@ land on exactly the users with the most data.
 compression on keys) is a constant-factor win and much less invasive. It does not
 change the growth, so it postpones the problem rather than removing it — but it
 may be the right first step if the miss cost in §2 turns out to be prohibitive.
+
+> This is what was implemented (#457), and the hedge at the end of that paragraph
+> is the part that held. Measured at 158 → 73 B/entry rather than the 5x
+> estimated here, because the estimate assumed a sorted array and the shipped
+> change kept a map with inline keys. It postpones rather than removes the
+> growth, exactly as written — which is why RFC 0024 goes after the object count
+> instead.
 
 **Memory-map the index.** Pushes residency onto the OS page cache and would work
 for `local`, but the store contract is remote-first; there is no file to map on

@@ -77,6 +77,21 @@ type PackStore struct {
 	// Misses per pack since it was last cached, used to decide when reading one
 	// object at a time is no longer the cheaper option. See resolveFromPack.
 	packMisses *lru.Cache[string, int]
+
+	// Hits served from a pack since it was promoted into packCache, read by
+	// onPackEvicted to tell a promotion that paid for itself from one that
+	// didn't. See packPenalized.
+	packHits *lru.Cache[string, int]
+
+	// Packs whose last promotion was evicted before serving packPromoteAfter
+	// hits — cheaper to have left as ranged reads. A pack in here is never
+	// promoted again until it ages out of this bounded structure, which is
+	// what keeps a working set bigger than packCache from paying a whole-pack
+	// transfer over and over: the cost per object converges to a ranged read,
+	// bounded by object size, rather than staying bounded by pack size no
+	// matter how much the true working set overruns the cache. See
+	// onPackEvicted and resolveFromPack.
+	packPenalized *lru.Cache[string, struct{}]
 }
 
 // PackEntry represents the location of a small object within a packfile.
@@ -88,6 +103,22 @@ type PackEntry struct {
 
 // PackOption configures a PackStore.
 type PackOption func(*PackStore)
+
+// withPackBodyCacheBudget overrides the pack body cache's byte budget.
+//
+// Unexported: production code has one number, arrived at by measurement (see
+// packBodyCacheBudget), and this exists only so a test can put a working set
+// through a cache deliberately smaller than it, without needing a repository
+// large enough to do that with the real budget.
+func withPackBodyCacheBudget(budget int) PackOption {
+	return func(s *PackStore) {
+		cache, err := newPackBodyCache(budget, s.onPackEvicted)
+		if err != nil {
+			panic(err) // test-only option; a bad budget here is a test bug
+		}
+		s.packCache = cache
+	}
+}
 
 // WithPackIndexKey seals the pack catalog and packfile footers with key.
 //
@@ -106,27 +137,39 @@ func WithPackIndexKey(key []byte) PackOption {
 
 // NewPackStore initializes a new MicroPackStore over an existing store.ObjectStore.
 func NewPackStore(inner store.ObjectStore, opts ...PackOption) (*PackStore, error) {
-	// Keep up to 30 MB of packfiles in memory (around 4 packs) to speed up reads
-	cache, err := newPackBodyCache(packBodyCacheBudget)
-	if err != nil {
-		return nil, fmt.Errorf("pack cache init: %w", err)
-	}
-
 	misses, err := lru.New[string, int](packMissWindow)
 	if err != nil {
 		return nil, fmt.Errorf("pack miss counter init: %w", err)
 	}
+	hits, err := lru.New[string, int](packMissWindow)
+	if err != nil {
+		return nil, fmt.Errorf("pack hit counter init: %w", err)
+	}
+	penalized, err := lru.New[string, struct{}](packMissWindow)
+	if err != nil {
+		return nil, fmt.Errorf("pack penalty tracker init: %w", err)
+	}
 
 	s := &PackStore{
-		ObjectStore: inner,
-		packBuffer:  new(bytes.Buffer),
-		packKeys:    make(map[string]PackEntry),
-		catalog:     newPackCatalog(),
-		pendingKeys: make(map[string]struct{}),
-		mergedIndex: make(map[string]bool),
-		packCache:   cache,
-		packMisses:  misses,
+		ObjectStore:   inner,
+		packBuffer:    new(bytes.Buffer),
+		packKeys:      make(map[string]PackEntry),
+		catalog:       newPackCatalog(),
+		pendingKeys:   make(map[string]struct{}),
+		mergedIndex:   make(map[string]bool),
+		packMisses:    misses,
+		packHits:      hits,
+		packPenalized: penalized,
 	}
+	// s.onPackEvicted needs packHits and packPenalized, both set above, so the
+	// cache is built after them and assigned rather than passed in the struct
+	// literal.
+	cache, err := newPackBodyCache(packBodyCacheBudget, s.onPackEvicted)
+	if err != nil {
+		return nil, fmt.Errorf("pack cache init: %w", err)
+	}
+	s.packCache = cache
+
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -363,11 +406,51 @@ func (s *PackStore) Get(ctx context.Context, key string) ([]byte, error) {
 		}
 		data := make([]byte, entry.Length)
 		copy(data, packData[entry.Offset:entry.Offset+entry.Length])
+		s.recordPackHit(entry.PackRef)
 		s.debugf("get %s: hit lru pack cache %s (len=%d)", key, entry.PackRef, entry.Length)
 		return data, nil
 	}
 
 	return s.resolveFromPack(ctx, key, entry)
+}
+
+// recordPackHit counts one object served from a cached pack, read back by
+// onPackEvicted when that pack leaves the cache.
+func (s *PackStore) recordPackHit(packRef string) {
+	hits := 0
+	if n, ok := s.packHits.Get(packRef); ok {
+		hits = n
+	}
+	s.packHits.Add(packRef, hits+1)
+}
+
+// onPackEvicted runs when a pack body leaves packCache, whatever the reason.
+//
+// A promotion (see resolveFromPack) pays for a whole-pack transfer up front,
+// betting it back on the hits the pack serves while cached. That bet loses
+// when the working set is bigger than the cache: the pack is evicted to make
+// room for another before it has served enough hits to be worth what it cost,
+// and the next miss on the same pack would promote it again, pay the same
+// transfer, and lose the same bet — forever, at a cost bounded by pack size no
+// matter how much larger the true working set is than the cache.
+//
+// Recording the loss here is what breaks that cycle. A pack that didn't earn
+// back its promotion is marked in packPenalized, and resolveFromPack serves it
+// with ranged reads from then on rather than promoting it again — bounding the
+// cost per object by object size instead, which holds regardless of how large
+// the repository or how mismatched the cache is to it. The mark expires when
+// it ages out of packPenalized's own bounded window, so a pack that becomes
+// worth caching again — the working set shrinks, or access moves on — gets
+// another chance rather than being penalized permanently on one bad measurement.
+func (s *PackStore) onPackEvicted(packRef string) {
+	hits := 0
+	if n, ok := s.packHits.Get(packRef); ok {
+		hits = n
+	}
+	s.packHits.Remove(packRef)
+	if hits < packPromoteAfter {
+		s.packPenalized.Add(packRef, struct{}{})
+	}
 }
 
 const (
@@ -433,7 +516,9 @@ func rangesNatively(s store.ObjectStore) bool {
 // Reading the whole pack to return a slice of it is right when the pack is being
 // scanned and wrong when it is being sampled, and the two are indistinguishable
 // at the first miss. So the first misses are served by ranged reads, and a pack
-// that keeps missing is fetched whole and cached -- see packPromoteAfter.
+// that keeps missing is fetched whole and cached -- see packPromoteAfter. A pack
+// whose last promotion was evicted before earning it back stays on ranged reads
+// regardless of miss count -- see packPenalized and onPackEvicted.
 func (s *PackStore) resolveFromPack(ctx context.Context, key string, entry PackEntry) ([]byte, error) {
 	ranger, canRange := s.ObjectStore.(store.RangeGetter)
 	canRange = canRange && rangesNatively(s.ObjectStore)
@@ -445,7 +530,9 @@ func (s *PackStore) resolveFromPack(ctx context.Context, key string, entry PackE
 	misses++
 	s.packMisses.Add(entry.PackRef, misses)
 
-	if canRange && misses < packPromoteAfter {
+	_, penalized := s.packPenalized.Get(entry.PackRef)
+
+	if canRange && (misses < packPromoteAfter || penalized) {
 		data, err := ranger.GetRange(ctx, entry.PackRef, entry.Offset, entry.Length)
 		if err != nil {
 			return nil, fmt.Errorf("read %s from pack %s: %w", key, entry.PackRef, err)

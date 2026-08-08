@@ -1,6 +1,8 @@
 # RFC 0023: Bounding the Pack Catalog
 
 - **Status:** §5–§6 implemented. §1–§2 withdrawn on measurement — see Outcome.
+  #474 raised #460's cache budget (8 → 48 packs' worth) and, more durably,
+  bounded the cost of outgrowing it at any size — see the 2026-08-08 addendum.
 - **Date:** 2026-08-04
 - **Affects:** `internal/storelayer`, `internal/engine`, `pkg/store`, docs
 
@@ -88,6 +90,37 @@ Peak RSS growth from 5,000 to 50,000 files, across seven merged changes:
 | backup-incremental | +122 MB | +99 MB |
 | backup-initial | +200 MB | +179 MB |
 | **total** | **+849 MB** | **+562 MB** |
+
+### Recalibrated, 2026-08-08
+
+Issue #460 sized `packBodyCacheBudget` to 8 packs' worth against a 6-pack
+repository. The benchmark grew four days later (#467 added incrementals, a 200
+MB growth step and a deduplicated backup to every size), and the same
+50,000-file point now builds 37 packs, not 6. A live run against MinIO showed
+the cost: `check` and `restore` re-reading whole packfiles again, #458's
+pathology recurring at a scale #460 never measured.
+
+The conclusion above still holds — hold more, not less — so the budget was
+raised to **48 packs' worth**, the same ~1.3x headroom over the new high point
+that 8 was over the old one. But a bigger constant only moves the day a bigger
+repository hits the same wall; it was the third time (four packs → #460's
+eight → this), and would not have been the last.
+
+So #474 also closes the part that kept recurring: `PackStore` now tracks
+whether a promoted pack was evicted before it served enough hits to earn back
+its transfer, and stops promoting a pack that loses that bet
+(`onPackEvicted`, `packPenalized` in `pack.go`). A pack the cache cannot hold
+falls back to ranged reads, bounded by object size, instead of repeating a
+whole-pack transfer, bounded by pack size, every time it is touched again.
+That bounds the cost of a repository outgrowing the budget at any size, not
+just the sizes measured so far — the budget is still worth raising for
+performance (residency beats ranged reads when it fits), but no longer stands
+between a working repository and one that reads 280x its own size.
+
+Verified on the same MinIO run: `check` 4.0 GB → 98 MB transferred, `restore`
+28 GB → 550 MB. `TestPackStore_ThrashingPackStopsBeingRepromoted` pins the
+mechanism directly: a working set the cache cannot hold at any budget still
+promotes each pack at most once, not once per pass.
 
 ## Context
 

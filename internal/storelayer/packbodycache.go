@@ -22,15 +22,31 @@ import (
 // times. The access order is already good; the cache was simply smaller than
 // what the order needs.
 //
-// Eight packs' worth is the budget. It covers the working set of a repository in
-// the size range the benchmark exercises while staying a stated ceiling rather
-// than an emergent product, and a repository with smaller packs gets
-// proportionally more of them — which a count-based cache could not express.
+// Eight packs' worth is the budget. It stays a stated ceiling rather than an
+// emergent product, and a repository with smaller packs gets proportionally
+// more of them — which a count-based cache could not express.
 //
-// This is deliberately larger than what it replaces. Going the other way was
-// measured and is worse: at a 32 MB budget the same `check` peaks at 251 MB
-// against 167 MB, because the transfers a smaller cache forces cost more than
-// the residency it saves.
+// Going lower was measured and is worse: at a 32 MB budget `check` peaks at
+// 251 MB against 167 MB for a working set that fits, because the transfers a
+// smaller cache forces cost more than the residency it saves.
+//
+// Going *higher* to cover a bigger repository was measured too, and rejected:
+// a budget that fits every pack of a 50,000-file repository (48 packs, 384 MB)
+// makes residency track repository size, which is what RFC 0023 exists to
+// remove — +347 MB peak RSS on `check`, +580 MB on `prune`. A number picked to
+// fit one repository is not a bound.
+//
+// So this number is deliberately not sized to the largest repository anyone
+// runs. What keeps exceeding it survivable is onPackEvicted: a pack whose
+// promotion was evicted before paying for itself stops being promoted, so
+// overrunning the cache degrades to ranged reads bounded by object size rather
+// than repeated whole-pack transfers bounded by pack size (#458's
+// amplification). That holds at any repository size, which a bigger constant
+// does not.
+//
+// It is a floor, not a cure: ranged reads cost round trips, and a scan whose
+// order moves between packs pays one per object. Fixing that means fixing the
+// access order, the way #455 did for restore's write phase — see #478.
 const packBodyCacheBudget = 8 * maxPackSize
 
 // packBodyCache is an LRU of packfile bodies bounded by total bytes.
@@ -43,15 +59,32 @@ type packBodyCache struct {
 	lru    *lru.Cache[string, []byte]
 	bytes  int
 	budget int
+
+	// Called for a body dropped because the cache ran out of room, and only
+	// for that. See newPackBodyCache.
+	onPressureEvict func(key string)
 }
 
 // newPackBodyCache returns a cache holding at most budget bytes of pack bodies.
-func newPackBodyCache(budget int) (*packBodyCache, error) {
-	c := &packBodyCache{budget: budget}
+//
+// onPressureEvict, if non-nil, is called when a body is dropped *because the
+// cache ran out of room* — never when one is removed deliberately. PackStore
+// reads that signal as "this promotion did not pay for itself" (see
+// PackStore.onPackEvicted), and a pack removed because it was deleted or its
+// upload was discarded carries no such meaning: it is gone, not thrashing.
+// Conflating the two marked deleted packs as not worth promoting and spent
+// slots in a bounded window that exists to track live ones.
+//
+// The distinction is structural rather than a flag: the budget loop in Add is
+// the only place a body is dropped under pressure, so it is the only place the
+// signal is raised. The underlying LRU's own callback stays responsible for
+// byte accounting, which every removal needs.
+func newPackBodyCache(budget int, onPressureEvict func(key string)) (*packBodyCache, error) {
+	c := &packBodyCache{budget: budget, onPressureEvict: onPressureEvict}
 	// The entry limit only has to be beyond what the budget can hold. A pack is
 	// never smaller than one object, so this cannot be reached before the byte
 	// budget is.
-	inner, err := lru.NewWithEvict[string, []byte](1<<20, func(_ string, v []byte) {
+	inner, err := lru.NewWithEvict(1<<20, func(_ string, v []byte) {
 		c.bytes -= len(v)
 	})
 	if err != nil {
@@ -85,10 +118,15 @@ func (c *packBodyCache) Add(key string, data []byte) {
 	c.bytes += len(data)
 
 	for c.bytes > c.budget && c.lru.Len() > 1 {
-		c.lru.RemoveOldest()
+		evicted, _, ok := c.lru.RemoveOldest()
+		if ok && c.onPressureEvict != nil {
+			c.onPressureEvict(evicted)
+		}
 	}
 }
 
+// Remove drops a body deliberately — the pack was deleted, or its upload was
+// discarded. It raises no pressure signal: see newPackBodyCache.
 func (c *packBodyCache) Remove(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

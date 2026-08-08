@@ -1,6 +1,8 @@
 # RFC 0023: Bounding the Pack Catalog
 
 - **Status:** §5–§6 implemented. §1–§2 withdrawn on measurement — see Outcome.
+  The cache-sizing conclusion was revised in #474; read the Outcome before
+  changing `packBodyCacheBudget`.
 - **Date:** 2026-08-04
 - **Affects:** `internal/storelayer`, `internal/engine`, `pkg/store`, docs
 
@@ -28,12 +30,13 @@ leaving the document reading as a plan.
 |---|---|
 | §5 restore writes in pack order | #455 — write-phase misses 55.5% → 0.74% |
 | §6 ranged reads for packed objects | #451, #452 |
+| a compact catalog encoding (from the *rejected* alternatives) | #457 — 158 → 73 B/entry, `check` live heap 74.1 → 57.8 MB |
+| a byte-bounded body cache | #460 |
+| bounding the cost of overrunning that cache | #474 |
 
-Both came out of the "Measured access locality" section, which was added to this
-document after the first draft. Neither was in the original proposal.
-
-Also shipped, from the *rejected* alternatives below: a compact catalog encoding
-(#457), 158 → 73 B/entry, `check` live heap 74.1 → 57.8 MB.
+The first two came out of the "Measured access locality" section, which was
+added to this document after the first draft. Neither was in the original
+proposal.
 
 ### What was withdrawn, and why
 
@@ -54,14 +57,44 @@ size of what was evicted. Trading residency for re-reads is only a good trade
 when the re-read is cheap, and a pack miss re-reads ~9 MB to return a few hundred
 bytes. There is no reason to expect the footer variant to behave differently.
 
-**The direction was inverted, not merely wrong.** The body cache turned out to be
-*undersized*: at 7 packs against a 4-pack cache, `check` re-read whole packfiles
-404 times and allocated 4.8 GB (#458). Sizing it to the working set took that to
-550 MB and peak RSS from 266 MB to 204 MB (#460). This RFC argued for holding
-less; the measurement said hold more.
-
 **§3 — streaming enumeration** was not attempted. It remains the right shape for
 the `prune` non-goal below.
+
+### What the cache size can and cannot fix
+
+The first reading of the measurement above was that the direction was inverted:
+the body cache was *undersized*, at 7 packs against a 4-pack cache `check`
+re-read whole packfiles 404 times and allocated 4.8 GB (#458), and sizing it to
+the working set took that to 550 MB (#460). "This RFC argued for holding less;
+the measurement said hold more."
+
+That reading was too simple, and a second measurement corrected it. #460's
+working set was one repository shape — 50,000 files, two snapshots, 6 packs. When
+the benchmark grew to exercise a repository's whole life (#467: incrementals,
+growth, a deduplicated backup), the same pipeline built 13 packs at 5,000 files,
+21 at 20,000 and 37 at 50,000, and the amplification returned: 27 GB transferred
+to restore a 98 MB repository.
+
+Sizing the cache to *that* working set means a 384 MB budget — enough to hold
+every pack of every one of those repositories at once. It does fix the transfers,
+and it costs +347 MB peak RSS on `check` and +580 MB on `prune` at 50,000 files,
+because residency then tracks repository size. That is the property this RFC
+exists to remove, so it was rejected.
+
+**Neither holding less nor holding more is a bound.** A budget is a tuning knob:
+whatever it is, some repository exceeds it, and the question that matters is what
+happens then. Before #474 the answer was unbounded — the same pack was fetched
+whole, evicted, and fetched again, at a cost set by pack size however far the
+working set overran the cache. #474 makes a pack whose promotion was evicted
+before paying for itself stop being promoted, so overrunning the cache degrades
+to ranged reads bounded by object size. That holds at any repository size.
+
+It is a floor rather than a cure. Ranged reads cost round trips, and a scan whose
+order moves between packs pays one per object: the same 5,000-file run issues
+10,792 requests for `check` and 17,765 for `restore` once the cache is overrun,
+against 121 and 169 when the working set fits. What removes both the re-reads and
+the round trips is read *order* — the thing that worked for restore's write phase
+in #455, and that `check` and `prune` do not yet do. Tracked in #478.
 
 ### Where the problem actually went
 
@@ -88,6 +121,10 @@ Peak RSS growth from 5,000 to 50,000 files, across seven merged changes:
 | backup-incremental | +122 MB | +99 MB |
 | backup-initial | +200 MB | +179 MB |
 | **total** | **+849 MB** | **+562 MB** |
+
+Measured against the benchmark as it stood on 2026-08-04, which built a much
+smaller repository per size than the current one does. The figures record what
+those changes did for that workload; they are not current absolute numbers.
 
 ## Context
 
@@ -297,19 +334,33 @@ S3 or B2.
 
 ## Open questions
 
-1. **What is the miss rate in practice?** For `restore` of a whole snapshot the
-   working set is everything, so a bounded cache is pure overhead unless access
-   order has pack locality. Backup writes objects in walk order, so a
-   subsequent restore in the same order may have excellent locality — this is
-   measurable and nobody has measured it.
-2. **§2(a) or §2(b)?** Depends entirely on 1.
-3. **What is the bound, and is it configurable?** A fixed pack count is simplest.
-   A byte budget is more honest given entries-per-pack varies with object size.
-4. **Does `prune` regress?** It streams instead of reading one resident map. On a
-   remote backend that could be many more requests. It must be measured, not
-   assumed, before this ships.
+These were the questions the RFC could not answer when it was written. The
+answers are recorded here because most of them turned out to matter more than
+the proposal they were meant to serve.
+
+1. **What is the miss rate in practice?** *Answered, and it depends on the
+   operation.* Restore's write phase was 55.5% before #455 reordered it to walk
+   order, and 0.74% after — locality is achievable where the order is ours to
+   choose. `check` measured 0.39% on a 6-pack repository (#460), which was read
+   as "the order is already good"; on the 13-pack repository the current
+   benchmark builds, the same operation transfers ~40 whole packs' worth per
+   pack, so that conclusion was specific to the shape it was measured on.
+   `check` and `prune` do not have pack locality in general — #478.
+2. **§2(a) or §2(b)?** *Moot.* Both belong to §1–§2, withdrawn above.
+3. **What is the bound, and is it configurable?** *A byte budget, not
+   configurable* (#460): entries per pack varies with object size, so a pack
+   count does not state what it costs. The more useful answer is that the exact
+   value matters less than what happens when a repository exceeds it — see
+   "What the cache size can and cannot fix".
+4. **Does `prune` regress?** *Not applicable.* §3 was never attempted, so
+   `prune` still reads a resident map.
 
 ## Testing strategy
+
+**For the withdrawn §1–§2**, kept as written. The tests that exist instead cover
+what shipped: the byte bound and its eviction semantics
+(`TestPackBodyCache_*`), and the behaviour when a working set overruns the cache
+(`TestPackStore_ThrashingPackStopsBeingRepromoted`).
 
 - A test that pins the bound: a repository far larger than the cache is opened
   and read, and resident entry count stays under the limit.
@@ -323,6 +374,9 @@ S3 or B2.
   representation change, not a behavioural one.
 
 ## Rollout plan
+
+**For the withdrawn §1–§2**, kept as written. Step 1 is the only part that
+happened, and its measurement is what withdrew the rest.
 
 1. Prototype §2(b) behind a build tag or an unexported option, purely to measure
    the miss rate and the resulting request count for `restore`, `check` and

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -490,6 +491,67 @@ const (
 	// fine.
 	packMissWindow = 64
 )
+
+// GroupByLocality orders keys so that objects sharing a packfile are read
+// consecutively, implementing store.LocalityGrouper.
+//
+// A pack is transferred as a unit once enough of it is wanted (see
+// packPromoteAfter), and stays cached only while it is the recently-used one.
+// Reading a pack's keys scattered among other packs' keys therefore transfers
+// it, evicts it, and transfers it again; reading them consecutively transfers
+// it once and serves the rest from memory. The keys are the same either way —
+// only the order changes, and only the caller knows the whole set in advance.
+//
+// Ordering is by (pack ref, offset), so reads also run forwards through each
+// pack rather than seeking around inside it.
+//
+// Keys with no catalog entry — large objects stored standalone, anything not
+// packed — keep their relative order and follow the packed ones. They are
+// unaffected by pack locality, so there is nothing to gain by moving them
+// relative to each other, and a caller may hand over a mixed set without
+// having to know which is which.
+//
+// This is a hint, not a contract: the result is always a permutation of the
+// input, so a caller that ignores it reads exactly the same objects.
+func (s *PackStore) GroupByLocality(keys []string) []string {
+	if len(keys) < 2 {
+		return keys
+	}
+
+	type placed struct {
+		key   string
+		entry PackEntry
+	}
+	packed := make([]placed, 0, len(keys))
+	loose := make([]string, 0)
+
+	s.mu.RLock()
+	for _, key := range keys {
+		if entry, ok := s.catalog.Get(key); ok {
+			packed = append(packed, placed{key: key, entry: entry})
+		} else {
+			loose = append(loose, key)
+		}
+	}
+	s.mu.RUnlock()
+
+	// The catalog is consulted without loading it. Grouping is an optimisation,
+	// and forcing a catalog load here would turn a hint into an I/O dependency
+	// on a path that has not asked to read anything yet; an unloaded catalog
+	// simply yields the input order back.
+	sort.SliceStable(packed, func(i, j int) bool {
+		if packed[i].entry.PackRef != packed[j].entry.PackRef {
+			return packed[i].entry.PackRef < packed[j].entry.PackRef
+		}
+		return packed[i].entry.Offset < packed[j].entry.Offset
+	})
+
+	out := make([]string, 0, len(keys))
+	for _, p := range packed {
+		out = append(out, p.key)
+	}
+	return append(out, loose...)
+}
 
 // rangesNatively reports whether a ranged read on s reaches a backend that
 // serves it as a ranged read, rather than one that emulates it by transferring

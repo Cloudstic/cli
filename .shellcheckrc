@@ -1,0 +1,6 @@
+# SC2086 (double-quote to prevent globbing/word splitting) fires on every
+# `$flags`-style variable these scripts split intentionally into multiple CLI
+# arguments — quoting it would break the behavior the script wants. Real bugs
+# (redirect order, unset vars in destructive commands, unused vars) are
+# different checks and stay enabled.
+disable=SC2086

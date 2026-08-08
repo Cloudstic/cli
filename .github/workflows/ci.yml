@@ -52,6 +52,19 @@ jobs:
         with:
           version: v2.12.2
           args: --timeout=5m
+      # golangci-lint only covers Go; these run once (not per-GOOS, they don't
+      # depend on it) to lint the workflows and shell scripts alongside it.
+      - name: Run yamllint
+        if: matrix.goos == 'linux'
+        run: |
+          pip install --quiet "yamllint==1.38.0"
+          yamllint -c .yamllint.yml .
+      - name: Run actionlint
+        if: matrix.goos == 'linux'
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: Run shellcheck
+        if: matrix.goos == 'linux'
+        run: find scripts -name '*.sh' -print0 | xargs -0 shellcheck --rcfile=.shellcheckrc
 
   vulncheck:
     name: Vulnerabilities
@@ -91,6 +104,8 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          # Package paths never contain whitespace.
+          # shellcheck disable=SC2046
           go test -json ${{ matrix.race }} -shuffle=on -coverprofile=unit.out -count=1 \
             $(go list ./... | grep -v '/e2e') | tee test-output.json
       - name: Test report

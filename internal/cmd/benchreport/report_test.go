@@ -29,6 +29,23 @@ restic,Full Restore,0,9.90,280.4,-
 borg,Full Restore,0,14.20,190.2,-
 `
 
+// A single-size MinIO run: one tool, requests and bytes populated. "check"
+// carries a genuine zero request count — an already-verified repository can
+// legitimately issue no calls — which the report must still show as 0, not as
+// an unmeasured dash.
+const minioComparisonCSV = `tool,operation,scale,seconds,peak_mb,repo_delta,requests,sent_mb,by_api
+cloudstic,backup,5000,1.10,204.2,24.6 MB,25,0,GetObject=8;HeadObject=3;ListObjectsV2=8;PutObject=5
+cloudstic,check,5000,3.50,276.7,0 KB,0,0,
+`
+
+// The same measurements, but as a scaling sweep across tree sizes.
+const minioScalingCSV = `tool,operation,scale,seconds,peak_mb,repo_delta,requests,sent_mb,by_api
+cloudstic,backup,5000,1.10,204.2,24.6 MB,25,0,GetObject=8;HeadObject=3;PutObject=5
+cloudstic,backup,20000,4.32,366.9,100.0 MB,60,0.9,GetObject=17;HeadObject=3;PutObject=13
+cloudstic,restore,5000,11.20,537.2,0 KB,151,505.8,GetObject=143;HeadObject=3;ListObjectsV2=3
+cloudstic,restore,20000,20.46,755.9,0 KB,280,1200.4,GetObject=260;HeadObject=3;ListObjectsV2=3
+`
+
 func parse(t *testing.T, csv string) *Report {
 	t.Helper()
 	rep, err := Parse(strings.NewReader(csv))
@@ -538,6 +555,154 @@ func TestReadAllocMBConvertsToMegabytes(t *testing.T) {
 	}
 	if got != 35 {
 		t.Errorf("got %v MB, want 35", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// S3 columns (requests, bytes, per-API breakdown)
+// ---------------------------------------------------------------------------
+
+// Parse must read the three S3 columns and set HasS3 from their presence,
+// not from whether the values happen to be non-zero.
+func TestParseReadsS3Columns(t *testing.T) {
+	rep := parse(t, minioComparisonCSV)
+	c, ok := rep.cell("cloudstic", "backup", 5000)
+	if !ok {
+		t.Fatal("cell not found")
+	}
+	if !c.HasS3 {
+		t.Fatal("HasS3 should be true for a row with a requests column")
+	}
+	if c.Requests.Median != 25 {
+		t.Errorf("requests = %v, want 25", c.Requests.Median)
+	}
+	if c.ByAPI != "GetObject=8;HeadObject=3;ListObjectsV2=8;PutObject=5" {
+		t.Errorf("by_api = %q", c.ByAPI)
+	}
+}
+
+// A zero request count is a real measurement — an already-verified repository
+// can legitimately issue no calls to check itself — and must render as 0, not
+// as the dash used for a backend that was never measured at all.
+func TestZeroRequestsIsARealMeasurementNotADash(t *testing.T) {
+	rep := parse(t, minioComparisonCSV)
+	c, ok := rep.cell("cloudstic", "check", 5000)
+	if !ok {
+		t.Fatal("cell not found")
+	}
+	if !c.HasS3 {
+		t.Fatal("a row with requests=0 must still count as measured")
+	}
+	if c.Requests.Median != 0 {
+		t.Errorf("requests = %v, want 0", c.Requests.Median)
+	}
+
+	var b strings.Builder
+	if err := Render(&b, rep, "T"); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	line := lineContaining(t, b.String(), "`check`")
+	if !strings.Contains(line, "| 0 |") {
+		t.Errorf("zero requests should render as 0, not a dash:\n%s", line)
+	}
+}
+
+// A malformed requests value is an error, matching every other numeric column:
+// a silent zero in a performance table is indistinguishable from a real zero.
+func TestParseRejectsMalformedRequests(t *testing.T) {
+	_, err := Parse(strings.NewReader(
+		"tool,operation,scale,seconds,peak_mb,requests\ncloudstic,backup,5000,1.0,200.0,many\n"))
+	if err == nil {
+		t.Fatal("expected an error for a non-numeric requests value")
+	}
+	if !strings.Contains(err.Error(), "requests") {
+		t.Errorf("error should name the offending column, got: %v", err)
+	}
+}
+
+// A single-size MinIO run must show requests and bytes in the comparison
+// table, gated the same way alloc and repo_delta are.
+func TestComparisonTableShowsRequestsAndSent(t *testing.T) {
+	var b strings.Builder
+	if err := Render(&b, parse(t, minioComparisonCSV), "T"); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	out := b.String()
+	if !strings.Contains(out, "Requests |") || !strings.Contains(out, "Sent |") {
+		t.Errorf("requests/sent columns missing; got:\n%s", out)
+	}
+	line := lineContaining(t, out, "`backup`")
+	if !strings.Contains(line, "| 25 |") {
+		t.Errorf("request count missing from backup row; got:\n%s", line)
+	}
+}
+
+// A local-only run — no requests/sent_mb/by_api columns at all — must render
+// exactly as it did before S3 columns existed: no empty Requests/Sent columns,
+// no empty by-API block.
+func TestComparisonTableOmitsRequestsWhenUnmeasured(t *testing.T) {
+	var b strings.Builder
+	if err := Render(&b, parse(t, comparisonCSV), "T"); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	out := b.String()
+	if strings.Contains(out, "Requests") || strings.Contains(out, "Sent |") {
+		t.Errorf("requests/sent columns rendered for a run that measured neither:\n%s", out)
+	}
+	if strings.Contains(out, "Requests by API") {
+		t.Errorf("by-API block rendered with nothing to show:\n%s", out)
+	}
+}
+
+// A scaling sweep against MinIO gets its own Requests and Sent tables,
+// alongside Peak RSS — the same treatment AllocMB gets.
+func TestScalingReportShowsRequestsAndSentTables(t *testing.T) {
+	var b strings.Builder
+	if err := Render(&b, parse(t, minioScalingCSV), "T"); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	out := b.String()
+	if !strings.Contains(out, "### Requests") {
+		t.Errorf("requests table missing; got:\n%s", out)
+	}
+	if !strings.Contains(out, "### Sent (MB)") {
+		t.Errorf("sent table missing; got:\n%s", out)
+	}
+	// backup: 60 requests at 20000 files, 25 at 5000 -> 2.40x.
+	if !strings.Contains(out, "2.40x") {
+		t.Errorf("requests growth column missing or wrong; got:\n%s", out)
+	}
+}
+
+// The per-API breakdown is long, so it belongs in a collapsed block rather
+// than a column — but it still has to reach the page.
+func TestByAPIRendersInACollapsedBlock(t *testing.T) {
+	var b strings.Builder
+	if err := Render(&b, parse(t, minioComparisonCSV), "T"); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	out := b.String()
+	if !strings.Contains(out, "<details>") || !strings.Contains(out, "Requests by API") {
+		t.Errorf("by-API details block missing; got:\n%s", out)
+	}
+	if !strings.Contains(out, "GetObject=8;HeadObject=3;ListObjectsV2=8;PutObject=5") {
+		t.Errorf("by-API breakdown missing; got:\n%s", out)
+	}
+}
+
+// A run with no S3 data must not grow an empty by-API block — the memory
+// sweep and every cross-tool comparison land here.
+func TestByAPIOmittedWhenNoS3Data(t *testing.T) {
+	for name, csv := range map[string]string{"scaling": scalingCSV, "comparison": comparisonCSV} {
+		t.Run(name, func(t *testing.T) {
+			var b strings.Builder
+			if err := Render(&b, parse(t, csv), "T"); err != nil {
+				t.Fatalf("Render: %v", err)
+			}
+			if strings.Contains(b.String(), "Requests by API") {
+				t.Errorf("by-API block rendered with nothing to show:\n%s", b.String())
+			}
+		})
 	}
 }
 

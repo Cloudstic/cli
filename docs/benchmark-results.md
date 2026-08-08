@@ -37,8 +37,16 @@ Requirements: Go toolchain; `bc`; docker, `aws` and `curl` only for
 `BACKENDS=minio`.
 
 Render a CSV as a table with `go run ./internal/cmd/benchreport render -in
-benchmark-results/bench.csv -title Benchmark`. The `Benchmark` workflow runs the
-same sweep on demand, or on a pull request labelled `benchmark`.
+benchmark-results/bench.csv -title Benchmark`. The `Benchmark` workflow runs
+this on demand, or on a pull request labelled `benchmark`, as two jobs: a local
+sweep on `macos-latest` — the one the headline time and memory figures have
+always come from — and a single-size, single-sample MinIO sweep on
+`ubuntu-latest`, since `macos-latest` has no Docker. One sample there, not
+three: several steps (the incremental churns, the dedup copy) mutate the
+source tree in place, and the tree is reused across every sample in a cell, so
+a second sample would back up an already-different, bigger tree rather than
+repeat the same measurement — its request and byte counts would reflect that
+growth, not run-to-run noise.
 
 ## Comparing against other tools — `compare.sh`
 

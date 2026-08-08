@@ -145,7 +145,14 @@ measure() {
     local requests="" sent_mb="" by_api=""
     if [ "$backend" = minio ]; then
         requests=$(( $(minio_requests) - req_before ))
-        sent_mb=$(echo "scale=1; ($(minio_sent_bytes) - sent_before) / 1048576" | bc)
+        # sent_before must be dollar-prefixed here: unlike the arithmetic
+        # context above, this string is parsed by bc, not bash, and bc treats
+        # a bare "sent_before" as its own uninitialized variable — silently 0
+        # — rather than an error. That turned every sample after the first
+        # into the cumulative sent-bytes total since the container started,
+        # not that operation's own delta, since the missing "$" made the
+        # subtraction a no-op.
+        sent_mb=$(echo "scale=1; ($(minio_sent_bytes) - $sent_before) / 1048576" | bc)
         minio_api_counts >"$WORK/api-after"
         by_api=$(minio_api_delta "$WORK/api-before" "$WORK/api-after")
     fi

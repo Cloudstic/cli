@@ -1,14 +1,18 @@
 name: Benchmark
 
-# One sweep over the pipeline: wall time, peak RSS, allocation, and — when a
-# MinIO backend is selected — requests and bytes.
+# Two sweeps over the pipeline. The local one, on macos-latest, is what the
+# headline numbers — wall time, peak RSS, allocation — have always come from,
+# and stays there so they remain comparable to every run before it. The MinIO
+# one needs Docker, which macos-latest does not have, so it runs on
+# ubuntu-latest instead; a different runner means its own timings are not
+# comparable to the local job's, which is why it reports requests and bytes
+# rather than wall time as its headline.
 #
-# There used to be two workflows here. They ran different scripts asking
-# different questions, which justified the split; once bench.sh collapsed those
-# scripts into one matrix they became the same job with different parameters,
-# started by the same label, one of them a strict subset of the other. A second
-# entry in the checks list is not free — it is a second thing to read, wait for
-# and explain.
+# There used to be two workflows here for a different reason — cloudstic.sh
+# and memory.sh ran different scripts asking different questions. Once
+# bench.sh collapsed those into one matrix they became the same job with
+# different parameters; splitting by backend now is not that same split come
+# back, it is the one thing this job cannot do on a single runner.
 #
 # Deliberately not part of the ordinary CI run: it builds several synthetic
 # trees and backs each one up, which costs minutes rather than seconds. Two ways
@@ -24,7 +28,7 @@ on:
         default: main
         type: string
       sizes:
-        description: Space-separated tree sizes to measure
+        description: Space-separated tree sizes to measure locally
         required: false
         default: "5000 20000 50000"
         type: string
@@ -39,14 +43,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  benchmark:
+  benchmark-local:
     # On a pull request this runs only while the `benchmark` label is on it, so
     # an unrelated label does not start a ten-minute job, and pushing more
     # commits to an already-labelled PR re-measures without another click.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       contains(github.event.pull_request.labels.*.name, 'benchmark')
-    name: Benchmark
+    name: Benchmark (local)
     runs-on: macos-latest
     steps:
       - name: Checkout target ref
@@ -75,7 +79,7 @@ jobs:
           set -euo pipefail
           go run ./internal/cmd/benchreport render \
             -in benchmark-results/bench.csv \
-            -title "Benchmark" >> "$GITHUB_STEP_SUMMARY"
+            -title "Benchmark (local)" >> "$GITHUB_STEP_SUMMARY"
           {
             echo ""
             echo "<details><summary>Run log</summary>"
@@ -92,7 +96,75 @@ jobs:
       - name: Upload results
         uses: actions/upload-artifact@v7
         with:
-          name: benchmark-results
+          name: benchmark-results-local
+          path: |
+            benchmark-results/bench.csv
+            benchmark-results/bench.log
+
+  benchmark-minio:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'benchmark')
+    name: Benchmark (MinIO)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target ref
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # One size, one sample — deliberately, not just for CI minutes. bench.sh
+      # regenerates the source tree once per (profile, size) and reuses it
+      # across every sample in that cell, and several of its steps (the
+      # incremental churns, the dedup copy) mutate that tree in place. A
+      # second sample therefore backs up a tree that already carries the
+      # first sample's changes, not a repeat of the same measurement — its
+      # request and byte counts would reflect a bigger, different repository,
+      # not sampling noise. One sample per cell is the only way to get a
+      # number that means what it says; a wider size matrix would only spend
+      # more CI minutes confirming the same thing.
+
+      - name: Measure
+        shell: bash
+        env:
+          SIZES: "5000"
+          PROFILES: source
+          BACKENDS: minio
+          SAMPLES: "1"
+        run: |
+          set -euo pipefail
+          mkdir -p benchmark-results
+          ./scripts/benchmark/bench.sh | tee benchmark-results/bench.log
+
+      - name: Publish summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run ./internal/cmd/benchreport render \
+            -in benchmark-results/bench.csv \
+            -title "Benchmark (MinIO)" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo ""
+            echo "<details><summary>Run log</summary>"
+            echo ""
+            echo '```text'
+            cat benchmark-results/bench.log
+            echo '```'
+            echo ""
+            echo "</details>"
+            echo ""
+            echo "Ref \`${{ github.event.inputs.ref || github.ref }}\` on \`${{ runner.os }}\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-results-minio
           path: |
             benchmark-results/bench.csv
             benchmark-results/bench.log

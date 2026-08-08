@@ -41,6 +41,21 @@ func Render(w io.Writer, rep *Report, title string) error {
 				"stops allocating something it did not need.\n\n")
 			renderScalingTable(b, rep, AllocMB)
 		}
+
+		// Against MinIO, request latency rather than bandwidth sets the pace,
+		// and egress is billed — so these are the columns that matter for a
+		// remote store, the way peak RSS matters for a local one.
+		if rep.hasS3() {
+			b.WriteString("\n### Requests\n\n")
+			b.WriteString("How many calls each operation made against the backend — the number\n" +
+				"that decides whether an operation is usable over a network at all.\n\n")
+			renderScalingTable(b, rep, Requests)
+
+			b.WriteString("\n### Sent (MB)\n\n")
+			b.WriteString("Bytes the backend sent back — downloads on a restore or check, a\n" +
+				"pack body cache undersized enough to force re-reads.\n\n")
+			renderScalingTable(b, rep, SentMB)
+		}
 	case KindComparison:
 		if len(rep.Tools()) > 1 {
 			b.WriteString("Each tool over the same dataset. Times on a shared runner carry several\n" +
@@ -56,6 +71,7 @@ func Render(w io.Writer, rep *Report, title string) error {
 	}
 
 	renderRepoSummary(b, rep)
+	renderByAPI(b, rep)
 
 	// A comparison of one tool has nothing to chart — a single bar compares
 	// nothing — so the heading is written only if something follows it.
@@ -153,6 +169,13 @@ func renderComparisonTable(b *strings.Builder, rep *Report) {
 	// it is the column that shows churn peak RSS cannot.
 	withAlloc := len(tools) == 1 && rep.hasAlloc()
 
+	// Requests and bytes are gated the same way again: only a MinIO run
+	// measures them, and a cross-tool comparison never points at a backend
+	// that reports its own counters, so this and withAlloc never both apply
+	// to a run this harness produces — but the gate stays independent of
+	// withAlloc for the same reason withAlloc is independent of withDelta.
+	withRequests := len(tools) == 1 && rep.hasS3()
+
 	b.WriteString("| Operation |")
 	for _, t := range tools {
 		fmt.Fprintf(b, " %s |", t)
@@ -162,6 +185,9 @@ func renderComparisonTable(b *strings.Builder, rep *Report) {
 	}
 	if withDelta {
 		b.WriteString(" Repo added |")
+	}
+	if withRequests {
+		b.WriteString(" Requests | Sent |")
 	}
 	b.WriteString("\n|---|")
 	for range tools {
@@ -173,11 +199,14 @@ func renderComparisonTable(b *strings.Builder, rep *Report) {
 	if withDelta {
 		b.WriteString("---:|")
 	}
+	if withRequests {
+		b.WriteString("---:|---:|")
+	}
 	b.WriteString("\n")
 
 	for _, op := range rep.Operations() {
 		fmt.Fprintf(b, "| `%s` |", op)
-		var delta, alloc string
+		var delta, alloc, requests, sentMB string
 		for _, t := range tools {
 			c, ok := rep.cell(t, op, scale)
 			if !ok {
@@ -188,6 +217,10 @@ func renderComparisonTable(b *strings.Builder, rep *Report) {
 			delta = c.RepoDelta
 			if c.HasAlloc {
 				alloc = statCell(c.AllocMB) + " MB"
+			}
+			if c.HasS3 {
+				requests = statCell(c.Requests)
+				sentMB = statCell(c.SentMB) + " MB"
 			}
 		}
 		if withAlloc {
@@ -202,11 +235,23 @@ func renderComparisonTable(b *strings.Builder, rep *Report) {
 			}
 			fmt.Fprintf(b, " %s |", delta)
 		}
+		if withRequests {
+			if requests == "" {
+				requests = "-"
+			}
+			if sentMB == "" {
+				sentMB = "-"
+			}
+			fmt.Fprintf(b, " %s | %s |", requests, sentMB)
+		}
 		b.WriteString("\n")
 	}
 	b.WriteString("\nEach cell is wall time and peak RSS.")
 	if withAlloc {
 		b.WriteString(" `Allocated` is cumulative bytes allocated,\nfreed or not — the column that moves when an operation stops allocating\nsomething it did not need.")
+	}
+	if withRequests {
+		b.WriteString(" `Sent` is bytes the backend sent back —\ndownloads on a restore or check.")
 	}
 	b.WriteString("\n")
 }
@@ -256,6 +301,48 @@ func renderRepoSummary(b *strings.Builder, rep *Report) {
 			b.WriteString(" - |\n")
 		}
 	}
+}
+
+// renderByAPI collapses the per-API request breakdown into a details block.
+//
+// It is long — every API name and its count, for every operation and, on a
+// scaling sweep, every size — and would dominate a summary whose headline
+// numbers are the Requests and Sent columns above it. A reader who wants the
+// breakdown opens the block; one who does not is not made to scroll past it.
+func renderByAPI(b *strings.Builder, rep *Report) {
+	if !rep.hasS3() {
+		return
+	}
+	scaling := rep.Kind() == KindScaling
+
+	var rows strings.Builder
+	any := false
+	for _, op := range rep.Operations() {
+		for _, s := range rep.Scales() {
+			c, ok := rep.cell("", op, s)
+			if !ok || c.ByAPI == "" {
+				continue
+			}
+			any = true
+			if scaling {
+				fmt.Fprintf(&rows, "| `%s` | %s files | %s |\n", op, humanInt(s), c.ByAPI)
+			} else {
+				fmt.Fprintf(&rows, "| `%s` | %s |\n", op, c.ByAPI)
+			}
+		}
+	}
+	if !any {
+		return
+	}
+
+	b.WriteString("\n<details>\n<summary>Requests by API</summary>\n\n")
+	if scaling {
+		b.WriteString("| Operation | Size | By API |\n|---|---|---|\n")
+	} else {
+		b.WriteString("| Operation | By API |\n|---|---|\n")
+	}
+	b.WriteString(rows.String())
+	b.WriteString("\n</details>\n")
 }
 
 // ---------------------------------------------------------------------------

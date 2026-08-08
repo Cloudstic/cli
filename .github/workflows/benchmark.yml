@@ -75,6 +75,8 @@ jobs:
 
       - name: Publish summary
         shell: bash
+        env:
+          BENCHMARK_REF: ${{ github.event.inputs.ref || github.ref }}
         run: |
           set -euo pipefail
           go run ./internal/cmd/benchreport render \
@@ -90,7 +92,7 @@ jobs:
             echo ""
             echo "</details>"
             echo ""
-            echo "Ref \`${{ github.event.inputs.ref || github.ref }}\` on \`${{ runner.os }}\`."
+            printf 'Ref `%s` on `%s`.\n' "$BENCHMARK_REF" "$RUNNER_OS"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload results
@@ -143,6 +145,8 @@ jobs:
 
       - name: Publish summary
         shell: bash
+        env:
+          BENCHMARK_REF: ${{ github.event.inputs.ref || github.ref }}
         run: |
           set -euo pipefail
           go run ./internal/cmd/benchreport render \
@@ -158,7 +162,7 @@ jobs:
             echo ""
             echo "</details>"
             echo ""
-            echo "Ref \`${{ github.event.inputs.ref || github.ref }}\` on \`${{ runner.os }}\`."
+            printf 'Ref `%s` on `%s`.\n' "$BENCHMARK_REF" "$RUNNER_OS"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload results

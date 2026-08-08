@@ -82,6 +82,16 @@ Three layers, in cost order:
   `minio.sh` holds the container lifecycle and metric scraping; docker, `aws`
   and `curl` are needed only for `BACKENDS=minio`. What the `Benchmark`
   workflow runs.
+- **`scripts/benchmark/aging.sh`** — how read cost grows with the number of
+  backups a repository has taken, rather than with how much data it holds. The
+  axis is backup count with the tree held fixed, which is the one effect
+  `bench.sh` structurally cannot see: its unit of repetition is a whole pipeline
+  against a fresh store, and this cost only appears once many backups have each
+  sealed their own packs and a snapshot's tree spans all of them. Requires
+  MinIO — request count is the measurement, and a local store reports none.
+  Manual, like `compare.sh`, and for the same reason: a run is dozens of
+  backups, far too slow for per-PR CI, and it answers a design question rather
+  than guarding a regression.
 
 ## Architecture
 

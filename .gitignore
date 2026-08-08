@@ -10,6 +10,10 @@ restore_out/
 # benchreport and gentree landed in the working tree — and, once, in a commit.
 /gentree
 /benchreport
+# Ad-hoc binaries from `go build -o <name> ./cmd/cloudstic` while benchmarking.
+# Two of these (cs, cs439, ~90 MB) reached main before this rule existed.
+/cs
+/cs*[0-9]
 dist/
 
 # Test output

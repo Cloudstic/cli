@@ -27,8 +27,13 @@ nothing to do with how many objects there are:
 
 This RFC proposes deriving the traversal order from the routing key that already
 exists, and having a snapshot record how many of its objects of each kind live in
-each pack. Together those make `restore` stream in O(depth) rather than O(files),
-and take a pack visit from ~9 requests to 1.
+each pack.
+
+The two halves address **different** costs, which is worth stating up front
+because it was measured the hard way (§1). Derived order removes the O(files)
+plan and keeps a pack's residency span short — it decides whether a pack is
+*re*-fetched. Demand counting removes the probe sequence — it decides what a
+pack's *first* contact costs. Neither substitutes for the other.
 
 ## Context
 
@@ -69,6 +74,7 @@ another rather than removing it:
 | size it to the working set (#460) | worked for one repository shape; broke when the benchmark grew to build 13/21/37 packs at 5k/20k/50k files |
 | size it to the *new* working set (#474, reverted) | fixed transfers by holding every pack resident — +347 MB peak RSS on `check`, +580 MB on `prune`. O(repository) residency, which RFC 0023 exists to remove |
 | bound the cost of overrunning it (#474, shipped) | 15x less transferred, 2.7x faster, peak RSS flat — but requests rise 1.4–2.7x, because a penalised pack is read one object at a time |
+| stop overrunning it in the first place (#481, shipped) | −47%/−61% requests when the working set exceeds the budget; **exactly zero** when it fits (§1) |
 
 What every one of those has in common is that it tuned a *policy* while leaving
 the *information* alone. The cache is asked to predict which packs will be wanted
@@ -145,6 +151,44 @@ all of it, so every backup pays in proportion to repository size rather than to
 churn. Chunking and content-addressing the list recovers that, at which point it
 is more machinery than derivation for a weaker locality guarantee.
 
+#### What ordering buys, measured
+
+An ordering-only prototype shipped ahead of this RFC to size the effect: #481
+added a `store.LocalityGrouper` capability and had `restore`'s metadata fetch
+issue its reads grouped by `(packRef, offset)` instead of in walk order. It
+changes only the order of reads, not which reads happen.
+
+| repository | packs | cache budget | requests before | after |
+|---|---|---|---|---|
+| benchmark pipeline | 13 | 8 | 10,650 | 5,666 (−47%) |
+| the same, `-no-verify` | 13 | 8 | 10,593 | 4,133 (−61%) |
+| incremental series (§4) | 9 | 8 | 112 | **112 (unchanged)** |
+
+The third row is the important one, and it refuted the hypothesis the prototype
+was built on. It is the very repository whose +9-requests-per-backup slope
+motivates this RFC, and grouping did **nothing** to it — while instrumentation
+confirmed 6,375 of 6,376 refs were genuinely reordered and the restored output
+was byte-identical.
+
+The explanation is that ordering prevents a pack from being fetched *again*, and
+when the working set fits in the cache there is no second fetch to prevent. The
+~9 requests are therefore not a re-contact cost that order can remove; they are
+**first-contact** cost — `packPromoteAfter` probing a pack to decide whether it
+is worth fetching whole. No permutation of the read sequence touches that.
+
+Three consequences carry into the rest of this RFC:
+
+- §1 and §2 do not overlap. §1's benefit appears only above the cache budget;
+  §2's appears regardless of it.
+- The heuristic cluster (`packPromoteAfter`, `packPenalized`) **cannot** be
+  retired by ordering. It was hoped it could be, which would have simplified
+  `PackStore` without any format change. Only §2 retires it.
+- A benchmark that sizes the cache generously will show §1 doing nothing and
+  conclude ordering is worthless; one that sizes it tightly will show §1 doing
+  everything and conclude demand counting is unnecessary. Both conclusions are
+  artefacts of the budget. Measurements here should state the pack count and the
+  budget together, as the table above does.
+
 ### 2. The pack cache is demand-counted, not LRU
 
 During a traversal **every metadata object is read exactly once** — `check` keeps
@@ -162,6 +206,11 @@ The measured cost of guessing instead of knowing is ~9 requests per pack visit
 whether the pack is worth fetching whole. `packPenalized` (#474) is the same
 guess from the other side — inferring that a pack is not worth caching from the
 fact that it was evicted.
+
+That those ~9 are *irreducible by ordering* is not an assumption: #481 reordered
+the entire read sequence of exactly this workload and left the count at 112
+(§1). Whatever else is true of the read order, the probe sequence survives it,
+and only stating the demand removes it.
 
 None of that is necessary, because **the demand is knowable**. A snapshot carries
 a manifest of `(packRef, kind) → count of this snapshot's objects of that kind in
@@ -305,8 +354,11 @@ cheap; a heavily churned one accumulates.
 The linear term has two factors — how many packs a snapshot spans, and what each
 visit costs — and this RFC addresses only the second:
 
-- **Ordering does not change the pack count.** §1 decides whether a pack is
-  revisited, not how many packs a snapshot spans.
+- **Ordering does not change the pack count, and here does not change the cost
+  either.** §1 decides whether a pack is revisited, not how many packs a
+  snapshot spans — and at 9 packs against an 8-pack budget there is barely a
+  revisit to prevent, which is why #481 measured this exact series at 112
+  requests before and after (§1).
 - **Demand counting attacks the per-visit cost.** Of those ~9 requests, 8 are
   probing. §2 knows the answer before the first read, so a visit costs one
   request instead of nine: the slope falls roughly 9x and the term stays linear.
@@ -353,6 +405,15 @@ for:
   a restore of small files — measured on the benchmark repository, `content/`
   objects holding inlined bodies are roughly 5,000 of the ~11,500 packed objects
   a restore reads. RFC 0024 is what collapses that class into the traversal set.
+- **Ordering does not retire the heuristics.** `packPromoteAfter` and
+  `packPenalized` answer a question — *is this pack worth fetching whole?* —
+  that no read order asks. Measured in #481 (§1). Only §2 removes them, and only
+  for the kinds it counts.
+- **Only `restore` reads in pack order today.** #481 wired
+  `store.GroupByLocality` into `collectMetadata` and nowhere else, so `check`
+  and `prune`'s mark phase still read in walk order and pay the revisit cost in
+  full whenever they overrun the budget. Extending it is mechanical, but it is
+  not done, and neither operation is covered by the numbers above.
 - **Secondary parents are not enumerated.** See §1; `ls` of a secondary parent
   needs an index this RFC does not propose.
 

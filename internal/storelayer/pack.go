@@ -424,7 +424,9 @@ func (s *PackStore) recordPackHit(packRef string) {
 	s.packHits.Add(packRef, hits+1)
 }
 
-// onPackEvicted runs when a pack body leaves packCache, whatever the reason.
+// onPackEvicted runs when a pack body is dropped because the cache ran out of
+// room — not when one is removed deliberately, which carries no such meaning
+// (see newPackBodyCache).
 //
 // A promotion (see resolveFromPack) pays for a whole-pack transfer up front,
 // betting it back on the hits the pack serves while cached. That bet loses
@@ -476,9 +478,16 @@ const (
 	// to matter more than the bytes saved.
 	packPromoteAfter = 8
 
-	// packMissWindow bounds the miss counter. It only has to span the packs in
-	// flight around a given moment, and it must not become a second unbounded
-	// per-repository structure -- which is the thing RFC 0023 is about.
+	// packMissWindow bounds the miss counter, the hit counter and the penalty
+	// set. Each only has to span the packs in flight around a given moment, and
+	// none may become a second unbounded per-repository structure -- which is
+	// the thing RFC 0023 is about.
+	//
+	// It has to stay comfortably above the number of packs the body cache can
+	// hold (packBodyCacheBudget / maxPackSize, currently 8). A hit counter
+	// evicted from this window while its pack is still resident would read as
+	// zero hits on the next eviction and penalize a pack that was serving
+	// fine.
 	packMissWindow = 64
 )
 

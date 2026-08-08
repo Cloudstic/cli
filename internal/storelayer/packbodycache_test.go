@@ -78,27 +78,49 @@ func TestPackBodyCache_ReplaceAndRemoveAccountForBytes(t *testing.T) {
 	}
 }
 
-// onEvict is what lets PackStore tell a promotion that earned back its cost
-// from one that didn't; it has to fire for every way a body leaves the cache,
-// not just the size-triggered path.
-func TestPackBodyCache_OnEvictFiresForEveryRemoval(t *testing.T) {
+// The pressure signal means "this promotion did not pay for itself", so it has
+// to fire when the cache runs out of room and *only* then. A pack removed
+// because it was deleted or its upload discarded is gone, not thrashing;
+// marking it burned a slot in a bounded window that exists to track live packs,
+// and a prune deleting many packs could flush out real penalties.
+func TestPackBodyCache_PressureSignalIsNotRaisedByDeliberateRemoval(t *testing.T) {
 	var evicted []string
 	c, err := newPackBodyCache(1000, func(key string) { evicted = append(evicted, key) })
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	c.Add("packs/explicit", bytes.Repeat([]byte("a"), 100))
-	c.Remove("packs/explicit")
-	if len(evicted) != 1 || evicted[0] != "packs/explicit" {
-		t.Fatalf("explicit Remove did not fire onEvict: %v", evicted)
+	c.Add("packs/deleted", bytes.Repeat([]byte("a"), 100))
+	c.Remove("packs/deleted") // what discardPack and Repack do
+	if len(evicted) != 0 {
+		t.Errorf("deliberate Remove raised the pressure signal for %v", evicted)
+	}
+	if got := c.byteLen(); got != 0 {
+		t.Errorf("byte accounting missed a deliberate removal: holds %d bytes", got)
 	}
 
-	evicted = nil
 	c.Add("packs/first", bytes.Repeat([]byte("b"), 900))
 	c.Add("packs/second", bytes.Repeat([]byte("c"), 900)) // over budget, evicts "first"
 	if len(evicted) != 1 || evicted[0] != "packs/first" {
-		t.Fatalf("budget-triggered eviction did not fire onEvict: %v", evicted)
+		t.Fatalf("running out of room did not raise the pressure signal: %v", evicted)
+	}
+}
+
+// Replacing an entry is not pressure either, and must still keep the byte
+// count honest.
+func TestPackBodyCache_ReplacingAnEntryRaisesNoPressureSignal(t *testing.T) {
+	var evicted []string
+	c, err := newPackBodyCache(10000, func(key string) { evicted = append(evicted, key) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Add("packs/same", bytes.Repeat([]byte("a"), 400))
+	c.Add("packs/same", bytes.Repeat([]byte("b"), 400))
+	if len(evicted) != 0 {
+		t.Errorf("replacing an entry raised the pressure signal for %v", evicted)
+	}
+	if got := c.byteLen(); got != 400 {
+		t.Errorf("holds %d bytes for one 400-byte entry", got)
 	}
 }
 

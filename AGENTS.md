@@ -29,6 +29,9 @@ go fmt ./...
 
 # Memory as a function of repository size (minutes, not seconds)
 SIZES="5000 20000" SAMPLES=3 ./scripts/benchmark/memory.sh
+
+# The same, against a source tree with realistic sizes, fan-out and duplication
+SIZES="5000" PROFILE=source ./scripts/benchmark/memory.sh
 ```
 
 ### Performance measurement
@@ -51,6 +54,15 @@ Three layers, in cost order:
   reason — which would silently move numbers a trend line is built on. The two
   share `lib.sh` for measurement mechanics and nothing else; in particular
   their datasets are separate, which is the whole point.
+- **`scripts/benchmark/gentree/`** — generates a backup source with the
+  statistics a real one has: heavy-tailed file sizes and directory fan-out,
+  duplicated content, and churn that clusters in a few directories rather than
+  spreading evenly. Seeded, so a given (profile, files, seed, MAX_BYTES) is
+  byte-identical run to run — a benchmark whose dataset drifts measures nothing. Profiles:
+  `uniform` (the original flat tree, still the default so historical numbers stay
+  comparable), `source`, `media`, `mixed`. Select with
+  `PROFILE=source ./scripts/benchmark/memory.sh`; `MAX_BYTES` scales the size
+  distribution to keep a realistic tree runnable.
 - **`scripts/benchmark/memory.sh`** — peak RSS and cumulative allocation for
   each operation across several tree sizes. Peak RSS is the one that answers
   "does this grow with the repository", which a single measurement cannot: an

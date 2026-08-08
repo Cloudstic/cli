@@ -40,6 +40,14 @@
 set -euo pipefail
 
 SIZES=${SIZES:-"5000 20000 50000"}
+# Which workload shape to measure against. "uniform" is the original flat tree —
+# constant file size, constant fan-out, nothing duplicated — kept as the default
+# so numbers stay comparable with everything recorded before. The other profiles
+# come from scripts/benchmark/gentree and have the statistics a real source has:
+# heavy-tailed sizes and fan-out, duplicated content, and churn that clusters in
+# a few directories instead of spreading evenly. See gentree/main.go.
+PROFILE=${PROFILE:-uniform}
+MAX_BYTES=${MAX_BYTES:-$((2 * 1024 * 1024 * 1024))}
 SAMPLES=${SAMPLES:-3}
 OUT=${OUT:-benchmark-results/memory.csv}
 KEEP=${KEEP:-0} # keep scratch dirs for inspection
@@ -66,6 +74,7 @@ PASSWORD=${BENCH_REPO_PASSWORD:-benchmark-password}
 # profiling.go); anything built before that flag existed will not write the
 # file measure() expects and the sweep will fail on its first row.
 CLOUDSTIC_BIN=${BENCH_CLOUDSTIC_BIN:-"$REPO_ROOT/bin/cloudstic"}
+GENTREE_BIN="$REPO_ROOT/bin/gentree"
 
 WORK=$(mktemp -d -t cloudstic-mem-XXXXXX)
 cleanup() { [ "$KEEP" = "1" ] || rm -rf "$WORK"; }
@@ -164,6 +173,9 @@ else
 fi
 echo "Building benchreport..."
 ( cd "$REPO_ROOT" && go build -o bin/benchreport ./internal/cmd/benchreport )
+if [ "$PROFILE" != "uniform" ]; then
+    ( cd "$REPO_ROOT" && go build -o bin/gentree ./scripts/benchmark/gentree )
+fi
 
 # benchreport writes the header itself on first append, so a stale CSV must go
 # or the sweep appends to the previous run.
@@ -173,6 +185,7 @@ rm -f "$OUT"
 echo ""
 echo "=== Memory vs repository size ==="
 echo "sizes:   $SIZES"
+echo "profile: $PROFILE"
 echo "samples: $SAMPLES per point (median reported)"
 echo ""
 
@@ -202,7 +215,17 @@ run_pipeline() {
     measure backup-initial "$size" \
         "$CLOUDSTIC_BIN" backup "${store_flags[@]}" "${source_flags[@]}" -quiet
 
-    touch_fraction "$data" "$size" 20 "$gen"
+    if [ "$PROFILE" = "uniform" ]; then
+        touch_fraction "$data" "$size" 20 "$gen"
+    else
+        # Seeded by the sample number so each sample churns differently, the way
+        # successive days would, while staying reproducible run to run.
+        # -max-bytes must match generation: churn scales its writes to the same
+        # budget, and a mismatch writes files from a different size distribution
+        # into the tree, quietly changing what the incremental measures.
+        "$GENTREE_BIN" -churn "$data" -profile "$PROFILE" -seed "$gen" \
+            -fraction 0.05 -max-bytes "$MAX_BYTES" >/dev/null
+    fi
 
     measure backup-incremental "$size" \
         "$CLOUDSTIC_BIN" backup "${store_flags[@]}" "${source_flags[@]}" -quiet
@@ -237,9 +260,15 @@ for size in $SIZES; do
     # Generated once and reused across the samples of this size. Regenerating
     # would add dataset variation to the very noise the samples exist to
     # measure; the tree is an input, not part of what is under test.
-    printf -- '--- %d files: generating... ' "$size"
-    generate_tree "$data" "$size"
-    echo "done"
+    printf -- '--- %d files: generating (%s)... ' "$size" "$PROFILE"
+    if [ "$PROFILE" = "uniform" ]; then
+        generate_tree "$data" "$size"
+        echo "done"
+    else
+        echo ""
+        "$GENTREE_BIN" -out "$data" -profile "$PROFILE" -files "$size" \
+            -seed 1 -max-bytes "$MAX_BYTES" -stats "$WORK/dataset-$size.json"
+    fi
 
     for (( sample = 1; sample <= SAMPLES; sample++ )); do
         echo "  sample $sample/$SAMPLES"

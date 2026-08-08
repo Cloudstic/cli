@@ -55,24 +55,25 @@ jobs:
         shell: bash
         env:
           SIZES: ${{ github.event.inputs.sizes || '5000 20000 50000' }}
+          PROFILES: source
         run: |
           set -euo pipefail
           mkdir -p benchmark-results
-          ./scripts/benchmark/memory.sh | tee benchmark-results/memory.log
+          ./scripts/benchmark/bench.sh | tee benchmark-results/bench.log
 
       - name: Publish summary
         shell: bash
         run: |
           set -euo pipefail
           go run ./internal/cmd/benchreport render \
-            -in benchmark-results/memory.csv \
+            -in benchmark-results/bench.csv \
             -title "Peak memory vs repository size" >> "$GITHUB_STEP_SUMMARY"
           {
             echo ""
             echo "<details><summary>Run log</summary>"
             echo ""
             echo '```text'
-            cat benchmark-results/memory.log
+            cat benchmark-results/bench.log
             echo '```'
             echo ""
             echo "</details>"

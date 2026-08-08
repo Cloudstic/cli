@@ -54,15 +54,18 @@ Three layers, in cost order:
   reason — which would silently move numbers a trend line is built on. The two
   share `lib.sh` for measurement mechanics and nothing else; in particular
   their datasets are separate, which is the whole point.
-- **`scripts/benchmark/s3.sh`** — requests and bytes transferred per operation
-  against a MinIO container, because peak RSS is the wrong headline for a remote
-  store: request latency sets the pace and egress is billed. The two can move in
-  opposite directions — sizing the pack body cache below the working set left
-  memory almost unchanged while causing gigabytes of re-read traffic (#458), and
-  nothing in `memory.sh` could see it. MinIO on loopback has none of S3's
-  latency, so the request counts are what transfer and the timings are a sanity
-  check. Needs docker, `aws` and `curl`; the container is removed on exit.
-  `scripts/benchmark/minio.sh` holds its lifecycle and the metric scraping.
+- **`scripts/benchmark/bench.sh`** — one pass over the pipeline collecting every
+  metric it can yield: wall time and peak RSS from `time(1)`, cumulative
+  allocation from the binary's `-memstats`, and — on a MinIO backend — requests
+  and bytes with a per-API breakdown. The matrix is
+  `PROFILES x SIZES x BACKENDS x SAMPLES`; a cell runs the pipeline once and
+  fills the columns available to it. Backend stays an axis rather than a metric,
+  because pointing at MinIO changes what is measured (the S3 SDK's buffers are
+  part of the process) rather than adding detail to the local number. Writes one
+  CSV per backend plus a sidecar recording the machine, since timings are a
+  property of the hardware as much as of the code. `minio.sh` holds the
+  container lifecycle and metric scraping. Needs docker, `aws` and `curl` only
+  for `BACKENDS=minio`.
 - **`scripts/benchmark/gentree/`** — generates a backup source with the
   statistics a real one has: heavy-tailed file sizes and directory fan-out,
   duplicated content, and churn that clusters in a few directories rather than

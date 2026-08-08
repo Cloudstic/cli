@@ -4,7 +4,7 @@ name: Benchmark
 #
 # Deliberately not compare.sh: that script's dataset exists to be fair across
 # four tools and may change for that reason, which would silently move the
-# numbers tracked here. See scripts/benchmark/cloudstic.sh.
+# numbers tracked here. See scripts/benchmark/bench.sh.
 
 # Two ways in, matching the Memory scaling workflow: dispatch it by hand
 # against any ref, or put the `benchmark` label on a pull request. The same
@@ -54,14 +54,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p benchmark-results
-          ./scripts/benchmark/cloudstic.sh local | tee benchmark-results/cloudstic.log
+          SIZES=20000 SAMPLES=2 ./scripts/benchmark/bench.sh | tee benchmark-results/cloudstic.log
 
       - name: Publish summary
         shell: bash
         run: |
           set -euo pipefail
           go run ./internal/cmd/benchreport render \
-            -in benchmark-results/cloudstic.csv \
+            -in benchmark-results/bench.csv \
             -title "Cloudstic benchmark" >> "$GITHUB_STEP_SUMMARY"
           {
             echo ""
@@ -82,4 +82,4 @@ jobs:
           name: cloudstic-benchmark
           path: |
             benchmark-results/cloudstic.log
-            benchmark-results/cloudstic.csv
+            benchmark-results/bench.csv

@@ -1,0 +1,110 @@
+name: Bug report
+description: Report reproducible behavior that is incorrect or unsafe
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues before filing a new one. For a security
+        vulnerability, use the private security-reporting link in the template
+        chooser instead of this form.
+
+        Use a specific title with no trailing period. Do not include passwords,
+        access keys, recovery keys, tokens, or unredacted debug output.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What were you trying to do, and why?
+      placeholder: Describe the command, workflow, source, and store involved.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide the smallest repeatable sequence that demonstrates the problem.
+      placeholder: |
+        1. Configure ...
+        2. Run `cloudstic ...`
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened? Include the exact error when one was reported.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened instead?
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Cloudstic version
+      description: Paste the version and build information reported by Cloudstic.
+      placeholder: cloudstic version ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Relevant configuration
+      description: |
+        Include source/store types and relevant flags. Redact credentials and
+        private paths. Say whether the repository uses encryption or packfiles
+        when that could matter.
+      placeholder: |
+        Source: local
+        Store: S3-compatible
+        Packfiles: enabled
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or additional evidence
+      description: |
+        Add a minimal redacted log, stack trace, benchmark, or screenshot. The
+        `-debug` flag may expose paths and backend details, so inspect its output
+        before posting it.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: Optional concrete checks that would prove the bug is fixed and remains fixed.
+      placeholder: |
+        - A regression test reproduces the failure on the current release.
+        - The same sequence completes successfully after the fix.
+    validations:
+      required: false

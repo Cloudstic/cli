@@ -427,9 +427,30 @@ One set of rules for commit, PR, and issue titles (derived from repo history).
 
 ## Creating GitHub Issues
 
-Create issues with `gh issue create` against `Cloudstic/cli`. Match the existing house style (see #155, #250–#253 as references).
+Create issues with `gh issue create` against `Cloudstic/cli`. The forms under
+`.github/ISSUE_TEMPLATE/` are the source of truth even when the CLI bypasses the
+web template chooser. Match the existing house style (see #155, #250–#253 as
+references).
 
-**Body structure** — use these four Markdown sections, in order:
+Never open a public issue for a suspected vulnerability. Direct it to the
+repository's private security-advisory form, as configured in
+`.github/ISSUE_TEMPLATE/config.yml`.
+
+**Bug reports** — follow `01-bug-report.yml`. Include these sections in order:
+
+- `Context`
+- `Reproduction`
+- `Actual behavior`
+- `Expected behavior`
+- `Cloudstic version`
+- `Operating system`
+- `Relevant configuration` when it matters
+- `Logs or additional evidence` when available, with secrets and private paths
+  redacted
+- `Acceptance criteria` when the regression has concrete proof conditions
+
+**Work items and proposals** — follow `02-work-item.yml`. Use these core
+Markdown sections in order:
 
 ```markdown
 ## Context
@@ -442,6 +463,10 @@ One or two sentences on the desired end state.
 
 ## Scope
 - bullet list of the concrete changes to make
+
+## Repository compatibility
+State how old repositories remain readable and whether the format version must
+change, or write "No repository format change."
 
 ## Acceptance Criteria
 - bullet list of verifiable outcomes
@@ -462,27 +487,42 @@ Do not invent new labels — reuse what `gh label list` returns.
 
 ## Creating Pull Requests
 
-Open PRs with `gh pr create` against `Cloudstic/cli`. Match the existing house style (see #214, #228, #236, #237 as references).
+Open PRs with `gh pr create` against `Cloudstic/cli`. Use
+`.github/pull_request_template.md` as the source of truth even when constructing
+the body non-interactively. Match the existing house style (see #214, #228,
+and #236–#237 as references).
 
 **Branch names** — `<type>/<kebab-slug>`, where the type mirrors the label vocabulary: `feat/`, `refactor/`, `test/`, `chore/`, `fix/`, `docs/` (e.g. `feat/tui-profile-history`, `refactor/tui-profile-modal-state`). Dependabot branches (`dependabot/...`) are machine-generated — leave them alone.
 
 **Titles** — see Naming Conventions above. Use a Conventional Commit prefix (`type: …` or `type(scope): …`) matching the branch type; because PRs squash-merge, the title becomes the commit subject.
 
-**Body structure** — two Markdown sections:
+**Body structure** — use these Markdown sections:
 
 ```markdown
 ## Summary
 - bullet list of the concrete changes, imperative voice
 
-<link line: `Closes #NNN`, `Part of #NNN`, or `Fixes #NNN`>
+## Related issues
+<`Closes #NNN`, `Part of #NNN`, `Fixes #NNN`, or `None`>
+
+## Repository compatibility
+<compatibility and version-gate decision, or `No repository format change.`>
 
 ## Verification
 - <exact test command run, scoped to the touched packages>
 - <exact lint command run, scoped to the touched packages>
+
+## Documentation
+<documentation changes, or `No documentation change required.`>
 ```
 
 - Keep the `Summary` bullets high-signal — what changed and why, not a file-by-file diff.
-- The link line ties the PR to its issue; omit it only for standalone work.
+- `Related issues` ties the PR to its issue; write `None` only for standalone work.
+- Read `docs/compatibility.md` before changing anything written to a store. The
+  compatibility section must identify the legacy read path, safe failure
+  behavior for older builds, and repository-format version decision.
+- Exported API changes must be paired with an update to the separate Cloudstic
+  docs repository; say so in `Documentation`.
 - Under `Verification`, paste the **exact commands you ran**, scoped to the packages you touched, using the repo's cache-env prefixes so they reproduce in CI:
 
 ```bash

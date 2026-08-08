@@ -292,8 +292,16 @@ run_pipeline() {
     # Removed first for the same reason as above: cp -R into an already-
     # existing directory nests a copy inside it rather than replacing it,
     # which would otherwise grow one directory deeper every sample.
-    local dedup_src
-    dedup_src=$(find "$data" -mindepth 1 -maxdepth 1 -type d | sort | head -1)
+    # Piping sort straight into `head -1` lets head close the pipe the moment
+    # it has its first line; once the tree is big enough that sort's full
+    # output does not fit in one pipe write, sort's next write gets SIGPIPE
+    # and pipefail fails the whole script. Capturing the whole listing first
+    # — a single command substitution waits for the pipeline to finish rather
+    # than closing it early — and then taking the first line with a bash
+    # parameter expansion avoids the pipe entirely for that step.
+    local all_dirs dedup_src
+    all_dirs=$(find "$data" -mindepth 1 -maxdepth 1 -type d | sort)
+    dedup_src=${all_dirs%%$'\n'*}
     rm -rf "$data/bench-dedup-copy"
     cp -R "$dedup_src" "$data/bench-dedup-copy"
     measure backup-dedup "$CLOUDSTIC_BIN" backup $flags -source "local:$data" -quiet

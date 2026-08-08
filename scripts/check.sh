@@ -34,7 +34,7 @@ go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 # Not go-installable (it's Haskell); install via your package manager
 # (e.g. `brew install shellcheck`, `apt install shellcheck`).
 echo "==> Running shellcheck..."
-find scripts -name '*.sh' -print0 | xargs -0 shellcheck --rcfile=.shellcheckrc
+find scripts -name '*.sh' -print0 | xargs -0 shellcheck
 
 echo "==> Running markdownlint..."
 npx markdownlint-cli2 "**/*.md"

@@ -1,10 +1,4 @@
-// Package benchreport turns benchmark measurements into a Markdown report.
-//
-// The measurement scripts orchestrate external binaries, which is what shell is
-// good at. Everything after that — arithmetic, grouping, table and chart
-// layout — is what shell is worst at, and is here instead: it is typed, it is
-// tested, and it does not fork bc to divide two numbers.
-package benchreport
+package main
 
 import (
 	"encoding/csv"

@@ -1,4 +1,4 @@
-package benchreport
+package main
 
 import (
 	"os"

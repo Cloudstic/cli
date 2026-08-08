@@ -1,22 +1,32 @@
 name: Benchmark
 
-# Cloudstic measured on its own terms, on a mixed dataset.
+# One sweep over the pipeline: wall time, peak RSS, allocation, and — when a
+# MinIO backend is selected — requests and bytes.
 #
-# Deliberately not compare.sh: that script's dataset exists to be fair across
-# four tools and may change for that reason, which would silently move the
-# numbers tracked here. See scripts/benchmark/bench.sh.
+# There used to be two workflows here. They ran different scripts asking
+# different questions, which justified the split; once bench.sh collapsed those
+# scripts into one matrix they became the same job with different parameters,
+# started by the same label, one of them a strict subset of the other. A second
+# entry in the checks list is not free — it is a second thing to read, wait for
+# and explain.
+#
+# Deliberately not part of the ordinary CI run: it builds several synthetic
+# trees and backs each one up, which costs minutes rather than seconds. Two ways
+# in — dispatch it by hand against any ref, or put the `benchmark` label on a
+# pull request when a change could plausibly move memory.
 
-# Two ways in, matching the Memory scaling workflow: dispatch it by hand
-# against any ref, or put the `benchmark` label on a pull request. The same
-# label drives both workflows, so labelling a PR once asks for the whole
-# performance picture rather than half of it.
 on:
   workflow_dispatch:
     inputs:
       ref:
-        description: Git ref to benchmark (branch, tag, or refs/pull/<number>/head)
+        description: Git ref to measure (branch, tag, or refs/pull/<number>/head)
         required: false
         default: main
+        type: string
+      sizes:
+        description: Space-separated tree sizes to measure
+        required: false
+        default: "5000 20000 50000"
         type: string
   pull_request:
     types: [labeled, synchronize]
@@ -25,18 +35,18 @@ permissions:
   contents: read
 
 concurrency:
-  group: local-benchmark-${{ github.event_name }}-${{ github.event.inputs.ref || github.ref }}
+  group: memory-${{ github.event.inputs.ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  benchmark:
+  memory:
     # On a pull request this runs only while the `benchmark` label is on it, so
-    # an unrelated label does not start the job, and pushing more commits to an
-    # already-labelled PR re-measures without another click.
+    # an unrelated label does not start a ten-minute job, and pushing more
+    # commits to an already-labelled PR re-measures without another click.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       contains(github.event.pull_request.labels.*.name, 'benchmark')
-    name: Cloudstic local benchmark
+    name: Benchmark
     runs-on: macos-latest
     steps:
       - name: Checkout target ref
@@ -49,12 +59,15 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Run benchmark
+      - name: Measure
         shell: bash
+        env:
+          SIZES: ${{ github.event.inputs.sizes || '5000 20000 50000' }}
+          PROFILES: source
         run: |
           set -euo pipefail
           mkdir -p benchmark-results
-          SIZES=20000 SAMPLES=2 ./scripts/benchmark/bench.sh | tee benchmark-results/cloudstic.log
+          ./scripts/benchmark/bench.sh | tee benchmark-results/bench.log
 
       - name: Publish summary
         shell: bash
@@ -62,13 +75,13 @@ jobs:
           set -euo pipefail
           go run ./internal/cmd/benchreport render \
             -in benchmark-results/bench.csv \
-            -title "Cloudstic benchmark" >> "$GITHUB_STEP_SUMMARY"
+            -title "Benchmark" >> "$GITHUB_STEP_SUMMARY"
           {
             echo ""
             echo "<details><summary>Run log</summary>"
             echo ""
             echo '```text'
-            cat benchmark-results/cloudstic.log
+            cat benchmark-results/bench.log
             echo '```'
             echo ""
             echo "</details>"
@@ -76,10 +89,10 @@ jobs:
             echo "Ref \`${{ github.event.inputs.ref || github.ref }}\` on \`${{ runner.os }}\`."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload benchmark artifact
+      - name: Upload results
         uses: actions/upload-artifact@v7
         with:
-          name: cloudstic-benchmark
+          name: benchmark-results
           path: |
-            benchmark-results/cloudstic.log
-            benchmark-results/bench.csv
+            benchmark-results/memory.csv
+            benchmark-results/memory.log

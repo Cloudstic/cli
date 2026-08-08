@@ -86,7 +86,7 @@ Three layers, in cost order:
   machine — allocation is the column that shows a change like that. Each
   point is `SAMPLES` repetitions (default 3) reduced to a median with its
   min–max band, because a single sample cannot tell a real change from a
-  noisy run. What the `Memory scaling` workflow runs.
+  noisy run. What the `Benchmark` workflow runs.
 
 Both workflows trigger the same two ways: dispatched by hand against any ref,
 or by putting the `benchmark` label on a pull request. One label asks for the

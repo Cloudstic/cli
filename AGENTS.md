@@ -50,7 +50,7 @@ Three layers, in cost order:
   reason — which would silently move numbers a trend line is built on. The two
   share `lib.sh` for measurement mechanics and nothing else; in particular
   their datasets are separate, which is the whole point.
-- **`scripts/benchmark/gentree/`** — generates a backup source with the
+- **`internal/cmd/gentree/`** — generates a backup source with the
   statistics a real one has: heavy-tailed file sizes and directory fan-out,
   duplicated content, and churn that clusters in a few directories rather than
   spreading evenly. Seeded, so a given (profile, files, seed, MAX_BYTES) is

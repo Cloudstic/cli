@@ -215,7 +215,7 @@ fi
 
 # Reset DATA_DIR to a clean copy of the template
 reset_data_dir() {
-    rm -rf "$DATA_DIR"/*
+    rm -rf "${DATA_DIR:?}"/*
     cp -a "$DATA_TEMPLATE"/ "$DATA_DIR/"
 }
 

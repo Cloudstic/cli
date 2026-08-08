@@ -79,9 +79,7 @@ detect_time() {
 TIME_FLAVOUR=$(detect_time)
 [ "$TIME_FLAVOUR" = none ] && { echo "need BSD or GNU time(1)" >&2; exit 2; }
 
-for tool in bc; do
-    command -v "$tool" >/dev/null 2>&1 || { echo "bench.sh needs $tool" >&2; exit 2; }
-done
+command -v bc >/dev/null 2>&1 || { echo "bench.sh needs bc" >&2; exit 2; }
 
 # ---------------------------------------------------------------------------
 # Measurement

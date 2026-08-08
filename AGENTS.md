@@ -398,6 +398,29 @@ clearer failure.
 - Use `-race` flag during development to catch race conditions.
 - Hermetic tests (default) use local filesystem + containers; no cloud credentials needed.
 
+## Commit Hygiene
+
+Treat the staged file list as a security and release boundary. Ad-hoc build
+binaries (`cs` and `cs439`, about 90 MB combined) reached main in the past; a
+matching `.gitignore` rule is a backstop, not a substitute for reviewing what a
+commit contains.
+
+- Run `git status --short` before staging and account for every modified and
+  untracked path. Existing changes may belong to the user or another workstream.
+- Stage only explicit paths that were intentionally created or modified for the
+  current task. Never use `git add .`, `git add -A`, a directory-wide add, or a
+  wildcard that can sweep up files you have not reviewed.
+- Never add a binary file. Do not commit compiled executables, archives,
+  profiles, coverage output, scratch data, credentials, tokens, or other build
+  and runtime artifacts.
+- Before committing, inspect `git diff --cached --name-status` and
+  `git diff --cached --stat`, then review the staged diff for every text file.
+  Use `file -- <path>` when a file's type is not obvious. Every staged path must
+  be known, intentional, and explainable.
+- Run `git diff --cached --check`. If anything unexpected is staged, unstage it
+  without deleting the working-tree file, investigate how it got there, and do
+  not commit until the index contains only reviewed files.
+
 ## Naming Conventions
 
 One set of rules for commit, PR, and issue titles (derived from repo history).

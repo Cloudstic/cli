@@ -24,10 +24,14 @@ BACKENDS="local minio" ./scripts/benchmark/bench.sh
 PROFILES="mixed media" ./scripts/benchmark/bench.sh
 ```
 
-One pipeline run per cell of `PROFILES x SIZES x BACKENDS x SAMPLES`, collecting
-wall time, peak RSS, cumulative allocation, and — on MinIO — requests and bytes
-with a per-API breakdown. Writes one CSV per backend plus a sidecar recording the
-machine, since timings belong to the hardware as much as to the code.
+One pipeline run per cell of `PROFILES x SIZES x BACKENDS x SAMPLES`: an initial
+backup, incrementals (no changes, one file, a bounded batch), 200 MB of new
+data, a deduplicated backup, check, restore (with and without `-no-verify`),
+and prune. Collects wall time, peak RSS, cumulative allocation, repository
+growth per operation, and — on MinIO — requests and bytes with a per-API
+breakdown, plus the final repository size and the logical/stored ratio as
+summary rows. Writes one CSV per backend plus a sidecar recording the machine,
+since timings belong to the hardware as much as to the code.
 
 Requirements: Go toolchain; `bc`; docker, `aws` and `curl` only for
 `BACKENDS=minio`.

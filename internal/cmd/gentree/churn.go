@@ -28,7 +28,12 @@ import (
 //   - rename a directory: with FileID identity nothing below it should be
 //     rewritten, and with path identity everything would be. It is the cheapest
 //     way to tell the two apart, so the generator has to be able to produce it.
-func applyChurn(root string, p profile, seed int64, fraction float64) (stats, error) {
+//
+// count, when greater than zero, sets the churn budget directly — "1000
+// changed" has to mean 1000 files at every tree size, which a fraction cannot
+// express without scaling with the tree. Zero defers to fraction, the
+// original size-relative behaviour.
+func applyChurn(root string, p profile, seed int64, fraction float64, count int) (stats, error) {
 	rng := rand.New(rand.NewSource(seed ^ 0x5eed))
 	st := stats{}
 
@@ -51,9 +56,17 @@ func applyChurn(root string, p profile, seed int64, fraction float64) (stats, er
 	if err != nil {
 		return st, err
 	}
-	budget := int(float64(total) * fraction)
+	var budget int
+	if count > 0 {
+		budget = count
+	} else {
+		budget = int(float64(total) * fraction)
+	}
 	if budget < 1 {
 		budget = 1
+	}
+	if budget > total {
+		budget = total
 	}
 
 	pool := newContentPool(rng, p)

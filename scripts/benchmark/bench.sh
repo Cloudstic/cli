@@ -34,6 +34,8 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 # shellcheck source=scripts/benchmark/minio.sh
 . "$REPO_ROOT/scripts/benchmark/minio.sh"
+# shellcheck source=scripts/benchmark/lib.sh
+. "$REPO_ROOT/scripts/benchmark/lib.sh"
 
 PROFILES=${PROFILES:-source}
 SIZES=${SIZES:-"5000 20000 50000"}
@@ -56,6 +58,9 @@ MINIO_STARTED=0
 cleanup() {
     [ "$MINIO_STARTED" = "1" ] && minio_stop
     [ "$KEEP" = "1" ] || rm -rf "$WORK"
+    # RESTORE_DIR is created by sourcing lib.sh and unused here; bench.sh keeps
+    # its own restore scratch space under $WORK.
+    rm -rf "$RESTORE_DIR"
 }
 trap cleanup EXIT
 
@@ -102,6 +107,9 @@ measure() {
         minio_api_counts >"$WORK/api-before"
     fi
 
+    local repo_kb_before
+    repo_kb_before=$(get_repo_size_kb)
+
     local rc=0
     if [ "$TIME_FLAVOUR" = bsd ]; then
         /usr/bin/time -l "$@" -memstats "$stats" >"$out" 2>"$err" || rc=$?
@@ -142,14 +150,22 @@ measure() {
         by_api=$(minio_api_delta "$WORK/api-before" "$WORK/api-after")
     fi
 
-    printf 'cloudstic,%s,%s,%d,%d,%s,%s,%.1f,%s,%s,%s,%s\n' \
+    # Repository growth, using lib.sh's get_repo_size_kb rather than a second
+    # implementation — it already handles both a local directory and an S3
+    # prefix, which matters now that a MinIO backend exists alongside local.
+    local repo_kb_after repo_delta
+    repo_kb_after=$(get_repo_size_kb)
+    repo_delta=$(format_size_kb $(( repo_kb_after - repo_kb_before )))
+
+    printf 'cloudstic,%s,%s,%d,%d,%s,%s,%.1f,%s,%s,%s,%s,%s\n' \
         "$backend" "$profile" "$size" "$sample" "$op" \
         "$seconds" "$(echo "scale=1; $peak_kb / 1024" | bc)" \
-        "$alloc_mb" "$requests" "$sent_mb" "$by_api" >>"$(backend_csv "$backend")"
+        "$alloc_mb" "$requests" "$sent_mb" "$by_api" "$repo_delta" >>"$(backend_csv "$backend")"
 
     printf '    %-20s %7ss %8.1f MB peak' "$op" "$seconds" "$(echo "scale=1; $peak_kb / 1024" | bc)"
     [ -n "$alloc_mb" ] && printf ' %9s MB alloc' "$alloc_mb"
     [ -n "$requests" ] && printf ' %6s req %8s MB sent' "$requests" "$sent_mb"
+    printf ' %10s repo' "$repo_delta"
     printf '\n'
 }
 
@@ -166,11 +182,48 @@ store_flags() {
     fi
 }
 
+# reset_store empties the backend and points get_repo_size_kb at it, so
+# repository-growth tracking (measure(), measure_summary()) sees the right
+# place for whichever backend this cell is measuring against.
 reset_store() {
     if [ "$backend" = minio ]; then
         minio_reset_bucket
+        BENCH_REPO_DIR=""
+        BENCH_S3_PREFIX="s3://$MINIO_BUCKET/bench/"
+        BENCH_S3_ENDPOINT=$(minio_endpoint)
+        export AWS_ACCESS_KEY_ID="$MINIO_USER" AWS_SECRET_ACCESS_KEY="$MINIO_PASSWORD"
     else
         rm -rf "$WORK/repo"; mkdir -p "$WORK/repo"
+        BENCH_REPO_DIR="$WORK/repo"
+        BENCH_S3_PREFIX=""
+        BENCH_S3_ENDPOINT=""
+    fi
+}
+
+# measure_summary appends the two rows that describe the whole pipeline rather
+# than one operation in it: the repository's final size, and how that compares
+# to the logical size of the tree that was backed up — the headline
+# deduplication and compression number. Neither is a timed operation, so
+# seconds and peak_mb are left at zero; benchreport renders them in their own
+# section rather than the per-operation tables.
+measure_summary() {
+    local stored_kb logical_kb stored_fmt logical_fmt
+    stored_kb=$(get_repo_size_kb)
+    logical_kb=$(du -sk "$data" | awk '{print $1}')
+    stored_fmt=$(format_size_kb "$stored_kb")
+    logical_fmt=$(format_size_kb "$logical_kb")
+
+    printf 'cloudstic,%s,%s,%d,%d,Final Repo Size,0,0,,,,,%s\n' \
+        "$backend" "$profile" "$size" "$sample" "$stored_fmt" >>"$(backend_csv "$backend")"
+    printf '    %-20s %s\n' "Final Repo Size" "$stored_fmt"
+
+    if [ "$stored_kb" -gt 0 ]; then
+        local ratio
+        ratio=$(echo "scale=2; $logical_kb / $stored_kb" | bc)
+        printf 'cloudstic,%s,%s,%d,%d,Logical / Stored,0,0,,,,,%s / %s (%sx)\n' \
+            "$backend" "$profile" "$size" "$sample" "$logical_fmt" "$stored_fmt" "$ratio" \
+            >>"$(backend_csv "$backend")"
+        printf '    %-20s %s / %s (%sx)\n' "Logical / Stored" "$logical_fmt" "$stored_fmt" "$ratio"
     fi
 }
 
@@ -179,24 +232,81 @@ reset_store() {
 # The unit of repetition is the whole pipeline, not the command: re-running
 # prune against an already-pruned repository, or an initial backup against a
 # populated one, measures a different operation that happens to share a name.
+#
+# The sequence mirrors what a real repository sees over time: an initial
+# backup, then the incrementals that follow it (nothing changed, a single
+# edit, a bounded batch of edits), then growth (new data), then the case that
+# separates this design from a naive copy (content it already has).
 run_pipeline() {
-    local flags restore
+    local flags restore restore_no_verify
     flags=$(store_flags)
     restore="$WORK/restore"
+    restore_no_verify="$WORK/restore-no-verify"
 
     reset_store
-    rm -rf "$restore"; mkdir -p "$restore"
+    rm -rf "$restore" "$restore_no_verify"
+    mkdir -p "$restore" "$restore_no_verify"
 
-    measure init    "$CLOUDSTIC_BIN" init $flags -quiet
-    measure backup  "$CLOUDSTIC_BIN" backup $flags -source "local:$data" -quiet
+    measure init   "$CLOUDSTIC_BIN" init $flags -quiet
+    measure backup "$CLOUDSTIC_BIN" backup $flags -source "local:$data" -quiet
 
-    "$GENTREE_BIN" -churn "$data" -profile "$profile" -seed "$sample" \
-        -fraction 0.05 -max-bytes "$MAX_BYTES" >/dev/null
+    # The cheapest possible incremental: nothing in the source changed. Shows
+    # whether scanning cost is proportional to the tree or to the churn.
+    measure backup-incremental-noop "$CLOUDSTIC_BIN" backup $flags -source "local:$data" -quiet
 
-    measure backup-incremental "$CLOUDSTIC_BIN" backup $flags -source "local:$data" -quiet
+    # An exact count rather than a fraction: "1 file" and "1000 changed" have
+    # to mean the same thing at every tree size, which -fraction cannot
+    # express without its shape changing with the tree.
+    "$GENTREE_BIN" -churn "$data" -profile "$profile" -seed "$(( sample * 100 + 1 ))" \
+        -count 1 -max-bytes "$MAX_BYTES" >/dev/null
+    measure backup-incremental-1 "$CLOUDSTIC_BIN" backup $flags -source "local:$data" -quiet
+
+    "$GENTREE_BIN" -churn "$data" -profile "$profile" -seed "$(( sample * 100 + 2 ))" \
+        -count 1000 -max-bytes "$MAX_BYTES" >/dev/null
+    measure backup-incremental-1000 "$CLOUDSTIC_BIN" backup $flags -source "local:$data" -quiet
+
+    # Growth rather than modification: brand new content the repository has
+    # never seen, sized to a fixed budget independent of the sweep's tree size.
+    #
+    # -max-bytes only ever scales a tree *down* to fit a budget (see
+    # fitToBudget in gentree/main.go) — it never pads a naturally smaller one
+    # up to fill it, which is the right behaviour for the main dataset but
+    # means the file count here has to be large enough that every profile's
+    # natural size already clears 200MB before scaling kicks in. 20000 clears
+    # it for the smallest-mean profile (source, ~18KB/file) with margin to
+    # spare for mixed and media, whose means are larger still.
+    #
+    # $data is regenerated once per (profile, size) and reused across every
+    # sample and backend, so this directory already exists from an earlier
+    # iteration; removing it first keeps -out writing a fresh, deterministic
+    # tree instead of layering another batch of names into it.
+    rm -rf "$data/bench-added-200mb"
+    "$GENTREE_BIN" -out "$data/bench-added-200mb" -profile "$profile" -files 20000 \
+        -seed "$sample" -max-bytes $(( 200 * 1024 * 1024 )) >/dev/null
+    measure backup-add-200mb "$CLOUDSTIC_BIN" backup $flags -source "local:$data" -quiet
+
+    # Backing up content the repository already holds, end to end: the repo
+    # should barely grow even though a whole directory's worth of bytes was
+    # logically presented to it again.
+    #
+    # Removed first for the same reason as above: cp -R into an already-
+    # existing directory nests a copy inside it rather than replacing it,
+    # which would otherwise grow one directory deeper every sample.
+    local dedup_src
+    dedup_src=$(find "$data" -mindepth 1 -maxdepth 1 -type d | sort | head -1)
+    rm -rf "$data/bench-dedup-copy"
+    cp -R "$dedup_src" "$data/bench-dedup-copy"
+    measure backup-dedup "$CLOUDSTIC_BIN" backup $flags -source "local:$data" -quiet
+
     measure check   "$CLOUDSTIC_BIN" check $flags -quiet
     measure restore "$CLOUDSTIC_BIN" restore $flags -output "$restore" latest -quiet
-    measure prune   "$CLOUDSTIC_BIN" prune $flags -quiet
+    # Restore without the per-file content-hash check, which separates what
+    # verification costs from what fetching and writing cost.
+    measure restore-no-verify "$CLOUDSTIC_BIN" restore $flags \
+        -output "$restore_no_verify" -no-verify latest -quiet
+    measure prune "$CLOUDSTIC_BIN" prune $flags -quiet
+
+    measure_summary
 }
 
 # ---------------------------------------------------------------------------
@@ -239,7 +349,7 @@ backend_csv() {
 # columns ride along without the renderer needing to know about them. "tool" is
 # constant here and present only because the renderer labels rows with it.
 for backend in $BACKENDS; do
-    echo "tool,backend,profile,scale,sample,operation,seconds,peak_mb,alloc_mb,requests,sent_mb,by_api" >"$(backend_csv "$backend")"
+    echo "tool,backend,profile,scale,sample,operation,seconds,peak_mb,alloc_mb,requests,sent_mb,by_api,repo_delta" >"$(backend_csv "$backend")"
 done
 
 export CLOUDSTIC_PASSWORD="$PASSWORD"

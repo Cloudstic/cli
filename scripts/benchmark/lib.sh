@@ -15,9 +15,12 @@
 
 # BENCH_REPO_DIR (local) or BENCH_S3_PREFIX (s3://bucket/prefix/) enable
 # repository-growth tracking. A script sets whichever applies before its first
-# run_bench.
+# run_bench. BENCH_S3_ENDPOINT points the S3 prefix at a non-AWS endpoint —
+# MinIO in particular — and is empty for real S3, where the default endpoint
+# is correct.
 BENCH_REPO_DIR=""
 BENCH_S3_PREFIX=""
+BENCH_S3_ENDPOINT=""
 
 # CURRENT_TOOL labels rows in the CSV. compare.sh reassigns it per tool;
 # cloudstic.sh leaves it alone.
@@ -61,9 +64,14 @@ get_repo_size_kb() {
     if [ -n "$BENCH_REPO_DIR" ] && [ -d "$BENCH_REPO_DIR" ]; then
         du -sk "$BENCH_REPO_DIR" | awk '{print $1}'
     elif [ -n "$BENCH_S3_PREFIX" ]; then
-        local bytes
-        bytes=$(aws s3 ls "$BENCH_S3_PREFIX" --summarize --recursive 2>/dev/null \
-            | grep "Total Size" | awk '{print $3}')
+        local bytes endpoint_args
+        endpoint_args=()
+        [ -n "$BENCH_S3_ENDPOINT" ] && endpoint_args=(--endpoint-url "$BENCH_S3_ENDPOINT")
+        # An empty prefix is normal right after `init` and must not be fatal:
+        # under pipefail, aws printing no "Total Size" line makes grep exit 1,
+        # which would otherwise abort the whole sweep under set -e.
+        bytes=$(aws "${endpoint_args[@]}" s3 ls "$BENCH_S3_PREFIX" --summarize --recursive 2>/dev/null \
+            | grep "Total Size" | awk '{print $3}') || true
         echo $(( ${bytes:-0} / 1024 ))
     else
         echo 0

@@ -44,7 +44,7 @@ $CLI backup $STORE -source gdrive 2>&1 | strip_ansi | tail -5
 
 # Verify backup created a snapshot
 LS_OUTPUT=$($CLI ls $STORE 2>&1)
-TOTAL_FILES=$(echo "$LS_OUTPUT" | strip_ansi | grep -v "^$" | grep -v "Listing" | grep -v "entries listed" | wc -l | tr -d ' ')
+TOTAL_FILES=$(echo "$LS_OUTPUT" | strip_ansi | grep -v "^$" | grep -v "Listing" | grep -vc "entries listed")
 echo "  total entries in snapshot: $TOTAL_FILES"
 check "backup has at least 1 entry" "[ '$TOTAL_FILES' -ge 1 ]"
 
@@ -91,7 +91,7 @@ if [ -n "$FOLDER" ]; then
   check "subtree restore is smaller than full" "[ '$SUBTREE_COUNT' -le '$FULL_COUNT' ]"
 
   # Verify all entries are under the selected folder.
-  OUTSIDE=$(zip_entries "$TMP_DIR/subtree.zip" | grep -v "^${FOLDER}" | wc -l | tr -d ' ')
+  OUTSIDE=$(zip_entries "$TMP_DIR/subtree.zip" | grep -vc "^${FOLDER}")
   check "no files outside subtree (got $OUTSIDE)" "[ '$OUTSIDE' -eq 0 ]"
 else
   echo ""
@@ -106,7 +106,7 @@ if [ -n "$FILE" ]; then
   echo "=== Step 4: Selective Restore — Single File ($FILE) ==="
 
   $CLI restore $STORE -output "$TMP_DIR/single.zip" -path "$FILE" 2>&1 | strip_ansi | tail -3
-  SINGLE_FILES=$(zip_entries "$TMP_DIR/single.zip" | grep -v '/$' | wc -l | tr -d ' ')
+  SINGLE_FILES=$(zip_entries "$TMP_DIR/single.zip" | grep -vc '/$')
   echo "  files in single-file restore: $SINGLE_FILES"
   check "single-file restore has exactly 1 file" "[ '$SINGLE_FILES' -eq 1 ]"
 

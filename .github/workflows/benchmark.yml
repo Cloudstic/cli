@@ -92,6 +92,8 @@ jobs:
             echo ""
             echo "</details>"
             echo ""
+            # Literal format string for printf, not interpolation.
+            # shellcheck disable=SC2016
             printf 'Ref `%s` on `%s`.\n' "$BENCHMARK_REF" "$RUNNER_OS"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -162,6 +164,8 @@ jobs:
             echo ""
             echo "</details>"
             echo ""
+            # Literal format string for printf, not interpolation.
+            # shellcheck disable=SC2016
             printf 'Ref `%s` on `%s`.\n' "$BENCHMARK_REF" "$RUNNER_OS"
           } >> "$GITHUB_STEP_SUMMARY"
 

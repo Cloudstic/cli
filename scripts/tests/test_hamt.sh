@@ -123,9 +123,9 @@ echo ""
 echo "=== Test 5: Prune + HAMT Integrity ==="
 
 echo "third-change" > "$TMP_DIR/data/file_1.txt"
-$CLI backup $STORE_FLAGS $SOURCE_FLAGS 2>&1 > /dev/null
+$CLI backup $STORE_FLAGS $SOURCE_FLAGS >/dev/null 2>&1
 
-$CLI forget $STORE_FLAGS --keep-last 1 2>&1 > /dev/null
+$CLI forget $STORE_FLAGS --keep-last 1 >/dev/null 2>&1
 PRUNE_OUTPUT=$($CLI prune $STORE_FLAGS --debug 2>&1)
 
 echo "  $(echo "$PRUNE_OUTPUT" | grep -i "repack" | head -3 || true)"
@@ -140,7 +140,7 @@ check "ls after prune shows all 50 files (got $POST_PRUNE_COUNT)" "[ '$POST_PRUN
 echo ""
 echo "=== Test 6: Restore Integrity ==="
 
-$CLI restore $STORE_FLAGS -output "$TMP_DIR/restored.zip" 2>&1 > /dev/null
+$CLI restore $STORE_FLAGS -output "$TMP_DIR/restored.zip" >/dev/null 2>&1
 RESTORED_COUNT=$(unzip -l "$TMP_DIR/restored.zip" 2>/dev/null | grep -c "file_" || true)
 check "restore ZIP contains all 50 files (got $RESTORED_COUNT)" "[ '$RESTORED_COUNT' -eq 50 ]"
 

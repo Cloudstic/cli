@@ -48,20 +48,20 @@ for i in $(seq 1 20); do
 done
 
 echo "  initial backup..."
-$CLI backup $STORE1 $SOURCE1 2>&1 > /dev/null
+$CLI backup $STORE1 $SOURCE1 >/dev/null 2>&1
 
 for change in $(seq 1 3); do
   for i in $(seq 1 20); do
     echo "Change $change for file $i" > "$TMP_DIR/data/file_$i.txt"
   done
   echo "  backup $change..."
-  $CLI backup $STORE1 $SOURCE1 2>&1 > /dev/null
+  $CLI backup $STORE1 $SOURCE1 >/dev/null 2>&1
 done
 
-PACKS_BEFORE=$(ls "$TMP_DIR/repo/packs/" 2>/dev/null | wc -l | tr -d ' ')
+PACKS_BEFORE=$(find "$TMP_DIR/repo/packs/" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')
 echo "  packs before prune: $PACKS_BEFORE"
 
-$CLI forget $STORE1 --keep-last 1 2>&1 > /dev/null
+$CLI forget $STORE1 --keep-last 1 >/dev/null 2>&1
 PRUNE_OUTPUT=$($CLI prune $STORE1 --verbose --debug 2>&1)
 PRUNE_CLEAN=$(echo "$PRUNE_OUTPUT" | strip_ansi)
 
@@ -70,7 +70,7 @@ echo "  orphaned packs deleted: $ORPHANS_DELETED"
 
 check "at least 1 orphaned pack deleted (got $ORPHANS_DELETED)" "[ '$ORPHANS_DELETED' -ge 1 ]"
 
-PACKS_AFTER=$(ls "$TMP_DIR/repo/packs/" 2>/dev/null | wc -l | tr -d ' ')
+PACKS_AFTER=$(find "$TMP_DIR/repo/packs/" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')
 echo "  packs after prune: $PACKS_AFTER"
 check "fewer packs after prune ($PACKS_AFTER < $PACKS_BEFORE)" "[ '$PACKS_AFTER' -lt '$PACKS_BEFORE' ]"
 
@@ -95,15 +95,15 @@ for i in $(seq 1 100); do echo "A content $i" > "$TMP_DIR/data2/A_$i.txt"; done
 for i in $(seq 1 100); do echo "B content $i" > "$TMP_DIR/data2/B_$i.txt"; done
 
 echo "  snap 1 (A + B)..."
-$CLI backup $STORE2 $SOURCE2 2>&1 > /dev/null
+$CLI backup $STORE2 $SOURCE2 >/dev/null 2>&1
 
 rm "$TMP_DIR/data2"/B_*.txt
 for i in $(seq 1 100); do echo "C content $i" > "$TMP_DIR/data2/C_$i.txt"; done
 
 echo "  snap 2 (A + C)..."
-$CLI backup $STORE2 $SOURCE2 2>&1 > /dev/null
+$CLI backup $STORE2 $SOURCE2 >/dev/null 2>&1
 
-$CLI forget $STORE2 --keep-last 1 2>&1 > /dev/null
+$CLI forget $STORE2 --keep-last 1 >/dev/null 2>&1
 
 PRUNE2_OUTPUT=$($CLI prune $STORE2 --verbose --debug 2>&1)
 PRUNE2_CLEAN=$(echo "$PRUNE2_OUTPUT" | strip_ansi)
@@ -129,7 +129,7 @@ check "ls shows 100 C files (got $C_COUNT)" "[ '$C_COUNT' -eq 100 ]"
 echo ""
 echo "=== Test 3: Restore Integrity After Repack ==="
 
-$CLI restore $STORE2 -output "$TMP_DIR/restored.zip" 2>&1 > /dev/null
+$CLI restore $STORE2 -output "$TMP_DIR/restored.zip" >/dev/null 2>&1
 RESTORED_A=$(unzip -l "$TMP_DIR/restored.zip" 2>/dev/null | grep -c "A_" || true)
 RESTORED_C=$(unzip -l "$TMP_DIR/restored.zip" 2>/dev/null | grep -c "C_" || true)
 RESTORED_B=$(unzip -l "$TMP_DIR/restored.zip" 2>/dev/null | grep -c "B_" || true)

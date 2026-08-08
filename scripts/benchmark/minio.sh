@@ -47,8 +47,7 @@ minio_start() {
         -e "MINIO_PROMETHEUS_AUTH_TYPE=public" \
         "$MINIO_IMAGE" server /data >/dev/null || return 1
 
-    local i
-    for i in $(seq 1 60); do
+    for _ in $(seq 1 60); do
         if curl -fs --max-time "$MINIO_CURL_TIMEOUT" "$(minio_endpoint)/minio/health/live" >/dev/null 2>&1; then
             return 0
         fi

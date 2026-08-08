@@ -1,0 +1,17 @@
+# Config for `yamllint`, run against every tracked YAML file (workflows,
+# GoReleaser, golangci-lint, Codecov, Dependabot, and any others added later).
+extends: default
+
+rules:
+  # None of the YAML here is multi-document, and GitHub's own workflow
+  # examples never carry a `---` marker — requiring one would fight the
+  # convention every file already follows.
+  document-start: disable
+  # YAML 1.1 treats bare `on`/`off` as booleans, but GitHub Actions requires
+  # the literal mapping key `on:` for the workflow trigger. check-keys: false
+  # limits the truthy check to values, where a stray `yes`/`no` typo is still
+  # worth catching.
+  truthy:
+    check-keys: false
+  line-length:
+    max: 130

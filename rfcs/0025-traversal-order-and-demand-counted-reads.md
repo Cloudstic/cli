@@ -76,6 +76,13 @@ another rather than removing it:
 | bound the cost of overrunning it (#474, shipped) | 15x less transferred, 2.7x faster, peak RSS flat — but requests rise 1.4–2.7x, because a penalised pack is read one object at a time |
 | stop overrunning it in the first place (#481, shipped) | −47%/−61% requests when the working set exceeds the budget; **exactly zero** when it fits (§1) |
 
+Measured over repository age rather than repository size (§4), those attempts
+share a shape: each is a policy applied to a working set the store cannot
+describe, and each holds only while that set fits the budget. At 82 packs the
+penalty path converts 741 reads into one request per object — the shipped
+behaviour working as designed, and the constant's own comment says so: *a floor,
+not a cure*.
+
 What every one of those has in common is that it tuned a *policy* while leaving
 the *information* alone. The cache is asked to predict which packs will be wanted
 again from nothing but which ones were wanted recently — and for a traversal, that
@@ -188,6 +195,28 @@ Three consequences carry into the rest of this RFC:
   everything and conclude demand counting is unnecessary. Both conclusions are
   artefacts of the budget. Measurements here should state the pack count and the
   budget together, as the table above does.
+
+#### Deriving an order and sorting into one are not interchangeable
+
+The shipped prototype sorted, and sorting needs the whole set in hand before the
+first read (#481). That set is available in `restore` only because
+`collectMetadata` already materialises every ref — the very O(files) plan §3
+exists to remove. `check` cannot be given the same treatment: it streams,
+handing each ref to a callback as `hamt.Walk` reaches it, and never holds a
+batch to sort.
+
+So the shipped prototype and the streaming goal pull against each other, and
+that tension resolves only one way. **A derived order is available a directory at
+a time; a sorted order is not available until the walk is over.** Derivation is
+therefore not merely a cheaper way to obtain the same ordering than recording one
+(the argument made above against a stored order list) — it is the only way to
+have locality and streaming at once. That makes §1 load-bearing for §3 rather
+than an independent optimisation, which is not how either was originally framed.
+
+A bounded-window compromise exists — buffer *N* refs, sort within the window,
+fetch, repeat — trading O(window) memory for approximate locality without a
+format change. It is worth measuring as a cheap probe of how much of §1's
+benefit survives approximation, but it is a fallback, not the design.
 
 ### 2. The pack cache is demand-counted, not LRU
 
@@ -330,11 +359,15 @@ changed files each, restoring the latest snapshot after every one:
 | after 4 backups | 6 | 85 | 181.6 MB |
 | after 7 backups | 9 | 112 | 184.5 MB |
 
-Exactly linear: **+1 pack, +9 requests and +1.1 MB per backup**, and the churn
-volume barely enters into it — 200 changed files out of 5,000 costs the same as
-any other small change, because what is added is a pack visit, not the data. The
-+9 is `packPromoteAfter` showing through: a pack contributing a handful of
-objects is read ~7 times by ranged read, then fetched whole once.
+Linear over this range: **+1 pack, +9 requests and +1.1 MB per backup**, and the
+churn volume barely enters into it — 200 changed files out of 5,000 costs the
+same as any other small change, because what is added is a pack visit, not the
+data. The +9 is `packPromoteAfter` showing through: a pack contributing a handful
+of objects is read ~7 times by ranged read, then fetched whole once.
+
+Seven backups is a week of daily use, and the linearity does **not** survive to
+the interesting range. See "Where linearity stops" below, which supersedes any
+reading of this table as the whole curve.
 
 The mechanism is confirmed by restoring an *old* snapshot from the same
 repository:
@@ -351,6 +384,76 @@ distinct backups contributed entries to the snapshot being read**. A stable tree
 with occasional churn keeps most of its entries in the original epoch and stays
 cheap; a heavily churned one accumulates.
 
+### Where linearity stops
+
+Extending the same series to 80 backups (`scripts/benchmark/aging.sh`, which
+sweeps backup count with the tree held fixed) shows the linear regime ending:
+
+| backups | packs | `check` req | req/pack | `restore` req | req/pack | `check` peak |
+|---|---|---|---|---|---|---|
+| 10 | 12 | 114 | 9.5 | 139 | 11.6 | 157 MB |
+| 40 | 42 | 385 | 9.2 | 507 | 12.1 | 179 MB |
+| 50 | 52 | 947 | 18.2 | 940 | 18.1 | 185 MB |
+| 60 | 62 | 1,344 | 21.7 | 1,734 | 28.0 | 189 MB |
+| 80 | 82 | 1,867 | **22.8** | 2,118 | **25.8** | 199 MB |
+
+Requests per pack hold flat out to 42 packs, then step ~2.5x and **plateau**. So
+the cost is linear in backup count in both regimes, with a step between them —
+not super-linear, and not the single slope the table above suggests. Wall time
+follows (`check` 0.58 s → 2.87 s), and peak RSS grows modestly but really
+(`check` 156 → 199 MB, `restore` 292 → 384 MB), which is the repository-size axis
+RFC 0023 exists to keep clear.
+
+**The step is `packPenalized`, not `packPromoteAfter`.** Counting reads inside
+`resolveFromPack` at both ends:
+
+| | 42 packs | 82 packs |
+|---|---|---|
+| whole-pack fetches | 42 (exactly 1 per pack) | 120 (re-fetches) |
+| ranged reads | 294 (7 per pack) | 1,595 |
+| **of those, penalized** | **0** | **741** |
+
+At 42 packs every pack is probed 7 times, fetched once, and then serves the rest
+of its objects from cache — the designed behaviour, exactly. At 82 packs
+promotions are evicted before paying for themselves, `onPackEvicted` penalizes
+those packs, and each subsequent object costs its own request.
+
+Two hypotheses were tested and killed before this one: that `packMissWindow`'s
+bounded structures were aging out (raising it 64 → 512 moved nothing), and that
+packs were falling below `packPromoteAfter` (the miss distribution shows they
+are not). Recorded because both are the natural first guesses.
+
+The trigger is a **byte** threshold, not a pack count: `packBodyCacheBudget` is
+64 MB, and incremental packs are small, so 42 packs still fit where 82 do not.
+Re-running the 82-pack repository with the budget raised 8x confirms it — 741
+penalized reads become 0, whole fetches fall 120 → 82, and misses per pack
+collapse to exactly 8 for *every* pack, matching the healthy 42-pack profile.
+That run is a diagnostic bound and not a proposal: it is the #474 experiment
+already reverted for O(repository) residency, and peak RSS rose with it.
+
+#### What this prices §2 at
+
+The raised-budget run separates two costs that were confounded. It is what
+perfect *caching* achieves with no *knowledge*; §2 adds the knowledge:
+
+| `check`, 82 packs | requests |
+|---|---|
+| today | 1,867 |
+| perfect caching only (budget 8x, diagnostic) | 744 |
+| demand-counted — 1 fetch per pack plus overhead | ~130 |
+
+Roughly **14x**, and the middle row is exactly the 8-misses-per-pack floor: 7
+probes that a manifest makes unnecessary, plus the one fetch that is real work.
+§2 also reaches that floor without the residency the middle row costs, because a
+pack is released when its count reaches zero rather than held until something
+evicts it.
+
+This is a stronger case than the ~9→1 argument made elsewhere in this RFC, which
+prices §2 only in the regime where the cache still fits. The regime that hurts is
+the one where it does not.
+
+### The two factors
+
 The linear term has two factors — how many packs a snapshot spans, and what each
 visit costs — and this RFC addresses only the second:
 
@@ -359,14 +462,18 @@ visit costs — and this RFC addresses only the second:
   snapshot spans — and at 9 packs against an 8-pack budget there is barely a
   revisit to prevent, which is why #481 measured this exact series at 112
   requests before and after (§1).
-- **Demand counting attacks the per-visit cost.** Of those ~9 requests, 8 are
-  probing. §2 knows the answer before the first read, so a visit costs one
-  request instead of nine: the slope falls roughly 9x and the term stays linear.
+- **Demand counting attacks the per-visit cost, in both regimes.** Of the ~9
+  requests below the budget, 8 are probing; above it a visit costs ~23. §2 knows
+  the answer before the first read, so a visit costs one request either way —
+  roughly 9x in the first regime and 14x in the second.
 - **Only compaction removes the linear term**, by rewriting scattered entries
   back into contiguous packs. `prune`/`Repack` is where that belongs, and today
   it does not happen on its own: measured on a repository with every snapshot
   still reachable, `prune` left the pack count unchanged, because nothing was
   garbage. Compaction has to be driven by *layout*, not only by reachability.
+  It is also the only thing that keeps a repository *out* of the penalized
+  regime rather than making that regime cheaper, which is what raises it from an
+  optimisation to the load-bearing open question (open question 5).
 
 Two further options were considered for removing the linear term outright and are
 recorded rather than proposed, because each is a larger change than this RFC asks
@@ -387,10 +494,20 @@ for:
 
 ## What this does not solve
 
-- **Restore cost still grows with backup count.** §2 takes a visit from ~9
-  requests to 1 and the slope falls accordingly, but the term stays linear:
-  nothing here reduces how many packs a snapshot spans. Removing it needs
-  layout-driven compaction, which does not exist yet (open question 3).
+- **Restore cost still grows with backup count.** §2 takes a visit to one
+  request and the slope falls accordingly, but the term stays linear: nothing
+  here reduces how many packs a snapshot spans. Removing it needs layout-driven
+  compaction, which does not exist yet (open question 5).
+- **Nothing here keeps a repository below the cache budget.** §2 makes the
+  penalized regime much cheaper; it does not prevent entry into it, because the
+  working set is set by how far a snapshot's entries have scattered. Only
+  compaction changes that, which is why §4 promotes it from an optimisation to
+  the load-bearing question.
+- **`check` and `prune` cannot use the shipped ordering at all.** #481 applies to
+  `restore` because it already materialises its refs; both other traversals
+  stream and have no batch to sort (§1). Extending locality to them means either
+  derived order or a bounded window — not a call-site change, which is how it was
+  scoped when #480 was written.
 - **`prune`'s sweep still materialises every key.** `ObjectStore.List` returns a
   slice; a streaming enumeration is a public-API change and its own RFC.
 - **Streaming is not primarily a wall-clock win on a local store.** Measured on a

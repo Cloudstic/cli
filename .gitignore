@@ -5,7 +5,11 @@ backup_store/
 restore_out/
 .envrc
 .idea/
-/bin/cloudstic
+/bin/
+# Built by scripts/benchmark/memory.sh; only cloudstic used to be ignored, so
+# benchreport and gentree landed in the working tree — and, once, in a commit.
+/gentree
+/benchreport
 dist/
 
 # Test output

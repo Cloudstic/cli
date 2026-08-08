@@ -27,11 +27,11 @@ golangci-lint run ./...
 # Format
 go fmt ./...
 
-# Memory as a function of repository size (minutes, not seconds)
-SIZES="5000 20000" SAMPLES=3 ./scripts/benchmark/memory.sh
+# One sweep: time, peak RSS and allocation across sizes (minutes, not seconds)
+SIZES="5000 20000" SAMPLES=3 ./scripts/benchmark/bench.sh
 
-# The same, against a source tree with realistic sizes, fan-out and duplication
-SIZES="5000" PROFILE=source ./scripts/benchmark/memory.sh
+# The same plus request and byte counts, against MinIO as well as local
+BACKENDS="local minio" SIZES="5000" ./scripts/benchmark/bench.sh
 ```
 
 ### Performance measurement
@@ -42,10 +42,6 @@ Three layers, in cost order:
   Compare runs with `benchstat`; `-benchmem` reports `B/op`, which measures
   allocation *volume* and cannot distinguish memory that is freed from memory
   that is retained.
-- **`scripts/benchmark/cloudstic.sh`** — this product on its own terms, over a
-  mixed dataset: throughput, incremental cost at one and at a thousand changed
-  files, deduplication, and the stored-to-logical ratio. What the `Benchmark`
-  workflow runs.
 - **`scripts/benchmark/compare.sh`** — the same binary against restic, borg and
   duplicacy. Manual, and needs those tools installed.
 
@@ -71,9 +67,54 @@ Three layers, in cost order:
   duplicated content, and churn that clusters in a few directories rather than
   spreading evenly. Seeded, so a given (profile, files, seed, MAX_BYTES) is
   byte-identical run to run — a benchmark whose dataset drifts measures nothing. Profiles:
-  `uniform` (the original flat tree, still the default so historical numbers stay
-  comparable), `source`, `media`, `mixed`. Select with
-  `PROFILE=source ./scripts/benchmark/memory.sh`; `MAX_BYTES` scales the size
+  `source` (the default), `media`, `mixed`, and `uniform` — the original flat
+  tree of identical files, kept only for reproducing a historical measurement,
+  since its lack of duplication and constant fan-out is what made this
+  workstream draw wrong conclusions about deduplication and write
+  amplification. Select with
+  `PROFILES=source ./scripts/benchmark/bench.sh`; `MAX_BYTES` scales the size
+  distribution to keep a realistic tree runnable.
+  Peak RSS answers "does this grow with the repository", which a single
+  measurement cannot: an operation holding a fixed working set is fine at any
+  scale, one holding a per-entry structure eventually meets a repository it
+  cannot open. Peak RSS is a high-water mark, though, and blind to churn the
+  collector reclaims: PR #449 removed 36 MB of allocation from `CompactCatalog`
+  and moved peak RSS by 5 MB, inside the ±60 MB run-to-run spread observed on
+  one machine — allocation is the column that shows a change like that. Each
+  point is `SAMPLES` repetitions (default 3) reduced to a median with its
+  min–max band, because a single sample cannot tell a real change from a noisy
+  run. What the `Benchmark` workflow runs.
+- **`scripts/benchmark/compare.sh`** — the same binary against restic, borg and
+  duplicacy. Manual, and needs those tools installed.
+
+  CI does **not** use `compare.sh`, and the split is not cosmetic. Its dataset
+  exists to be fair across four tools and may legitimately change for that
+  reason — which would silently move numbers a trend line is built on. The two
+  share `lib.sh` for measurement mechanics and nothing else; in particular
+  their datasets are separate, which is the whole point.
+- **`scripts/benchmark/bench.sh`** — one pass over the pipeline collecting every
+  metric it can yield: wall time and peak RSS from `time(1)`, cumulative
+  allocation from the binary's `-memstats`, and — on a MinIO backend — requests
+  and bytes with a per-API breakdown. The matrix is
+  `PROFILES x SIZES x BACKENDS x SAMPLES`; a cell runs the pipeline once and
+  fills the columns available to it. Backend stays an axis rather than a metric,
+  because pointing at MinIO changes what is measured (the S3 SDK's buffers are
+  part of the process) rather than adding detail to the local number. Writes one
+  CSV per backend plus a sidecar recording the machine, since timings are a
+  property of the hardware as much as of the code. `minio.sh` holds the
+  container lifecycle and metric scraping. Needs docker, `aws` and `curl` only
+  for `BACKENDS=minio`.
+- **`scripts/benchmark/gentree/`** — generates a backup source with the
+  statistics a real one has: heavy-tailed file sizes and directory fan-out,
+  duplicated content, and churn that clusters in a few directories rather than
+  spreading evenly. Seeded, so a given (profile, files, seed, MAX_BYTES) is
+  byte-identical run to run — a benchmark whose dataset drifts measures nothing. Profiles:
+  `source` (the default), `media`, `mixed`, and `uniform` — the original flat
+  tree of identical files, kept only for reproducing a historical measurement,
+  since its lack of duplication and constant fan-out is what made this
+  workstream draw wrong conclusions about deduplication and write
+  amplification. Select with
+  `PROFILES=source ./scripts/benchmark/bench.sh`; `MAX_BYTES` scales the size
   distribution to keep a realistic tree runnable.
 - **`scripts/benchmark/memory.sh`** — peak RSS and cumulative allocation for
   each operation across several tree sizes. Peak RSS is the one that answers

@@ -530,7 +530,11 @@ func (s *PackStore) resolveFromPack(ctx context.Context, key string, entry PackE
 	misses++
 	s.packMisses.Add(entry.PackRef, misses)
 
-	_, penalized := s.packPenalized.Get(entry.PackRef)
+	// Peek, not Get: checking the penalty must not refresh its recency, or a
+	// pack read every miss (which a penalized one is, by definition) would
+	// keep itself permanently fresh in packPenalized and never age out for
+	// the second chance the comment on that field promises.
+	_, penalized := s.packPenalized.Peek(entry.PackRef)
 
 	if canRange && (misses < packPromoteAfter || penalized) {
 		data, err := ranger.GetRange(ctx, entry.PackRef, entry.Offset, entry.Length)

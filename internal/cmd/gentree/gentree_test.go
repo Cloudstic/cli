@@ -196,7 +196,10 @@ func TestChurnCountIsExactAcrossTreeSizes(t *testing.T) {
 }
 
 // A count larger than the tree must not be requested forever: it should be
-// capped at the number of files that actually exist.
+// capped at the number of files that actually exist, and reached exactly —
+// not just approached. A single share-weighted pass over each directory
+// (20-80% of its files) never reaches every file on its own, so hitting the
+// cap requires revisiting directories across passes.
 func TestChurnCountIsCappedByTreeSize(t *testing.T) {
 	root := t.TempDir()
 	p := fitToBudget(profiles["source"], 100, 16<<20)
@@ -208,8 +211,8 @@ func TestChurnCountIsCappedByTreeSize(t *testing.T) {
 		t.Fatal(err)
 	}
 	changed := st.Modified + st.Created + st.Deleted
-	if changed > 100 {
-		t.Errorf("changed %d files in a 100-file tree; count was not capped", changed)
+	if changed != 100 {
+		t.Errorf("changed %d files in a 100-file tree, want exactly 100 (the capped budget)", changed)
 	}
 }
 

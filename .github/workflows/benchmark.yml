@@ -13,7 +13,7 @@ name: Benchmark
 # Deliberately not part of the ordinary CI run: it builds several synthetic
 # trees and backs each one up, which costs minutes rather than seconds. Two ways
 # in — dispatch it by hand against any ref, or put the `benchmark` label on a
-# pull request when a change could plausibly move memory.
+# pull request when a change could plausibly move time, memory or request counts.
 
 on:
   workflow_dispatch:
@@ -35,11 +35,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: memory-${{ github.event.inputs.ref || github.ref }}
+  group: benchmark-${{ github.event.inputs.ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  memory:
+  benchmark:
     # On a pull request this runs only while the `benchmark` label is on it, so
     # an unrelated label does not start a ten-minute job, and pushing more
     # commits to an already-labelled PR re-measures without another click.
@@ -94,5 +94,5 @@ jobs:
         with:
           name: benchmark-results
           path: |
-            benchmark-results/memory.csv
-            benchmark-results/memory.log
+            benchmark-results/bench.csv
+            benchmark-results/bench.log

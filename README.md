@@ -130,7 +130,7 @@ This works automatically on GPT-formatted drives (exFAT, APFS, ext4, NTFS). For 
 
 ## Performance
 
-Benchmarked against Restic, Borg, and Duplicacy on a ~1 GB dataset (local) and a real Google Drive account (~40 MB). Reproduce with `scripts/benchmark/compare.sh`, which needs those tools installed.
+Benchmarked against Restic, Borg, and Duplicacy on a ~1 GB dataset (local) and a real Google Drive account (~40 MB). Full methodology and numbers in [docs/benchmark-results.md](docs/benchmark-results.md).
 
 **Local filesystem** (time / peak RAM):
 

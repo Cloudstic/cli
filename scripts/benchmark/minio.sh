@@ -25,6 +25,11 @@ MINIO_USER=${MINIO_USER:-cloudsticbench}
 MINIO_PASSWORD=${MINIO_PASSWORD:-cloudsticbench}
 MINIO_BUCKET=${MINIO_BUCKET:-bench}
 
+# Every call to the container is bounded. A wedged MinIO would otherwise hang the
+# sweep indefinitely, and a blank column is a far better outcome than a benchmark
+# that never returns.
+MINIO_CURL_TIMEOUT=${MINIO_CURL_TIMEOUT:-5}
+
 minio_endpoint() { echo "http://127.0.0.1:$MINIO_PORT"; }
 
 # minio_start launches the container and waits for it to answer.
@@ -44,7 +49,7 @@ minio_start() {
 
     local i
     for i in $(seq 1 60); do
-        if curl -fs "$(minio_endpoint)/minio/health/live" >/dev/null 2>&1; then
+        if curl -fs --max-time "$MINIO_CURL_TIMEOUT" "$(minio_endpoint)/minio/health/live" >/dev/null 2>&1; then
             return 0
         fi
         sleep 1
@@ -77,21 +82,44 @@ minio_reset_bucket() {
 MINIO_API_METRICS="/minio/metrics/v3/api/requests"
 
 minio_requests() {
-    curl -fs "$(minio_endpoint)$MINIO_API_METRICS" 2>/dev/null \
+    curl -fs --max-time "$MINIO_CURL_TIMEOUT" "$(minio_endpoint)$MINIO_API_METRICS" 2>/dev/null \
         | awk '/^minio_api_requests_total/ { s += $NF } END { printf "%d", s }'
 }
 
 minio_sent_bytes() {
-    curl -fs "$(minio_endpoint)$MINIO_API_METRICS" 2>/dev/null \
+    curl -fs --max-time "$MINIO_CURL_TIMEOUT" "$(minio_endpoint)$MINIO_API_METRICS" 2>/dev/null \
         | awk '/^minio_api_requests_traffic_sent_bytes/ { s += $NF } END { printf "%d", s }'
 }
 
-# minio_requests_by_api breaks the count down, which is what tells a GET storm
-# apart from a LIST storm.
-minio_requests_by_api() {
-    curl -fs "$(minio_endpoint)$MINIO_API_METRICS" 2>/dev/null \
-        | awk -F\" '/^minio_api_requests_total/ { for (i = 1; i < NF; i++) if ($i ~ /name=$/) api = $(i+1) }
-                     /^minio_api_requests_total/ { split($0, f, " "); printf "%s=%d ", api, f[length(f)] }'
+# minio_api_counts prints "NAME COUNT" per API, one per line.
+#
+# These are cumulative counters. Reporting them raw would put every earlier
+# operation's requests in each row, so callers take two snapshots and subtract —
+# see minio_api_delta.
+minio_api_counts() {
+    curl -fs --max-time "$MINIO_CURL_TIMEOUT" "$(minio_endpoint)$MINIO_API_METRICS" 2>/dev/null \
+        | awk -F'"' '/^minio_api_requests_total/ {
+              api = ""
+              for (i = 1; i < NF; i++) if ($i ~ /name=$/) api = $(i + 1)
+              if (api == "") next
+              n = split($0, f, " ")
+              printf "%s %d\n", api, f[n]
+          }'
+}
+
+# minio_api_delta subtracts a "before" snapshot from an "after" one, printing
+# only the APIs that moved, as "Name=N;Name=N".
+#
+# Written with awk over two files rather than an associative array: bash 3.2 is
+# still what macOS ships and has none.
+minio_api_delta() {
+    awk '
+        NR == FNR { before[$1] = $2; next }
+        {
+            d = $2 - (($1 in before) ? before[$1] : 0)
+            if (d > 0) printf "%s%s=%d", (n++ ? ";" : ""), $1, d
+        }
+    ' "$1" "$2"
 }
 
 # minio_store_flags prints the flags that point cloudstic at the container.

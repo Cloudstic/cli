@@ -47,7 +47,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for tool in docker aws curl; do
+for tool in docker aws curl bc; do
     command -v "$tool" >/dev/null 2>&1 || { echo "s3.sh needs $tool" >&2; exit 2; }
 done
 
@@ -83,6 +83,7 @@ measure() {
     local req_before sent_before start end
     req_before=$(minio_requests)
     sent_before=$(minio_sent_bytes)
+    minio_api_counts >"$WORK/api-before"
     start=$(date +%s)
 
     "$@" >/dev/null 2>&1 || { echo "  $op FAILED" >&2; return 1; }
@@ -91,7 +92,10 @@ measure() {
     local req sent api
     req=$(( $(minio_requests) - req_before ))
     sent=$(( $(minio_sent_bytes) - sent_before ))
-    api=$(minio_requests_by_api | tr ' ' ';' | sed 's/;$//')
+    # The per-API counters are cumulative, so this row would otherwise carry
+    # every earlier operation's requests as well as its own.
+    minio_api_counts >"$WORK/api-after"
+    api=$(minio_api_delta "$WORK/api-before" "$WORK/api-after")
 
     printf '%s,%d,%s,%d,%d,%.1f,%s\n' \
         "$op" "$FILES" "$PROFILE" "$((end - start))" "$req" \

@@ -205,7 +205,7 @@ run_pipeline() {
 
 echo "Building..."
 ( cd "$REPO_ROOT" && go build -o bin/cloudstic ./cmd/cloudstic )
-( cd "$REPO_ROOT" && go build -o bin/gentree ./scripts/benchmark/gentree )
+( cd "$REPO_ROOT" && go build -o bin/gentree ./internal/cmd/gentree )
 
 for backend in $BACKENDS; do
     if [ "$backend" = minio ]; then

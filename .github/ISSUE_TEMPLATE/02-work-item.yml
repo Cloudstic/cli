@@ -1,0 +1,95 @@
+name: Work item or proposal
+description: Propose a feature, refactor, performance improvement, test, or tracking issue
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This form follows the structure used by existing Cloudstic issues:
+        context, goal, scope, and acceptance criteria.
+
+        Use an imperative title such as “Add …” or “Separate …”, or an area
+        prefix such as “TUI: …”. Do not use a conventional-commit prefix or a
+        trailing period.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of work
+      options:
+        - Feature or enhancement
+        - Performance or scaling
+        - Refactor or technical debt
+        - Test, CI, documentation, or maintenance
+        - Tracking issue or RFC
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Explain the current behavior, evidence, constraints, and why the work matters now.
+      placeholder: Link relevant code, issues, RFCs, measurements, or prior decisions where useful.
+    validations:
+      required: true
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: State the outcome in terms of observable behavior, not an implementation detail.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Describe the work that belongs in this issue and the important design constraints.
+      placeholder: |
+        - Change ...
+        - Preserve ...
+        - Document ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Out of scope
+      description: Record nearby work or tempting expansions that this issue should not include.
+    validations:
+      required: false
+
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Repository compatibility
+      description: |
+        If this may change bytes written to a store, explain how old repositories
+        remain readable and whether the repository format version must change.
+        Otherwise write “No repository format change.”
+      placeholder: No repository format change.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: List specific, verifiable outcomes, including focused tests and lint commands.
+      placeholder: |
+        - The new behavior is covered by a regression test.
+        - `go test -count=1 ./path/to/package` passes.
+        - `golangci-lint run ./path/to/package/...` passes.
+    validations:
+      required: true
+
+  - type: textarea
+    id: related
+    attributes:
+      label: Related work
+      description: Link parent, child, blocked, superseded, or otherwise related issues and RFCs.
+      placeholder: "Related to #123."
+    validations:
+      required: false

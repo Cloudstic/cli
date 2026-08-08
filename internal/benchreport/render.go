@@ -55,6 +55,8 @@ func Render(w io.Writer, rep *Report, title string) error {
 		renderComparisonTable(b, rep)
 	}
 
+	renderRepoSummary(b, rep)
+
 	// A comparison of one tool has nothing to chart — a single bar compares
 	// nothing — so the heading is written only if something follows it.
 	charts := &strings.Builder{}
@@ -207,6 +209,53 @@ func renderComparisonTable(b *strings.Builder, rep *Report) {
 		b.WriteString(" `Allocated` is cumulative bytes allocated,\nfreed or not — the column that moves when an operation stops allocating\nsomething it did not need.")
 	}
 	b.WriteString("\n")
+}
+
+// renderRepoSummary renders the final repository size and the logical/stored
+// ratio, when a self-benchmark recorded them.
+//
+// These are not timed operations — they have no seconds or peak_mb worth
+// showing — so they get their own small section rather than a row of zeros in
+// the per-operation tables above. A scaling sweep gets one row per tree size;
+// a single-size run gets two plain lines, since a one-row table of "5,000
+// files" tells the reader nothing a bare sentence would not.
+func renderRepoSummary(b *strings.Builder, rep *Report) {
+	if !rep.hasSummaryRows() {
+		return
+	}
+	scales := rep.Scales()
+
+	b.WriteString("\n### Repository\n\n")
+
+	if len(scales) <= 1 {
+		var scale int
+		if len(scales) == 1 {
+			scale = scales[0]
+		}
+		if c, ok := rep.cell("", OpFinalRepoSize, scale); ok && c.RepoDelta != "" {
+			fmt.Fprintf(b, "Final repository size: **%s**\n\n", c.RepoDelta)
+		}
+		if c, ok := rep.cell("", OpLogicalStored, scale); ok && c.RepoDelta != "" {
+			fmt.Fprintf(b, "Logical / stored: **%s**\n\n", c.RepoDelta)
+		}
+		return
+	}
+
+	b.WriteString("| Tree size | Final repo size | Logical / stored |\n|---|---:|---:|\n")
+	for _, s := range scales {
+		fmt.Fprintf(b, "| %s files |", humanInt(s))
+
+		if c, ok := rep.cell("", OpFinalRepoSize, s); ok && c.RepoDelta != "" {
+			fmt.Fprintf(b, " %s |", c.RepoDelta)
+		} else {
+			b.WriteString(" - |")
+		}
+		if c, ok := rep.cell("", OpLogicalStored, s); ok && c.RepoDelta != "" {
+			fmt.Fprintf(b, " %s |\n", c.RepoDelta)
+		} else {
+			b.WriteString(" - |\n")
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------

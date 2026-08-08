@@ -15,6 +15,20 @@ import (
 	"strings"
 )
 
+// Reserved operation names for the two summary rows a self-benchmark can emit:
+// the repository's final size and its logical-to-stored ratio. Neither is a
+// timed operation — they carry no seconds or peak_mb worth showing — so they
+// are excluded from Operations() and rendered in their own section rather than
+// polluting the per-operation time/memory tables with a row of zeros.
+const (
+	OpFinalRepoSize = "Final Repo Size"
+	OpLogicalStored = "Logical / Stored"
+)
+
+func isSummaryOp(op string) bool {
+	return op == OpFinalRepoSize || op == OpLogicalStored
+}
+
 // Row is one measured operation.
 //
 // One schema serves both harnesses because they differ only in which column
@@ -180,9 +194,29 @@ func (r *Report) Kind() Kind {
 }
 
 // Operations returns the distinct operations in first-seen order, which is the
-// order the harness ran them and therefore the order a reader expects.
+// order the harness ran them and therefore the order a reader expects. The two
+// summary rows are excluded — they have their own section, rendered by
+// renderRepoSummary.
 func (r *Report) Operations() []string {
-	return distinct(r.Rows, func(row Row) string { return row.Operation })
+	all := distinct(r.Rows, func(row Row) string { return row.Operation })
+	out := make([]string, 0, len(all))
+	for _, op := range all {
+		if !isSummaryOp(op) {
+			out = append(out, op)
+		}
+	}
+	return out
+}
+
+// hasSummaryRows reports whether the harness recorded a final repository size
+// or a logical/stored ratio, which the memory sweep and compare.sh never do.
+func (r *Report) hasSummaryRows() bool {
+	for _, row := range r.Rows {
+		if isSummaryOp(row.Operation) {
+			return true
+		}
+	}
+	return false
 }
 
 // Tools returns the distinct tools in first-seen order.

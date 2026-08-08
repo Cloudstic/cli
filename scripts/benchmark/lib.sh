@@ -15,9 +15,12 @@
 
 # BENCH_REPO_DIR (local) or BENCH_S3_PREFIX (s3://bucket/prefix/) enable
 # repository-growth tracking. A script sets whichever applies before its first
-# run_bench.
+# run_bench. BENCH_S3_ENDPOINT points the S3 prefix at a non-AWS endpoint —
+# MinIO in particular — and is empty for real S3, where the default endpoint
+# is correct.
 BENCH_REPO_DIR=""
 BENCH_S3_PREFIX=""
+BENCH_S3_ENDPOINT=""
 
 # CURRENT_TOOL labels rows in the CSV. compare.sh reassigns it per tool;
 # cloudstic.sh leaves it alone.
@@ -61,9 +64,24 @@ get_repo_size_kb() {
     if [ -n "$BENCH_REPO_DIR" ] && [ -d "$BENCH_REPO_DIR" ]; then
         du -sk "$BENCH_REPO_DIR" | awk '{print $1}'
     elif [ -n "$BENCH_S3_PREFIX" ]; then
-        local bytes
-        bytes=$(aws s3 ls "$BENCH_S3_PREFIX" --summarize --recursive 2>/dev/null \
-            | grep "Total Size" | awk '{print $3}')
+        local endpoint_args listing bytes
+        endpoint_args=()
+        [ -n "$BENCH_S3_ENDPOINT" ] && endpoint_args=(--endpoint-url "$BENCH_S3_ENDPOINT")
+
+        # `aws s3 ls --summarize --recursive` exits 1 even on a *successful*
+        # listing of zero objects (a fresh prefix right after `init`), so its
+        # exit code cannot tell that apart from a real failure — bad endpoint,
+        # bad credentials, a missing bucket — and is deliberately not checked
+        # here. Only a genuine failure skips the "Total Size" line entirely,
+        # so that line's presence is the signal used instead: treating a real
+        # failure as "empty" would put a silently wrong repo_delta and final
+        # size in every row from this point on.
+        listing=$(aws "${endpoint_args[@]}" s3 ls "$BENCH_S3_PREFIX" --summarize --recursive 2>&1) || true
+        if ! bytes=$(echo "$listing" | grep "Total Size" | awk '{print $3}'); then
+            echo "get_repo_size_kb: aws s3 ls $BENCH_S3_PREFIX did not complete:" >&2
+            echo "$listing" >&2
+            return 1
+        fi
         echo $(( ${bytes:-0} / 1024 ))
     else
         echo 0

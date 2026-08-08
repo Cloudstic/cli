@@ -28,7 +28,12 @@ import (
 //   - rename a directory: with FileID identity nothing below it should be
 //     rewritten, and with path identity everything would be. It is the cheapest
 //     way to tell the two apart, so the generator has to be able to produce it.
-func applyChurn(root string, p profile, seed int64, fraction float64) (stats, error) {
+//
+// count, when greater than zero, sets the churn budget directly — "1000
+// changed" has to mean 1000 files at every tree size, which a fraction cannot
+// express without scaling with the tree. Zero defers to fraction, the
+// original size-relative behaviour.
+func applyChurn(root string, p profile, seed int64, fraction float64, count int) (stats, error) {
 	rng := rand.New(rand.NewSource(seed ^ 0x5eed))
 	st := stats{}
 
@@ -51,21 +56,35 @@ func applyChurn(root string, p profile, seed int64, fraction float64) (stats, er
 	if err != nil {
 		return st, err
 	}
-	budget := int(float64(total) * fraction)
+	var budget int
+	if count > 0 {
+		budget = count
+	} else {
+		budget = int(float64(total) * fraction)
+	}
 	if budget < 1 {
 		budget = 1
+	}
+	if budget > total {
+		budget = total
 	}
 
 	pool := newContentPool(rng, p)
 	touched := map[string]bool{}
+	changed := func() int { return st.Modified + st.Created + st.Deleted }
 
-	for _, dir := range hot {
-		if st.Modified+st.Created+st.Deleted >= budget {
-			break
+	// Each directory's file list is read once and then consumed across passes
+	// as changed() progresses, so a directory already exhausted is not
+	// re-listed from disk on the next pass.
+	remaining := make(map[string][]string, len(hot))
+	filesIn := func(dir string) []string {
+		if files, ok := remaining[dir]; ok {
+			return files
 		}
 		entries, err := os.ReadDir(dir)
 		if err != nil {
-			continue
+			remaining[dir] = nil
+			return nil
 		}
 		var files []string
 		for _, e := range entries {
@@ -73,59 +92,92 @@ func applyChurn(root string, p profile, seed int64, fraction float64) (stats, er
 				files = append(files, filepath.Join(dir, e.Name()))
 			}
 		}
-		if len(files) == 0 {
-			continue
-		}
 		sort.Strings(files)
+		remaining[dir] = files
+		return files
+	}
 
-		// How much of this directory changes, weighted so hot directories churn
-		// hard rather than every directory churning a little.
-		share := 0.2 + 0.6*rng.Float64()
-		n := int(float64(len(files)) * share)
-		if n < 1 {
-			n = 1
-		}
+	// One pass touches at most a share of each directory's files, so budget
+	// can require more than one pass over hot to reach — a budget capped at
+	// the tree's total file count (an exact count larger than the tree) means
+	// touching every file, which a single share-weighted pass never reaches.
+	// A pass that changes nothing means every directory is exhausted, so the
+	// loop stops instead of spinning.
+	for changed() < budget {
+		progressed := false
 
-		for i := 0; i < n && st.Modified+st.Created+st.Deleted < budget; i++ {
-			idx := rng.Intn(len(files))
-			path := files[idx]
-			touched[dir] = true
-			switch r := rng.Float64(); {
-			case r < 0.60: // modify in place
-				size := sampleSize(rng, p)
-				body, _ := pool.body(rng, size)
-				if err := os.WriteFile(path, body, 0o644); err == nil {
-					st.Modified++
-				}
-			case r < 0.80: // append, the case incremental chunking exists for
-				f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
-				if err != nil {
-					continue
-				}
-				tail := makeBody(rng, sampleSize(rng, p)/8, rng.Float64() < p.incompressibleFraction)
-				_, _ = f.Write(tail)
-				_ = f.Close()
-				st.Modified++
-			case r < 0.93: // create
-				size := sampleSize(rng, p)
-				body, _ := pool.body(rng, size)
-				name := fmt.Sprintf("new-%d-%d.dat", seed, rng.Int63())
-				if err := os.WriteFile(filepath.Join(dir, name), body, 0o644); err == nil {
-					st.Created++
-				}
-			default: // delete
-				if err := os.Remove(path); err == nil {
-					st.Deleted++
-					// Drawing is with replacement, and the modify branch would
-					// recreate this path with os.WriteFile — leaving the run
-					// reporting a deletion that is not in the tree the next
-					// backup sees.
-					files = append(files[:idx], files[idx+1:]...)
-					if len(files) == 0 {
-						break
+		for _, dir := range hot {
+			if changed() >= budget {
+				break
+			}
+			files := filesIn(dir)
+			if len(files) == 0 {
+				continue
+			}
+
+			// How much of this directory changes this pass, weighted so hot
+			// directories churn hard rather than every directory churning a
+			// little.
+			share := 0.2 + 0.6*rng.Float64()
+			n := int(float64(len(files)) * share)
+			if n < 1 {
+				n = 1
+			}
+			if n > len(files) {
+				n = len(files)
+			}
+
+			// Shuffled and consumed without replacement: drawing with
+			// replacement let the same path be modified twice in one pass
+			// while a distinct file in the same directory was never picked,
+			// which is what made a capped budget (an exact count at or above
+			// the tree size) unreachable no matter how many files existed.
+			rng.Shuffle(len(files), func(i, j int) { files[i], files[j] = files[j], files[i] })
+
+			taken := 0
+			for taken < n && changed() < budget {
+				path := files[taken]
+				taken++
+				touched[dir] = true
+				progressed = true
+				switch r := rng.Float64(); {
+				case r < 0.60: // modify in place
+					size := sampleSize(rng, p)
+					body, _ := pool.body(rng, size)
+					if err := os.WriteFile(path, body, 0o644); err == nil {
+						st.Modified++
 					}
+				case r < 0.80: // append, the case incremental chunking exists for
+					f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+					if err != nil {
+						continue
+					}
+					tail := makeBody(rng, sampleSize(rng, p)/8, rng.Float64() < p.incompressibleFraction)
+					_, _ = f.Write(tail)
+					_ = f.Close()
+					st.Modified++
+				case r < 0.93: // create
+					size := sampleSize(rng, p)
+					body, _ := pool.body(rng, size)
+					name := fmt.Sprintf("new-%d-%d.dat", seed, rng.Int63())
+					if err := os.WriteFile(filepath.Join(dir, name), body, 0o644); err == nil {
+						st.Created++
+					}
+				default: // delete
+					if err := os.Remove(path); err != nil {
+						continue
+					}
+					st.Deleted++
 				}
 			}
+			// Consumed files — modified, appended to, deleted, or merely the
+			// slot a create happened to draw — are not eligible again, so a
+			// later pass only ever touches files this pass has not seen.
+			remaining[dir] = files[taken:]
+		}
+
+		if !progressed {
+			break // every directory is exhausted; budget cannot be reached
 		}
 	}
 

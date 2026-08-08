@@ -278,6 +278,76 @@ func TestScalingTableHasNoRepoColumn(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Repository summary rows
+// ---------------------------------------------------------------------------
+
+// Final Repo Size and Logical / Stored are not timed operations. They must not
+// show up in the per-operation tables and charts as a row of zeros.
+func TestSummaryRowsExcludedFromOperations(t *testing.T) {
+	csv := "tool,operation,scale,seconds,peak_mb,repo_delta\n" +
+		"cloudstic,Initial Backup,,0.70,534.4,344.0 MB\n" +
+		"cloudstic,Final Repo Size,,0,0,546.0 MB\n" +
+		"cloudstic,Logical / Stored,,0,0,1.16 GB / 545.7 MB (2.18x)\n"
+	ops := parse(t, csv).Operations()
+	if len(ops) != 1 || ops[0] != "Initial Backup" {
+		t.Errorf("Operations() = %v, want only [Initial Backup]", ops)
+	}
+}
+
+// The two summary rows get their own section rather than a table row, and the
+// values must reach the page.
+func TestRepoSummaryRendersFinalSizeAndRatio(t *testing.T) {
+	csv := "tool,operation,scale,seconds,peak_mb,repo_delta\n" +
+		"cloudstic,Initial Backup,,0.70,534.4,344.0 MB\n" +
+		"cloudstic,Final Repo Size,,0,0,546.0 MB\n" +
+		"cloudstic,Logical / Stored,,0,0,1.16 GB / 545.7 MB (2.18x)\n"
+	var b strings.Builder
+	if err := Render(&b, parse(t, csv), "T"); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	out := b.String()
+	if !strings.Contains(out, "### Repository") {
+		t.Fatalf("no repository summary section; got:\n%s", out)
+	}
+	if !strings.Contains(out, "546.0 MB") {
+		t.Errorf("final repo size missing; got:\n%s", out)
+	}
+	if !strings.Contains(out, "1.16 GB / 545.7 MB (2.18x)") {
+		t.Errorf("logical/stored ratio missing; got:\n%s", out)
+	}
+}
+
+// A scaling sweep gets one row of the summary per tree size, not just the
+// last one measured.
+func TestRepoSummaryRendersPerScaleForAScalingSweep(t *testing.T) {
+	csv := "tool,operation,scale,seconds,peak_mb,repo_delta\n" +
+		"cloudstic,backup,5000,0.50,148.9,\n" +
+		"cloudstic,backup,20000,1.20,188.1,\n" +
+		"cloudstic,Final Repo Size,5000,0,0,50.0 MB\n" +
+		"cloudstic,Final Repo Size,20000,0,0,200.0 MB\n"
+	var b strings.Builder
+	if err := Render(&b, parse(t, csv), "T"); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	out := b.String()
+	if !strings.Contains(out, "50.0 MB") || !strings.Contains(out, "200.0 MB") {
+		t.Errorf("expected a final repo size row per scale; got:\n%s", out)
+	}
+}
+
+// A harness that never measured the repository (the memory sweep) must not
+// grow an empty summary section.
+func TestNoRepoSummaryWhenUnmeasured(t *testing.T) {
+	var b strings.Builder
+	if err := Render(&b, parse(t, scalingCSV), "T"); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(b.String(), "### Repository") {
+		t.Errorf("repository summary rendered with nothing measured:\n%s", b.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Repeated samples
 // ---------------------------------------------------------------------------
 

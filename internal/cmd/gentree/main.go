@@ -16,6 +16,7 @@
 //
 //	gentree -out DIR -profile mixed -files 50000 [-seed 1] [-stats FILE]
 //	gentree -churn DIR -profile mixed [-seed 1] [-fraction 0.05]
+//	gentree -churn DIR -profile mixed [-seed 1] [-count 1000]
 package main
 
 import (
@@ -131,6 +132,7 @@ func main() {
 		files    = flag.Int("files", 50000, "number of files to generate")
 		seed     = flag.Int64("seed", 1, "PRNG seed; the same seed always produces the same tree")
 		fraction = flag.Float64("fraction", 0.05, "churn: fraction of files to touch")
+		count    = flag.Int("count", 0, "churn: exact number of files to touch; overrides -fraction when > 0")
 		statsOut = flag.String("stats", "", "write a JSON summary of what was generated")
 		maxBytes = flag.Int64("max-bytes", 2<<30, "scale file sizes so the tree fits this budget; 0 disables")
 	)
@@ -166,7 +168,7 @@ func main() {
 		if *maxBytes > 0 {
 			p = fitToBudget(p, n, *maxBytes)
 		}
-		st, err = applyChurn(*churn, p, *seed, *fraction)
+		st, err = applyChurn(*churn, p, *seed, *fraction, *count)
 	}
 	if err != nil {
 		fatalf("%v", err)

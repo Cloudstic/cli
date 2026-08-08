@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -148,7 +149,7 @@ func TestChurnConcentratesInFewDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	st, err := applyChurn(root, p, 9, 0.05)
+	st, err := applyChurn(root, p, 9, 0.05, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,6 +169,51 @@ func TestChurnConcentratesInFewDirectories(t *testing.T) {
 			st.TouchedDirs, changed)
 	}
 	t.Logf("%d changes across %d of %d directories", changed, st.TouchedDirs, len(dirs))
+}
+
+// An exact count must hold regardless of tree size: "1000 changed" has to mean
+// 1000 files whether the tree has 2000 or 50000, which -fraction cannot
+// express since it scales with the tree.
+func TestChurnCountIsExactAcrossTreeSizes(t *testing.T) {
+	const count = 50
+	for _, files := range []int{200, 2000} {
+		t.Run(fmt.Sprintf("%d files", files), func(t *testing.T) {
+			root := t.TempDir()
+			p := fitToBudget(profiles["source"], files, 64<<20)
+			if _, err := generate(root, p, files, 9); err != nil {
+				t.Fatal(err)
+			}
+			st, err := applyChurn(root, p, 9, 0.05, count)
+			if err != nil {
+				t.Fatal(err)
+			}
+			changed := st.Modified + st.Created + st.Deleted
+			if changed != count {
+				t.Errorf("changed %d files out of %d in tree, want exactly %d", changed, files, count)
+			}
+		})
+	}
+}
+
+// A count larger than the tree must not be requested forever: it should be
+// capped at the number of files that actually exist, and reached exactly —
+// not just approached. A single share-weighted pass over each directory
+// (20-80% of its files) never reaches every file on its own, so hitting the
+// cap requires revisiting directories across passes.
+func TestChurnCountIsCappedByTreeSize(t *testing.T) {
+	root := t.TempDir()
+	p := fitToBudget(profiles["source"], 100, 16<<20)
+	if _, err := generate(root, p, 100, 3); err != nil {
+		t.Fatal(err)
+	}
+	st, err := applyChurn(root, p, 3, 0.05, 10000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := st.Modified + st.Created + st.Deleted
+	if changed != 100 {
+		t.Errorf("changed %d files in a 100-file tree, want exactly 100 (the capped budget)", changed)
+	}
 }
 
 // A rename must move a directory inside the tree, never the tree itself.
@@ -210,7 +256,7 @@ func TestChurnDeletionsAreNotRecreated(t *testing.T) {
 	// same path is a collision, and one run may not produce it.
 	for seed := int64(0); seed < 20; seed++ {
 		before := snapshotFiles(t, root)
-		st, err := applyChurn(root, p, seed, 0.30)
+		st, err := applyChurn(root, p, seed, 0.30, 0)
 		if err != nil {
 			t.Fatal(err)
 		}

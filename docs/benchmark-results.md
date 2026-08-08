@@ -1,29 +1,65 @@
 # Benchmark Results
 
-## Running the Benchmark
+Two harnesses, answering different questions.
+
+`bench.sh` measures this tool on its own, over a workload generated to have the
+statistics of a real backup source. `compare.sh` measures it against restic, borg
+and duplicacy on a dataset constrained to be fair across all four. The datasets
+are deliberately separate: a change made so that one tool is not penalised
+unfairly would otherwise move the numbers tracked for this one.
+
+## Measuring this tool — `bench.sh`
 
 ```bash
-# Usage: ./scripts/benchmark/run.sh [SOURCE] [STORE] [TOOL] [--debug]
+# Defaults: source profile, 5000/20000/50000 files, local backend, 3 samples
+./scripts/benchmark/bench.sh
+
+# Narrow it while iterating
+SIZES="5000" SAMPLES=1 ./scripts/benchmark/bench.sh
+
+# Add request and byte counts by measuring against MinIO as well
+BACKENDS="local minio" ./scripts/benchmark/bench.sh
+
+# Other workload shapes: source (default), mixed, media, uniform
+PROFILES="mixed media" ./scripts/benchmark/bench.sh
+```
+
+One pipeline run per cell of `PROFILES x SIZES x BACKENDS x SAMPLES`, collecting
+wall time, peak RSS, cumulative allocation, and — on MinIO — requests and bytes
+with a per-API breakdown. Writes one CSV per backend plus a sidecar recording the
+machine, since timings belong to the hardware as much as to the code.
+
+Requirements: Go toolchain; `bc`; docker, `aws` and `curl` only for
+`BACKENDS=minio`.
+
+Render a CSV as a table with `go run ./internal/cmd/benchreport render -in
+benchmark-results/bench.csv -title Benchmark`. The `Benchmark` workflow runs the
+same sweep on demand, or on a pull request labelled `benchmark`.
+
+## Comparing against other tools — `compare.sh`
+
+```bash
+# Usage: ./scripts/benchmark/compare.sh [SOURCE] [STORE] [TOOL] [--debug]
 #   SOURCE: local (default) or gdrive
 #   STORE:  local (default) or s3
 #   TOOL:   cloudstic, restic, borg, duplicacy, or all (default)
 
 # Local source -> local store (default)
-./scripts/benchmark/run.sh
-./scripts/benchmark/run.sh local local all
-./scripts/benchmark/run.sh local local cloudstic
+./scripts/benchmark/compare.sh
+./scripts/benchmark/compare.sh local local all
+./scripts/benchmark/compare.sh local local cloudstic
 
 # Local source -> S3 store
-./scripts/benchmark/run.sh local s3 all
+./scripts/benchmark/compare.sh local s3 all
 
 # Google Drive source -> local store
-./scripts/benchmark/run.sh gdrive local all
+./scripts/benchmark/compare.sh gdrive local all
 
 # Google Drive source -> S3 store
-./scripts/benchmark/run.sh gdrive s3 cloudstic
+./scripts/benchmark/compare.sh gdrive s3 cloudstic
 
 # Enable debug logging for Cloudstic
-./scripts/benchmark/run.sh local local cloudstic --debug
+./scripts/benchmark/compare.sh local local cloudstic --debug
 ```
 
 Requirements:
@@ -35,6 +71,11 @@ Requirements:
 - ~2 GB free disk space for the test dataset and repository copies
 
 ## Results
+
+The numbers below were produced by this comparison before the harness was
+renamed from `run.sh` to `compare.sh`. Its dataset and measurement steps are
+unchanged, so they remain the current figures; re-running is what refreshes
+them.
 
 Dataset: ~1.05 GB (500MB random, 500MB compressible zeros, 50 x 1MB docs, 100 x ~1KB config files, 152 files total)
 
@@ -76,7 +117,7 @@ _Format: time / peak RAM / +repo written_
 
 > **Stale:** this table predates the restore rows above and predates the
 > pipelined restore path, so it has no restore numbers and its backup numbers
-> are from an earlier build. Re-run `./scripts/benchmark/run.sh local s3 all`
+> are from an earlier build. Re-run `./scripts/benchmark/compare.sh local s3 all`
 > against real S3 to refresh it.
 
 > **Note on architecture differences:** Cloudstic defaults to a hybrid `MicroPackStore` approach. It intelligently bundles small metadata objects (filemeta, nodes) into up to tightly-packed 8MB chunks to minimize S3 `PUT` requests, while passing all large files through as native encrypted objects. This yields the best of both worlds: lightning-fast S3 API performance comparable to packfile-based tools, while preserving native S3 lifecycle rules and fine-grained partial downloads for large media files.

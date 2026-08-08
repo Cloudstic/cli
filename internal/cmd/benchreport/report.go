@@ -1,10 +1,4 @@
-// Package benchreport turns benchmark measurements into a Markdown report.
-//
-// The measurement scripts orchestrate external binaries, which is what shell is
-// good at. Everything after that — arithmetic, grouping, table and chart
-// layout — is what shell is worst at, and is here instead: it is typed, it is
-// tested, and it does not fork bc to divide two numbers.
-package benchreport
+package main
 
 import (
 	"encoding/csv"
@@ -49,6 +43,17 @@ type Row struct {
 	PeakMB    float64
 	AllocMB   float64 // cumulative bytes allocated, including freed; 0 when unmeasured
 	RepoDelta string  // human-formatted, passed through untouched
+
+	// S3 columns: only a MinIO backend row carries these. Requests and
+	// SentMB can each be a genuine zero — a no-op incremental backup can
+	// still issue zero uploads, an upload-heavy step can send zero bytes
+	// back — so zero cannot double as "unmeasured" the way it does for
+	// AllocMB. HasS3 is the presence flag, true whenever the row's CSV record
+	// had a requests column at all.
+	Requests int
+	SentMB   float64
+	ByAPI    string // "GetObject=8;HeadObject=3;…", passed through untouched
+	HasS3    bool
 }
 
 // Stat summarises repeated samples of one measurement.
@@ -92,6 +97,11 @@ type Cell struct {
 	AllocMB   Stat
 	HasAlloc  bool
 	RepoDelta string
+
+	Requests Stat
+	SentMB   Stat
+	HasS3    bool
+	ByAPI    string // last non-empty sample, like RepoDelta
 }
 
 // Report is a parsed measurement set.
@@ -177,6 +187,21 @@ func Parse(r io.Reader) (*Report, error) {
 				return nil, fmt.Errorf("row %d: alloc_mb %q: %w", n+2, v, err)
 			}
 		}
+		// requests is the presence flag for every S3 column: bench.sh leaves
+		// it (and sent_mb, by_api) empty on a local-backend row and always
+		// fills it on a MinIO one, even when the true count is zero.
+		if v := get(rec, "requests"); v != "" {
+			row.HasS3 = true
+			if row.Requests, err = strconv.Atoi(v); err != nil {
+				return nil, fmt.Errorf("row %d: requests %q: %w", n+2, v, err)
+			}
+			if v := get(rec, "sent_mb"); v != "" {
+				if row.SentMB, err = strconv.ParseFloat(v, 64); err != nil {
+					return nil, fmt.Errorf("row %d: sent_mb %q: %w", n+2, v, err)
+				}
+			}
+			row.ByAPI = get(rec, "by_api")
+		}
 		rep.Rows = append(rep.Rows, row)
 	}
 	if len(rep.Rows) == 0 {
@@ -257,7 +282,7 @@ func distinct(rows []Row, key func(Row) string) []string {
 // are that sample, so the single-sample and repeated-sample paths are the same
 // code.
 func (r *Report) cell(tool, op string, scale int) (Cell, bool) {
-	var seconds, peak, alloc []float64
+	var seconds, peak, alloc, requests, sentMB []float64
 	var c Cell
 	for _, row := range r.Rows {
 		if row.Operation != op || row.Scale != scale || (tool != "" && row.Tool != tool) {
@@ -273,12 +298,24 @@ func (r *Report) cell(tool, op string, scale int) (Cell, bool) {
 		if row.RepoDelta != "" {
 			c.RepoDelta = row.RepoDelta
 		}
+		// Unlike AllocMB, presence rather than a positive value is the gate:
+		// a genuine zero request or byte count must still be averaged in, not
+		// dropped as if it were a local-backend row that never measured it.
+		if row.HasS3 {
+			requests = append(requests, float64(row.Requests))
+			sentMB = append(sentMB, row.SentMB)
+			if row.ByAPI != "" {
+				c.ByAPI = row.ByAPI
+			}
+		}
 	}
 	if len(peak) == 0 {
 		return Cell{}, false
 	}
 	c.Seconds, c.PeakMB, c.AllocMB = newStat(seconds), newStat(peak), newStat(alloc)
 	c.HasAlloc = len(alloc) > 0
+	c.Requests, c.SentMB = newStat(requests), newStat(sentMB)
+	c.HasS3 = len(requests) > 0
 	return c, true
 }
 
@@ -299,6 +336,18 @@ func (r *Report) hasRepoDelta() bool {
 func (r *Report) hasAlloc() bool {
 	for _, row := range r.Rows {
 		if row.AllocMB > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// hasS3 reports whether any row measured requests and bytes against a MinIO
+// backend. A local-backend run must not grow empty request/byte columns
+// because of it.
+func (r *Report) hasS3() bool {
+	for _, row := range r.Rows {
+		if row.HasS3 {
 			return true
 		}
 	}
@@ -328,7 +377,9 @@ type Metric struct {
 }
 
 var (
-	PeakMB  = Metric{Name: "Peak RSS", Unit: "MB", Value: func(c Cell) Stat { return c.PeakMB }}
-	AllocMB = Metric{Name: "Total allocated", Unit: "MB", Value: func(c Cell) Stat { return c.AllocMB }}
-	Seconds = Metric{Name: "Time", Unit: "s", Value: func(c Cell) Stat { return c.Seconds }}
+	PeakMB   = Metric{Name: "Peak RSS", Unit: "MB", Value: func(c Cell) Stat { return c.PeakMB }}
+	AllocMB  = Metric{Name: "Total allocated", Unit: "MB", Value: func(c Cell) Stat { return c.AllocMB }}
+	Seconds  = Metric{Name: "Time", Unit: "s", Value: func(c Cell) Stat { return c.Seconds }}
+	Requests = Metric{Name: "Requests", Unit: "", Value: func(c Cell) Stat { return c.Requests }}
+	SentMB   = Metric{Name: "Sent", Unit: "MB", Value: func(c Cell) Stat { return c.SentMB }}
 )

@@ -1,6 +1,6 @@
 //go:build unix
 
-package benchreport
+package main
 
 import (
 	"fmt"

@@ -14,8 +14,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-
-	"github.com/cloudstic/cli/internal/benchreport"
 )
 
 func main() {
@@ -80,7 +78,7 @@ func runCmd(args []string) error {
 		stdout, stderr = nil, nil
 	}
 
-	seconds, peakMB, err := benchreport.Measure(rest[0], rest[1:], stdout, stderr)
+	seconds, peakMB, err := Measure(rest[0], rest[1:], stdout, stderr)
 	if err != nil {
 		return err
 	}
@@ -92,12 +90,12 @@ func runCmd(args []string) error {
 	// nothing".
 	var allocMB float64
 	if *allocFrom != "" {
-		if allocMB, err = benchreport.ReadAllocMB(*allocFrom); err != nil {
+		if allocMB, err = ReadAllocMB(*allocFrom); err != nil {
 			return err
 		}
 	}
 
-	if err := benchreport.AppendRow(*out, benchreport.Row{
+	if err := AppendRow(*out, Row{
 		Tool:      *tool,
 		Operation: *op,
 		Scale:     *scale,
@@ -148,7 +146,7 @@ func rowCmd(args []string) error {
 	if *op == "" || *out == "" {
 		return fmt.Errorf("-op and -out are required")
 	}
-	return benchreport.AppendRow(*out, benchreport.Row{
+	return AppendRow(*out, Row{
 		Tool:      *tool,
 		Operation: *op,
 		Scale:     *scale,
@@ -175,9 +173,9 @@ func renderCmd(args []string) error {
 	}
 	defer func() { _ = f.Close() }()
 
-	rep, err := benchreport.Parse(f)
+	rep, err := Parse(f)
 	if err != nil {
 		return err
 	}
-	return benchreport.Render(os.Stdout, rep, *title)
+	return Render(os.Stdout, rep, *title)
 }

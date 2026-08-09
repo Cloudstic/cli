@@ -167,9 +167,72 @@ func (rm *RestoreManager) Run(ctx context.Context, writer RestoreWriter, snapsho
 // therefore dispatched to a bounded worker pool whenever the writer says it
 // can take concurrent writes; the pool degenerates to sequential execution for
 // writers that cannot (zip).
+// contentRefs returns one entry per content *read*, not per distinct content
+// object.
+//
+// Deduplicating here is wrong, and expensively so. Restore calls
+// writeFileContent once per file, so a content object shared by several files
+// through deduplication is fetched once per referencing file: its demand is a
+// reference count, not a presence bit. Declaring it once made demand reach zero
+// after the first of those reads, so the pack was released while later files
+// still wanted it and had to be fetched again — measured at 42 packs as 460
+// requests and 305.2 MB becoming 620 and 496.2 MB.
+//
+// RFC 0025 §2 states this outright under "they have different multiplicities",
+// which is where the correction came from rather than from first principles.
+func contentRefs(plan restorePlan) []string {
+	refs := make([]string, 0, len(plan.sorted))
+	for _, id := range plan.sorted {
+		meta, ok := plan.byID[id]
+		if !ok {
+			continue
+		}
+		// The same fallback writeFileContent uses: ContentRef is the HMAC-based
+		// key on repositories that have one, ContentHash on those that do not.
+		// Declaring the wrong one would name a key nothing reads, which is
+		// harmless but useless, and the point is to name the keys actually read.
+		key := meta.ContentRef
+		if key == "" {
+			key = meta.ContentHash
+		}
+		if key == "" {
+			continue
+		}
+		// Folders have no content and contribute no read; everything else
+		// appends, repeats included.
+		refs = append(refs, "content/"+key)
+	}
+	return refs
+}
+
 func (rm *RestoreManager) runWithWriter(ctx context.Context, plan restorePlan, writer RestoreWriter) (*RestoreResult, error) {
 	result := &RestoreResult{SnapshotRef: plan.snapshotRef, Root: plan.root}
 	phase := rm.reporter.StartPhase("Restoring", int64(len(plan.sorted)), false)
+
+	// Declare the content objects this phase will read, the way collectMetadata
+	// declares the metadata objects it reads.
+	//
+	// Two phases have to declare separately because neither knows the other's
+	// keys: a content hash is a field of a FileMeta, so it is not knowable until
+	// that FileMeta has been read. Declaring only the metadata phase measurably
+	// covers the smaller half — a restore of the benchmark repository reads
+	// roughly 6,500 metadata objects and 5,000 content objects — so the phase
+	// left undeclared was the one carrying most of the traffic.
+	//
+	// Taken from plan.sorted rather than plan.byID, so a -path restore declares
+	// the subtree it will actually read instead of the whole snapshot.
+	//
+	// chunk/ refs are deliberately not declared, and mostly do not need to be:
+	// cdcAvgSize is 1 MB against a maxObjectSize of 512 KB, so a typical chunk
+	// is stored standalone rather than packed, and a pack's fate does not turn
+	// on it.
+	//
+	// Final, unlike the metadata declaration: every content object a restore
+	// will read is known by now, and nothing is read after this phase. That is
+	// what lets PackStore release a pack when its demand is exhausted instead of
+	// holding it until something evicts it, and it is available without any
+	// format change precisely because collectMetadata has already run.
+	defer store.DeclareDemand(rm.store, contentRefs(plan), store.DemandFinal)()
 
 	// Counters are touched from the file workers as well as this goroutine.
 	var mu sync.Mutex
@@ -797,6 +860,25 @@ func (rm *RestoreManager) collectMetadata(ctx context.Context, root string) (map
 	// walkOrder is unaffected: it is filled by index below, so the order results
 	// are *fetched* in is independent of the order restore *writes* in, which
 	// must stay walk order (RFC 0023 §5).
+	//
+	// The same set is also declared, which answers a different question than
+	// the ordering does. Order decides whether a pack is read again; the
+	// declaration decides what its *first* contact costs, by replacing the
+	// probe sequence PackStore would otherwise use to work out whether the pack
+	// is worth transferring whole. Measured separately: ordering alone left
+	// this workload unchanged at 112 requests (#481), because a pack that fits
+	// in cache is never re-read whatever the order.
+	//
+	// Partial, because the keys this restore reads next are fields of the very
+	// objects being read here: a file's content object is named by its FileMeta,
+	// so it cannot be declared until that FileMeta has been fetched. Running out
+	// of demand here therefore means this pass is done with a pack, not that the
+	// restore is — and PackStore must not drop the body on it.
+	//
+	// Released when metadata collection returns. The write phase makes its own,
+	// final declaration from what this one produced.
+	defer store.DeclareDemand(rm.store, refs, store.DemandPartial)()
+
 	order := make([]int, len(refs))
 	for i := range refs {
 		order[i] = i

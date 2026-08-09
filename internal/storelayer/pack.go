@@ -76,6 +76,11 @@ type PackStore struct {
 	// Whether a pack is worth transferring whole, estimated from read history.
 	// See packadmission.go, including why it is expected to be deleted.
 	admission *packAdmission
+
+	// Objects a caller has declared it will still read, per pack and namespace.
+	// Empty unless something called DeclareDemand, which is what leaves every
+	// caller that did not on admission's estimate. See packdemand.go.
+	demand *packDemand
 }
 
 // PackEntry represents the location of a small object within a packfile.
@@ -134,6 +139,7 @@ func NewPackStore(inner store.ObjectStore, opts ...PackOption) (*PackStore, erro
 		pendingKeys: make(map[string]struct{}),
 		mergedIndex: make(map[string]bool),
 		admission:   admission,
+		demand:      newPackDemand(),
 	}
 	// s.admission.evicted is the cache's pressure signal, so the cache is built
 	// after it and assigned rather than passed in the struct literal.
@@ -380,10 +386,69 @@ func (s *PackStore) Get(ctx context.Context, key string) ([]byte, error) {
 		data := make([]byte, entry.Length)
 		copy(data, packData[entry.Offset:entry.Offset+entry.Length])
 		s.debugf("get %s: hit lru pack cache %s (len=%d)", key, entry.PackRef, entry.Length)
+		s.finishDemand(entry.PackRef, key)
 		return data, nil
 	}
 
-	return s.resolveFromPack(ctx, key, entry)
+	data, err := s.resolveFromPack(ctx, key, entry)
+	if err != nil {
+		return nil, err
+	}
+	// Counted after the read succeeds: a failed read has not consumed the
+	// object, and counting it would retire a pack that still owes one.
+	s.finishDemand(entry.PackRef, key)
+	return data, nil
+}
+
+// DeclareDemand records how many of keys live in each pack, implementing
+// store.DemandDeclarer.
+//
+// Without it, resolveFromPack learns a pack's worth one miss at a time: it
+// ranged-reads up to packPromoteAfter objects while working out whether the
+// pack is worth transferring whole, and infers from a later eviction that it
+// was not (see packPenalized). Both are inferences about a quantity the caller
+// already holds — a restore has its whole metadata plan before it fetches
+// anything — so declaring it replaces the guess with the number.
+//
+// The counts are read from the catalog, which GroupByLocality already consults
+// for the same key set, so this costs one map lookup per key and no I/O. Keys
+// with no catalog entry are not counted: they are not in packs, so there is no
+// pack whose fate they bear on.
+//
+// The catalog is not force-loaded, for the same reason GroupByLocality does not:
+// this is an optimisation hint, and making a hint perform I/O would let it fail
+// an operation that would otherwise have succeeded. An unloaded catalog yields
+// no counts and the heuristics apply, which is exactly the previous behaviour.
+func (s *PackStore) DeclareDemand(keys []string, scope store.DemandScope) func() {
+	counts := make(map[demandKey]int)
+
+	s.mu.RLock()
+	for _, key := range keys {
+		if entry, ok := s.catalog.Get(key); ok {
+			counts[demandKey{packRef: entry.PackRef, kind: kindOf(key)}]++
+		}
+	}
+	s.mu.RUnlock()
+
+	if len(counts) == 0 {
+		return func() {}
+	}
+
+	final := scope == store.DemandFinal
+	s.demand.declare(counts, final)
+	s.debugf("declare demand: %d keys across %d (pack, kind) buckets (final=%t)", len(keys), len(counts), final)
+
+	// Release subtracts what this declaration added rather than clearing the
+	// packs outright, so an overlapping declaration keeps its own outstanding
+	// demand. Reads have already decremented what they consumed, so the
+	// subtraction floors at zero.
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.demand.release(counts, final)
+			s.debugf("release demand across %d packs", len(counts))
+		})
+	}
 }
 
 // GroupByLocality orders keys so that objects sharing a packfile are read
@@ -476,6 +541,36 @@ func rangesNatively(s store.ObjectStore) bool {
 	return ok
 }
 
+// finishDemand records one declared object served from a pack, and drops the
+// body once the pack is finished.
+//
+// "Finished" is narrower than "exhausted", and the difference is what a
+// DemandPartial declaration expresses. A restore's first pass names the metadata
+// objects it will read and cannot name the content objects those point at until
+// it has read them, so its packs run out of declared demand long before the
+// operation is done with them. Dropping bodies on that signal was implemented
+// and measured: restore at 42 packs went from 507 requests and 320.8 MB to 937
+// and 647.0 MB, bytes almost exactly doubling, because every pack the metadata
+// pass released was fetched again by the write pass.
+//
+// The write pass is different, and that is what makes releasing safe at all
+// without a manifest. By then every content object is known, and nothing is read
+// after it — so its declaration is final, exhaustion does mean finished, and the
+// body can go rather than waiting for eviction pressure.
+//
+// packBodyCache.Remove is deliberate removal rather than pressure, so it raises
+// no eviction signal: a finished pack must not be recorded as a promotion that
+// failed to pay for itself. See newPackBodyCache.
+func (s *PackStore) finishDemand(packRef, key string) {
+	if !s.demand.consume(packRef, key) {
+		return
+	}
+	// Removing the body takes its hit tally with it (#494), so a later promotion
+	// of the same pack cannot inherit hits it did not earn.
+	s.packCache.Remove(packRef)
+	s.debugf("pack %s: finished, released", packRef)
+}
+
 // resolveFromPack returns one object from a pack that is not in the body cache.
 //
 // Reading the whole pack to return a slice of it is right when the pack is being
@@ -486,7 +581,17 @@ func (s *PackStore) resolveFromPack(ctx context.Context, key string, entry PackE
 	ranger, canRange := s.ObjectStore.(store.RangeGetter)
 	canRange = canRange && rangesNatively(s.ObjectStore)
 
-	misses, fetchWhole := s.admission.recordMiss(entry.PackRef)
+	// A declared pack's worth is stated, and admission exists only to estimate
+	// that same number -- so a declaration replaces both the probe sequence and
+	// the penalty rather than being consulted alongside them. A declared pack is
+	// released once its count reaches zero (finishDemand), so it cannot thrash
+	// the way the penalty exists to bound.
+	misses, fetchWhole := 0, false
+	if declared := s.demand.outstanding(entry.PackRef); declared > 0 {
+		fetchWhole = declared >= packPromoteAfter
+	} else {
+		misses, fetchWhole = s.admission.recordMiss(entry.PackRef)
+	}
 
 	if canRange && !fetchWhole {
 		data, err := ranger.GetRange(ctx, entry.PackRef, entry.Offset, entry.Length)

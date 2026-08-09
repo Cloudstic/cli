@@ -67,6 +67,73 @@ type LocalityGrouper interface {
 	GroupByLocality(keys []string) []string
 }
 
+// DemandDeclarer is an optional interface for stores that can use advance
+// knowledge of which keys a caller is about to read.
+//
+// LocalityGrouper answers "in what order", this answers "how many, and from
+// where". A store bundling many objects per transfer has to decide, on first
+// contact with a bundle, whether to transfer the whole thing or read a piece of
+// it — a decision it can only make by guessing, since it sees one key at a time.
+// A caller holding its whole read set already knows the answer.
+//
+// Declaring is a hint about a caller's own intent, not a lock or a reservation.
+// A declared key need not be read, a key not declared may be, and reads from
+// other callers proceed unaffected. A store may ignore the declaration entirely,
+// which is what a store with nothing to gain from it does by not implementing
+// this at all.
+//
+// The returned function ends the declaration and must be called — deferring it
+// is the intended use. Ending it early costs efficiency, never correctness.
+type DemandDeclarer interface {
+	DeclareDemand(keys []string, scope DemandScope) (release func())
+}
+
+// DemandScope says whether a caller may still declare more keys from the same
+// bundles, which decides whether running out of declared demand means the
+// bundle is finished or merely quiet.
+//
+// The distinction is not bookkeeping. A reader whose later keys are fields of
+// its earlier ones cannot name them up front — a restore learns a file's
+// content object only by reading that file's metadata — so its first pass is
+// necessarily partial, and a store that treated exhaustion as completion would
+// discard bundles the second pass immediately asks for again.
+type DemandScope int
+
+const (
+	// DemandPartial promises nothing beyond the keys named. More keys from the
+	// same bundles may follow, so exhausting this declaration means only that
+	// this pass is done with them.
+	DemandPartial DemandScope = iota
+
+	// DemandFinal additionally promises that no further keys from these bundles
+	// will be declared by this caller. Exhausting it therefore means the bundle
+	// is finished and its resources can be released rather than waiting to be
+	// evicted.
+	//
+	// Wrong only costs performance: a bundle released early is fetched again.
+	DemandFinal
+)
+
+// DeclareDemand walks the store wrapper chain and declares to the first
+// DemandDeclarer it finds, returning a no-op release if none exists.
+//
+// The walk matters for the same reason GroupByLocality's does: PackStore is the
+// store that bundles, and it sits beneath CompressedStore, EncryptedStore and
+// MeteredStore.
+func DeclareDemand(s ObjectStore, keys []string, scope DemandScope) (release func()) {
+	for s != nil {
+		if d, ok := s.(DemandDeclarer); ok {
+			return d.DeclareDemand(keys, scope)
+		}
+		if u, ok := s.(Unwrapper); ok {
+			s = u.Unwrap()
+		} else {
+			break
+		}
+	}
+	return func() {}
+}
+
 // GroupByLocality walks the store wrapper chain and applies the first
 // LocalityGrouper it finds, returning keys unchanged if none exists.
 //

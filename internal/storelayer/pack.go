@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 
@@ -21,7 +20,15 @@ const (
 	maxPackSize   = 8 * 1024 * 1024 // 8 MB
 	maxObjectSize = 512 * 1024      // Only bundle objects smaller than 512 KB
 	packPrefix    = "packs/"
-	indexPacksKey = "index/packs"
+
+	// maxCachedPacks is how many whole packfile bodies are held in memory.
+	//
+	// Four is the pre-RFC-0023 value, restored deliberately. It is a count, not
+	// a byte budget, so the memory it implies is four times whatever a pack
+	// weighs -- up to maxPackSize each -- which is exactly the figure RFC 0023
+	// objected to nobody having stated.
+	maxCachedPacks = 4
+	indexPacksKey  = "index/packs"
 )
 
 // PackStore wraps an store.ObjectStore to aggregate small objects into larger "packfiles".
@@ -72,27 +79,11 @@ type PackStore struct {
 	// local write or a footer rebuild puts a key here.
 	pendingKeys map[string]struct{}
 
-	// LRU cache for recently downloaded packfiles to accelerate Get() and HAMT walks
-	packCache *packBodyCache
-
-	// Misses per pack since it was last cached, used to decide when reading one
-	// object at a time is no longer the cheaper option. See resolveFromPack.
-	packMisses *lru.Cache[string, int]
-
-	// Hits served from a pack since it was promoted into packCache, read by
-	// onPackEvicted to tell a promotion that paid for itself from one that
-	// didn't. See packPenalized.
-	packHits *lru.Cache[string, int]
-
-	// Packs whose last promotion was evicted before serving packPromoteAfter
-	// hits — cheaper to have left as ranged reads. A pack in here is never
-	// promoted again until it ages out of this bounded structure, which is
-	// what keeps a working set bigger than packCache from paying a whole-pack
-	// transfer over and over: the cost per object converges to a ranged read,
-	// bounded by object size, rather than staying bounded by pack size no
-	// matter how much the true working set overruns the cache. See
-	// onPackEvicted and resolveFromPack.
-	packPenalized *lru.Cache[string, struct{}]
+	// LRU cache of whole packfile bodies, bounded by entry count.
+	//
+	// The pre-RFC-0023 shape, restored deliberately: a fixed number of whole
+	// packs, with no byte budget, no promotion threshold and no penalty.
+	packCache *lru.Cache[string, []byte]
 }
 
 // PackEntry represents the location of a small object within a packfile.
@@ -104,22 +95,6 @@ type PackEntry struct {
 
 // PackOption configures a PackStore.
 type PackOption func(*PackStore)
-
-// withPackBodyCacheBudget overrides the pack body cache's byte budget.
-//
-// Unexported: production code has one number, arrived at by measurement (see
-// packBodyCacheBudget), and this exists only so a test can put a working set
-// through a cache deliberately smaller than it, without needing a repository
-// large enough to do that with the real budget.
-func withPackBodyCacheBudget(budget int) PackOption {
-	return func(s *PackStore) {
-		cache, err := newPackBodyCache(budget, s.onPackEvicted)
-		if err != nil {
-			panic(err) // test-only option; a bad budget here is a test bug
-		}
-		s.packCache = cache
-	}
-}
 
 // WithPackIndexKey seals the pack catalog and packfile footers with key.
 //
@@ -138,45 +113,27 @@ func WithPackIndexKey(key []byte) PackOption {
 
 // NewPackStore initializes a new MicroPackStore over an existing store.ObjectStore.
 func NewPackStore(inner store.ObjectStore, opts ...PackOption) (*PackStore, error) {
-	misses, err := lru.New[string, int](packMissWindow)
-	if err != nil {
-		return nil, fmt.Errorf("pack miss counter init: %w", err)
-	}
-	hits, err := lru.New[string, int](packMissWindow)
-	if err != nil {
-		return nil, fmt.Errorf("pack hit counter init: %w", err)
-	}
-	penalized, err := lru.New[string, struct{}](packMissWindow)
-	if err != nil {
-		return nil, fmt.Errorf("pack penalty tracker init: %w", err)
-	}
-
-	s := &PackStore{
-		ObjectStore:   inner,
-		packBuffer:    new(bytes.Buffer),
-		packKeys:      make(map[string]PackEntry),
-		catalog:       newPackCatalog(),
-		pendingKeys:   make(map[string]struct{}),
-		mergedIndex:   make(map[string]bool),
-		packMisses:    misses,
-		packHits:      hits,
-		packPenalized: penalized,
-	}
-	// s.onPackEvicted needs packHits and packPenalized, both set above, so the
-	// cache is built after them and assigned rather than passed in the struct
-	// literal.
-	cache, err := newPackBodyCache(packBodyCacheBudget, s.onPackEvicted)
+	cache, err := lru.New[string, []byte](maxCachedPacks)
 	if err != nil {
 		return nil, fmt.Errorf("pack cache init: %w", err)
 	}
-	s.packCache = cache
+
+	s := &PackStore{
+		ObjectStore: inner,
+		packBuffer:  new(bytes.Buffer),
+		packKeys:    make(map[string]PackEntry),
+		catalog:     newPackCatalog(),
+		pendingKeys: make(map[string]struct{}),
+		mergedIndex: make(map[string]bool),
+		packCache:   cache,
+	}
 
 	for _, opt := range opts {
 		opt(s)
 	}
 	// Logged after the options are applied so it reaches the sink the caller
 	// asked for rather than the process-wide fallback.
-	s.debugf("init packstore: pack body budget=%d bytes", packBodyCacheBudget)
+	s.debugf("init packstore: pack cache holds %d packs", maxCachedPacks)
 	return s, nil
 }
 
@@ -407,7 +364,6 @@ func (s *PackStore) Get(ctx context.Context, key string) ([]byte, error) {
 		}
 		data := make([]byte, entry.Length)
 		copy(data, packData[entry.Offset:entry.Offset+entry.Length])
-		s.recordPackHit(entry.PackRef)
 		s.debugf("get %s: hit lru pack cache %s (len=%d)", key, entry.PackRef, entry.Length)
 		return data, nil
 	}
@@ -415,220 +371,20 @@ func (s *PackStore) Get(ctx context.Context, key string) ([]byte, error) {
 	return s.resolveFromPack(ctx, key, entry)
 }
 
-// recordPackHit counts one object served from a cached pack, read back by
-// onPackEvicted when that pack leaves the cache.
-func (s *PackStore) recordPackHit(packRef string) {
-	hits := 0
-	if n, ok := s.packHits.Get(packRef); ok {
-		hits = n
-	}
-	s.packHits.Add(packRef, hits+1)
-}
-
-// onPackEvicted runs when a pack body is dropped because the cache ran out of
-// room — not when one is removed deliberately, which carries no such meaning
-// (see newPackBodyCache).
+// resolveFromPack returns one object from a pack that is not in the body cache,
+// by downloading the whole pack and caching it.
 //
-// A promotion (see resolveFromPack) pays for a whole-pack transfer up front,
-// betting it back on the hits the pack serves while cached. That bet loses
-// when the working set is bigger than the cache: the pack is evicted to make
-// room for another before it has served enough hits to be worth what it cost,
-// and the next miss on the same pack would promote it again, pay the same
-// transfer, and lose the same bet — forever, at a cost bounded by pack size no
-// matter how much larger the true working set is than the cache.
-//
-// Recording the loss here is what breaks that cycle. A pack that didn't earn
-// back its promotion is marked in packPenalized, and resolveFromPack serves it
-// with ranged reads from then on rather than promoting it again — bounding the
-// cost per object by object size instead, which holds regardless of how large
-// the repository or how mismatched the cache is to it. The mark expires when
-// it ages out of packPenalized's own bounded window, so a pack that becomes
-// worth caching again — the working set shrinks, or access moves on — gets
-// another chance rather than being penalized permanently on one bad measurement.
-func (s *PackStore) onPackEvicted(packRef string) {
-	hits := 0
-	if n, ok := s.packHits.Get(packRef); ok {
-		hits = n
-	}
-	s.packHits.Remove(packRef)
-	if hits < packPromoteAfter {
-		s.packPenalized.Add(packRef, struct{}{})
-	}
-}
-
-const (
-	// packPromoteAfter is how many times a pack may be read one object at a time
-	// before the whole thing is fetched and cached instead.
-	//
-	// The two access patterns this sits between were measured (RFC 0023). A scan
-	// -- check, ls, prune -- walks a pack's objects consecutively, so one transfer
-	// serves thousands of reads and ranged reads would be thousands of round
-	// trips instead of one. A scattered read -- restore's write phase, or a cat
-	// of a single file -- touches a pack once or twice, so fetching up to
-	// maxPackSize to return a few hundred bytes is nearly all waste.
-	//
-	// The threshold is asymmetric in what it costs each pattern, which is why it
-	// is not 2. A scan pays at most packPromoteAfter-1 extra small requests per
-	// pack visit -- a few hundred across a repository, against transfers it makes
-	// anyway. A scattered read pays one whole pack per packPromoteAfter misses,
-	// which is bytes, and bytes are what a remote backend bills for.
-	//
-	// Measured on a 51-pack tree, restore's whole-pack transfers against this
-	// value: 2857 at 2, 1419 at 4, 719 at 8, 358 at 16, 179 at 32. Most of the
-	// benefit is captured by 8, and beyond it the round trips traded away start
-	// to matter more than the bytes saved.
-	packPromoteAfter = 8
-
-	// packMissWindow bounds the miss counter, the hit counter and the penalty
-	// set. Each only has to span the packs in flight around a given moment, and
-	// none may become a second unbounded per-repository structure -- which is
-	// the thing RFC 0023 is about.
-	//
-	// It has to stay comfortably above the number of packs the body cache can
-	// hold (packBodyCacheBudget / maxPackSize, currently 8). A hit counter
-	// evicted from this window while its pack is still resident would read as
-	// zero hits on the next eviction and penalize a pack that was serving
-	// fine.
-	packMissWindow = 64
-)
-
-// GroupByLocality orders keys so that objects sharing a packfile are read
-// consecutively, implementing store.LocalityGrouper.
-//
-// A pack is transferred as a unit once enough of it is wanted (see
-// packPromoteAfter), and stays cached only while it is the recently-used one.
-// Reading a pack's keys scattered among other packs' keys therefore transfers
-// it, evicts it, and transfers it again; reading them consecutively transfers
-// it once and serves the rest from memory. The keys are the same either way —
-// only the order changes, and only the caller knows the whole set in advance.
-//
-// Ordering is by (pack ref, offset), so reads also run forwards through each
-// pack rather than seeking around inside it.
-//
-// Keys with no catalog entry — large objects stored standalone, anything not
-// packed — keep their relative order and follow the packed ones. They are
-// unaffected by pack locality, so there is nothing to gain by moving them
-// relative to each other, and a caller may hand over a mixed set without
-// having to know which is which.
-//
-// This is a hint, not a contract: the result is always a permutation of the
-// input, so a caller that ignores it reads exactly the same objects.
-func (s *PackStore) GroupByLocality(keys []string) []string {
-	if len(keys) < 2 {
-		return keys
-	}
-
-	type placed struct {
-		key   string
-		entry PackEntry
-	}
-	packed := make([]placed, 0, len(keys))
-	loose := make([]string, 0)
-
-	s.mu.RLock()
-	for _, key := range keys {
-		if entry, ok := s.catalog.Get(key); ok {
-			packed = append(packed, placed{key: key, entry: entry})
-		} else {
-			loose = append(loose, key)
-		}
-	}
-	s.mu.RUnlock()
-
-	// The catalog is consulted without loading it. Grouping is an optimisation,
-	// and forcing a catalog load here would turn a hint into an I/O dependency
-	// on a path that has not asked to read anything yet; an unloaded catalog
-	// simply yields the input order back.
-	sort.SliceStable(packed, func(i, j int) bool {
-		if packed[i].entry.PackRef != packed[j].entry.PackRef {
-			return packed[i].entry.PackRef < packed[j].entry.PackRef
-		}
-		return packed[i].entry.Offset < packed[j].entry.Offset
-	})
-
-	out := make([]string, 0, len(keys))
-	for _, p := range packed {
-		out = append(out, p.key)
-	}
-	return append(out, loose...)
-}
-
-// rangesNatively reports whether a ranged read on s reaches a backend that
-// serves it as a ranged read, rather than one that emulates it by transferring
-// the whole object and slicing.
-//
-// Implementing store.RangeGetter is not the same claim. DebugStore declares the
-// method unconditionally and falls back to a full Get over an inner store that
-// cannot range, which is right for the footer path — there the fallback costs
-// exactly what not ranging would have cost anyway. It is wrong here, because
-// this decides *whether* to range: emulated ranging would transfer the whole
-// pack on every one of the first packPromoteAfter misses and never populate the
-// body cache, which is worse than not ranging at all.
-//
-// So walk to the bottom of the wrapper chain and ask the backend itself.
-func rangesNatively(s store.ObjectStore) bool {
-	for {
-		u, ok := s.(store.Unwrapper)
-		if !ok {
-			break
-		}
-		inner := u.Unwrap()
-		if inner == nil {
-			break
-		}
-		s = inner
-	}
-	_, ok := s.(store.RangeGetter)
-	return ok
-}
-
-// resolveFromPack returns one object from a pack that is not in the body cache.
-//
-// Reading the whole pack to return a slice of it is right when the pack is being
-// scanned and wrong when it is being sampled, and the two are indistinguishable
-// at the first miss. So the first misses are served by ranged reads, and a pack
-// that keeps missing is fetched whole and cached -- see packPromoteAfter. A pack
-// whose last promotion was evicted before earning it back stays on ranged reads
-// regardless of miss count -- see packPenalized and onPackEvicted.
+// There is no ranged read on this path and no promotion threshold: every miss
+// transfers the entire packfile to return one object from it, however small.
+// That is the pre-RFC-0023 behaviour this branch exists to measure.
 func (s *PackStore) resolveFromPack(ctx context.Context, key string, entry PackEntry) ([]byte, error) {
-	ranger, canRange := s.ObjectStore.(store.RangeGetter)
-	canRange = canRange && rangesNatively(s.ObjectStore)
-
-	misses := 0
-	if n, ok := s.packMisses.Get(entry.PackRef); ok {
-		misses = n
-	}
-	misses++
-	s.packMisses.Add(entry.PackRef, misses)
-
-	// Peek, not Get: checking the penalty must not refresh its recency, or a
-	// pack read every miss (which a penalized one is, by definition) would
-	// keep itself permanently fresh in packPenalized and never age out for
-	// the second chance the comment on that field promises.
-	_, penalized := s.packPenalized.Peek(entry.PackRef)
-
-	if canRange && (misses < packPromoteAfter || penalized) {
-		data, err := ranger.GetRange(ctx, entry.PackRef, entry.Offset, entry.Length)
-		if err != nil {
-			return nil, fmt.Errorf("read %s from pack %s: %w", key, entry.PackRef, err)
-		}
-		if int64(len(data)) != entry.Length {
-			return nil, fmt.Errorf("ranged read of %s from pack %s returned %d bytes, want %d",
-				key, entry.PackRef, len(data), entry.Length)
-		}
-		s.debugf("get %s: ranged read from pack %s (len=%d)", key, entry.PackRef, entry.Length)
-		return data, nil
-	}
-
-	s.debugf("get %s: downloading pack %s (miss %d)", key, entry.PackRef, misses)
+	s.debugf("get %s: downloading pack %s", key, entry.PackRef)
 	packData, err := s.ObjectStore.Get(ctx, entry.PackRef)
 	if err != nil {
 		return nil, fmt.Errorf("fetch pack %s for key %s: %w", entry.PackRef, key, err)
 	}
 
 	s.packCache.Add(entry.PackRef, packData)
-	// The pack is cached now, so the misses that led here are spent.
-	s.packMisses.Remove(entry.PackRef)
 
 	if int64(len(packData)) < entry.Offset+entry.Length {
 		return nil, fmt.Errorf("downloaded packfile %s is too small", entry.PackRef)

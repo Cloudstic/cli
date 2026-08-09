@@ -786,35 +786,13 @@ func (rm *RestoreManager) collectMetadata(ctx context.Context, root string) (map
 	walkOrder := make([]string, len(refs))
 	var mu sync.Mutex
 
-	// Fetch in the order the store says is cheapest, which is not the order the
-	// walk produced. Walk order matches the layout of whichever backup wrote
-	// each entry, so on a repository built by several backups it interleaves
-	// packs — and a pack read in pieces spread across the fetch is transferred,
-	// evicted and transferred again. Handing the whole set over first lets
-	// PackStore group it, because it is the layer that knows where objects live
-	// and this is the one moment the full set is known in advance.
-	//
-	// walkOrder is unaffected: it is filled by index below, so the order results
-	// are *fetched* in is independent of the order restore *writes* in, which
-	// must stay walk order (RFC 0023 §5).
+	// Fetched in walk order, which is simply the order the tree walk produced.
+	// No reordering: this branch predates pack-locality grouping, so a pack
+	// read in pieces spread across the fetch is transferred, evicted and
+	// transferred again — which is the behaviour being measured.
 	order := make([]int, len(refs))
 	for i := range refs {
 		order[i] = i
-	}
-	if len(refs) > 1 {
-		byRef := make(map[string][]int, len(refs))
-		for i, ref := range refs {
-			byRef[ref] = append(byRef[ref], i)
-		}
-		order = order[:0]
-		for _, ref := range store.GroupByLocality(rm.store, refs) {
-			// A ref can appear more than once when two entries share a
-			// filemeta object; each occurrence gets its own index, and the
-			// grouped list names the ref once per occurrence.
-			idx := byRef[ref]
-			order = append(order, idx[0])
-			byRef[ref] = idx[1:]
-		}
 	}
 
 	g, gCtx := errgroup.WithContext(ctx)

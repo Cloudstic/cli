@@ -47,46 +47,6 @@ type RangeGetter interface {
 	GetRange(ctx context.Context, key string, offset, length int64) ([]byte, error)
 }
 
-// LocalityGrouper is an optional interface for stores that know something about
-// where objects physically live, and can say which order is cheapest to read a
-// set of them in.
-//
-// A caller that knows every key it is about to read — a restore has its whole
-// plan before it fetches anything — can hand them over and get back a cheaper
-// ordering. The store that benefits is one bundling many objects per transfer:
-// reading a bundle's keys consecutively transfers it once, where reading them
-// scattered among other bundles' keys can transfer it repeatedly.
-//
-// Implementations return a permutation: the same keys, once each, no additions
-// and no drops. Keys the store knows nothing about keep their relative order,
-// so a partially-known set is still safe to hand over wholesale.
-//
-// Backends with no such structure simply do not implement it, and callers get
-// their own order back — correct everywhere, merely no faster.
-type LocalityGrouper interface {
-	GroupByLocality(keys []string) []string
-}
-
-// GroupByLocality walks the store wrapper chain and applies the first
-// LocalityGrouper it finds, returning keys unchanged if none exists.
-//
-// The walk matters: PackStore is the store that knows about locality, and it
-// sits beneath CompressedStore, EncryptedStore and MeteredStore, so a caller
-// holding the outermost wrapper cannot see it directly.
-func GroupByLocality(s ObjectStore, keys []string) []string {
-	for s != nil {
-		if g, ok := s.(LocalityGrouper); ok {
-			return g.GroupByLocality(keys)
-		}
-		if u, ok := s.(Unwrapper); ok {
-			s = u.Unwrap()
-		} else {
-			break
-		}
-	}
-	return keys
-}
-
 // GetConcurrencyHint walks the store wrapper chain and returns the first
 // ConcurrencyHint it finds, defaulting to defaultConcurrency if none exists.
 func GetConcurrencyHint(s ObjectStore, defaultConcurrency int) int {

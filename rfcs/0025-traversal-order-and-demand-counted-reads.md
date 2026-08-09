@@ -75,6 +75,7 @@ another rather than removing it:
 | size it to the *new* working set (#474, reverted) | fixed transfers by holding every pack resident — +347 MB peak RSS on `check`, +580 MB on `prune`. O(repository) residency, which RFC 0023 exists to remove |
 | bound the cost of overrunning it (#474, shipped) | 15x less transferred, 2.7x faster, peak RSS flat — but requests rise 1.4–2.7x, because a penalised pack is read one object at a time |
 | stop overrunning it in the first place (#481, shipped) | −47%/−61% requests when the working set exceeds the budget; **exactly zero** when it fits (§1) |
+| tell it the demand instead of guessing (#487, open) | −9% requests at 42 packs, −39% at 82; +15% bytes in the aged case, and release-at-zero turned out not to be reachable this way at all (§2) |
 
 Measured over repository age rather than repository size (§4), those attempts
 share a shape: each is a policy applied to a working set the store cannot
@@ -278,6 +279,39 @@ directory's metadata and then immediately write that directory's files, the two
 phases interleave per directory rather than running end to end, so a pack holding
 both is used contiguously and released once.
 
+#### Why the manifest has to be carried, not derived
+
+The counts above are derivable from the catalog without any format change, and
+that was prototyped (#487) before proposing to put anything on a snapshot. It
+works for admission and **cannot** work for release, and the reason is not the
+one this section originally gave.
+
+`collectMetadata` materialises every metadata ref before fetching any of them,
+and the catalog already maps each to a pack, so per-pack demand is a counter
+increment in a loop that already runs. Declared that way, a pack is transferred
+whole on first contact when its count justifies it, with no probe sequence:
+restore fell from 507 requests to 460 at 42 packs, and from 2,118 to 1,290 at 82.
+
+Releasing a pack body when its count reached zero was implemented in the same
+prototype and is a clear regression — 507 requests and 320.8 MB became 937 and
+647.0 MB, bytes almost exactly doubling, because every pack the metadata phase
+released was fetched again by the write phase. Declaring the content objects as
+well narrows the gap but does not close it, because the two declarations cannot
+be *live at the same time*: a content hash is a field of a `FileMeta`, so the
+write phase's keys are unknowable until the metadata phase has read — and
+therefore exhausted — its own.
+
+That is the distinction this section missed. Splitting the count per kind is
+necessary but not sufficient; what release requires is that **every kind's count
+is available before the first read**, and a count derived from what the caller
+already holds can never be, for a reader whose later keys are contents of its
+earlier ones. A snapshot-carried manifest is available at that moment by
+construction.
+
+So the manifest earns its format change on *release*, not on admission. That is
+a narrower claim than this RFC originally made and a firmer one, because the
+cheap alternative has been built and measured rather than argued against.
+
 This is also where the two RFCs stop being merely independent and start
 composing. In the benchmark repository — 5,000 files, 3.6 KB median, below
 `cdcMinSize` so nothing is chunked — roughly 6,500 packed objects are metadata
@@ -292,7 +326,16 @@ With exact counts a reader gets three things it cannot have today:
 
 - **Optimal admission.** Fetch a pack whole if this traversal needs enough of it,
   ranged-read it otherwise — decided once, before the first read, instead of
-  after seven probes.
+  after seven probes. Available from the catalog and already measured (#487);
+  this is the one benefit that needs no manifest.
+- **Admission decided on bytes rather than object count.** `packPromoteAfter`
+  counts objects, but the choice is between one request plus a pack's worth of
+  bytes and *N* requests plus only the bytes wanted: a pack 79 KB is wanted from
+  is not worth 8 MB whatever the object count. Summing the declared entries'
+  `Length` gives the quantity the decision actually turns on, and no reader
+  discovering demand one miss at a time can have it. This is what the +15% bytes
+  in #487's aged case is: the existing threshold, correctly applied, making a
+  trade calibrated for a different regime.
 - **Immediate release.** Free a pack when its count reaches zero rather than
   waiting for eviction pressure to notice. The cache holds only packs with
   outstanding demand.
@@ -534,6 +577,50 @@ for:
 - **Secondary parents are not enumerated.** See §1; `ls` of a secondary parent
   needs an index this RFC does not propose.
 
+## Sequencing
+
+The proposal is four changes with different costs and different evidence behind
+them, and they are deliberately not one project. Two have been built and
+measured, which is what makes the order below a finding rather than a guess.
+
+| stage | change | format | status | measured |
+|---|---|---|---|---|
+| A | order reads by pack (§1, sorted) | none | shipped (#481) | −47%/−61% above the budget, 0 within it |
+| B | admission from catalog-derived demand (§2) | none | open (#487) | −9% at 42 packs, −39% at 82; +15% bytes aged |
+| C | snapshot-carried per-kind manifest (§2) | additive | not started | — |
+| D | layout-driven compaction (§4) | none | not started (#486) | — |
+
+**A and B are the cheap half and are nearly spent.** Neither needs a format
+change, both are built, and together they take the aged case from 2,118 requests
+to 1,290. What they cannot do is now known rather than suspected: A does nothing
+while the working set fits the cache, and B cannot release a pack body at all,
+because a two-phase reader's later keys are contents of its earlier ones.
+
+**C is what release-at-zero costs.** The manifest's justification is not that it
+is per-kind — catalog-derived counts are already per-kind in effect — but that it
+is complete *before the first read*. That buys release-at-zero, Belady eviction,
+and byte-aware admission, which is also the answer to B's +15% bytes. It is the
+only stage requiring a format change, and it should be sequenced after B rather
+than instead of it, because B is what establishes that admission is worth having
+at all.
+
+**D is the only stage that changes the shape of the curve.** A, B and C all make
+a pack visit cheaper; none makes a snapshot span fewer packs. The cost stays
+linear in contributing backups with a step at the cache budget (§4), and
+compaction is the only thing that removes the term or keeps a repository below
+the step. It has no format change and no dependency on A–C, so it can proceed in
+parallel — and on the measured curve it is worth more than the rest combined for
+a repository old enough to be in the penalized regime.
+
+[RFC 0024](0024-metadata-in-the-tree.md) is orthogonal to all four and improves
+C's ceiling specifically: folding small-file content into the leaf collapses the
+two classes whose separation is what makes a two-phase declaration impossible.
+
+**The honest summary is that this RFC's cheap half is done and worth roughly a
+third of the aged case, its expensive half is unstarted, and the largest single
+lever is in neither half but in §4.** That ordering was not obvious when the RFC
+was written; it is the product of measuring backup count rather than tree size.
+
 ## Open questions
 
 1. **How wide should the parent prefix be?** §1 derives directory listings from
@@ -555,6 +642,21 @@ for:
    *metadata* versus *file data*, decides how large the manifest is and how much a
    caller has to know to slice it. Under RFC 0024 the distinction largely
    dissolves, which is an argument for not over-specifying it now.
+
+   #487 narrows this. Granularity turned out not to be what release-at-zero
+   needs — a caller can already slice catalog-derived counts by kind, and it
+   still cannot release, because the kinds become knowable at different *times*.
+   So the question to answer is when each count is available, and granularity
+   only matters where it changes that.
+1. **Should admission be decided on bytes rather than object count?** §2's
+   admission is `packPromoteAfter`, a count, but the trade is between one request
+   plus a whole pack and *N* requests plus only what is wanted. #487 measured the
+   consequence: −39% requests at 82 packs and +15% bytes, because packs
+   contributing many small objects clear a count threshold that their byte
+   contribution does not justify. Declared entries carry `Length`, so the
+   quantity is available; what is unresolved is the exchange rate between a
+   request and a byte, which is a property of the backend rather than of the
+   repository, and therefore possibly a knob rather than a constant.
 1. **What does the reference-counting pass cost?** Metadata demand is one per
    object, but `content/` and `chunk/` demand is one per *reference*, so building
    those counts means walking references rather than distinct objects. For a
@@ -565,7 +667,8 @@ for:
    flattens rather than solves. `prune`/`Repack` compacts on *reachability* and
    leaves layout alone, so a repository whose snapshots are all still live keeps
    every pack. A layout-driven trigger needs designing, and its cost measured
-   against the backup it would compete with for I/O.
+   against the backup it would compete with for I/O. Tracked as #486; stage D of
+   the sequencing above, and on the measured curve the largest of the four.
 1. **Does derivation hold up under a partial restore?** `-path` filtering selects
    a subtree. Derivation should be *better* here than a global order — it can
    descend straight to the directories it wants — and the manifest's counts then

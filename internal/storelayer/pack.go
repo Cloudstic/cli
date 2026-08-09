@@ -379,7 +379,6 @@ func (s *PackStore) Get(ctx context.Context, key string) ([]byte, error) {
 		}
 		data := make([]byte, entry.Length)
 		copy(data, packData[entry.Offset:entry.Offset+entry.Length])
-		s.admission.served(entry.PackRef)
 		s.debugf("get %s: hit lru pack cache %s (len=%d)", key, entry.PackRef, entry.Length)
 		return data, nil
 	}

@@ -49,6 +49,21 @@ import (
 // access order, the way #455 did for restore's write phase — see #478.
 const packBodyCacheBudget = 8 * maxPackSize
 
+// packBody is a cached packfile body together with the number of objects served
+// from it since it was cached.
+//
+// The count lives with the body rather than in a structure of its own, and that
+// is the entire point of it being here. They are one lifecycle: a body that is
+// resident has a count, and a body that leaves takes its count with it. Held
+// apart — which is how this worked until #494 — the two were bounded by
+// different rules, so the count could be forgotten while the body was still
+// resident, and the next eviction would read zero hits and penalize a pack that
+// had been serving perfectly well.
+type packBody struct {
+	data []byte
+	hits int
+}
+
 // packBodyCache is an LRU of packfile bodies bounded by total bytes.
 //
 // hashicorp/golang-lru bounds by entry count, so the byte accounting lives here:
@@ -56,13 +71,13 @@ const packBodyCacheBudget = 8 * maxPackSize
 // the tail until the budget is met.
 type packBodyCache struct {
 	mu     sync.Mutex
-	lru    *lru.Cache[string, []byte]
+	lru    *lru.Cache[string, *packBody]
 	bytes  int
 	budget int
 
 	// Called for a body dropped because the cache ran out of room, and only
-	// for that. See newPackBodyCache.
-	onPressureEvict func(key string)
+	// for that, with the hits it served while cached. See newPackBodyCache.
+	onPressureEvict func(key string, hits int)
 }
 
 // newPackBodyCache returns a cache holding at most budget bytes of pack bodies.
@@ -70,7 +85,7 @@ type packBodyCache struct {
 // onPressureEvict, if non-nil, is called when a body is dropped *because the
 // cache ran out of room* — never when one is removed deliberately. PackStore
 // reads that signal as "this promotion did not pay for itself" (see
-// PackStore.onPackEvicted), and a pack removed because it was deleted or its
+// packAdmission.evicted), and a pack removed because it was deleted or its
 // upload was discarded carries no such meaning: it is gone, not thrashing.
 // Conflating the two marked deleted packs as not worth promoting and spent
 // slots in a bounded window that exists to track live ones.
@@ -79,13 +94,13 @@ type packBodyCache struct {
 // the only place a body is dropped under pressure, so it is the only place the
 // signal is raised. The underlying LRU's own callback stays responsible for
 // byte accounting, which every removal needs.
-func newPackBodyCache(budget int, onPressureEvict func(key string)) (*packBodyCache, error) {
+func newPackBodyCache(budget int, onPressureEvict func(key string, hits int)) (*packBodyCache, error) {
 	c := &packBodyCache{budget: budget, onPressureEvict: onPressureEvict}
 	// The entry limit only has to be beyond what the budget can hold. A pack is
 	// never smaller than one object, so this cannot be reached before the byte
 	// budget is.
-	inner, err := lru.NewWithEvict(1<<20, func(_ string, v []byte) {
-		c.bytes -= len(v)
+	inner, err := lru.NewWithEvict(1<<20, func(_ string, v *packBody) {
+		c.bytes -= len(v.data)
 	})
 	if err != nil {
 		return nil, err
@@ -94,10 +109,21 @@ func newPackBodyCache(budget int, onPressureEvict func(key string)) (*packBodyCa
 	return c, nil
 }
 
+// Get returns a cached body and counts the read against it.
+//
+// Counting here rather than in a separate call is what makes the tally
+// inseparable from the body: every Get is a hit by definition, since the only
+// caller reads an object out of what it returns.
 func (c *packBodyCache) Get(key string) ([]byte, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.lru.Get(key)
+
+	body, ok := c.lru.Get(key)
+	if !ok {
+		return nil, false
+	}
+	body.hits++
+	return body.data, true
 }
 
 // Add stores data under key and evicts from the tail until the cache is within
@@ -114,13 +140,13 @@ func (c *packBodyCache) Add(key string, data []byte) {
 		// The eviction callback adjusts the count for the value being replaced.
 		c.lru.Remove(key)
 	}
-	c.lru.Add(key, data)
+	c.lru.Add(key, &packBody{data: data})
 	c.bytes += len(data)
 
 	for c.bytes > c.budget && c.lru.Len() > 1 {
-		evicted, _, ok := c.lru.RemoveOldest()
+		evicted, body, ok := c.lru.RemoveOldest()
 		if ok && c.onPressureEvict != nil {
-			c.onPressureEvict(evicted)
+			c.onPressureEvict(evicted, body.hits)
 		}
 	}
 }

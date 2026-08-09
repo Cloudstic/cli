@@ -44,10 +44,6 @@ type packAdmission struct {
 	// object at a time is no longer the cheaper option.
 	misses *lru.Cache[string, int]
 
-	// Hits served from a pack since it was promoted, read by evicted() to tell
-	// a promotion that paid for itself from one that didn't.
-	hits *lru.Cache[string, int]
-
 	// Packs whose last promotion was evicted before serving packPromoteAfter
 	// hits -- cheaper to have left as ranged reads. A pack in here is never
 	// promoted again until it ages out of this bounded structure, which is what
@@ -81,23 +77,19 @@ const (
 	// to matter more than the bytes saved.
 	packPromoteAfter = 8
 
-	// packMissWindow bounds the miss counter, the hit counter and the penalty
-	// set. Each only has to span the packs in flight around a given moment, and
-	// none may become a second unbounded per-repository structure -- which is
-	// the thing RFC 0023 is about.
+	// packMissWindow bounds the miss counter and the penalty set. Each only has
+	// to span the packs in flight around a given moment, and neither may become
+	// a second unbounded per-repository structure -- which is the thing RFC 0023
+	// is about.
 	//
-	// It has to stay above the number of packs the body cache holds at once. A
-	// hit counter evicted from this window while its pack is still resident
-	// reads as zero hits on the next eviction and penalizes a pack that was
-	// serving fine.
-	//
-	// 64 does not actually guarantee that, and the comment here used to claim it
-	// did. The figure it was chosen against -- packBodyCacheBudget /
+	// It deliberately does *not* bound a hit counter any more. That one had to
+	// outlive its pack's residency to be correct, and this window could not
+	// promise it: the figure it was sized against -- packBodyCacheBudget /
 	// maxPackSize, or 8 -- assumes every pack is maximal, while packBodyCache
-	// bounds bytes rather than entries, so a repository of small incremental
-	// packs can hold far more than 64 resident. Latent rather than active at
-	// measured scale: at 82 packs roughly 32 are resident, and raising this to
-	// 512 there moved nothing. See #494 for the fix, which is behavioural.
+	// bounds bytes, so a repository of small incremental packs holds far more
+	// than 64 resident. Hits now live in the cached body itself (#494), where
+	// the lifetimes cannot diverge, so no arithmetic has to hold for the
+	// penalty to be correct.
 	packMissWindow = 64
 )
 
@@ -106,15 +98,11 @@ func newPackAdmission() (*packAdmission, error) {
 	if err != nil {
 		return nil, fmt.Errorf("pack miss counter init: %w", err)
 	}
-	hits, err := lru.New[string, int](packMissWindow)
-	if err != nil {
-		return nil, fmt.Errorf("pack hit counter init: %w", err)
-	}
 	penalized, err := lru.New[string, struct{}](packMissWindow)
 	if err != nil {
 		return nil, fmt.Errorf("pack penalty tracker init: %w", err)
 	}
-	return &packAdmission{misses: misses, hits: hits, penalized: penalized}, nil
+	return &packAdmission{misses: misses, penalized: penalized}, nil
 }
 
 // recordMiss counts one miss against packRef and reports whether the pack has
@@ -149,15 +137,6 @@ func (a *packAdmission) cached(packRef string) {
 	a.misses.Remove(packRef)
 }
 
-// served records one object served from a cached pack, read back by evicted.
-func (a *packAdmission) served(packRef string) {
-	hits := 0
-	if n, ok := a.hits.Get(packRef); ok {
-		hits = n
-	}
-	a.hits.Add(packRef, hits+1)
-}
-
 // evicted records that a cached pack was dropped because the cache ran out of
 // room -- not that one was removed deliberately, which carries no such meaning
 // (see newPackBodyCache).
@@ -178,12 +157,7 @@ func (a *packAdmission) served(packRef string) {
 // penalty set's own bounded window, so a pack that becomes worth caching again
 // -- the working set shrinks, or access moves on -- gets another chance rather
 // than being penalized permanently on one bad measurement.
-func (a *packAdmission) evicted(packRef string) {
-	hits := 0
-	if n, ok := a.hits.Get(packRef); ok {
-		hits = n
-	}
-	a.hits.Remove(packRef)
+func (a *packAdmission) evicted(packRef string, hits int) {
 	if hits < packPromoteAfter {
 		a.penalized.Add(packRef, struct{}{})
 	}

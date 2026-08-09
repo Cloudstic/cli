@@ -85,7 +85,7 @@ func TestPackBodyCache_ReplaceAndRemoveAccountForBytes(t *testing.T) {
 // and a prune deleting many packs could flush out real penalties.
 func TestPackBodyCache_PressureSignalIsNotRaisedByDeliberateRemoval(t *testing.T) {
 	var evicted []string
-	c, err := newPackBodyCache(1000, func(key string) { evicted = append(evicted, key) })
+	c, err := newPackBodyCache(1000, func(key string, _ int) { evicted = append(evicted, key) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestPackBodyCache_PressureSignalIsNotRaisedByDeliberateRemoval(t *testing.T
 // count honest.
 func TestPackBodyCache_ReplacingAnEntryRaisesNoPressureSignal(t *testing.T) {
 	var evicted []string
-	c, err := newPackBodyCache(10000, func(key string) { evicted = append(evicted, key) })
+	c, err := newPackBodyCache(10000, func(key string, _ int) { evicted = append(evicted, key) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,5 +295,71 @@ func TestPackStore_ThrashingPackStopsBeingRepromoted(t *testing.T) {
 		t.Errorf("fullGets = %d over %d passes, want at most %d (one promotion per pack, ever); "+
 			"a thrashing pack is still being repromoted instead of falling back to ranged reads",
 			counting.fullGets, passes, packs)
+	}
+}
+
+// A resident body keeps its hit tally however many other packs are read
+// alongside it.
+//
+// This is the property #494 was filed for. The tally used to live in an LRU
+// bounded by packMissWindow while the body lived in one bounded by bytes, so a
+// repository of small packs could hold far more bodies than the tally window had
+// room for. Reading past the window forgot the tally while the body was still
+// resident, and the next pressure eviction then read zero hits and penalized a
+// pack that had been serving fine — the exact failure that window's comment
+// claimed to prevent.
+//
+// The reproduction needs all three conditions together, which is why it is
+// spelled out rather than folded into an existing test: the bodies must fit
+// (so nothing is evicted early), every filler must be *read* (so it occupies a
+// tally slot), and the earner must be evicted last (so its tally is consulted
+// after the window has overflowed).
+func TestPackBodyCache_ResidentBodyKeepsItsHitsPastTheMissWindow(t *testing.T) {
+	const fillers = packMissWindow * 3
+	const bodySize = 16
+
+	var penalized []string
+	// Roomy enough that every small body stays resident; the final oversized
+	// Add is what forces an eviction.
+	c, err := newPackBodyCache((fillers+2)*bodySize, func(key string, hits int) {
+		if hits < packPromoteAfter {
+			penalized = append(penalized, key)
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c.Add("packs/earner", bytes.Repeat([]byte("e"), bodySize))
+	for range packPromoteAfter {
+		if _, ok := c.Get("packs/earner"); !ok {
+			t.Fatal("earner left the cache while it was being read")
+		}
+	}
+
+	// Every filler is read once, so each takes a tally slot. Past
+	// packMissWindow of them, a window-bounded tally has dropped the earner's.
+	for i := range fillers {
+		key := fmt.Sprintf("packs/filler-%03d", i)
+		c.Add(key, bytes.Repeat([]byte("f"), bodySize))
+		if _, ok := c.Get(key); !ok {
+			t.Fatalf("%s left the cache while it was being read", key)
+		}
+	}
+	// Deliberately not read again here: a Get would refresh its recency and put
+	// it at the head, and the eviction below takes from the tail. The earner has
+	// to be the oldest entry for its tally to be the one consulted.
+
+	// Blow the budget so the tail is evicted and the tallies are consulted.
+	c.Add("packs/flood", bytes.Repeat([]byte("x"), (fillers+2)*bodySize))
+
+	for _, key := range penalized {
+		if key == "packs/earner" {
+			t.Fatalf("a pack that served %d hits was penalized after %d other packs were read",
+				packPromoteAfter, fillers)
+		}
+	}
+	if len(penalized) == 0 {
+		t.Fatal("nothing was penalized, so the eviction path never ran and this test proves nothing")
 	}
 }

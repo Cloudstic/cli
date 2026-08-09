@@ -20,14 +20,25 @@ func Render(w io.Writer, rep *Report, title string) error {
 
 	switch rep.Kind() {
 	case KindScaling:
-		b.WriteString("Measurements of the real binary, per operation, at each tree size. A row\n" +
-			"that stays flat holds a working set; one that tracks the file count holds a\n" +
-			"per-entry structure, and will eventually meet a repository it cannot open.\n\n")
+		b.WriteString("Measurements of the real binary, per operation, at each tree size.\n\n")
 		writeSampleNote(b, rep)
 
-		b.WriteString("### Peak RSS (MB)\n\n")
+		// Wall time leads because it is the headline this sweep exists to
+		// produce. It was measured all along — bench.sh parses it from time(1)
+		// and writes it to the CSV — but for a while only the comparison
+		// renderer printed it, so a scaling run uploaded its timings in the
+		// artifact and showed none of them in the summary.
+		b.WriteString("### Wall time (s)\n\n")
+		b.WriteString("How long each operation took. A shared runner carries several percent of\n" +
+			"noise and its hardware differs from the next runner's, so read a column\n" +
+			"against the others in the same run rather than against another run's.\n\n")
+		renderScalingTable(b, rep, Seconds)
+
+		b.WriteString("\n### Peak RSS (MB)\n\n")
 		b.WriteString("The largest amount live at once — what decides whether an operation fits\n" +
-			"in the memory available.\n\n")
+			"in the memory available. A row that stays flat holds a working set; one that\n" +
+			"tracks the file count holds a per-entry structure, and will eventually meet a\n" +
+			"repository it cannot open.\n\n")
 		renderScalingTable(b, rep, PeakMB)
 
 		// Peak RSS is blind to allocation that is freed again, which is most of
@@ -359,7 +370,9 @@ func renderByAPI(b *strings.Builder, rep *Report) {
 func renderCharts(b *strings.Builder, rep *Report) {
 	switch rep.Kind() {
 	case KindScaling:
-		metrics := []Metric{PeakMB}
+		// Same order as the tables above, so a reader scrolling from one to the
+		// other meets the metrics in the same sequence.
+		metrics := []Metric{Seconds, PeakMB}
 		if rep.hasAlloc() {
 			metrics = append(metrics, AllocMB)
 		}

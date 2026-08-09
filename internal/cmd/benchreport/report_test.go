@@ -97,6 +97,42 @@ func TestScalingTableReportsGrowth(t *testing.T) {
 	}
 }
 
+// Wall time is the headline a scaling sweep exists to produce, and it was
+// measured all along — but only the comparison renderer used to print it, so a
+// multi-size run wrote its timings to the CSV and showed none of them in the
+// summary. The chart matters as much as the table: without it, time is the one
+// metric a reader cannot see the shape of.
+func TestScalingReportShowsWallTime(t *testing.T) {
+	var b strings.Builder
+	if err := Render(&b, parse(t, scalingCSV), "T"); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	out := b.String()
+
+	if !strings.Contains(out, "### Wall time (s)") {
+		t.Errorf("wall time table missing; got:\n%s", out)
+	}
+	// backup-initial's timings, which appear nowhere else in this report.
+	for _, want := range []string{"| 0.5 |", "| 1.2 |", "| 5.49 |"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("wall time cell %q missing; got:\n%s", want, out)
+		}
+	}
+	// 5.49 / 0.50 = 10.98
+	if !strings.Contains(out, "10.98x") {
+		t.Errorf("wall time growth column missing or wrong; got:\n%s", out)
+	}
+	if !strings.Contains(out, `title "backup-initial — time (s)"`) {
+		t.Errorf("wall time chart missing; got:\n%s", out)
+	}
+
+	// Time leads; memory follows. A reader scanning the summary should meet
+	// the headline before the diagnostics.
+	if secs, peak := strings.Index(out, "### Wall time"), strings.Index(out, "### Peak RSS"); secs > peak {
+		t.Errorf("peak RSS precedes wall time; got:\n%s", out)
+	}
+}
+
 // The table has to precede the charts and survive on its own: a renderer that
 // does not know xychart-beta shows the chart as source text, and the numbers
 // still have to be readable.

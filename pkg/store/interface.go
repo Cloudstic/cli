@@ -47,36 +47,68 @@ type RangeGetter interface {
 	GetRange(ctx context.Context, key string, offset, length int64) ([]byte, error)
 }
 
-// LocalityGrouper is an optional interface for stores that know something about
-// where objects physically live, and can say which order is cheapest to read a
-// set of them in.
+// ReadPlan is a store's answer to a caller that is about to read a set of keys.
 //
-// A caller that knows every key it is about to read — a restore has its whole
-// plan before it fetches anything — can hand them over and get back a cheaper
-// ordering. The store that benefits is one bundling many objects per transfer:
-// reading a bundle's keys consecutively transfers it once, where reading them
-// scattered among other bundles' keys can transfer it repeatedly.
-//
-// Implementations return a permutation: the same keys, once each, no additions
-// and no drops. Keys the store knows nothing about keep their relative order,
-// so a partially-known set is still safe to hand over wholesale.
-//
-// Backends with no such structure simply do not implement it, and callers get
-// their own order back — correct everywhere, merely no faster.
-type LocalityGrouper interface {
-	GroupByLocality(keys []string) []string
+// It carries what the store knows and the caller does not: where the objects
+// physically live, and how much of that layout the store can hold at once.
+type ReadPlan struct {
+	// Groups partitions the requested keys so that consuming one group at a
+	// time keeps each underlying bundle live for a contiguous span. Keys the
+	// store knows nothing about form singleton groups and keep their relative
+	// order.
+	//
+	// It is advice, not a contract: the keys are the same either way, so a
+	// caller whose order is already good may keep it (see PlanReads).
+	Groups [][]string
+
+	// Concurrency is how many groups may be read at once without defeating the
+	// grouping. A worker reading a group holds that group's bundle for as long
+	// as it takes, so this is a statement about the store's buffer capacity,
+	// not about requests in flight — and it is generally much smaller than
+	// ConcurrencyHint, which answers the latter.
+	Concurrency int
 }
 
-// GroupByLocality walks the store wrapper chain and applies the first
-// LocalityGrouper it finds, returning keys unchanged if none exists.
+// ReadPlanner is an optional interface for stores that can use advance
+// knowledge of which keys a caller is about to read.
+//
+// Declaring is the purpose; the returned plan is the advice that comes with it.
+// A store that bundles many objects per transfer has to decide, on first
+// contact with a bundle, whether to transfer the whole thing or read a piece of
+// it — a decision it can only guess at while it sees one key at a time. A
+// caller holding its whole read set already knows the answer.
+//
+// Declaring is a statement about a caller's own intent, not a lock or a
+// reservation. A declared key need not be read, a key not declared may be, and
+// reads from other callers proceed unaffected.
+type ReadPlanner interface {
+	PlanReads(ctx context.Context, keys []string) ReadPlan
+}
+
+// PlanReads tells the store which keys the caller is about to read and returns
+// its advice on how to read them.
+//
+// **Declaring is the point; taking the advice is optional.** A caller whose
+// order is already good may use the plan for its demand alone and keep its own
+// sequence — restore's write phase does exactly that, because it writes leaves
+// in walk order, which is the order backup laid them into bundles. Reordering
+// them by locality was measured and is a regression. Ignoring Groups is
+// therefore a supported use, not a misuse.
 //
 // The walk matters: PackStore is the store that knows about locality, and it
 // sits beneath CompressedStore, EncryptedStore and MeteredStore, so a caller
 // holding the outermost wrapper cannot see it directly.
-func GroupByLocality(s ObjectStore, keys []string) []string {
+//
+// The context is taken because an implementation may have to read to answer —
+// PackStore needs its catalog. That is not speculative I/O: a caller declares
+// because it is about to read these keys, and the same load would happen on the
+// first of them. Planning never fails; a store that cannot answer returns
+// singleton groups, which claim no locality and serialise nobody.
+func PlanReads(ctx context.Context, s ObjectStore, keys []string) ReadPlan {
+	outer := s
 	for s != nil {
-		if g, ok := s.(LocalityGrouper); ok {
-			return g.GroupByLocality(keys)
+		if p, ok := s.(ReadPlanner); ok {
+			return p.PlanReads(ctx, keys)
 		}
 		if u, ok := s.(Unwrapper); ok {
 			s = u.Unwrap()
@@ -84,7 +116,13 @@ func GroupByLocality(s ObjectStore, keys []string) []string {
 			break
 		}
 	}
-	return keys
+	groups := make([][]string, len(keys))
+	for i, k := range keys {
+		groups[i] = []string{k}
+	}
+	// Singleton groups hold nothing between reads, so the limit is the ordinary
+	// requests-in-flight question this store already answers.
+	return ReadPlan{Groups: groups, Concurrency: GetConcurrencyHint(outer, 10)}
 }
 
 // GetConcurrencyHint walks the store wrapper chain and returns the first

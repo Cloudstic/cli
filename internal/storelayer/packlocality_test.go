@@ -11,10 +11,31 @@ import (
 	"github.com/cloudstic/cli/pkg/store/local"
 )
 
-// assertPermutation is the invariant every other property rests on: grouping is
-// a reordering and nothing else. A caller hands over the keys it intends to
-// read, so dropping one silently loses an object and duplicating one reads it
-// twice.
+// flatten concatenates groups, for the properties that are about order rather
+// than about where the boundaries fall.
+func flatten(groups [][]string) []string {
+	var out []string
+	for _, g := range groups {
+		out = append(out, g...)
+	}
+	return out
+}
+
+// assertPartition is the invariant every other property rests on: grouping
+// redistributes keys and nothing else. A caller hands over the keys it intends
+// to read, so dropping one silently loses an object and duplicating one reads it
+// twice. Empty groups are rejected too — a caller may make the group its unit of
+// concurrency, and an empty one buys a goroutine that does nothing.
+func assertPartition(t *testing.T, in []string, groups [][]string) {
+	t.Helper()
+	for i, g := range groups {
+		if len(g) == 0 {
+			t.Fatalf("group %d is empty", i)
+		}
+	}
+	assertPermutation(t, in, flatten(groups))
+}
+
 func assertPermutation(t *testing.T, in, out []string) {
 	t.Helper()
 	if len(in) != len(out) {
@@ -59,7 +80,7 @@ func seedPacks(t *testing.T, ctx context.Context, base store.ObjectStore, packs,
 // The property the change exists for: keys that share a pack come out adjacent,
 // so a reader working through the result transfers each pack once instead of
 // returning to it.
-func TestPackStore_GroupByLocalityClustersKeysSharingAPack(t *testing.T) {
+func TestPackStore_PlanReadsClustersKeysSharingAPack(t *testing.T) {
 	ctx := context.Background()
 	base, err := local.New(t.TempDir())
 	if err != nil {
@@ -77,8 +98,9 @@ func TestPackStore_GroupByLocalityClustersKeysSharingAPack(t *testing.T) {
 		}
 	}
 
-	got := w.GroupByLocality(scattered)
-	assertPermutation(t, scattered, got)
+	groups := w.PlanReads(ctx, scattered).Groups
+	assertPartition(t, scattered, groups)
+	got := flatten(groups)
 
 	// Count how many times the result crosses from one pack to another. Grouped
 	// perfectly that is packs-1; scattered it is close to len(keys)-1.
@@ -104,7 +126,7 @@ func TestPackStore_GroupByLocalityClustersKeysSharingAPack(t *testing.T) {
 }
 
 // Within a pack, reads should run forwards rather than seeking around.
-func TestPackStore_GroupByLocalityOrdersByOffsetWithinAPack(t *testing.T) {
+func TestPackStore_PlanReadsOrdersByOffsetWithinAPack(t *testing.T) {
 	ctx := context.Background()
 	base, err := local.New(t.TempDir())
 	if err != nil {
@@ -117,8 +139,9 @@ func TestPackStore_GroupByLocalityOrdersByOffsetWithinAPack(t *testing.T) {
 		reversed[len(keys)-1-i] = k
 	}
 
-	got := w.GroupByLocality(reversed)
-	assertPermutation(t, reversed, got)
+	groups := w.PlanReads(ctx, reversed).Groups
+	assertPartition(t, reversed, groups)
+	got := flatten(groups)
 
 	last := int64(-1)
 	for _, k := range got {
@@ -135,7 +158,7 @@ func TestPackStore_GroupByLocalityOrdersByOffsetWithinAPack(t *testing.T) {
 
 // Keys the catalog knows nothing about must survive, so a caller can hand over
 // a mixed set without first working out which is which.
-func TestPackStore_GroupByLocalityKeepsUnknownKeys(t *testing.T) {
+func TestPackStore_PlanReadsKeepsUnknownKeys(t *testing.T) {
 	ctx := context.Background()
 	base, err := local.New(t.TempDir())
 	if err != nil {
@@ -144,8 +167,9 @@ func TestPackStore_GroupByLocalityKeepsUnknownKeys(t *testing.T) {
 	keys, w := seedPacks(t, ctx, base, 2, 4)
 
 	mixed := []string{"chunk/unknown-a", keys[3], "chunk/unknown-b", keys[0], "chunk/unknown-c"}
-	got := w.GroupByLocality(mixed)
-	assertPermutation(t, mixed, got)
+	groups := w.PlanReads(ctx, mixed).Groups
+	assertPartition(t, mixed, groups)
+	got := flatten(groups)
 
 	// Unknown keys keep their relative order among themselves.
 	var unknown []string
@@ -164,7 +188,7 @@ func TestPackStore_GroupByLocalityKeepsUnknownKeys(t *testing.T) {
 
 // A store that cannot group returns the caller's order, and the helper has to
 // find PackStore underneath the wrappers that sit above it in the real chain.
-func TestGroupByLocality_WalksTheWrapperChain(t *testing.T) {
+func TestPlanReads_WalksTheWrapperChain(t *testing.T) {
 	ctx := context.Background()
 	base, err := local.New(t.TempDir())
 	if err != nil {
@@ -173,7 +197,7 @@ func TestGroupByLocality_WalksTheWrapperChain(t *testing.T) {
 	keys, w := seedPacks(t, ctx, base, 3, 6)
 
 	// No grouper anywhere in the chain: the input comes back untouched.
-	if got := store.GroupByLocality(base, keys); len(got) != len(keys) {
+	if got := flatten(store.PlanReads(ctx, base, keys).Groups); len(got) != len(keys) {
 		t.Fatalf("plain backend changed the key count")
 	} else {
 		for i := range keys {
@@ -186,10 +210,9 @@ func TestGroupByLocality_WalksTheWrapperChain(t *testing.T) {
 	// PackStore under the wrappers it really runs under.
 	chain := NewCompressedStore(NewEncryptedStore(w, testKey(t)))
 	scattered := []string{keys[12], keys[0], keys[6], keys[13], keys[1]}
-	got := store.GroupByLocality(chain, scattered)
-	assertPermutation(t, scattered, got)
+	got := flatten(store.PlanReads(ctx, chain, scattered).Groups)
 
-	direct := w.GroupByLocality(scattered)
+	direct := flatten(w.PlanReads(ctx, scattered).Groups)
 	for i := range direct {
 		if got[i] != direct[i] {
 			t.Fatalf("grouping through the chain differs from grouping directly: %v vs %v", got, direct)
@@ -197,9 +220,49 @@ func TestGroupByLocality_WalksTheWrapperChain(t *testing.T) {
 	}
 }
 
-// Grouping must not force a catalog load. It is a hint issued before any read,
-// and turning it into I/O would make a caller pay for advice it can ignore.
-func TestPackStore_GroupByLocalityDoesNotLoadTheCatalog(t *testing.T) {
+// Grouping loads the catalog, and this test asserts the reverse of what it used
+// to. Grouping was a hint a caller could ignore, so forcing I/O for it was
+// wrong. It is now the mechanism admission runs on: without a catalog every key
+// looks unpacked, the store falls back to probing, and the caller pays the
+// probe sequence with nothing to indicate why. A caller groups because it is
+// about to read these keys, so the load is work it had already committed to.
+func TestPackStore_PlanReadsLoadsTheCatalog(t *testing.T) {
+	ctx := context.Background()
+	base, err := local.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, w := seedPacks(t, ctx, base, 2, 12)
+	if err := w.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	reader, err := NewPackStore(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reader.catalogLoaded {
+		t.Fatal("catalog already loaded before grouping; the test proves nothing")
+	}
+
+	scattered := []string{keys[13], keys[0], keys[14], keys[1]}
+	groups := reader.PlanReads(ctx, scattered).Groups
+	assertPartition(t, scattered, groups)
+
+	if !reader.catalogLoaded {
+		t.Error("grouping did not load the catalog, so admission has nothing to work from")
+	}
+	if len(groups) != 2 {
+		t.Errorf("got %d groups for keys spanning 2 packs: %v", len(groups), groups)
+	}
+}
+
+// A backend that cannot answer must still return something usable, and it must
+// be singletons: a caller may make the group its unit of concurrency, so one
+// group of everything would serialise it while claiming a locality that was
+// never established.
+func TestPackStore_PlanReadsReturnsSingletonsWithoutACatalog(t *testing.T) {
+	ctx := context.Background()
 	base, err := local.New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -209,14 +272,14 @@ func TestPackStore_GroupByLocalityDoesNotLoadTheCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 	in := []string{"filemeta/a", "filemeta/b", "filemeta/c"}
-	got := reader.GroupByLocality(in)
-	assertPermutation(t, in, got)
-	if reader.catalogLoaded {
-		t.Error("grouping loaded the catalog; it must stay a no-I/O hint")
+	groups := reader.PlanReads(ctx, in).Groups
+	assertPartition(t, in, groups)
+	if len(groups) != len(in) {
+		t.Fatalf("got %d groups for %d unpacked keys; want one each", len(groups), len(in))
 	}
-	for i := range in {
-		if got[i] != in[i] {
-			t.Fatalf("with no catalog loaded the input order should survive, got %v", got)
+	for i, g := range groups {
+		if g[0] != in[i] {
+			t.Fatalf("with nothing known the input order should survive, got %v", groups)
 		}
 	}
 }

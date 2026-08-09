@@ -25,8 +25,20 @@ import (
 // surgery across four call sites -- which is what it was before this type
 // existed.
 //
-// Not safe for concurrent use on its own; PackStore serialises access the same
-// way it did when these were three of its own fields.
+// Concurrency, stated accurately because the obvious reading is wrong in both
+// directions. The three caches are individually safe for concurrent use --
+// hashicorp/golang-lru guards each with its own mutex -- and PackStore does
+// *not* serialise these calls: Get invokes served and recordMiss after
+// releasing its own lock, and the body cache invokes evicted from wherever the
+// eviction happened.
+//
+// What is not atomic is the read-modify-write inside recordMiss and served: two
+// concurrent misses on the same pack can both read n and both write n+1, losing
+// one. That is a lost update on an estimate that is approximate by
+// construction, costing at most a one-miss delay to a promotion, and it is the
+// behaviour these fields already had. Making it atomic would change promotion
+// timing under concurrency, which is a behavioural change and not what this
+// type's extraction is.
 type packAdmission struct {
 	// Misses per pack since it was last cached, used to decide when reading one
 	// object at a time is no longer the cheaper option.
@@ -74,11 +86,18 @@ const (
 	// none may become a second unbounded per-repository structure -- which is
 	// the thing RFC 0023 is about.
 	//
-	// It has to stay comfortably above the number of packs the body cache can
-	// hold (packBodyCacheBudget / maxPackSize, currently 8). A hit counter
-	// evicted from this window while its pack is still resident would read as
-	// zero hits on the next eviction and penalize a pack that was serving
-	// fine.
+	// It has to stay above the number of packs the body cache holds at once. A
+	// hit counter evicted from this window while its pack is still resident
+	// reads as zero hits on the next eviction and penalizes a pack that was
+	// serving fine.
+	//
+	// 64 does not actually guarantee that, and the comment here used to claim it
+	// did. The figure it was chosen against -- packBodyCacheBudget /
+	// maxPackSize, or 8 -- assumes every pack is maximal, while packBodyCache
+	// bounds bytes rather than entries, so a repository of small incremental
+	// packs can hold far more than 64 resident. Latent rather than active at
+	// measured scale: at 82 packs roughly 32 are resident, and raising this to
+	// 512 there moved nothing. See #494 for the fix, which is behavioural.
 	packMissWindow = 64
 )
 

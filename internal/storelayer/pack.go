@@ -123,7 +123,7 @@ func WithPackIndexKey(key []byte) PackOption {
 func NewPackStore(inner store.ObjectStore, opts ...PackOption) (*PackStore, error) {
 	admission, err := newPackAdmission()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("pack admission init: %w", err)
 	}
 
 	s := &PackStore{

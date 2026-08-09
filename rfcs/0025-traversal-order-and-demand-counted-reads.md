@@ -371,14 +371,66 @@ Given §1 and §2, the O(files) plan disappears:
   `restoreOrder` at all. Memory becomes O(tree depth + in-flight writes) rather
   than O(files), and the first file is written after the first directory rather
   than after the last.
-- **`check`** verifies directory by directory. Its `verified` set is then needed
-  only for objects reachable more than once — deduplicated `content/` and
-  `chunk/` objects, and metadata reachable through a secondary parent — rather
-  than one entry per object verified.
+- **`check`** already streams its traversal — `CheckManager.Run` hands each ref
+  to a callback as `hamt.Walk` reaches it and never holds a batch — so §3
+  changes nothing about its walk. What it gains is a smaller `verified` set,
+  needed then only for objects reachable more than once: deduplicated `content/`
+  and `chunk/` objects, and metadata reachable through a secondary parent, rather
+  than one entry per object verified. The streaming property `check` has is also
+  exactly why it cannot use #481's ordering (§1).
 - **`prune`'s mark phase** marks reachable refs as it streams, instead of
   building a set over every key first. The *sweep* still materialises every key,
   because `ObjectStore.List` returns a slice; that is unchanged and remains a
   non-goal (RFC 0023).
+
+#### Streaming is gated on §1 and the manifest, not merely enabled by them
+
+The two shipped or prototyped stages both work by handing the store a batch:
+the ordering prototype sorts the ref set (#481), the demand prototype declares
+it (#487). Streaming is the removal of that batch.
+So §3 does not sit on top of A and B — it *replaces* them, and cannot land until
+each has a streaming-compatible substitute:
+
+- sorting is replaced by §1's derived order, which is available a directory at a
+  time and needs no batch;
+- catalog-derived declaration is replaced by the manifest, which is carried on
+  the snapshot and so is equally available without one.
+
+That is the practical reason the manifest is stage C rather than optional: a
+streaming restore has no ref set to declare, so demand counting without a
+manifest is not merely weaker there, it is unavailable. Anything that improves
+reads by consulting the whole plan is spending the plan §3 exists to delete.
+
+#### What the O(files) plan actually costs
+
+The plan's memory is the argument for §3, and it had not been measured. Holding
+`byID` plus one ordering, with representative names and hashes, retains **555
+bytes per entry** — `core.FileMeta` is 216 bytes and the strings it points at
+are the remainder. `restoreOrder` then builds `interior`, `emitted` and `out` on
+top of that, so this is a floor rather than the total.
+
+Against the fixed buffers a restore already holds — `restoreMemoryBudget` is
+128 MB of in-flight chunk data and `packBodyCacheBudget` another 64 MB — that
+puts the crossover a long way out:
+
+| files | plan (floor) | share of a ~192 MB fixed baseline |
+|---|---|---|
+| 5,000 | 2.8 MB | 1.4% |
+| 50,000 | 27.8 MB | 14% |
+| 200,000 | 105.8 MB | 55% |
+| 1,000,000 | ~529 MB | 275% |
+
+**So §3's benefit is real and entirely outside the range anything here has been
+measured at.** The benchmark harness tops out at 50,000 files, where the plan is
+27.8 MB against a ±60 MB run-to-run spread — smaller than the noise. Every
+measurement in this RFC was taken at 5,000 files, where the plan is 1.4% of peak
+RSS and streaming would be invisible.
+
+That does not make §3 wrong; it makes it unevidenced, and specifically scoped:
+it is a change for repositories of hundreds of thousands of files, and it should
+be justified and measured there rather than in general. The wall-clock note
+below already says streaming is not primarily a speed win, and at 5,000 files it
+is not a memory win either.
 
 **How large a cache this needs is conditional, and the condition should be
 stated.** With a freshly written or compacted repository, a directory's entries
@@ -589,6 +641,7 @@ measured, which is what makes the order below a finding rather than a guess.
 | B | admission from catalog-derived demand (§2) | none | open (#487) | −9% at 42 packs, −39% at 82; +15% bytes aged |
 | C | snapshot-carried per-kind manifest (§2) | additive | not started | — |
 | D | layout-driven compaction (§4) | none | not started (#486) | — |
+| E | streaming traversal (§3) | none | not started | plan floor is 555 B/entry; below the noise under 50k files |
 
 **A and B are the cheap half and are nearly spent.** Neither needs a format
 change, both are built, and together they take the aged case from 2,118 requests
@@ -612,14 +665,24 @@ the step. It has no format change and no dependency on A–C, so it can proceed 
 parallel — and on the measured curve it is worth more than the rest combined for
 a repository old enough to be in the penalized regime.
 
-[RFC 0024](0024-metadata-in-the-tree.md) is orthogonal to all four and improves
+**E is last because it deletes what A and B are built on.** Both improve reads by
+handing the store the whole plan; streaming is the removal of that plan. E
+therefore requires §1's derived order to replace A's sorting and the stage-C
+manifest to replace B's declaration, and cannot be brought forward past either.
+Its own benefit is a memory one that does not appear below a few hundred thousand
+files, so nothing measured in this RFC would have shown it.
+
+[RFC 0024](0024-metadata-in-the-tree.md) is orthogonal to all five and improves
 C's ceiling specifically: folding small-file content into the leaf collapses the
 two classes whose separation is what makes a two-phase declaration impossible.
 
 **The honest summary is that this RFC's cheap half is done and worth roughly a
-third of the aged case, its expensive half is unstarted, and the largest single
-lever is in neither half but in §4.** That ordering was not obvious when the RFC
-was written; it is the product of measuring backup count rather than tree size.
+third of the aged case, its expensive half buys release rather than admission,
+the largest single lever is in neither half but in §4, and the streaming rewrite
+is both last in dependency order and unevidenced at any scale yet measured.**
+That ordering was not obvious when the RFC was written; it is the product of
+measuring backup count rather than tree size, and of building the cheap
+alternatives before proposing the expensive ones.
 
 ## Open questions
 
@@ -669,6 +732,14 @@ was written; it is the product of measuring backup count rather than tree size.
    every pack. A layout-driven trigger needs designing, and its cost measured
    against the backup it would compete with for I/O. Tracked as #486; stage D of
    the sequencing above, and on the measured curve the largest of the four.
+1. **At what repository size does streaming start to pay?** §3's benefit is a
+   memory one, and the plan's floor of 555 bytes per entry puts it at 2.8 MB for
+   5,000 files against ~192 MB of buffers a restore holds regardless. Nothing in
+   this RFC was measured above 50,000 files, where it is still inside the
+   run-to-run spread. A restore at 200,000 and 1,000,000 files would establish
+   whether §3 is a change worth making at all, and it is cheap relative to
+   implementing it. Until then §3 is the one part of this proposal with no
+   supporting measurement.
 1. **Does derivation hold up under a partial restore?** `-path` filtering selects
    a subtree. Derivation should be *better* here than a global order — it can
    descend straight to the directories it wants — and the manifest's counts then

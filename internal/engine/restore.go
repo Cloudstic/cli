@@ -290,12 +290,12 @@ func (rm *RestoreManager) prepareRestore(ctx context.Context, snapshotRef string
 		return restorePlan{}, err
 	}
 
-	byID, walkOrder, err := rm.collectMetadata(ctx, snap.Root)
+	byID, err := rm.collectMetadata(ctx, snap.Root)
 	if err != nil {
 		return restorePlan{}, err
 	}
 
-	sorted := restoreOrder(byID, walkOrder)
+	sorted := topoSort(byID)
 	if cfg.pathFilter != "" {
 		sorted = filterByPath(sorted, byID, cfg.pathFilter)
 	}
@@ -752,8 +752,7 @@ func (rm *RestoreManager) resolveSnapshot(ctx context.Context, ref string) (*cor
 // Metadata collection
 // ---------------------------------------------------------------------------
 
-// collectMetadata loads every entry in the snapshot, and reports the order the
-// tree walk yielded them in as well as the entries themselves.
+// collectMetadata loads every entry in the snapshot.
 //
 // The order matters to what comes after, and the two orders are different.
 // Restore *writes* in walk order, because that is the order backup laid entries
@@ -762,14 +761,14 @@ func (rm *RestoreManager) resolveSnapshot(ctx context.Context, ref string) (*cor
 // order the store says is cheapest, which on a repository built by several
 // backups is not walk order at all: each backup's entries sit in its own packs,
 // so the walk interleaves them. See the grouping below.
-func (rm *RestoreManager) collectMetadata(ctx context.Context, root string) (map[string]core.FileMeta, []string, error) {
+func (rm *RestoreManager) collectMetadata(ctx context.Context, root string) (map[string]core.FileMeta, error) {
 	var refs []string
 	err := rm.tree.Walk(ctx, root, func(_, valueRef string) error {
 		refs = append(refs, valueRef)
 		return nil
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	phase := rm.reporter.StartPhase("Loading metadata", int64(len(refs)), false)
@@ -779,26 +778,15 @@ func (rm *RestoreManager) collectMetadata(ctx context.Context, root string) (map
 	// them, unlike a file's content chunks, so results can land in the map
 	// as soon as they arrive rather than needing to be sequenced.
 	//
-	// Walk order is kept separately, by writing each result to its own index
-	// rather than appending as it lands: concurrency decides when a result
-	// arrives, and that must not decide the order the restore writes in.
+	// Dispatched in the order the walk produced, with no reordering: this
+	// branch predates pack-locality grouping, so a pack read in pieces spread
+	// across the fetch is transferred, evicted and transferred again.
 	byID := make(map[string]core.FileMeta, len(refs))
-	walkOrder := make([]string, len(refs))
 	var mu sync.Mutex
-
-	// Fetched in walk order, which is simply the order the tree walk produced.
-	// No reordering: this branch predates pack-locality grouping, so a pack
-	// read in pieces spread across the fetch is transferred, evicted and
-	// transferred again — which is the behaviour being measured.
-	order := make([]int, len(refs))
-	for i := range refs {
-		order[i] = i
-	}
 
 	g, gCtx := errgroup.WithContext(ctx)
 	g.SetLimit(store.GetConcurrencyHint(rm.store, 10))
-	for _, i := range order {
-		ref := refs[i]
+	for _, ref := range refs {
 		g.Go(func() error {
 			fm, err := rm.metas.load(gCtx, ref)
 			if err != nil {
@@ -806,7 +794,6 @@ func (rm *RestoreManager) collectMetadata(ctx context.Context, root string) (map
 			}
 			mu.Lock()
 			byID[fm.FileID] = *fm
-			walkOrder[i] = fm.FileID
 			mu.Unlock()
 			phase.Increment(1)
 			return nil
@@ -814,56 +801,39 @@ func (rm *RestoreManager) collectMetadata(ctx context.Context, root string) (map
 	}
 	if err := g.Wait(); err != nil {
 		phase.Error()
-		return nil, nil, err
+		return nil, err
 	}
 	phase.Done()
-	return byID, walkOrder, nil
+	return byID, nil
 }
 
 // ---------------------------------------------------------------------------
 // Ordering
 // ---------------------------------------------------------------------------
 
-// restoreOrder returns FileIDs in the order a restore should write them.
+// topoSort returns FileIDs in parent-before-child order so that directories are
+// created before the files they contain. Parents contain FileIDs.
 //
-// The constraint is that an entry's parents exist before it does, so a directory
-// is created before anything it contains. That constraint binds only the entries
-// that *are* parents — everything else is a leaf, and a leaf may be written at
-// any point after the interior of the tree exists.
+// It orders byID rather than copying out of it: the caller already holds every
+// entry, and a second slice of core.FileMeta doubled a snapshot's metadata for
+// the sake of sequencing it.
 //
-// So the interior is emitted first, in parent-before-child order, and the leaves
-// follow in walkOrder. Leaves are the overwhelming majority (50,000 of 50,500 in
-// the tree RFC 0023 measured) and walk order is the order backup wrote them,
-// which is the order they are laid out in packfiles. Ordering the whole tree
-// topologically instead scattered reads across every pack: 55% pack-cache misses
-// against 0.6% for the metadata phase, which already reads in walk order.
-//
-// Interior membership is derived from the data rather than from Type. A regular
-// file is a leaf in every source model this supports, but a snapshot is data
-// read off a store, and an entry that claims a file as its parent must still be
-// ordered after it rather than trusted not to exist.
-func restoreOrder(byID map[string]core.FileMeta, walkOrder []string) []string {
-	interior := make(map[string]bool)
-	for _, meta := range byID {
-		for _, parentID := range meta.Parents {
-			if _, ok := byID[parentID]; ok {
-				interior[parentID] = true
-			}
-		}
-	}
-
+// Leaves come out grouped by directory rather than in the order backup wrote
+// them, which bears no relation to how they sit in packfiles. That is the
+// pre-#455 behaviour this branch exists to measure.
+func topoSort(byID map[string]core.FileMeta) []string {
 	out := make([]string, 0, len(byID))
-	emitted := make(map[string]bool, len(byID))
+	visited := make(map[string]bool, len(byID))
 
 	var visit func(core.FileMeta)
 	visit = func(meta core.FileMeta) {
-		if emitted[meta.FileID] {
+		if visited[meta.FileID] {
 			return
 		}
 		// Marked before recursing, not after: a parent cycle would otherwise
 		// revisit this entry forever. Marking first makes a cycle terminate with
 		// the entry emitted once, in an order the cycle itself does not define.
-		emitted[meta.FileID] = true
+		visited[meta.FileID] = true
 		for _, parentID := range meta.Parents {
 			if parent, ok := byID[parentID]; ok {
 				visit(parent)
@@ -872,36 +842,8 @@ func restoreOrder(byID map[string]core.FileMeta, walkOrder []string) []string {
 		out = append(out, meta.FileID)
 	}
 
-	// Interior nodes in walk order too, so that sibling directories are created
-	// in the order they were backed up rather than in map-iteration order. visit
-	// pulls in any ancestor that has not been reached yet.
-	for _, id := range walkOrder {
-		if interior[id] {
-			visit(byID[id])
-		}
-	}
-	// A cycle among interior nodes can leave one unreached from walkOrder if the
-	// snapshot is malformed; nothing may be dropped.
-	for id := range interior {
-		if !emitted[id] {
-			visit(byID[id])
-		}
-	}
-
-	for _, id := range walkOrder {
-		if emitted[id] {
-			continue
-		}
-		emitted[id] = true
-		out = append(out, id)
-	}
-	// walkOrder comes from the same walk that built byID, so this adds nothing in
-	// practice. It is here because dropping an entry silently loses a file.
-	for id := range byID {
-		if !emitted[id] {
-			emitted[id] = true
-			out = append(out, id)
-		}
+	for _, meta := range byID {
+		visit(meta)
 	}
 	return out
 }

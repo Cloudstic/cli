@@ -26,16 +26,16 @@ func benchTree(dirs, perDir int) (map[string]core.FileMeta, []string) {
 	return byID, walk
 }
 
-// restoreOrder sequences every entry in a snapshot before the first byte is
+// topoSort sequences every entry in a snapshot before the first byte is
 // written, so it is on the critical path of every restore.
 func BenchmarkRestoreOrder(b *testing.B) {
 	for _, files := range []int{5000, 50000} {
 		b.Run(fmt.Sprintf("files=%d", files), func(b *testing.B) {
-			byID, walk := benchTree(files/100, 100)
+			byID, _ := benchTree(files/100, 100)
 
 			b.ReportAllocs()
 			for b.Loop() {
-				if got := restoreOrder(byID, walk); len(got) != len(byID) {
+				if got := topoSort(byID); len(got) != len(byID) {
 					b.Fatalf("ordered %d of %d", len(got), len(byID))
 				}
 			}

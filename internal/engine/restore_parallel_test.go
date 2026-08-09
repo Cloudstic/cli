@@ -86,23 +86,12 @@ func TestRestoreManager_CollectMetadata_FetchesConcurrently(t *testing.T) {
 		t.Fatalf("resolveSnapshot: %v", err)
 	}
 
-	byID, walkOrder, err := rsMgr.collectMetadata(ctx, snap.Root)
+	byID, err := rsMgr.collectMetadata(ctx, snap.Root)
 	if err != nil {
 		t.Fatalf("collectMetadata: %v", err)
 	}
 	if len(byID) == 0 {
 		t.Fatal("expected at least one file/dir in collected metadata")
-	}
-	// Walk order is what the pack-locality ordering rests on, so it must be
-	// complete and free of the gaps a concurrent fetch would leave if results
-	// were appended as they landed rather than placed by index.
-	if len(walkOrder) != len(byID) {
-		t.Errorf("walk order has %d entries, byID has %d", len(walkOrder), len(byID))
-	}
-	for i, id := range walkOrder {
-		if id == "" {
-			t.Fatalf("walk order has a gap at index %d", i)
-		}
 	}
 
 	if peak := tracker.peakConcurrency(); peak < 2 {

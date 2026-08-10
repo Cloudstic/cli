@@ -886,6 +886,53 @@ stated variance, which is the protocol `bench.sh` already applies to timings and
 this workstream never applied to request counts — a gap that went unnoticed only
 because `restore`, `check` and `ls` happen to be stable enough to survive it.
 
+#### That stability was a property of the old regime, and grouping ended it
+
+The table above is **stale for `check`, and quoting it produced a false
+regression report.** Reading the CI benchmark after the backup work, `check`
+appeared to go 186 -> 457 requests — a 146% regression on a command the change
+did not touch. The 4% figure above made that look like a real signal.
+
+Re-running the same benchmark on one machine, against the *unchanged* baseline
+commit, twice:
+
+| `check`, `bench.sh` MinIO cell | requests |
+|---|---|
+| CI, baseline | 186 |
+| local run 1, baseline | 254 |
+| local run 2, baseline | 316 |
+| local, index consolidation only | 475 |
+| CI, both commits | 457 |
+
+**The baseline alone spans 186–316, a 70% spread on identical code.** The
+apparent regression was two draws from a distribution nobody had sampled.
+
+The mechanism is the one already stated for `prune`, and it reached `check`
+*because of the work in this RFC*. `PackStore.Put` uploads a filled pack outside
+the lock while backup uploads concurrently, so which objects share a pack is not
+deterministic. When `check` cost 10,721 requests it was in the penalty regime —
+roughly one request per object, a cost indifferent to which pack an object sits
+in, hence 4%. Grouping took it to a few hundred, where cost is dominated by
+per-pack whole-versus-ranged admission decisions, which are highly sensitive to
+exactly that layout.
+
+So this work moved `check` from a layout-insensitive regime to a
+layout-sensitive one, and its variance moved with it. **A measured improvement
+can invalidate the variance estimate that justified measuring it that way** —
+which is not a special fact about `check`, and is the reason to re-derive spread
+after any change that alters what dominates a cost, rather than carrying an
+older figure forward.
+
+Two further notes for anyone reading the CI benchmark against this branch. It
+runs six backups against a fresh repository, so `backup`'s index consolidation
+(threshold 16) never fires there and is invisible by construction — that term is
+linear in repository *age*, which is `aging.sh`'s axis and one `bench.sh`
+structurally cannot see. And `SAMPLES` is not the way to get repeats from that
+cell: the source tree is regenerated once per size and mutated in place by the
+churn steps, so a second sample measures a larger, different repository. A valid
+repeat is a fresh invocation of the whole script, which is how the three
+baselines above were taken.
+
 **`diff` had never been measured at all.** Four rounds of this harness invoked
 it without the two snapshot IDs it requires, so it failed instantly and reported
 zero. Fixed, it costs 39 requests — 16 of them the index reads above — which is

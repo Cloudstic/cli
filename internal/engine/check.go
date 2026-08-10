@@ -179,7 +179,7 @@ func (cm *CheckManager) checkSnapshot(ctx context.Context, ref string, result *C
 	}
 
 	// 3. Walk leaf entries — verify filemeta → content → chunks.
-	if err := cm.tree.Walk(ctx, snap.Root, func(_, valueRef string) error {
+	if err := walkEntriesGrouped(ctx, cm.tree, cm.store, snap.Root, func(valueRef string) error {
 		return cm.checkFileMeta(ctx, valueRef, result, cfg, phase)
 	}); err != nil {
 		result.Errors = append(result.Errors, CheckError{

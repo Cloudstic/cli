@@ -222,30 +222,66 @@ func (pm *PruneManager) markSnapshot(ctx context.Context, ref string, reachable 
 		return err
 	}
 
-	return pm.tree.Walk(ctx, snap.Root, func(_, valueRef string) error {
-		return pm.markFileMeta(ctx, valueRef, reachable)
-	})
+	// Two grouped passes rather than one interleaved one. Marking an entry needs
+	// its filemeta and then the content object that filemeta names, and doing
+	// both inline alternates between two namespaces that live in different packs
+	// — so a batch of grouped filemeta reads is punctuated by content reads that
+	// evict the very bodies the grouping arranged. Measured at 82 packs, grouping
+	// the walk alone moved prune 2,210 -> 2,148 requests, essentially nothing.
+	//
+	// So collect the content keys while walking, and read them as their own
+	// grouped batch. Each pass then touches one namespace and each pack is
+	// wanted across a contiguous span of it.
+	//
+	// The extra memory is one key per entry with content, which is the same order
+	// as the reachable set this phase already builds.
+	var contentRefs []string
+	if err := walkEntriesGrouped(ctx, pm.tree, pm.store, snap.Root, func(valueRef string) error {
+		key, err := pm.markFileMeta(ctx, valueRef, reachable)
+		if err != nil {
+			return err
+		}
+		if key != "" {
+			contentRefs = append(contentRefs, key)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	for _, group := range store.PlanReads(ctx, pm.store, contentRefs).Groups {
+		for _, ref := range group {
+			if err := pm.markContent(ctx, ref, reachable); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
-func (pm *PruneManager) markFileMeta(ctx context.Context, ref string, reachable map[string]bool) error {
+// markFileMeta marks an entry's filemeta and returns the content key it names,
+// leaving that content unread so the caller can batch it.
+//
+// It returns "" when there is nothing to read: the entry has no content, or its
+// filemeta was already marked by another snapshot.
+func (pm *PruneManager) markFileMeta(ctx context.Context, ref string, reachable map[string]bool) (string, error) {
 	if reachable[ref] {
-		return nil
+		return "", nil
 	}
 	reachable[ref] = true
 
 	meta, err := pm.metas.load(ctx, ref)
 	if err != nil {
-		return err
+		return "", err
 	}
-
-	if meta.ContentHash != "" {
-		contentKey := meta.ContentRef
-		if contentKey == "" {
-			contentKey = meta.ContentHash
-		}
-		return pm.markContent(ctx, "content/"+contentKey, reachable)
+	if meta.ContentHash == "" {
+		return "", nil
 	}
-	return nil
+	contentKey := meta.ContentRef
+	if contentKey == "" {
+		contentKey = meta.ContentHash
+	}
+	return "content/" + contentKey, nil
 }
 
 func (pm *PruneManager) markContent(ctx context.Context, ref string, reachable map[string]bool) error {

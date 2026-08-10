@@ -179,44 +179,13 @@ func (cm *CheckManager) checkSnapshot(ctx context.Context, ref string, result *C
 	}
 
 	// 3. Walk leaf entries — verify filemeta → content → chunks.
-	// Two grouped passes per batch. Verifying an entry reads its filemeta and
-	// then the content object that filemeta names; interleaving the two
-	// alternates namespaces that live in different packs, so each grouped
-	// filemeta read would be punctuated by a content read that evicts the body
-	// the grouping just arranged. Carrying the pending content per batch rather
-	// than per snapshot keeps that bounded.
 	if err := walkEntriesBatched(ctx, cm.tree, snap.Root, func(entries []treeEntry) error {
 		refs := make([]string, len(entries))
 		for i, e := range entries {
 			refs[i] = e.ref
 		}
-		pending := make([]pendingContent, 0, len(refs))
-		if err := readGrouped(ctx, cm.store, refs, func(ref string) error {
-			key, meta, err := cm.checkFileMeta(ctx, ref, result, cfg, phase)
-			if err != nil {
-				return err
-			}
-			if key != "" {
-				pending = append(pending, pendingContent{key: key, meta: meta})
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
-		byKey := make(map[string][]core.FileMeta, len(pending))
-		keys := make([]string, 0, len(pending))
-		for _, pc := range pending {
-			byKey[pc.key] = append(byKey[pc.key], pc.meta)
-			keys = append(keys, pc.key)
-		}
-		return readGrouped(ctx, cm.store, keys, func(key string) error {
-			metas := byKey[key]
-			if len(metas) == 0 {
-				return nil
-			}
-			meta := metas[0]
-			byKey[key] = metas[1:]
-			return cm.checkContent(ctx, key, &meta, result, cfg, phase)
+		return readGrouped(ctx, cm.store, refs, func(ref string) error {
+			return cm.checkFileMeta(ctx, ref, result, cfg, phase)
 		})
 	}); err != nil {
 		result.Errors = append(result.Errors, CheckError{
@@ -260,22 +229,9 @@ func (cm *CheckManager) verifyObject(ctx context.Context, key string, result *Ch
 }
 
 // checkFileMeta verifies a filemeta object and its content/chunk chain.
-// pendingContent is a content object a verified filemeta named, held until the
-// batch's content pass reads it.
-type pendingContent struct {
-	key  string
-	meta core.FileMeta
-}
-
-// checkFileMeta verifies an entry's filemeta and returns the content object it
-// names, leaving that content unread so the caller can batch it.
-//
-// It returns "" when there is nothing to read: the entry has no content, the
-// filemeta was already verified, or it failed verification and there is nothing
-// trustworthy to follow.
-func (cm *CheckManager) checkFileMeta(ctx context.Context, ref string, result *CheckResult, cfg *checkConfig, phase ui.Phase) (string, core.FileMeta, error) {
+func (cm *CheckManager) checkFileMeta(ctx context.Context, ref string, result *CheckResult, cfg *checkConfig, phase ui.Phase) error {
 	if cm.verified[ref] {
-		return "", core.FileMeta{}, nil
+		return nil
 	}
 
 	data, err := cm.store.Get(ctx, ref)
@@ -284,14 +240,14 @@ func (cm *CheckManager) checkFileMeta(ctx context.Context, ref string, result *C
 			Key: ref, Type: "missing", Message: fmt.Sprintf("filemeta not found or unreadable: %v", err),
 		})
 		cm.verified[ref] = true
-		return "", core.FileMeta{}, nil
+		return nil
 	}
 	cm.verified[ref] = true
 	if err := core.VerifyRef(ref, data); err != nil {
 		result.Errors = append(result.Errors, CheckError{
 			Key: ref, Type: "corrupt", Message: err.Error(),
 		})
-		return "", core.FileMeta{}, nil
+		return nil
 	}
 	result.ObjectsVerified++
 	phase.Logf(ui.DetailVerbose, "OK: %s", ref)
@@ -301,11 +257,11 @@ func (cm *CheckManager) checkFileMeta(ctx context.Context, ref string, result *C
 		result.Errors = append(result.Errors, CheckError{
 			Key: ref, Type: "parse_error", Message: fmt.Sprintf("cannot parse filemeta: %v", err),
 		})
-		return "", core.FileMeta{}, nil
+		return nil
 	}
 
 	if meta.ContentHash == "" {
-		return "", core.FileMeta{}, nil // folder or file with no content
+		return nil // folder or file with no content
 	}
 
 	contentKey := meta.ContentRef
@@ -326,11 +282,11 @@ func (cm *CheckManager) checkFileMeta(ctx context.Context, ref string, result *C
 				Message: fmt.Sprintf("content_ref %s does not derive from content_hash %s",
 					meta.ContentRef, meta.ContentHash),
 			})
-			return "", core.FileMeta{}, nil
+			return nil
 		}
 	}
 
-	return "content/" + contentKey, meta, nil
+	return cm.checkContent(ctx, "content/"+contentKey, &meta, result, cfg, phase)
 }
 
 // checkContent verifies a content object and its referenced chunks.

@@ -316,36 +316,19 @@ func (s *findScanner) closeRun(lineage findLineage, state *lineageState, key str
 // whole tree.
 func (s *findScanner) walkSnapshot(ctx context.Context, root string, state *lineageState) ([]findCandidate, error) {
 	var candidates []findCandidate
-	err := walkEntriesBatched(ctx, s.tree, root, func(entries []treeEntry) error {
-		byRef := make(map[string][]string, len(entries))
-		refs := make([]string, len(entries))
-		for i, e := range entries {
-			refs[i] = e.ref
-			byRef[e.ref] = append(byRef[e.ref], e.key)
+	err := s.tree.Walk(ctx, root, func(key, ref string) error {
+		s.entriesScanned++
+		eval, err := s.eval(ctx, ref)
+		if err != nil {
+			return err
 		}
-		// Candidates come out in pack order rather than walk order; collectMatches
-		// sorts by path before returning, so the result is unaffected.
-		return readGrouped(ctx, s.store, refs, func(ref string) error {
-			keys := byRef[ref]
-			if len(keys) == 0 {
-				return nil
-			}
-			key := keys[0]
-			byRef[ref] = keys[1:]
-
-			s.entriesScanned++
-			eval, err := s.eval(ctx, ref)
-			if err != nil {
-				return err
-			}
-			if eval.meta != nil && metaFileType(eval.meta) == core.FileTypeFolder {
-				state.folders[key] = *eval.meta
-			}
-			if eval.matched && s.pred.matchKey(key) {
-				candidates = append(candidates, findCandidate{key: key, ref: ref, meta: *eval.meta})
-			}
-			return nil
-		})
+		if eval.meta != nil && metaFileType(eval.meta) == core.FileTypeFolder {
+			state.folders[key] = *eval.meta
+		}
+		if eval.matched && s.pred.matchKey(key) {
+			candidates = append(candidates, findCandidate{key: key, ref: ref, meta: *eval.meta})
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("walk snapshot root %s: %w", root, err)

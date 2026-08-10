@@ -298,6 +298,10 @@ answer:
 - **No `packPenalized`, no `packMissWindow`, no `packAdmission`.** These exist
   to detect and bound repeated-eviction failure. Contiguity makes that failure
   unreachable.
+
+  **Measured false** — see "The estimator is load-bearing" below. The estimator
+  serves the majority of misses in every command, and this bullet is retained
+  only because it is the claim that section refutes.
 - **No `packBodyCacheBudget` as a tuning constant.** The buffer is
   `W × maxPackSize` where *W* is fetch concurrency — a number chosen for
   throughput, not for repository shape.
@@ -842,6 +846,46 @@ and releases it; the write phase asks again. No admission or ordering policy
 removes that. [RFC 0024](0024-metadata-in-the-tree.md) does, by folding
 small-file content into the leaf so the traversal set is the read set — which
 makes it the next lever rather than a parallel idea.
+
+### The estimator is load-bearing, and this RFC assumed it was not
+
+§2 says the heuristic cluster becomes "unnecessary rather than better-informed"
+once reads are planned, and lists `packAdmission`, `packPromoteAfter`,
+`packPenalized` and `packMissWindow` as deletions the design earns. **That is
+wrong**, and it was measured by counting, per command, how many pack misses
+arrive with a plan against how many do not:
+
+| command | planned | unplanned |
+|---|---|---|
+| `restore` | 420 | 480 |
+| `check` | 134 | 596 |
+| `ls` | 59 | 480 |
+| `find` | 2 | 640 |
+| `backup` | 0 | 848 |
+| `prune` | 46 | 1,296 |
+
+The estimator handles the majority of misses in every command, restore
+included. Two things put it there, and both are consequences of decisions this
+RFC records approvingly.
+
+**Retiring a spent plan manufactures unplanned reads.** `consume` exists so a
+finished pass cannot decide for a later one, which is right — but the moment a
+pack's declared objects are read, every further read of that pack is undeclared
+and falls to the estimator. The two mechanisms are not layered, they are
+interleaved, and the estimator is the one carrying the load.
+
+**A plan is only worth having when the caller reads what it declares.** Restore
+does. `check`, `prune` and `find` all skip a large fraction of a batch through a
+dedupe set — `verified`, `reachable`, a cache — so their declarations overstate
+demand. Overstated demand is not harmless: it pushes admission toward whole-pack
+transfers for objects nobody reads, which is why adding a second declared pass
+to `check` cost 752 -> 819 requests with whole transfers going 139 -> 202, and
+why planning `find` moved it 743 -> 729 on 2 planned reads out of 642.
+
+So the simplification this RFC promised is not available on the evidence. What
+grouping buys is real and measured (§6), but it buys it *alongside* the
+heuristics rather than in place of them, and any future attempt to delete them
+should start by re-running this count rather than by re-reading §2.
 
 ### Check, which does not work
 

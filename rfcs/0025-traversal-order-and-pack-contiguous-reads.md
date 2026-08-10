@@ -314,11 +314,12 @@ answer:
 
 #### The interface
 
-`store.LocalityGrouper` already exists and already ships (#481). It returns a
-flat permutation, which hands the caller a better order but tells it nothing
-about where one pack ends and the next begins — so the store still cannot know
-when a body is finished. Returning the grouping instead of flattening it is the
-entire change:
+`store.LocalityGrouper` shipped first (#481). It returned a flat permutation,
+which hands the caller a better order but tells it nothing about where one pack
+ends and the next begins — so the store still could not know when a body is
+finished. Returning the grouping instead of flattening it was the entire change,
+and `LocalityGrouper` was replaced by the interface below rather than joined by
+it:
 
 ```go
 type ReadPlanner interface {
@@ -795,6 +796,70 @@ prefix:
 The two untouched commands are what makes the rest attributable: they were
 measured in the same runs and did not move.
 
+#### Backup, which was a control until it was not
+
+`backup` stayed flat above because nothing had been applied to it, not because
+it had nothing to gain. Its breakdown at 82 packs was 791 ranged reads out of
+985 requests — the same probe sequence, from the same cause, arriving through a
+different traversal. Change detection reads the previous filemeta of every entry
+the source walks, and a source walk is in no relation to storage layout: a
+file's filemeta sits in whichever pack was open the last time that file changed,
+so after eighty backups an unchanged tree's metadata is spread across every pack
+the repository has.
+
+Buffering the walk and declaring each batch's refs before reading any of them:
+
+| `backup`, 82 packs | requests | ranged | whole-pack |
+|---|---|---|---|
+| before | 985 | 791 | 92 |
+| index consolidation | 896 | 765 | 92 |
+| + declared scan reads | 575 | 446 | 90 |
+
+**−42% of requests with whole-pack transfers unchanged**, which is the shape
+worth having: the ranged reads became cache hits rather than being converted
+into transfers, so the bytes did not move. `find` measured 679 in both runs,
+identical to the digit, which is what makes the rest attributable.
+
+Two things distinguish this from `check` and `find`, where declaring bought
+nothing. The declaration is *exact* — every ref handed over is read moments
+later, because a filemeta names its own `FileID` and no two entries can share
+one, so nothing is declared that a dedupe set then skips. And the processing
+order is left alone: only the reads are grouped. The order a scan queues entries
+in becomes the upload order, which is what gives newly written objects their own
+locality, and reordering that to match where the *previous* snapshot's metadata
+happens to live would trade a one-time read win for a permanent write
+regression — the same mistake `orderLeavesByContentLocality` made on restore.
+
+#### The index cost nobody was counting
+
+Instrumenting by key prefix surfaced a term that has nothing to do with
+traversal order and was larger than several things this RFC does address. Every
+command spent one request per pack-index object before doing any work at all:
+81 for `check`, `ls` and `find`, 86 for `backup`, 84 for `prune`.
+
+The pack index is append-only by design (RFC 0018) — one shard per flush, so
+that concurrent writers cannot erase each other. The consequence is that opening
+a repository costs a request per flush ever made, growing with the number of
+backups taken and with nothing else. Only `prune` bounded it, by compacting, and
+a repository that is only ever backed up never runs one.
+
+Backup now consolidates the index once it exceeds a threshold, after releasing
+its shared lock and under the exclusive lock compaction needs. Concurrent
+backups fail to take it and skip, so whichever finishes alone does the work:
+
+| command | before | after | index reads |
+|---|---|---|---|
+| `check` | 753 | 703 | 81 → 17 |
+| `ls` | 627 | 556 | 81 → 17 |
+| `find` | 743 | 679 | 81 → 17 |
+| `backup` | 985 | 896 | 86 → 22 |
+
+The percentages are small at 80 backups and that is the least interesting thing
+about them: the term was linear in the repository's history and is now a
+constant. It is recorded here because it was invisible to every measurement this
+RFC took before requests were broken down by key prefix — aggregate request
+counts had been carrying it the whole time.
+
 **`prune` is absent, and why is a finding of its own.** Its request count came
 out 2,210 / 2,148 / 1,725 / 2,842 / 1,974 across five runs. The last three are
 *identical code*, spanning 1,725–2,842 — a 65% spread — so its run-to-run
@@ -820,6 +885,11 @@ in a way the read-only traversals are not.
 stated variance, which is the protocol `bench.sh` already applies to timings and
 this workstream never applied to request counts — a gap that went unnoticed only
 because `restore`, `check` and `ls` happen to be stable enough to survive it.
+
+**`diff` had never been measured at all.** Four rounds of this harness invoked
+it without the two snapshot IDs it requires, so it failed instantly and reported
+zero. Fixed, it costs 39 requests — 16 of them the index reads above — which is
+why nothing here targets it.
 
 Three findings came out of building it, none of which the replay predicted.
 
@@ -920,11 +990,6 @@ the current code produces.
   one extra transfer per mixed pack, rather than the unbounded refetching §5
   measured — and §1's directory-at-a-time interleaving is what shrinks it.
   RFC 0024 removes the class distinction entirely.
-- **`check` and `prune` cannot use the shipped ordering at all.** #481 applies to
-  `restore` because it already materialises its refs; both other traversals
-  stream and have no batch to sort (§1). Extending locality to them means either
-  derived order or a bounded window — not a call-site change, which is how it was
-  scoped when #480 was written.
 - **`prune`'s sweep still materialises every key.** `ObjectStore.List` returns a
   slice; a streaming enumeration is a public-API change and its own RFC.
 - **Streaming is not primarily a wall-clock win on a local store.** Measured on a
@@ -941,11 +1006,14 @@ the current code produces.
   and `packPenalized` answer a question — *is this pack worth fetching whole?* —
   that a flat permutation does not ask. Measured in #481 (§1). It is the group
   *boundary*, not the order, that retires them.
-- **Only `restore` reads in pack order today.** #481 wired
-  `store.GroupByLocality` into `collectMetadata` and nowhere else, so `check`
-  and `prune`'s mark phase still read in walk order and pay the revisit cost in
-  full whenever they overrun the budget. Extending it is mechanical, but it is
-  not done, and neither operation is covered by the numbers above.
+- **Declaring is not free for every traversal, so not every one does it.**
+  `restore`, `check`, `ls`, `diff` and `prune`'s mark phase read through
+  `walkEntriesBatched` + `readGrouped`, and `backup`'s full scan declares its
+  change-detection reads. `find` does not: it was wired and reverted, because 2
+  of its 642 pack misses arrived planned and the request count did not move. The
+  discriminator is whether the caller reads what it declares — see "The
+  estimator is load-bearing" above — and it has to be measured per traversal
+  rather than assumed from the shape of the walk.
 - **Secondary parents are not enumerated.** See §1; `ls` of a secondary parent
   needs an index this RFC does not propose.
 

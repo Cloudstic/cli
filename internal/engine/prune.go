@@ -222,41 +222,39 @@ func (pm *PruneManager) markSnapshot(ctx context.Context, ref string, reachable 
 		return err
 	}
 
-	// Two grouped passes rather than one interleaved one. Marking an entry needs
-	// its filemeta and then the content object that filemeta names, and doing
-	// both inline alternates between two namespaces that live in different packs
-	// — so a batch of grouped filemeta reads is punctuated by content reads that
-	// evict the very bodies the grouping arranged. Measured at 82 packs, grouping
-	// the walk alone moved prune 2,210 -> 2,148 requests, essentially nothing.
+	// Two grouped passes per batch rather than one interleaved pass. Marking an
+	// entry needs its filemeta and then the content object that filemeta names,
+	// and doing both inline alternates between two namespaces that live in
+	// different packs — so a batch of grouped filemeta reads is punctuated by
+	// content reads that evict the very bodies the grouping arranged. Measured
+	// at 82 packs, grouping the walk alone moved prune essentially nothing.
 	//
-	// So collect the content keys while walking, and read them as their own
-	// grouped batch. Each pass then touches one namespace and each pack is
-	// wanted across a contiguous span of it.
-	//
-	// The extra memory is one key per entry with content, which is the same order
-	// as the reachable set this phase already builds.
-	var contentRefs []string
-	if err := walkEntriesGrouped(ctx, pm.tree, pm.store, snap.Root, func(valueRef string) error {
-		key, err := pm.markFileMeta(ctx, valueRef, reachable)
-		if err != nil {
-			return err
+	// One namespace per pass is the rule. Doing the second pass per batch rather
+	// than per snapshot is what keeps the carried keys bounded: a snapshot-wide
+	// collection is O(entries), and this phase is already the one that builds an
+	// O(objects) reachable set, so there is no reason to add a second.
+	return walkEntriesBatched(ctx, pm.tree, snap.Root, func(entries []treeEntry) error {
+		refs := make([]string, len(entries))
+		for i, e := range entries {
+			refs[i] = e.ref
 		}
-		if key != "" {
-			contentRefs = append(contentRefs, key)
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-
-	for _, group := range store.PlanReads(ctx, pm.store, contentRefs).Groups {
-		for _, ref := range group {
-			if err := pm.markContent(ctx, ref, reachable); err != nil {
+		contentRefs := make([]string, 0, len(refs))
+		if err := readGrouped(ctx, pm.store, refs, func(ref string) error {
+			key, err := pm.markFileMeta(ctx, ref, reachable)
+			if err != nil {
 				return err
 			}
+			if key != "" {
+				contentRefs = append(contentRefs, key)
+			}
+			return nil
+		}); err != nil {
+			return err
 		}
-	}
-	return nil
+		return readGrouped(ctx, pm.store, contentRefs, func(key string) error {
+			return pm.markContent(ctx, key, reachable)
+		})
+	})
 }
 
 // markFileMeta marks an entry's filemeta and returns the content key it names,

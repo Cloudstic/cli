@@ -205,15 +205,21 @@ func classifyEntry(d hamt.DiffEntry) (ChangeType, string) {
 // can honestly be said about that entry's location.
 func (dm *DiffManager) collectFolders(ctx context.Context, root string) (map[string]core.FileMeta, error) {
 	folderByID := make(map[string]core.FileMeta)
-	err := dm.tree.Walk(ctx, root, func(_, valueRef string) error {
-		fm, err := dm.metas.load(ctx, valueRef)
-		if err != nil {
-			return err
+	err := walkEntriesBatched(ctx, dm.tree, root, func(entries []treeEntry) error {
+		refs := make([]string, len(entries))
+		for i, e := range entries {
+			refs[i] = e.ref
 		}
-		if fm.Type == core.FileTypeFolder {
-			folderByID[fm.FileID] = *fm
-		}
-		return nil
+		return readGrouped(ctx, dm.store, refs, func(ref string) error {
+			fm, err := dm.metas.load(ctx, ref)
+			if err != nil {
+				return err
+			}
+			if fm.Type == core.FileTypeFolder {
+				folderByID[fm.FileID] = *fm
+			}
+			return nil
+		})
 	})
 	return folderByID, err
 }

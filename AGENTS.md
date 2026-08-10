@@ -166,7 +166,7 @@ All objects are addressed by `<type>/<sha256>`:
 ### Backup Flow
 
 1. `BackupManager` acquires a shared lock, loads the previous snapshot (if any) for its source identity.
-2. Source is scanned via `Walk()` (full) or `WalkChanges()` (incremental, for gdrive-changes/onedrive-changes).
+2. Source is scanned via `Walk()` (full) or `WalkChanges()` (incremental, for gdrive-changes/onedrive-changes). The full scan buffers the walk into batches of `entryBatch` and resolves each batch's previous refs before reading any of them, so change detection's filemeta reads are declared to the store together rather than arriving one at a time in an order unrelated to storage layout (RFC 0025). Entries are still *processed* in walk order — that order becomes the upload order, and with it the locality of newly written objects.
 3. New/changed files are chunked (`internal/engine/chunker.go`) using FastCDC, content-addressed, and uploaded.
 4. The HAMT tree is updated with new filemeta refs through a `hamt.Txn`, which holds every intermediate node in memory and serializes only the dirty spine reachable from the final root.
 5. A new `Snapshot` object is written, and `index/latest` is updated.

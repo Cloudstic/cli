@@ -81,3 +81,21 @@ func (l *metaLoader) cached(ref string) bool {
 	l.mu.RUnlock()
 	return ok
 }
+
+// releaseCache drops what the loader remembers and leaves it reading through,
+// for a caller whose repeated reads are over.
+//
+// Memoizing is a property of a phase, not of a whole operation. Backup's scan
+// reads the previous filemeta of every entry it visits and gets hits on the
+// ones it revisits; what follows the scan — uploading file data — reads almost
+// none of them and would carry a FileMeta per file through the longest and most
+// allocation-heavy part of the run for nothing.
+//
+// Reading through afterwards is correct rather than merely tolerable: the cache
+// only ever holds objects addressed by their own content, so a later read
+// returns the same bytes it would have returned from memory.
+func (l *metaLoader) releaseCache() {
+	l.mu.Lock()
+	l.cache = nil
+	l.mu.Unlock()
+}

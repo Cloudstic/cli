@@ -50,7 +50,7 @@ func primaryParentID(meta *core.FileMeta) string {
 	return ""
 }
 
-func (bm *BackupManager) processEntry(ctx context.Context, meta *core.FileMeta, oldRoot string, s *scanState, phase ui.Phase) error {
+func (bm *BackupManager) processEntry(ctx context.Context, meta *core.FileMeta, oldRef string, s *scanState, phase ui.Phase) error {
 	if meta.Type == core.FileTypeFolder {
 		meta.ContentHash = ""
 		meta.Size = 0
@@ -65,7 +65,7 @@ func (bm *BackupManager) processEntry(ctx context.Context, meta *core.FileMeta, 
 		meta.Paths = []string{bm.buildPathFromTree(ctx, meta)}
 	}
 
-	changed, oldRef, err := bm.detectChange(ctx, oldRoot, meta)
+	changed, err := bm.compareWithOld(ctx, oldRef, meta)
 	if err != nil {
 		return err
 	}
@@ -95,10 +95,22 @@ func (bm *BackupManager) scan(ctx context.Context, oldRoot string) (pending []co
 	bm.txn = bm.tree.Edit("")
 	s := &scanState{}
 
+	batch := make([]core.FileMeta, 0, entryBatch)
 	err = bm.source.Walk(ctx, func(meta core.FileMeta) error {
 		phase.Increment(1)
-		return bm.processEntry(ctx, &meta, oldRoot, s, phase)
+		batch = append(batch, meta)
+		if len(batch) < entryBatch {
+			return nil
+		}
+		if err := bm.processBatch(ctx, oldRoot, batch, s, phase); err != nil {
+			return err
+		}
+		batch = batch[:0]
+		return nil
 	})
+	if err == nil && len(batch) > 0 {
+		err = bm.processBatch(ctx, oldRoot, batch, s, phase)
+	}
 
 	if err != nil {
 		phase.Error()
@@ -106,6 +118,68 @@ func (bm *BackupManager) scan(ctx context.Context, oldRoot string) (pending []co
 	}
 	phase.Done()
 	return s.pending, s.totalBytes, nil
+}
+
+// processBatch resolves a buffered run of entries against the previous snapshot
+// and then processes them, in the order the source walked them.
+//
+// The two halves are separate so the reads can be declared. Change detection
+// loads the previous filemeta of every entry that has one, and a source walk
+// visits them in an order that has nothing to do with where they were stored: a
+// file's filemeta lives in whichever packfile was open the last time that file
+// changed, so after eighty backups an unchanged tree's filemetas are spread
+// across every pack the repository has. Read one at a time in walk order, that
+// is a packfile contacted, dropped and contacted again — at 82 packs, 791 of
+// backup's 985 requests. Resolving the refs first lets the whole batch be
+// declared at once, so the store reads each bundle's share of it together.
+//
+// Processing still happens in walk order, not in the store's. It is the reads
+// that are reordered, and only those: the entries a scan queues become the
+// upload order, which is what gives newly written objects their own locality —
+// reordering that to match where the *previous* snapshot's metadata happens to
+// live would trade a one-time read win for a permanent write regression.
+func (bm *BackupManager) processBatch(ctx context.Context, oldRoot string, batch []core.FileMeta, s *scanState, phase ui.Phase) error {
+	oldRefs := make([]string, len(batch))
+	for i := range batch {
+		ref, err := bm.lookupOldRef(ctx, oldRoot, &batch[i])
+		if err != nil {
+			return err
+		}
+		oldRefs[i] = ref
+	}
+
+	if err := bm.prefetchOldMetas(ctx, oldRefs); err != nil {
+		return err
+	}
+
+	for i := range batch {
+		if err := bm.processEntry(ctx, &batch[i], oldRefs[i], s, phase); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// prefetchOldMetas reads the batch's previous filemetas in the order the store
+// nominates, leaving them in the loader's cache for the pass that follows.
+//
+// The declaration is exact, which is what makes it worth making. Every ref
+// handed over here is read by compareWithOld moments later, so the store is not
+// told to fetch anything the scan then skips; and a ref cannot repeat within a
+// batch, because a filemeta names its own FileID and two entries cannot share
+// one. Backup's loader memoizes, so reading here and reading again below is one
+// store read, not two.
+func (bm *BackupManager) prefetchOldMetas(ctx context.Context, oldRefs []string) error {
+	refs := make([]string, 0, len(oldRefs))
+	for _, ref := range oldRefs {
+		if ref != "" {
+			refs = append(refs, ref)
+		}
+	}
+	return readGrouped(ctx, bm.store, refs, func(ref string) error {
+		_, err := bm.metas.load(ctx, ref)
+		return err
+	})
 }
 
 func (bm *BackupManager) scanIncremental(ctx context.Context, oldRoot string, incSrc source.IncrementalSource, token string) (pending []core.FileMeta, totalBytes int64, newToken string, err error) {
@@ -130,7 +204,15 @@ func (bm *BackupManager) scanIncremental(ctx context.Context, oldRoot string, in
 				return fmt.Errorf("hamt delete %s: %w", fc.Meta.FileID, err)
 			}
 		case source.ChangeUpsert:
-			return bm.processEntry(ctx, &fc.Meta, oldRoot, s, phase)
+			// Not batched, unlike the full scan. A change feed emits only what
+			// changed, so there is rarely a batch's worth to group, and buffering
+			// upserts across the deletes interleaved with them would reorder two
+			// operations on the same entry against each other.
+			oldRef, err := bm.lookupOldRef(ctx, oldRoot, &fc.Meta)
+			if err != nil {
+				return err
+			}
+			return bm.processEntry(ctx, &fc.Meta, oldRef, s, phase)
 		}
 		return nil
 	})
@@ -160,24 +242,36 @@ func (bm *BackupManager) lookupDeleteParentID(ctx context.Context, fileID string
 	return primaryParentID(oldMeta), nil
 }
 
-// detectChange compares meta against the previous snapshot. It returns whether
-// the entry changed, and the old value ref (empty when the entry is new).
+// lookupOldRef finds meta's entry in the previous snapshot, returning an empty
+// ref when the entry is new.
+//
+// It is separate from the comparison because it is the half that can be hoisted
+// out of the walk: it reads the previous snapshot's tree, which no part of the
+// current scan modifies, so a batch of entries may resolve all of its refs up
+// front. That is what lets scan declare a batch's filemeta reads before making
+// any of them — see prefetchOldMetas.
+func (bm *BackupManager) lookupOldRef(ctx context.Context, oldRoot string, meta *core.FileMeta) (string, error) {
+	ref, err := bm.tree.Lookup(ctx, oldRoot, AffinityKey(primaryParentID(meta), meta.FileID), meta.FileID)
+	if err != nil {
+		return "", fmt.Errorf("hamt lookup: %w", err)
+	}
+	return ref, nil
+}
+
+// compareWithOld compares meta against the entry it had in the previous
+// snapshot, named by oldRef. An empty oldRef means the entry is new.
 //
 // For sources that do not provide a content hash (e.g. Google Drive), a
 // fast-path compares observable metadata and carries the hash forward to avoid
 // false-positive diffs.
-func (bm *BackupManager) detectChange(ctx context.Context, oldRoot string, meta *core.FileMeta) (changed bool, oldRef string, err error) {
-	oldRef, err = bm.tree.Lookup(ctx, oldRoot, AffinityKey(primaryParentID(meta), meta.FileID), meta.FileID)
-	if err != nil {
-		return false, "", fmt.Errorf("hamt lookup: %w", err)
-	}
+func (bm *BackupManager) compareWithOld(ctx context.Context, oldRef string, meta *core.FileMeta) (changed bool, err error) {
 	if oldRef == "" {
-		return true, "", nil
+		return true, nil
 	}
 
 	oldMeta, err := bm.metas.load(ctx, oldRef)
 	if err != nil {
-		return false, "", err
+		return false, err
 	}
 
 	// Native Google files: use headRevisionId as the sole change signal.
@@ -190,9 +284,9 @@ func (bm *BackupManager) detectChange(ctx context.Context, oldRoot string, meta 
 			meta.ContentHash = oldMeta.ContentHash
 			meta.ContentRef = oldMeta.ContentRef
 			meta.Size = oldMeta.Size
-			return false, oldRef, nil
+			return false, nil
 		}
-		return true, oldRef, nil
+		return true, nil
 	}
 
 	if meta.ContentHash == "" && oldMeta.ContentHash != "" && metadataEqual(*meta, *oldMeta) {
@@ -208,9 +302,9 @@ func (bm *BackupManager) detectChange(ctx context.Context, oldRoot string, meta 
 	newPersisted := persistedFileMeta(*meta)
 	newRef, _, err := core.FileMetaRef(&newPersisted)
 	if err != nil {
-		return false, "", err
+		return false, err
 	}
-	return newRef != oldRef, oldRef, nil
+	return newRef != oldRef, nil
 }
 
 // isGoogleNativeMeta returns true if the FileMeta represents a Google-native

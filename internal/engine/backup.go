@@ -317,6 +317,14 @@ func (bm *BackupManager) run(ctx context.Context) (*RunResult, error) {
 	// loudly instead of quietly repopulating a map nothing consumes.
 	bm.newMetas = nil
 
+	// Same reasoning, one phase wider. The scan reads the previous filemeta of
+	// every entry it visits — that is what change detection is — and memoizes
+	// them because it revisits parents. Nothing below reads them again except
+	// countRemoved, and only for entries that are gone, so keeping a FileMeta
+	// per scanned file through the upload buys a handful of hits and holds
+	// memory proportional to the source.
+	bm.metas.releaseCache()
+
 	if bm.cfg.dryRun {
 		if usedFullScan {
 			if err := bm.countRemoved(ctx, oldRoot); err != nil {

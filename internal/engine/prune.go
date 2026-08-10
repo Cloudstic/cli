@@ -9,7 +9,6 @@ import (
 	"github.com/cloudstic/cli/internal/hamt"
 	"github.com/cloudstic/cli/internal/storelayer"
 	"github.com/cloudstic/cli/internal/ui"
-	"github.com/cloudstic/cli/pkg/store"
 )
 
 type PruneOption func(*pruneConfig)
@@ -78,21 +77,8 @@ func (pm *PruneManager) Run(ctx context.Context, opts ...PruneOption) (*PruneRes
 	result := pm.sweep(ctx, reachable, &cfg)
 
 	if !cfg.dryRun {
-		// Attempt to repack fragmented packfiles.
-		// We walk down the store chain to find the PackStore if it is enabled.
-		var packStore *storelayer.PackStore
-		var current store.ObjectStore = pm.store
-		for current != nil {
-			if ps, ok := current.(*storelayer.PackStore); ok {
-				packStore = ps
-				break
-			}
-			if un, ok := current.(store.Unwrapper); ok {
-				current = un.Unwrap()
-			} else {
-				break
-			}
-		}
+		// Attempt to repack fragmented packfiles, if this repository packs at all.
+		packStore := findPackStore(pm.store)
 
 		if packStore != nil {
 			repackPhase := pm.reporter.StartPhase("Repacking fragmented index files", 0, false)

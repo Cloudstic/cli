@@ -187,6 +187,54 @@ type RunResult struct {
 // Run executes a full backup: scan the source for changes, upload new/modified
 // files, build a new HAMT root, and persist a snapshot.
 func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
+	res, err := bm.run(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !bm.cfg.dryRun {
+		bm.compactPackIndex(ctx)
+	}
+	return res, nil
+}
+
+// compactPackIndex consolidates the pack index when it has grown past
+// packIndexCompactThreshold, and only if it can do so without getting in
+// anyone's way.
+//
+// It runs after run returned, which is after the shared lock was released, and
+// takes the exclusive lock rather than compacting under the shared one.
+// Compaction deletes the shards this store absorbed, and a concurrent reader
+// that listed them before the delete and reads them after fails — a spurious
+// error rather than data loss, but a backup tidying up on its way out must not
+// cause it. AcquireRepoLock fails immediately when any lock is held, so
+// concurrent backups skip this and whichever finishes alone does the work.
+//
+// Every failure is swallowed by design. The backup itself has already
+// succeeded; all that is lost is a consolidation the next backup will reach
+// again, and turning "someone else holds the lock" into a backup failure would
+// be strictly worse than reading a few more index objects.
+func (bm *BackupManager) compactPackIndex(ctx context.Context) {
+	ps := findPackStore(bm.store)
+	if ps == nil || ps.IndexObjectCount() <= packIndexCompactThreshold {
+		return
+	}
+
+	lock, lockedCtx, err := AcquireRepoLock(ctx, bm.store, "compact pack index")
+	if err != nil {
+		bm.log.Debugf("skipping pack index compaction: %v", err)
+		return
+	}
+	defer lock.Release()
+
+	removed, err := ps.CompactCatalog(lockedCtx)
+	if err != nil {
+		bm.log.Debugf("pack index compaction failed: %v", err)
+		return
+	}
+	bm.log.Debugf("consolidated %d pack index objects", removed)
+}
+
+func (bm *BackupManager) run(ctx context.Context) (*RunResult, error) {
 	if err := bm.cfg.validateMeta(); err != nil {
 		return nil, err
 	}

@@ -792,15 +792,30 @@ The two untouched commands are what makes the rest attributable: they were
 measured in the same runs and did not move.
 
 **`prune` is absent, and why is a finding of its own.** Its request count came
-out 2,210 / 2,148 / 1,725 / 2,842 across four runs, the last two on identical
-code — so its run-to-run spread exceeds any effect this work could have there,
-and the −22% an earlier revision of this section reported was two noisy points
-compared against each other. The cost is dominated by `Repack`, whose work
-depends on per-pack waste, and pack composition depends on which objects happen
-to land together during concurrent upload. **A single `prune` measurement means
-nothing**; it needs repeated runs and a stated variance, which is the protocol
-`bench.sh` already applies to timings and this workstream never applied to
-request counts.
+out 2,210 / 2,148 / 1,725 / 2,842 / 1,974 across five runs. The last three are
+*identical code*, spanning 1,725–2,842 — a 65% spread — so its run-to-run
+variance exceeds any effect this work could have there, and the −22% an earlier
+revision of this section reported was two noisy points compared against each
+other.
+
+The noise is specific to `prune`, not to the harness. In the same runs:
+
+| command | across runs | spread |
+|---|---|---|
+| `find` | 743, 743, 743 | 0% |
+| `ls` | 619, 627, 628 | 1.5% |
+| `check` | 782, 753, 752 | 4% |
+| `prune` | 1,725, 2,842, 1,974 | **65%** |
+
+The cost is dominated by `Repack`, whose work depends on per-pack waste — and
+pack composition depends on which objects happen to land together during
+concurrent upload, which is not deterministic. So `prune` is structurally noisy
+in a way the read-only traversals are not.
+
+**A single `prune` measurement means nothing.** It needs repeated runs and a
+stated variance, which is the protocol `bench.sh` already applies to timings and
+this workstream never applied to request counts — a gap that went unnoticed only
+because `restore`, `check` and `ls` happen to be stable enough to survive it.
 
 Three findings came out of building it, none of which the replay predicted.
 

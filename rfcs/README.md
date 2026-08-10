@@ -24,4 +24,4 @@
 - [RFC 0022: Public Go API Boundaries](0022-public-go-api-boundaries.md)
 - [RFC 0023: Bounding the Pack Catalog](0023-bounding-the-pack-catalog.md)
 - [RFC 0024: Metadata in the Tree](0024-metadata-in-the-tree.md)
-- [RFC 0025: Traversal Order and Demand-Counted Reads](0025-traversal-order-and-demand-counted-reads.md)
+- [RFC 0025: Traversal Order and Pack-Contiguous Reads](0025-traversal-order-and-pack-contiguous-reads.md)

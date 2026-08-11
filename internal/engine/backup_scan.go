@@ -56,8 +56,15 @@ func (bm *BackupManager) processEntry(ctx context.Context, meta *core.FileMeta, 
 		meta.Size = 0
 	}
 
-	// Record this entry's parent so lookupMetaByFileID can use AffinityKey.
-	bm.parentIndex[meta.FileID] = primaryParentID(meta)
+	// Record this entry's parent so lookupMetaByFileID can use AffinityKey
+	// rather than walking the tree. Only scanIncremental allocates the index,
+	// since its changes are the ones that routinely arrive without Paths; a full
+	// scan skips the write instead of running it once per file for a map whose
+	// reader it does not reach. A nil index costs a slower lookup at most — see
+	// the field comment on BackupManager.
+	if bm.parentIndex != nil {
+		bm.parentIndex[meta.FileID] = primaryParentID(meta)
+	}
 
 	// Resolve Paths when the source hasn't populated it (incremental/changes
 	// sources only emit changed entries and can't build a full path map).
@@ -111,6 +118,9 @@ func (bm *BackupManager) scan(ctx context.Context, oldRoot string) (pending []co
 func (bm *BackupManager) scanIncremental(ctx context.Context, oldRoot string, incSrc source.IncrementalSource, token string) (pending []core.FileMeta, totalBytes int64, newToken string, err error) {
 	phase := bm.reporter.StartPhase("Scanning (incremental)", 0, false)
 	bm.txn = bm.tree.Edit(oldRoot)
+	// A change may legitimately arrive with no Paths, so this is the one scan
+	// strategy whose entries reach lookupMetaByFileID and can use the index.
+	bm.parentIndex = make(map[string]string)
 	s := &scanState{}
 
 	newToken, walkErr := incSrc.WalkChanges(ctx, token, func(fc source.FileChange) error {
@@ -357,7 +367,8 @@ func (bm *BackupManager) buildPathFromTree(ctx context.Context, meta *core.FileM
 // lookupMetaByFileID resolves a FileID to its FileMeta via the HAMT tree.
 // It checks newMetas (just inserted this scan) first, then falls back to the store.
 // Uses parentIndex to resolve the affinity routing key; falls back to a full-tree walk
-// for entries not yet seen in this scan (e.g. incremental backups).
+// for entries not yet seen in this scan (e.g. incremental backups), and for every
+// entry on the full-scan path, where the index is nil because nothing populates it.
 func (bm *BackupManager) lookupMetaByFileID(ctx context.Context, fileID string) *core.FileMeta {
 	parentID := bm.parentIndex[fileID]
 	ref, err := bm.txn.Lookup(ctx, AffinityKey(parentID, fileID), fileID)

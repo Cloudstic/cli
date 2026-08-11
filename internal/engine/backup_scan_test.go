@@ -301,6 +301,117 @@ func TestScanIncremental_DeleteWithoutParentUsesExistingMetadataParent(t *testin
 	}
 }
 
+// nestedMockSource builds folder/sub/a.txt. MockSource.Walk emits no Paths, so
+// a scan over it exercises buildPathFromTree — and the two-level nesting is
+// load-bearing: resolving "sub" needs a parent other than the root, which is
+// the only case where the affinity key differs from the parentIndex-less guess.
+func nestedMockSource() *MockSource {
+	src := NewMockSource()
+	src.Files["FOLDER_1"] = MockFile{Meta: core.FileMeta{FileID: "FOLDER_1", Name: "folder", Type: core.FileTypeFolder}}
+	src.Files["SUB_1"] = MockFile{Meta: core.FileMeta{
+		FileID: "SUB_1", Name: "sub", Type: core.FileTypeFolder, Parents: []string{"FOLDER_1"},
+	}}
+	src.Files["FILE_1"] = MockFile{
+		Meta: core.FileMeta{
+			FileID: "FILE_1", Name: "a.txt", Type: core.FileTypeFile,
+			Parents: []string{"SUB_1"}, Size: 3,
+		},
+		Content: []byte("abc"),
+	}
+	return src
+}
+
+func pendingByID(pending []core.FileMeta, fileID string) (core.FileMeta, bool) {
+	for _, m := range pending {
+		if m.FileID == fileID {
+			return m, true
+		}
+	}
+	return core.FileMeta{}, false
+}
+
+// No source in this module leaves Paths empty in Walk, so a full scan has no
+// reader for parentIndex and leaves it nil instead of writing two strings per
+// scanned file into it.
+//
+// MockSource does emit entries without Paths, which is what lets this test cover
+// the other half: with the index nil, path resolution falls through to
+// LookupByKey and must still reach the right answer.
+func TestScan_LeavesParentIndexUnpopulated(t *testing.T) {
+	ctx := context.Background()
+	mgr := NewBackupManager(Deps{Store: NewMockStore(), Reporter: ui.NewNoOpReporter()}, nestedMockSource())
+	mgr.stats = &backupStats{} // Run installs these before scanning; scanSource is driven directly here.
+
+	pending, _, _, usedFullScan, err := mgr.scanSource(ctx, "", "")
+	if err != nil {
+		t.Fatalf("scanSource: %v", err)
+	}
+	if !usedFullScan {
+		t.Fatal("expected the full-scan strategy for a non-incremental source")
+	}
+	// Asserted as nil, not as empty: an index allocated but left unwritten would
+	// pass a length check while still contradicting the documented contract.
+	if mgr.parentIndex != nil {
+		t.Errorf("full scan left parentIndex allocated with %d entries; nothing reads it on this path", len(mgr.parentIndex))
+	}
+
+	// MockSource emits no Paths, so this scan does resolve paths through the
+	// tree — proving the LookupByKey fallback still answers correctly without
+	// the index, rather than that the branch was skipped.
+	file, ok := pendingByID(pending, "FILE_1")
+	if !ok {
+		t.Fatalf("FILE_1 missing from pending %v", pending)
+	}
+	if got := file.Paths; len(got) != 1 || got[0] != "folder/sub/a.txt" {
+		t.Errorf("resolved paths = %v, want [folder/sub/a.txt]", got)
+	}
+}
+
+// An incremental scan is where a change can legitimately arrive with no Paths
+// (see pkg/source/gdrive/changes.go), so it is the one strategy whose entries
+// reach lookupMetaByFileID — and the one that populates the index.
+func TestScanIncremental_PopulatesParentIndexAndResolvesPathsWithoutPaths(t *testing.T) {
+	ctx := context.Background()
+	base := nestedMockSource()
+	inc := &mockIncrementalSource{MockSource: base, startToken: "tok-1", newToken: "tok-2"}
+	dest := NewMockStore()
+
+	first, err := NewBackupManager(Deps{Store: dest, Reporter: ui.NewNoOpReporter()}, inc).Run(ctx)
+	if err != nil {
+		t.Fatalf("first backup failed: %v", err)
+	}
+
+	// A new file under folder/sub, delivered as a change with no Paths at all.
+	inc.changes = []source.FileChange{{
+		Type: source.ChangeUpsert,
+		Meta: core.FileMeta{
+			FileID: "FILE_2", Name: "b.txt", Type: core.FileTypeFile,
+			Parents: []string{"SUB_1"}, Size: 5,
+		},
+	}}
+
+	mgr := NewBackupManager(Deps{Store: dest, Reporter: ui.NewNoOpReporter()}, inc)
+	mgr.stats = &backupStats{}
+	pending, _, _, usedFullScan, err := mgr.scanSource(ctx, first.Root, "tok-1")
+	if err != nil {
+		t.Fatalf("scanSource: %v", err)
+	}
+	if usedFullScan {
+		t.Fatal("expected the incremental strategy given a change token")
+	}
+	if got := mgr.parentIndex["FILE_2"]; got != "SUB_1" {
+		t.Errorf("parentIndex[FILE_2] = %q, want %q", got, "SUB_1")
+	}
+
+	file, ok := pendingByID(pending, "FILE_2")
+	if !ok {
+		t.Fatalf("FILE_2 missing from pending %v", pending)
+	}
+	if got := file.Paths; len(got) != 1 || got[0] != "folder/sub/b.txt" {
+		t.Errorf("resolved paths = %v, want [folder/sub/b.txt]", got)
+	}
+}
+
 func TestMetadataEqual_ExtendedFields(t *testing.T) {
 	base := core.FileMeta{
 		Name:  "test.txt",

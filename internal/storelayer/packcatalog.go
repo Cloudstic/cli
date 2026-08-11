@@ -1,8 +1,7 @@
 package storelayer
 
 import (
-	"encoding/hex"
-	"strings"
+	"github.com/cloudstic/cli/internal/objkey"
 )
 
 // packCatalog maps an object key to its location in a packfile.
@@ -11,12 +10,11 @@ import (
 // entry per packed object — so it is stored compactly rather than as the obvious
 // map[string]PackEntry.
 //
-// Almost every key is "<prefix>/<64 hex characters>": a namespace from a fixed
-// set, and a SHA-256. Held as a string that is 73 bytes of text plus a header,
-// for 32 bytes of hash. Decoding the hash and reducing the prefix to a byte puts
-// the key inline in the map, with no separate allocation and no pointer for the
-// garbage collector to chase. Pack refs are interned to an index into packRefs,
-// and offsets fit in uint32 because a packfile is bounded by maxPackSize.
+// Keys are held in the compact form internal/objkey defines — a namespace byte
+// and a decoded SHA-256, inline in the map with nothing for the garbage
+// collector to chase — rather than as the 73-byte hex strings they arrive as.
+// Pack refs are interned to an index into packRefs, and offsets fit in uint32
+// because a packfile is bounded by maxPackSize.
 //
 // Measured on 200,000 entries: 158 B/entry as map[string]PackEntry with pack refs
 // already interned, against 73 B/entry here.
@@ -26,7 +24,7 @@ import (
 // are a handful at most, so it costs nothing to keep them exact rather than
 // refuse them.
 type packCatalog struct {
-	compact  map[compactKey]compactEntry
+	compact  map[objkey.Key]compactEntry
 	fallback map[string]PackEntry
 
 	packRefs []string
@@ -37,50 +35,18 @@ type packCatalog struct {
 	packEnd []int64
 }
 
-// compactKey is a namespace byte followed by a decoded SHA-256.
-type compactKey [1 + 32]byte
-
 type compactEntry struct {
 	pack   uint32
 	offset uint32
 	length uint32
 }
 
-// packableNamespaces are the prefixes a compact key can encode. The order fixes
-// the namespace byte, so entries must only ever be appended.
-var packableNamespaces = []string{"filemeta/", "node/", "snapshot/", "chunk/", "content/"}
-
 func newPackCatalog() *packCatalog {
 	return &packCatalog{
-		compact:  make(map[compactKey]compactEntry),
+		compact:  make(map[objkey.Key]compactEntry),
 		fallback: make(map[string]PackEntry),
 		packIdx:  make(map[string]uint32),
 	}
-}
-
-// encodeKey renders key compactly, reporting false for a key that does not have
-// the "<known prefix>/<64 hex>" shape.
-func encodeKey(key string) (compactKey, bool) {
-	var out compactKey
-	for i, prefix := range packableNamespaces {
-		if !strings.HasPrefix(key, prefix) {
-			continue
-		}
-		hexPart := key[len(prefix):]
-		if len(hexPart) != 64 {
-			return out, false
-		}
-		if _, err := hex.Decode(out[1:], []byte(hexPart)); err != nil {
-			return out, false
-		}
-		out[0] = byte(i)
-		return out, true
-	}
-	return out, false
-}
-
-func decodeKey(k compactKey) string {
-	return packableNamespaces[k[0]] + hex.EncodeToString(k[1:])
 }
 
 // internPack returns the index for ref, adding it if new.
@@ -137,7 +103,7 @@ func (c *packCatalog) Len() int { return len(c.compact) + len(c.fallback) }
 // Checking only the compact map would make such an entry vanish — and an entry
 // that silently disappears from this catalog is an object prune cannot see.
 func (c *packCatalog) Get(key string) (PackEntry, bool) {
-	if k, ok := encodeKey(key); ok {
+	if k, ok := objkey.Encode(key); ok {
 		if e, found := c.compact[k]; found {
 			return PackEntry{
 				PackRef: c.packRefs[e.pack],
@@ -151,7 +117,7 @@ func (c *packCatalog) Get(key string) (PackEntry, bool) {
 }
 
 func (c *packCatalog) Has(key string) bool {
-	if k, ok := encodeKey(key); ok {
+	if k, ok := objkey.Encode(key); ok {
 		if _, found := c.compact[k]; found {
 			return true
 		}
@@ -167,7 +133,7 @@ func (c *packCatalog) Has(key string) bool {
 // store, so such an entry goes to the fallback map rather than being truncated
 // into a location that points somewhere else entirely.
 func (c *packCatalog) Set(key string, entry PackEntry) {
-	k, ok := encodeKey(key)
+	k, ok := objkey.Encode(key)
 	if !ok || entry.Offset > int64(^uint32(0)) || entry.Length > int64(^uint32(0)) ||
 		entry.Offset < 0 || entry.Length < 0 {
 		// Interned here too. A fallback entry is rare, but "entries sharing a
@@ -192,7 +158,7 @@ func (c *packCatalog) Set(key string, entry PackEntry) {
 // Delete removes key from wherever it is held. Both maps are touched for the
 // same reason Get consults both: a well-shaped key may still be in the fallback.
 func (c *packCatalog) Delete(key string) {
-	if k, ok := encodeKey(key); ok {
+	if k, ok := objkey.Encode(key); ok {
 		delete(c.compact, k)
 	}
 	delete(c.fallback, key)
@@ -202,7 +168,7 @@ func (c *packCatalog) Delete(key string) {
 // the map this replaced.
 func (c *packCatalog) Each(fn func(key string, entry PackEntry)) {
 	for k, e := range c.compact {
-		fn(decodeKey(k), PackEntry{
+		fn(k.String(), PackEntry{
 			PackRef: c.packRefs[e.pack],
 			Offset:  int64(e.offset),
 			Length:  int64(e.length),

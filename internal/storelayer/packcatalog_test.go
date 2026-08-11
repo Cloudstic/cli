@@ -2,12 +2,15 @@ package storelayer
 
 import (
 	"fmt"
+	"strings"
 	"testing"
+
+	"github.com/cloudstic/cli/internal/objkey"
 )
 
 func TestPackCatalog_RoundTripsCompactKeys(t *testing.T) {
 	c := newPackCatalog()
-	for _, prefix := range packableNamespaces {
+	for _, prefix := range objkey.Namespaces {
 		key := prefix + fmt.Sprintf("%064x", 42)
 		want := PackEntry{PackRef: "packs/" + fmt.Sprintf("%064x", 7), Offset: 1234, Length: 5678}
 		c.Set(key, want)
@@ -102,5 +105,47 @@ func TestPackCatalog_SharesPackRefs(t *testing.T) {
 	}
 	if len(c.packRefs) != 1 {
 		t.Fatalf("stored %d distinct pack refs for one pack", len(c.packRefs))
+	}
+}
+
+// Every namespace this store bundles must be one objkey can encode. Nothing
+// breaks if that stops holding — the catalog keeps such keys exact in its
+// fallback map — but the compact representation is why the catalog fits in
+// memory at repository scale, and a packable namespace missing from the
+// encoding table would move every one of its entries to the string-keyed side
+// with nothing to say so.
+func TestPackablePrefixesAreAllEncodable(t *testing.T) {
+	encodable := make(map[string]bool, len(objkey.Namespaces))
+	for _, ns := range objkey.Namespaces {
+		encodable[ns] = true
+	}
+	for _, prefix := range packablePrefixes {
+		if !encodable[prefix] {
+			t.Errorf("packable prefix %q is not in objkey.Namespaces, so its entries "+
+				"fall back to string keys", prefix)
+		}
+	}
+}
+
+// A key that is not canonical lowercase hex must come back exactly as it went
+// in. The catalog decoded with encoding/hex before, which accepts both cases, so
+// an uppercase key round-tripped through Each as its lowercase spelling — a
+// different key, handed to prune's sweep as the name of an object that is not
+// there.
+func TestPackCatalog_PreservesNonCanonicalHexExactly(t *testing.T) {
+	c := newPackCatalog()
+	key := "chunk/" + strings.ToUpper(strings.Repeat("ab", 32))
+	want := PackEntry{PackRef: "packs/z", Offset: 16, Length: 8}
+	c.Set(key, want)
+
+	var got []string
+	c.Each(func(k string, _ PackEntry) { got = append(got, k) })
+	if len(got) != 1 || got[0] != key {
+		t.Fatalf("Each yielded %q, want [%q]", got, key)
+	}
+
+	lower := strings.ToLower(key)
+	if _, ok := c.Get(lower); ok {
+		t.Errorf("%q was reported as present after only %q was set", lower, key)
 	}
 }

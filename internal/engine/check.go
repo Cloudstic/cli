@@ -10,6 +10,7 @@ import (
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
+	"github.com/cloudstic/cli/internal/objkey"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/crypto"
 	"github.com/cloudstic/cli/pkg/store"
@@ -64,7 +65,11 @@ type CheckManager struct {
 	store    store.ObjectStore
 	tree     *hamt.Tree
 	reporter ui.Reporter
-	verified map[string]bool
+	// verified holds one entry per object the walk has already looked at,
+	// so a shared filemeta, content object or chunk is read once rather than
+	// once per referencing snapshot. It is sized by the repository, which is
+	// why it is an objkey.Set rather than the map[string]bool it reads as.
+	verified *objkey.Set
 	hmacKey  []byte
 }
 
@@ -85,7 +90,7 @@ func (cm *CheckManager) Run(ctx context.Context, opts ...CheckOption) (*CheckRes
 		opt(&cfg)
 	}
 
-	cm.verified = make(map[string]bool)
+	cm.verified = objkey.NewSet()
 	result := &CheckResult{}
 
 	// Resolve which snapshots to check.
@@ -138,7 +143,7 @@ func (cm *CheckManager) resolveSnapshots(ctx context.Context, snapshotRef string
 
 // checkSnapshot verifies a single snapshot and its entire reference chain.
 func (cm *CheckManager) checkSnapshot(ctx context.Context, ref string, result *CheckResult, cfg *checkConfig, phase ui.Phase) error {
-	if cm.verified[ref] {
+	if cm.verified.Has(ref) {
 		return nil
 	}
 
@@ -150,7 +155,7 @@ func (cm *CheckManager) checkSnapshot(ctx context.Context, ref string, result *C
 		})
 		return nil // continue checking other snapshots
 	}
-	cm.verified[ref] = true
+	cm.verified.Add(ref)
 	if err := core.VerifyRef(ref, data); err != nil {
 		result.Errors = append(result.Errors, CheckError{
 			Key: ref, Type: "corrupt", Message: err.Error(),
@@ -198,7 +203,7 @@ func (cm *CheckManager) checkSnapshot(ctx context.Context, ref string, result *C
 
 // verifyObject checks that an object can be read from the store.
 func (cm *CheckManager) verifyObject(ctx context.Context, key string, result *CheckResult, cfg *checkConfig, phase ui.Phase) error {
-	if cm.verified[key] {
+	if cm.verified.Has(key) {
 		return nil
 	}
 
@@ -207,11 +212,11 @@ func (cm *CheckManager) verifyObject(ctx context.Context, key string, result *Ch
 		result.Errors = append(result.Errors, CheckError{
 			Key: key, Type: "missing", Message: fmt.Sprintf("object not found or unreadable: %v", err),
 		})
-		cm.verified[key] = true
+		cm.verified.Add(key)
 		return nil
 	}
 
-	cm.verified[key] = true
+	cm.verified.Add(key)
 	// A node key is the SHA-256 of its bytes. The HAMT walk that produced this
 	// ref checks that too, but reporting it here names the offending object as
 	// a finding rather than aborting the walk with an opaque error.
@@ -230,7 +235,7 @@ func (cm *CheckManager) verifyObject(ctx context.Context, key string, result *Ch
 
 // checkFileMeta verifies a filemeta object and its content/chunk chain.
 func (cm *CheckManager) checkFileMeta(ctx context.Context, ref string, result *CheckResult, cfg *checkConfig, phase ui.Phase) error {
-	if cm.verified[ref] {
+	if cm.verified.Has(ref) {
 		return nil
 	}
 
@@ -239,10 +244,10 @@ func (cm *CheckManager) checkFileMeta(ctx context.Context, ref string, result *C
 		result.Errors = append(result.Errors, CheckError{
 			Key: ref, Type: "missing", Message: fmt.Sprintf("filemeta not found or unreadable: %v", err),
 		})
-		cm.verified[ref] = true
+		cm.verified.Add(ref)
 		return nil
 	}
-	cm.verified[ref] = true
+	cm.verified.Add(ref)
 	if err := core.VerifyRef(ref, data); err != nil {
 		result.Errors = append(result.Errors, CheckError{
 			Key: ref, Type: "corrupt", Message: err.Error(),
@@ -299,7 +304,7 @@ func (cm *CheckManager) checkFileMeta(ctx context.Context, ref string, result *C
 // re-running the concatenation catches that, which is why it belongs to
 // -read-data rather than the cheap pass.
 func (cm *CheckManager) checkContent(ctx context.Context, ref string, meta *core.FileMeta, result *CheckResult, cfg *checkConfig, phase ui.Phase) error {
-	if cm.verified[ref] {
+	if cm.verified.Has(ref) {
 		return nil
 	}
 
@@ -308,10 +313,10 @@ func (cm *CheckManager) checkContent(ctx context.Context, ref string, meta *core
 		result.Errors = append(result.Errors, CheckError{
 			Key: ref, Type: "missing", Message: fmt.Sprintf("content object not found or unreadable: %v", err),
 		})
-		cm.verified[ref] = true
+		cm.verified.Add(ref)
 		return nil
 	}
-	cm.verified[ref] = true
+	cm.verified.Add(ref)
 	result.ObjectsVerified++
 	phase.Logf(ui.DetailVerbose, "OK: %s", ref)
 
@@ -396,7 +401,7 @@ func (cm *CheckManager) checkManifest(
 // checkChunk verifies a chunk object. With --read-data, it also verifies the
 // hash of the chunk data matches the key.
 func (cm *CheckManager) checkChunk(ctx context.Context, ref string, result *CheckResult, cfg *checkConfig, phase ui.Phase) error {
-	if cm.verified[ref] {
+	if cm.verified.Has(ref) {
 		return nil
 	}
 
@@ -405,10 +410,10 @@ func (cm *CheckManager) checkChunk(ctx context.Context, ref string, result *Chec
 		result.Errors = append(result.Errors, CheckError{
 			Key: ref, Type: "missing", Message: fmt.Sprintf("chunk not found or unreadable: %v", err),
 		})
-		cm.verified[ref] = true
+		cm.verified.Add(ref)
 		return nil
 	}
-	cm.verified[ref] = true
+	cm.verified.Add(ref)
 	result.ObjectsVerified++
 
 	if cfg.readData {

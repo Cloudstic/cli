@@ -134,6 +134,47 @@ func TestPackStore_GetFailsWhenCatalogUnreadable(t *testing.T) {
 	}
 }
 
+// And for existence checks, where the permissive answer is the dangerous one.
+// Get and List fail loudly when the catalog cannot be read; Exists could
+// instead fall through to the backend and answer (false, nil), which is
+// indistinguishable from "this object was never written" to a caller like
+// copy's putIfMissing. A transient backend error must not become an object
+// silently rewritten -- or, on a caller that treats absence as deletion, an
+// object silently lost.
+func TestPackStore_ExistsFailsWhenCatalogUnreadable(t *testing.T) {
+	ctx := context.Background()
+	faulty, inner := newCatalogTestStore(t)
+	seedPackedRepo(t, inner, "filemeta/a")
+
+	faulty.failsLeft = 1
+	ps := newPackStoreT(t, faulty)
+
+	ok, err := ps.Exists(ctx, "filemeta/a")
+	if err == nil {
+		t.Fatalf("Exists succeeded (= %v); want an error when the catalog is unreadable", ok)
+	}
+	if ok {
+		t.Error("Exists reported true alongside an error; the answer must not be trusted")
+	}
+	if faulty.injected == 0 {
+		t.Fatal("fault was never injected")
+	}
+	if !errors.Is(err, errCatalogUnavailable) {
+		t.Errorf("error should wrap the backend failure, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "filemeta/a") {
+		t.Errorf("error should name the key that was looked up, got: %v", err)
+	}
+
+	// The failure is not sticky: once the backend recovers, the same store
+	// answers correctly rather than caching a half-loaded catalog.
+	if ok, err := ps.Exists(ctx, "filemeta/a"); err != nil {
+		t.Errorf("Exists after recovery: %v", err)
+	} else if !ok {
+		t.Error("Exists(filemeta/a) = false after the backend recovered")
+	}
+}
+
 // Auto-flush adds authoritative local entries before the stored catalog is
 // loaded. A later load failure must discard only streamed remote entries: the
 // local objects remain readable without depending on an unrelated bad shard.

@@ -556,7 +556,7 @@ func (s *PackStore) Exists(ctx context.Context, key string) (bool, error) {
 
 	if hasPackablePrefix(key) {
 		if err := s.ensureCatalogLoaded(ctx); err != nil {
-			return false, err
+			return false, fmt.Errorf("look up %s: %w", key, err)
 		}
 		s.mu.RLock()
 		packed := s.catalog.Has(key)

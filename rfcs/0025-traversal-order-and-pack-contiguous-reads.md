@@ -295,6 +295,14 @@ answer:
 - **No `packPromoteAfter`.** *K* and *B* are known exactly at group time, from
   the catalog entries the caller already resolved. Admission becomes arithmetic:
   fetch whole iff `(K−1)·requestCost > (S−B)·byteCost`.
+
+  As implemented this holds **only for reads the caller declared**. *K* and *B*
+  are exact for the groups `PlanReads` formed, and a read of a key in one of
+  those packs that was not declared — or one arriving after the group's
+  declared keys are spent — gets the estimate instead, which is what
+  `TestPackStore_UngroupedReadStillProbes` pins. That is not a gap to be closed
+  later: it is why the estimator survives, and the counts below show it carries
+  the majority of misses.
 - **No `packPenalized`, no `packMissWindow`, no `packAdmission`.** These exist
   to detect and bound repeated-eviction failure. Contiguity makes that failure
   unreachable.
@@ -1039,6 +1047,16 @@ the current code produces.
   RFC 0024 removes the class distinction entirely.
 - **`prune`'s sweep still materialises every key.** `ObjectStore.List` returns a
   slice; a streaming enumeration is a public-API change and its own RFC.
+- **A `PackStore` holds one plan, not one per caller.** `PlanReads` records into
+  a single field, so two operations sharing a `Client` — and therefore a store —
+  overwrite each other's declarations. The consequence is bounded: a read
+  matched against the wrong plan gets a wrong *admission decision*, whole where
+  ranged was cheaper or the reverse, and returns identical bytes either way. It
+  degrades toward the estimate, which the counts below show is carrying most of
+  the load regardless. Scoping a plan to the execution that declared it needs a
+  plan token threaded through `ReadPlanner`, which is a public-interface change
+  and is not worth making before there is a measurement showing the collision
+  costs anything.
 - **Streaming is not primarily a wall-clock win on a local store.** Measured on a
   20,000-file restore to a local backend, metadata collection is 189 ms of
   1.53 s — about 12%. The win is that memory stops scaling with file count, that
@@ -1100,9 +1118,14 @@ groups; the store stops guessing. Together they should be a net deletion in
 `internal/storelayer`, and that — not a request count — is the acceptance
 criterion. A version of this that adds machinery has misunderstood the finding.
 
+  **The acceptance criterion was not met, and the finding it rests on was
+  wrong.** The store did not stop guessing; see "The estimator is load-bearing"
+  below. This is retained as written because it is the prediction that section
+  refutes.
+
 **Stage 3 is not a prerequisite for 1–2, which is how earlier drafts had it.**
 Restore already separates the two orders: `collectMetadata` reads through
-`GroupByLocality` — in pack order — while `restoreOrder` computes the
+`store.PlanReads` — in pack order — while `restoreOrder` computes the
 parent-before-child *write* sequence from the materialised `byID` map. Read
 order is therefore free to be anything, and grouping it changes no ordering
 guarantee. Derived order is what supplies the write sequence once the plan is

@@ -66,6 +66,14 @@ type ReadPlan struct {
 	// as it takes, so this is a statement about the store's buffer capacity,
 	// not about requests in flight — and it is generally much smaller than
 	// ConcurrencyHint, which answers the latter.
+	//
+	// **Always at least 1**, guaranteed by PlanReads regardless of what a store
+	// or a ConcurrencyHinter returned. Callers feed this straight to things like
+	// errgroup.SetLimit, where zero does not mean "unlimited" or "default" — it
+	// means no goroutine may ever run, so the first submission blocks forever.
+	// A backend returning a zero hint is a plausible mistake for an interface
+	// this package exports to other modules, and it should not be able to hang
+	// a restore.
 	Concurrency int
 }
 
@@ -108,7 +116,7 @@ func PlanReads(ctx context.Context, s ObjectStore, keys []string) ReadPlan {
 	outer := s
 	for s != nil {
 		if p, ok := s.(ReadPlanner); ok {
-			return p.PlanReads(ctx, keys)
+			return withUsableConcurrency(p.PlanReads(ctx, keys))
 		}
 		if u, ok := s.(Unwrapper); ok {
 			s = u.Unwrap()
@@ -122,7 +130,21 @@ func PlanReads(ctx context.Context, s ObjectStore, keys []string) ReadPlan {
 	}
 	// Singleton groups hold nothing between reads, so the limit is the ordinary
 	// requests-in-flight question this store already answers.
-	return ReadPlan{Groups: groups, Concurrency: GetConcurrencyHint(outer, 10)}
+	return withUsableConcurrency(ReadPlan{Groups: groups, Concurrency: GetConcurrencyHint(outer, 10)})
+}
+
+// withUsableConcurrency enforces ReadPlan.Concurrency >= 1.
+//
+// It is applied to every plan this function returns, including one a store
+// produced itself, because the guarantee is only worth anything if callers can
+// rely on it without knowing which store answered. Both sources can produce a
+// zero: a ReadPlanner in another module, and ConcurrencyHint, whose value
+// GetConcurrencyHint returns verbatim.
+func withUsableConcurrency(p ReadPlan) ReadPlan {
+	if p.Concurrency < 1 {
+		p.Concurrency = 1
+	}
+	return p
 }
 
 // GetConcurrencyHint walks the store wrapper chain and returns the first

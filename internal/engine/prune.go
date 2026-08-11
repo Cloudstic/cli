@@ -74,7 +74,10 @@ func (pm *PruneManager) Run(ctx context.Context, opts ...PruneOption) (*PruneRes
 	}
 	markPhase.Done()
 
-	result := pm.sweep(ctx, reachable, &cfg)
+	result, err := pm.sweep(ctx, reachable, &cfg)
+	if err != nil {
+		return nil, err
+	}
 
 	if !cfg.dryRun {
 		// Attempt to repack fragmented packfiles, if this repository packs at all.
@@ -108,7 +111,12 @@ func (pm *PruneManager) Run(ctx context.Context, opts ...PruneOption) (*PruneRes
 			compactPhase.Done()
 		}
 
-		_ = pm.store.Flush(ctx)
+		// Not discarded. The sweep's deletions and the compaction above exist
+		// only in memory until this lands, so a failure here means a prune that
+		// reported reclaimed space and durably reclaimed none of it.
+		if err := pm.store.Flush(ctx); err != nil {
+			return nil, fmt.Errorf("flush after prune: %w", err)
+		}
 	}
 
 	return result, nil
@@ -289,13 +297,29 @@ func (pm *PruneManager) markContent(ctx context.Context, ref string, reachable m
 	return nil
 }
 
-func (pm *PruneManager) sweep(ctx context.Context, reachable map[string]bool, cfg *pruneConfig) *PruneResult {
+// sweep deletes every object the mark phase did not reach.
+//
+// A listing that fails is fatal, and that is the rule in docs/compatibility.md
+// rather than caution: prune must not proceed on data it could not fully read.
+// Skipping the prefix instead — which is what this did — leaves the operation
+// silently partial. It errs safe in the sense that an unlisted prefix is one
+// nothing is deleted from, but prune then reports a success and an object count
+// covering a repository it only partly looked at, and the next run has no idea
+// a prefix was missed.
+//
+// Failing to delete one object is deliberately not fatal, and the distinction
+// is the point: not being able to *enumerate* means not knowing what is there,
+// while not being able to delete one object means one object survives — safe,
+// visible in the count, and reclaimed by the next run.
+func (pm *PruneManager) sweep(ctx context.Context, reachable map[string]bool, cfg *pruneConfig) (*PruneResult, error) {
+	listing := make(map[string][]string, len(objectPrefixes))
 	var totalKeys int
 	for _, prefix := range objectPrefixes {
 		keys, err := pm.store.List(ctx, prefix)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("list %s: %w", prefix, err)
 		}
+		listing[prefix] = keys
 		totalKeys += len(keys)
 	}
 
@@ -306,12 +330,11 @@ func (pm *PruneManager) sweep(ctx context.Context, reachable map[string]bool, cf
 	phase := pm.reporter.StartPhase(label, int64(totalKeys), true)
 	result := &PruneResult{DryRun: cfg.dryRun}
 
+	// The listing taken above is the one swept, rather than being taken a second
+	// time. Two passes could disagree, and the progress total would then describe
+	// a different set of objects than the one being deleted.
 	for _, prefix := range objectPrefixes {
-		keys, err := pm.store.List(ctx, prefix)
-		if err != nil {
-			continue
-		}
-		for _, key := range keys {
+		for _, key := range listing[prefix] {
 			result.ObjectsScanned++
 			if reachable[key] {
 				phase.Increment(0)
@@ -337,7 +360,7 @@ func (pm *PruneManager) sweep(ctx context.Context, reachable map[string]bool, cf
 		pm.store.Reset()
 	}
 	phase.Done()
-	return result
+	return result, nil
 }
 
 func (pm *PruneManager) loadSnapshot(ctx context.Context, ref string) (*core.Snapshot, error) {

@@ -10,7 +10,7 @@ import (
 
 func TestPackCatalog_RoundTripsCompactKeys(t *testing.T) {
 	c := newPackCatalog()
-	for _, prefix := range objkey.Namespaces {
+	for _, prefix := range objkey.Namespaces() {
 		key := prefix + fmt.Sprintf("%064x", 42)
 		want := PackEntry{PackRef: "packs/" + fmt.Sprintf("%064x", 7), Offset: 1234, Length: 5678}
 		c.Set(key, want)
@@ -115,8 +115,9 @@ func TestPackCatalog_SharesPackRefs(t *testing.T) {
 // encoding table would move every one of its entries to the string-keyed side
 // with nothing to say so.
 func TestPackablePrefixesAreAllEncodable(t *testing.T) {
-	encodable := make(map[string]bool, len(objkey.Namespaces))
-	for _, ns := range objkey.Namespaces {
+	namespaces := objkey.Namespaces()
+	encodable := make(map[string]bool, len(namespaces))
+	for _, ns := range namespaces {
 		encodable[ns] = true
 	}
 	for _, prefix := range packablePrefixes {

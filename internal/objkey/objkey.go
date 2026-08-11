@@ -19,6 +19,7 @@ package objkey
 
 import (
 	"encoding/hex"
+	"slices"
 	"strings"
 )
 
@@ -29,15 +30,25 @@ const DigestHexLen = 64
 // Key is a namespace byte followed by a decoded SHA-256.
 type Key [1 + 32]byte
 
-// Namespaces are the prefixes a Key can encode: the content-addressed object
+// namespaces are the prefixes a Key can encode: the content-addressed object
 // namespaces of the repository object model.
 //
-// The index into this slice is the namespace byte. That byte never leaves the
+// The index into this table is the namespace byte. That byte never leaves the
 // process, so the table is not repository format and reordering it could not
 // corrupt anything stored. It would still be a bug — a Key encoded before the
-// change decodes to a different namespace after it — so treat the table as
-// append-only.
-var Namespaces = []string{"filemeta/", "node/", "snapshot/", "chunk/", "content/"}
+// change decodes to a different namespace after it — so entries may only ever be
+// appended.
+//
+// That is enforced rather than asked for: the table is unexported and Namespaces
+// hands out a copy, so the invariant cannot be broken from outside the package
+// at all, let alone at run time between one Encode and the next.
+var namespaces = [...]string{"filemeta/", "node/", "snapshot/", "chunk/", "content/"}
+
+// Namespaces returns the prefixes a Key can encode, in namespace-byte order.
+//
+// The returned slice is a fresh copy, so a caller may do as it likes with it
+// without moving the encoding under keys that are already stored.
+func Namespaces() []string { return slices.Clone(namespaces[:]) }
 
 // Encode renders key compactly, reporting false for a key that does not have
 // the "<namespace><64 lowercase hex chars>" shape.
@@ -47,7 +58,7 @@ var Namespaces = []string{"filemeta/", "node/", "snapshot/", "chunk/", "content/
 // what lets a caller treat a Key as standing for its key rather than merely
 // hashing it.
 func Encode(key string) (Key, bool) {
-	for i, prefix := range Namespaces {
+	for i, prefix := range namespaces {
 		hexPart, found := strings.CutPrefix(key, prefix)
 		if !found {
 			continue
@@ -67,7 +78,7 @@ func Encode(key string) (Key, bool) {
 // String returns the object key k encodes. Encode(k.String()) == k, for every
 // Key that Encode itself produced.
 func (k Key) String() string {
-	return Namespaces[k[0]] + hex.EncodeToString(k[1:])
+	return namespaces[k[0]] + hex.EncodeToString(k[1:])
 }
 
 // DecodeDigest decodes s as a raw SHA-256 digest, reporting false for anything

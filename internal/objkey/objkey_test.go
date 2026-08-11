@@ -7,7 +7,7 @@ import (
 )
 
 func TestEncode_RoundTripsEveryNamespace(t *testing.T) {
-	for _, prefix := range Namespaces {
+	for _, prefix := range Namespaces() {
 		key := prefix + fmt.Sprintf("%064x", 42)
 		k, ok := Encode(key)
 		if !ok {

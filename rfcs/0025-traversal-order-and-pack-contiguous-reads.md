@@ -1047,6 +1047,21 @@ the current code produces.
   RFC 0024 removes the class distinction entirely.
 - **`prune`'s sweep still materialises every key.** `ObjectStore.List` returns a
   slice; a streaming enumeration is a public-API change and its own RFC.
+- **An undeclared read depletes a plan it was never part of.** `packGroupPlan`
+  holds a *count* per pack, and `consume` runs on every serve from a packed
+  location — so a read nobody declared decrements a declared pack's budget. Every
+  traversal mixes the two: a batch of declared filemeta reads interleaved with
+  undeclared content reads, node reads and path resolution. Declared reads later
+  in the batch then find the budget spent and fall back to the estimate.
+
+  This matters for the count in "The estimator is load-bearing": an unknown share
+  of the unplanned misses recorded there are declared reads whose slot was taken,
+  not reads nobody planned — so that table understates how far declaration
+  reaches, and it is the wrong basis for concluding the estimator cannot be
+  removed. The fix is contained (hold the declared key set rather than a bare
+  count; one batch of string headers, not catalog-sized), and **it has to land
+  before the count is re-run**, which is itself the precondition that section
+  sets for deleting anything.
 - **A `PackStore` holds one plan, not one per caller.** `PlanReads` records into
   a single field, so two operations sharing a `Client` — and therefore a store —
   overwrite each other's declarations. The consequence is bounded: a read

@@ -56,10 +56,12 @@ func (bm *BackupManager) processEntry(ctx context.Context, meta *core.FileMeta, 
 		meta.Size = 0
 	}
 
-	// Record this entry's parent so lookupMetaByFileID can use AffinityKey.
-	// Only scanIncremental allocates the index, because only its entries can
-	// arrive without Paths and so reach that lookup; on a full scan the map
-	// stays nil and this write is skipped rather than run once per file.
+	// Record this entry's parent so lookupMetaByFileID can use AffinityKey
+	// rather than walking the tree. Only scanIncremental allocates the index,
+	// since its changes are the ones that routinely arrive without Paths; a full
+	// scan skips the write instead of running it once per file for a map whose
+	// reader it does not reach. A nil index costs a slower lookup at most — see
+	// the field comment on BackupManager.
 	if bm.parentIndex != nil {
 		bm.parentIndex[meta.FileID] = primaryParentID(meta)
 	}

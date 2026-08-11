@@ -330,10 +330,13 @@ func pendingByID(pending []core.FileMeta, fileID string) (core.FileMeta, bool) {
 	return core.FileMeta{}, false
 }
 
-// A full scan never reads parentIndex: every source populates Paths in Walk, so
-// processEntry's path-resolution branch is not taken and lookupMetaByFileID is
-// never reached. Writing the index anyway costs two strings per scanned file for
-// a map with no reader, so scan leaves it nil.
+// No source in this module leaves Paths empty in Walk, so a full scan has no
+// reader for parentIndex and leaves it nil instead of writing two strings per
+// scanned file into it.
+//
+// MockSource does emit entries without Paths, which is what lets this test cover
+// the other half: with the index nil, path resolution falls through to
+// LookupByKey and must still reach the right answer.
 func TestScan_LeavesParentIndexUnpopulated(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewBackupManager(Deps{Store: NewMockStore(), Reporter: ui.NewNoOpReporter()}, nestedMockSource())
@@ -346,8 +349,10 @@ func TestScan_LeavesParentIndexUnpopulated(t *testing.T) {
 	if !usedFullScan {
 		t.Fatal("expected the full-scan strategy for a non-incremental source")
 	}
-	if len(mgr.parentIndex) != 0 {
-		t.Errorf("full scan populated parentIndex with %d entries; nothing reads it on this path", len(mgr.parentIndex))
+	// Asserted as nil, not as empty: an index allocated but left unwritten would
+	// pass a length check while still contradicting the documented contract.
+	if mgr.parentIndex != nil {
+		t.Errorf("full scan left parentIndex allocated with %d entries; nothing reads it on this path", len(mgr.parentIndex))
 	}
 
 	// MockSource emits no Paths, so this scan does resolve paths through the

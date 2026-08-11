@@ -1135,7 +1135,7 @@ and which forty backups of small churn never reach.
   30x the wall time, for 2x the requests, is not a trade that needs positioning.
 - **A window is not a mitigation.** 2,048 measured *worse than baseline* — a
   window that size still spans all eleven packs, so it still marks all of them
-  whole. §7's earlier suggestion that the derived walk's 30x transfer reduction
+  whole. §8's earlier suggestion that the derived walk's 30x transfer reduction
   was "a property of the window" is wrong as stated: 2,048 refs of *walk order*
   buys nothing, so whatever the derived walk gained came from its batches being
   pack-local by construction of the descent, not from their size.
@@ -1162,6 +1162,129 @@ and which forty backups of small churn never reach.
 on the property the metadata phase depends on, and the out-of-order case as a
 tripwire that fails if admission is ever made residency-aware — at which point
 this deletion is worth revisiting.
+
+## 8. Stage 3 built: derived order, and what it turned out to measure
+
+Stage 3 is built. `restore` no longer materialises a plan: it descends
+`hash(parentID)[:4]`, lists a directory, writes what it finds and recurses, with
+`hamt.ScanPrefix` supplying the descent. §1's construction holds — every entry a
+backup wrote is reached — and the ordering machinery it replaces
+(`collectMetadata` + `restoreOrder`, six O(files) structures) now runs only for a
+snapshot the descent cannot enumerate.
+
+**Derivation is not trusted, it is checked.** The walk counts what it claimed and
+the caller compares that against the tree's own entry count, which is a node-only
+traversal and costs no filemeta. Anything short falls back to the materialised
+plan for the entries the descent missed, and `derivedReachable` decides which
+those are by *replaying* the descent over the materialised tree rather than by an
+equivalent rule. That distinction is load-bearing and was nearly got wrong: the
+obvious analytic test — "the primary-parent chain reaches the root through
+folders" — is true of every entry in a pre-affinity repository, whose entries the
+descent cannot find at all, so believing it would have restored nothing while
+reporting success. Comparing each entry's stored routing prefix against the one
+its primary parent implies is what the descent actually does, so that is what the
+fallback compares.
+
+### What the traversal is worth, measured as retention
+
+`B/op` answers this backwards, and running it first was the useful mistake: the
+derived walk allocates ~11% *more* than the plan, because it reads a batch, uses
+it and drops it where the plan reads once and keeps everything. What separates
+them is what survives. `BenchmarkRestoreTraversal` reports heap still in use once
+the traversal has finished, with what it produced still reachable:
+
+| retained | 5,000 files | 50,000 files |
+|---|---|---|
+| materialised plan | 751 B/entry | 583 B/entry |
+| derived walk | 287 B/entry | 128 B/entry |
+
+The plan's figure is flat per entry and lands on the 555 B/entry floor §6
+estimated. The derived walk's *falls* as the tree grows, which is what a bounded
+structure looks like divided by a growing denominator: 29.4 MB against 6.5 MB at
+50,000 files, and the 6.5 MB is almost entirely the HAMT node cache, which both
+traversals fill and neither scales.
+
+**So §3's own prediction was right, and it is the honest headline.** This is a
+change for repositories of hundreds of thousands of files. At the sizes the
+harness runs it is worth tens of megabytes against a ~192 MB fixed baseline, and
+peak RSS cannot see it.
+
+### The end-to-end numbers are much larger than that, and they are not the traversal
+
+Against MinIO, `SAMPLES=1` (the churn steps mutate the tree in place, so later
+samples measure a different repository and a median across them means nothing):
+
+| restore | requests | transferred | wall | peak RSS |
+|---|---|---|---|---|
+| 5,000, main | 2,749 | 21,286 MB | 78.8 s | 500 MB |
+| 5,000, derived | 1,753 (−36%) | 4,216 MB (−80%) | 17.3 s | 420 MB |
+| 20,000, main | 11,552 | 95,480 MB | 348.7 s | 532 MB |
+| 20,000, derived | 7,025 (−39%) | 16,609 MB (−83%) | 64.0 s | 448 MB |
+
+Both axes move the same way, which is not the requests-versus-bytes frontier §6
+found everywhere else, and that alone should have been the signal that something
+other than ordering was being measured. **`main` transfers 95 GB to restore a
+180 MB repository.** That is §5's *F* ≈ 59 refetch storm, reproduced on the
+ordinary benchmark rather than on an 80-backup aged one.
+
+The cause is `declareContentReads`, and the control isolates it. Restoring the
+same repository three ways — main, main with its content declaration switched
+off, and the derived build — on a local backend, where allocation counts every
+pack body that was transferred and dropped:
+
+| | wall | peak RSS | allocation |
+|---|---|---|---|
+| main | 3.04 s | 558 MB | 22,227 MB |
+| main, content declaration removed | 3.00 s | 313 MB | 1,763 MB |
+| derived walk (declares per batch) | 3.62 s | 418 MB | 3,255 MB |
+
+**Declaring the write phase's reads all at once is what causes the storm, and
+declaring none at all is better than either.** The mechanism is the one §5 states
+and §2 was built to remove: exact *K* and *B* over a 50,000-key plan tell
+`PackStore` that almost every pack is worth transferring whole, it commits to
+holding far more than `packBodyCacheBudget`, and each body is fetched, evicted
+before its objects are consumed, and fetched again. A declaration is a statement
+about *what*, and admission needs *when*; handing over more of the what makes the
+gap worse, not better.
+
+The derived walk improves on `main` only because streaming forces the
+declaration to be windowed — 2,048 refs rather than the whole snapshot — so its
+30x transfer reduction is a property of the window, not of the descent. Three
+consequences:
+
+- **The window is now the parameter**, and `derivedScanBatch` is currently set
+  from a locality argument rather than a residency one. Where it should sit is
+  the same question as open question 3, arriving from the reader's side.
+- **This is a live regression on `main`, not a historical note.** It shipped with
+  #496 and it is worst on exactly the repositories restore matters for. It wants
+  its own change; a window is a mitigation, and "declare nothing" measured better
+  than both here while §6 measured declaring worth −56% requests on an 80-backup
+  repository. Those two results are not in conflict — they are the same
+  admission arithmetic in the two regimes — and picking between them is a
+  measurement across repository age, which is `aging.sh`'s axis.
+- **`check` and `prune` in the same runs are unusable as controls.** `check` went
+  434 → 158 requests at 5,000 files and 1,294 → 2,611 at 20,000, on code this
+  change does not touch, and `prune` 2,705 → 11,830. That is the layout
+  non-determinism §6 records, and it is a reminder that a single MinIO cell
+  prices only the effects large enough to clear it. Restore's is; theirs is not.
+
+### What derivation does not buy, and one thing it costs
+
+- **A path filter still reads the whole snapshot.** Pruning the descent to the
+  selected subtree looks free and is not: a pre-RFC 0015 snapshot persists a path
+  that need not agree with where the entry sits in the tree, so a subtree cannot
+  be excluded on its directory's path alone. Selection and cost are therefore
+  both unchanged, and open question 7 is answered only in the weaker sense that
+  derivation does not *break* partial restore. What it does gain is that
+  ancestors of a match are created by deferring rather than by a second pass.
+- **Listing a directory sees its prefix neighbours.** 16 bits is 65,536 buckets,
+  so directories collide, and a colliding directory's entries are read, discarded
+  and read again when their own parent is listed. Open question 1 — widening the
+  prefix — is the fix, and it is now a measurable cost rather than a
+  hypothetical one.
+- **One extra node-level traversal**, for the entry count the completeness check
+  needs. It reads no filemeta and warms the node cache the descents then use, and
+  it is what lets the fallback exist at all.
 
 ## What this does not solve
 
@@ -1244,7 +1367,7 @@ started and needs no format change to replace.
 | 0 | trace-replay harness for pack policy | none | **done** (§6) | reproduces the shipped policy's instrumented breakdown exactly at 42 packs |
 | 1 | grouped reads + arithmetic admission in `restore` | none | not started | **1,207 → 176 requests, 64 MB → ~13 MB** on a real 82-pack trace (§6) |
 | 2 | bound the read window; delete `packAdmission`, `packPenalized`, `packMissWindow` | none | not started | an 8,192-ref window is within 3% of holding the whole plan (§6) |
-| 3 | derived traversal order (§1), for **write** ordering | none | not started | −47%/−61% above the budget when sorted (#481) |
+| 3 | derived traversal order (§1), for **write** ordering | none | **done** (§8) | retention 583 → 128 B/entry at 50,000 files; the end-to-end numbers are the declaration window, not the order |
 | 4 | batch entry refs in streaming traversals | none | **done** for `check`, `ls`, `prune` | `check` −57%, `ls` −55% at 82 packs; `prune` too noisy to measure (§6) |
 | 5 | layout-driven compaction (#486) | none | blocked on 1–2 | −74% requests at 22 packs; **+603% bytes at 82** standalone (§5) |
 
@@ -1342,7 +1465,13 @@ reach.** The sequencing above puts a cheap feedback loop first for that reason.
    65,536. Widening to 6 hex characters gives 16M buckets and keeps junk
    negligible at any plausible scale; the fileID half retains ample entropy
    either way. It is currently 4 because that is what `AffinityKey` was written
-   with, which is not a reason.
+   with, which is not a reason. §8 promotes this from hypothetical to real: a
+   colliding directory's entries are now read, discarded and read again when
+   their own parent is listed, so the prefix width is a read-amplification
+   parameter and not only a layout one. Changing it is a format change —
+   `derivedPrefixLen` and `AffinityKey` have to agree, and old entries keep the
+   old width, which the completeness check turns into a fallback rather than a
+   loss.
 1. **What is the exchange rate between a request and a byte?** §2's admission
    rule compares `(K-1)` requests against `(S-B)` bytes, and the constant
    relating them is a property of the backend — latency, per-request price,
@@ -1370,20 +1499,24 @@ reach.** The sequencing above puts a cheap feedback loop first for that reason.
    it can never bring a working set under a byte budget, and the previous claim
    that it is "the only thing that keeps a repository out of the penalized
    regime" was wrong.
-1. **At what repository size does streaming start to pay?** §3's benefit is a
-   memory one, and the plan's floor of 555 bytes per entry puts it at 2.8 MB for
-   5,000 files against ~192 MB of buffers a restore holds regardless. Nothing in
-   this RFC was measured above 50,000 files, where it is still inside the
-   run-to-run spread. A restore at 200,000 and 1,000,000 files would establish
-   whether §3 is a change worth making at all, and it is cheap relative to
-   implementing it. Until then §3 is the one part of this proposal with no
-   supporting measurement.
-1. **Does derivation hold up under a partial restore?** `-path` filtering selects
-   a subtree. Derivation should be *better* here than a global order — it can
-   descend straight to the directories it wants — and grouping degrades
-   gracefully: fewer objects per pack means smaller *K*, which the arithmetic
-   rule turns into ranged reads without any special case. Worth confirming rather
-   than assuming.
+1. **At what repository size does streaming start to pay?** §8 measures the two
+   traversals' retention directly and confirms the estimate this question was
+   built on: 583 B/entry for the plan against 128 for the descent at 50,000
+   files, so 29.4 MB against 6.5 MB — real, and still inside the ±60 MB spread
+   peak RSS carries. The crossover is therefore where the plan clears that
+   spread, around 100,000 files, and it is a change for the hundreds of thousands.
+   What is still unmeasured is the far end: nothing here has run at 200,000 or
+   1,000,000 files, where the node cache (4,096 entries) also stops holding the
+   tree and the descent starts paying for re-descents.
+1. **Does derivation hold up under a partial restore?** Yes, and for a weaker
+   reason than expected: §8 keeps `-path` selecting exactly what it selected
+   before, at exactly the cost it cost before, because descending straight to the
+   selected subtree is not sound. A snapshot predating RFC 0015 persists its own
+   paths, and a persisted path need not agree with where the entry sits in the
+   tree, so a subtree cannot be excluded on its directory's path alone. Pruning
+   the descent needs that case decided first — either by declaring persisted
+   paths non-authoritative for selection, or by pruning only when a snapshot
+   carries none.
 1. **What does a secondary-parent index cost?** Out of scope here, but the
    multi-parent case is real and `ls` needs it. Whether it is a second routing of
    the same entry, or a side index, changes the write cost of a multi-parent file.

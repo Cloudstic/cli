@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -23,24 +24,33 @@ import (
 // lets a test hold a known number of fetches in flight for as long as it
 // needs, rather than infer overlap from the order in which a loaded machine
 // happened to finish two independent sleeps.
+//
+// track narrows what the peak counts. A restore fetches metadata concurrently
+// as well as content, and since the two now interleave — the walk reads the
+// next directory while the current one's files are being written — a peak over
+// every key cannot tell the two apart.
 type blockingStore struct {
 	store.ObjectStore
 	delay    time.Duration
 	hold     func(key string) bool
+	track    func(key string) bool
 	gate     *fetchGate
 	inFlight atomic.Int64
 	peak     atomic.Int64
 }
 
 func (s *blockingStore) Get(ctx context.Context, key string) ([]byte, error) {
-	n := s.inFlight.Add(1)
-	for {
-		p := s.peak.Load()
-		if n <= p || s.peak.CompareAndSwap(p, n) {
-			break
+	counted := s.track == nil || s.track(key)
+	if counted {
+		n := s.inFlight.Add(1)
+		for {
+			p := s.peak.Load()
+			if n <= p || s.peak.CompareAndSwap(p, n) {
+				break
+			}
 		}
+		defer s.inFlight.Add(-1)
 	}
-	defer s.inFlight.Add(-1)
 
 	if s.hold != nil && s.hold(key) {
 		if err := s.gate.wait(ctx); err != nil {
@@ -202,45 +212,45 @@ func (w *handshakeWriter) awaitFetches() int64 {
 // files cost one full round trip each no matter how much the store could take.
 func TestRunWithWriter_RestoresFilesConcurrently(t *testing.T) {
 	ctx := context.Background()
-	dest := setupBackupForRestore(t)
 
-	bs := &blockingStore{ObjectStore: dest, delay: 5 * time.Millisecond}
+	// Several files under one directory, so the overlap under test is between
+	// file writes rather than between one write and the walk that follows it.
+	src := NewMockSource()
+	for i := range 8 {
+		src.AddFile(fmt.Sprintf("file%d.txt", i), fmt.Sprintf("id%d", i), []byte("content"))
+	}
+	dest := NewMockStore()
+	if _, err := NewBackupManager(Deps{Store: dest, Reporter: ui.NewNoOpReporter()}, src).Run(ctx); err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+
+	// Only content reads are counted. Metadata is fetched concurrently in its
+	// own right, and counting that would make this pass even with a strictly
+	// sequential file loop — the exact regression it exists to catch.
+	bs := &blockingStore{
+		ObjectStore: dest,
+		delay:       5 * time.Millisecond,
+		track:       func(key string) bool { return strings.HasPrefix(key, "content/") },
+	}
 	rm := NewRestoreManager(Deps{Store: bs, Reporter: ui.NewNoOpReporter()})
-
-	// Plan and write are driven separately so the peak can be reset in
-	// between. prepareRestore fetches file metadata concurrently on its own,
-	// and counting that would make this pass even with a strictly sequential
-	// file loop — which is the exact regression it exists to catch.
-	plan, err := rm.prepareRestore(ctx, "")
-	if err != nil {
-		t.Fatalf("prepareRestore: %v", err)
-	}
-	files := 0
-	for _, id := range plan.sorted {
-		m := plan.byID[id]
-		if m.Type != core.FileTypeFolder && m.ContentHash != "" {
-			files++
-		}
-	}
-	if files < 2 {
-		t.Skipf("fixture has %d files; need at least 2 to observe overlap", files)
-	}
 
 	writer, err := NewFSRestoreWriter(t.TempDir())
 	if err != nil {
 		t.Fatalf("writer: %v", err)
 	}
-	bs.peak.Store(0)
 
-	res, err := rm.runWithWriter(ctx, plan, writer)
+	res, err := rm.Run(ctx, writer, "")
 	if err != nil {
 		t.Fatalf("restore: %v", err)
 	}
 	if res.Errors != 0 {
 		t.Fatalf("restore reported %d errors", res.Errors)
 	}
+	if res.FilesWritten != 8 {
+		t.Fatalf("restored %d files, want 8", res.FilesWritten)
+	}
 	if peak := bs.peak.Load(); peak < 2 {
-		t.Errorf("restore issued one request at a time (peak in-flight = %d); file-level restore has become sequential again", peak)
+		t.Errorf("restore issued one content request at a time (peak in-flight = %d); file-level restore has become sequential again", peak)
 	}
 }
 

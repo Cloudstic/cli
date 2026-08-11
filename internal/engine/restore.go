@@ -34,21 +34,6 @@ type restoreConfig struct {
 	noVerify   bool
 }
 
-// restorePlan is what a restore walks. byID owns the metadata; sorted is an
-// ordering over it, naming entries by FileID rather than repeating them.
-//
-// The two used to be independent copies of the same tree. A core.FileMeta is 216
-// bytes, so a snapshot's metadata was held twice over before a byte was written.
-// An ordering of IDs costs one string header each and shares the ID already
-// stored as byID's key.
-type restorePlan struct {
-	cfg         restoreConfig
-	sorted      []string
-	byID        map[string]core.FileMeta
-	snapshotRef string
-	root        string
-}
-
 // WithRestoreDryRun resolves the snapshot and reports what would be restored without writing output.
 func WithRestoreDryRun() RestoreOption {
 	return func(cfg *restoreConfig) { cfg.dryRun = true }
@@ -130,6 +115,11 @@ func NewRestoreManager(d Deps) *RestoreManager {
 
 // Run restores the snapshot's file tree to the provided writer format.
 // snapshotRef can be "", "latest", a bare hash, or "snapshot/<hash>".
+//
+// The traversal is derived from the tree rather than planned in memory: see
+// restore_derived.go. What remains here is the completeness check that makes
+// derivation safe to rely on — the tree's own entry count against what the walk
+// claimed — and the materialised fallback for a snapshot it cannot enumerate.
 func (rm *RestoreManager) Run(ctx context.Context, writer RestoreWriter, snapshotRef string, opts ...RestoreOption) (*RestoreResult, error) {
 	lock, lockedCtx, err := AcquireSharedLock(ctx, rm.store, "restore")
 	if err != nil {
@@ -138,161 +128,234 @@ func (rm *RestoreManager) Run(ctx context.Context, writer RestoreWriter, snapsho
 	defer lock.Release()
 	ctx = lockedCtx
 
-	plan, err := rm.prepareRestore(ctx, snapshotRef, opts...)
+	var cfg restoreConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	if writer == nil && !cfg.dryRun {
+		return nil, fmt.Errorf("restore writer is required")
+	}
+
+	snap, resolvedRef, err := rm.resolveSnapshot(ctx, snapshotRef)
 	if err != nil {
 		return nil, err
 	}
 
-	if plan.cfg.dryRun {
-		return rm.dryRunRestore(plan.sorted, plan.byID, plan.snapshotRef, plan.root), nil
+	total, err := rm.countEntries(ctx, snap.Root)
+	if err != nil {
+		return nil, err
 	}
-	if writer == nil {
-		return nil, fmt.Errorf("restore writer is required")
+
+	result := &RestoreResult{SnapshotRef: resolvedRef, Root: snap.Root, DryRun: cfg.dryRun}
+	out := rm.newEmitter(ctx, writer, cfg, result, total)
+
+	walk := &derivedWalk{
+		tree:   rm.tree,
+		store:  rm.store,
+		metas:  rm.metas,
+		filter: newRestorePathFilter(cfg.pathFilter),
+		out:    out,
 	}
-	return rm.runWithWriter(ctx, plan, writer)
+	reached, err := walk.run(ctx, snap.Root)
+	if err != nil {
+		out.fail()
+		return nil, err
+	}
+
+	if reached < total {
+		if err := rm.restoreUnreached(ctx, snap.Root, cfg, out); err != nil {
+			out.fail()
+			return nil, err
+		}
+	}
+
+	if err := out.finish(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
-// runWithWriter walks the topologically sorted entries, creating directories
-// and writing file contents.
+// restoreEmitter turns entries into output, whichever traversal found them.
 //
-// Directories are handled inline and in order: plan.sorted lists a parent
-// before its children, so creating them on this goroutine is what guarantees
-// a file's directory exists by the time the file is dispatched.
-//
-// File contents are the expensive part — each one is at least a content-object
-// fetch, and for a large file a whole sequence of chunk fetches. Restoring
-// them one after another means exactly one request is ever outstanding, so on
-// a high-latency backend the wall time collapses to (file count x round trip)
-// no matter how much bandwidth or store concurrency is available. They are
-// therefore dispatched to a bounded worker pool whenever the writer says it
-// can take concurrent writes; the pool degenerates to sequential execution for
+// Directories are created inline on the traversal's own goroutine, which is what
+// guarantees a file's directory exists by the time the file is dispatched. File
+// contents are the expensive part — each one is at least a content-object fetch,
+// and for a large file a whole sequence of chunk fetches. Restoring them one
+// after another means exactly one request is ever outstanding, so on a
+// high-latency backend the wall time collapses to (file count x round trip) no
+// matter how much bandwidth or store concurrency is available. They are
+// therefore dispatched to a bounded worker pool whenever the writer says it can
+// take concurrent writes; the pool degenerates to sequential execution for
 // writers that cannot (zip).
-func (rm *RestoreManager) runWithWriter(ctx context.Context, plan restorePlan, writer RestoreWriter) (*RestoreResult, error) {
-	result := &RestoreResult{SnapshotRef: plan.snapshotRef, Root: plan.root}
-	phase := rm.reporter.StartPhase("Restoring", int64(len(plan.sorted)), false)
+type restoreEmitter struct {
+	rm     *RestoreManager
+	writer RestoreWriter
+	cfg    restoreConfig
+	result *RestoreResult
+	phase  ui.Phase
 
-	// Counters are touched from the file workers as well as this goroutine.
-	var mu sync.Mutex
-	bump := func(field *int) {
-		mu.Lock()
-		*field++
-		mu.Unlock()
+	// mu guards result's counters, which the file workers touch as well as the
+	// traversal goroutine.
+	mu sync.Mutex
+
+	g          *errgroup.Group
+	gctx       context.Context
+	concurrent bool
+}
+
+func (rm *RestoreManager) newEmitter(ctx context.Context, writer RestoreWriter, cfg restoreConfig, result *RestoreResult, total int64) *restoreEmitter {
+	e := &restoreEmitter{
+		rm:     rm,
+		writer: writer,
+		cfg:    cfg,
+		result: result,
+		phase:  rm.reporter.StartPhase("Restoring", total, false),
+	}
+	if cfg.dryRun {
+		return e
 	}
 
 	if setter, ok := writer.(restoreWarningSetter); ok {
 		setter.SetWarningFunc(func(msg string) {
-			bump(&result.Warnings)
-			phase.Log("Warning: " + msg)
+			e.bump(&result.Warnings)
+			e.phase.Log("Warning: " + msg)
 		})
 	}
-
 	cw, ok := writer.(concurrentRestoreWriter)
-	concurrent := ok && cw.SupportsConcurrentWrites()
+	e.concurrent = ok && cw.SupportsConcurrentWrites()
+	e.g, e.gctx = errgroup.WithContext(ctx)
+	if e.concurrent {
+		e.g.SetLimit(restoreFileConcurrency(rm.store))
+	}
+	return e
+}
 
-	g, gCtx := errgroup.WithContext(ctx)
-	if concurrent {
-		g.SetLimit(restoreFileConcurrency(rm.store))
+func (e *restoreEmitter) bump(field *int) {
+	e.mu.Lock()
+	*field++
+	e.mu.Unlock()
+}
+
+// skip accounts for an entry the traversal reached and the path filter dropped.
+// Progress is measured against the snapshot's entry count, so an entry that is
+// not written still has to be counted off.
+func (e *restoreEmitter) skip() { e.phase.Increment(1) }
+
+// ensureDir creates a directory and every uncreated ancestor above it.
+//
+// Deferring is what a path filter needs: a directory merely on the way to the
+// selection is created only once something under it survives, which is what
+// filterByPath expressed as a second pass over the materialised plan.
+func (e *restoreEmitter) ensureDir(d *restoreDir) {
+	if d == nil || d.made {
+		return
+	}
+	e.ensureDir(d.parent)
+	d.made = true
+	meta := *d.meta
+	d.meta = nil // released as soon as it has been used; see restoreDir
+	// A deferred directory was already counted off when the filter passed over
+	// it; creating it later must not count it twice.
+	e.emitDir(meta, d.rel, !d.charged)
+}
+
+// dir creates one directory the traversal reached for the first time.
+func (e *restoreEmitter) dir(meta core.FileMeta, rel string) {
+	e.emitDir(meta, rel, true)
+}
+
+// emitDir creates one directory. A failure is counted and reported, not fatal:
+// the rest of the snapshot is still worth recovering.
+func (e *restoreEmitter) emitDir(meta core.FileMeta, rel string, charge bool) {
+	if charge {
+		defer e.phase.Increment(1)
+	}
+	if e.cfg.dryRun {
+		e.result.DirsWritten++
+		return
+	}
+	if err := e.writer.MkdirAll(rel, meta); err != nil {
+		if !errors.Is(err, errRestoreSkipped) {
+			e.phase.Log(fmt.Sprintf("Failed: %s: %v", rel, err))
+			// Through bump, not directly: a file worker counts its own failures
+			// into the same field while this goroutine is creating directories.
+			e.bump(&e.result.Errors)
+		}
+		return
+	}
+	e.phase.Logf(ui.DetailVerbose, "Dir: %s", rel)
+	e.result.DirsWritten++
+}
+
+// file writes one file, on the worker pool where the writer allows it.
+func (e *restoreEmitter) file(meta core.FileMeta, rel string) {
+	if meta.ContentHash == "" {
+		e.phase.Increment(1)
+		return
+	}
+	if e.cfg.dryRun {
+		e.result.FilesWritten++
+		e.result.BytesWritten += meta.Size
+		e.phase.Increment(1)
+		return
 	}
 
-	// A failure to write one file is reported and counted, not fatal — the
-	// rest of the snapshot is still worth recovering. Only a context
-	// cancellation stops the walk, which is why the worker returns nil here
-	// and errgroup carries just gCtx's error.
-	restoreFile := func(meta core.FileMeta, rel string) func() error {
-		return func() error {
-			err := writer.WriteFile(rel, meta, func(out io.Writer) error {
-				return rm.writeFileContent(gCtx, out, meta, !plan.cfg.noVerify)
-			})
-			defer phase.Increment(1)
-			switch {
-			case errors.Is(err, errRestoreSkipped):
-				return nil
-			case err != nil:
-				phase.Log(fmt.Sprintf("Failed: %s: %v", rel, err))
-				bump(&result.Errors)
-				return nil
-			}
-			phase.Logf(ui.DetailVerbose, "File: %s (%d bytes)", rel, meta.Size)
-			bump(&result.FilesWritten)
+	// A failure to write one file is reported and counted, not fatal. Only a
+	// context cancellation stops the traversal, which is why the worker returns
+	// nil here and errgroup carries just gctx's error.
+	work := func() error {
+		err := e.writer.WriteFile(rel, meta, func(out io.Writer) error {
+			return e.rm.writeFileContent(e.gctx, out, meta, !e.cfg.noVerify)
+		})
+		defer e.phase.Increment(1)
+		switch {
+		case errors.Is(err, errRestoreSkipped):
+			return nil
+		case err != nil:
+			e.phase.Log(fmt.Sprintf("Failed: %s: %v", rel, err))
+			e.bump(&e.result.Errors)
 			return nil
 		}
+		e.phase.Logf(ui.DetailVerbose, "File: %s (%d bytes)", rel, meta.Size)
+		e.bump(&e.result.FilesWritten)
+		return nil
 	}
 
-	// The write phase declares nothing, and that is a decision rather than an
-	// omission.
-	//
-	// It used to hand its whole content read set to store.PlanReads (#496), on the
-	// reasoning that a declaration is a statement about *what* will be read and so
-	// stays true whatever order the reads arrive in. The statement is true; the use
-	// admission makes of it is not. PlanReads records how many objects each pack
-	// owes this caller, and resolveFromPack promotes a pack to a whole transfer once
-	// that count says a transfer beats the ranged reads it replaces — which is only
-	// cheaper if the caller reads those objects while the body is still resident.
-	//
-	// The metadata phase earns that: it reads group by group, one worker per group,
-	// with concurrency bounded to the body cache's capacity. This phase cannot. It
-	// writes in walk order across up to restoreFileConcurrency files at once, so it
-	// touches every pack before returning to any of them, and a declaration that
-	// marks them all worth transferring whole turns every read into a whole-pack
-	// fetch that is evicted before its next object is wanted.
-	//
-	// Measured against MinIO on a 20,000-file repository of 11 full packs
-	// (RFC 0025 §7): declaring cost 18,416 MB of transfer and 93.5 s where declaring
-	// nothing cost 160 MB and 3.1 s, for 2,274 requests against 4,726. Bounding the
-	// declared window to 2,048 entries does not help — 19,236 MB — because a window
-	// that size still spans every pack. Below roughly 42 packs the whole working set
-	// fits the body cache and all three are indistinguishable.
-	//
-	// So the write phase reads undeclared, and its packs are admitted by the
-	// estimator in packadmission.go, whose eviction penalty is exactly the feedback
-	// a declaration overrides. Restore's *metadata* phase still declares (see
-	// collectMetadata) and is where the measured win lives.
-	for _, id := range plan.sorted {
-		meta := plan.byID[id]
-		rel := buildRestorePath(meta, plan.byID)
-
-		if meta.Type == core.FileTypeFolder {
-			if err := writer.MkdirAll(rel, meta); err != nil {
-				if !errors.Is(err, errRestoreSkipped) {
-					phase.Log(fmt.Sprintf("Failed: %s: %v", rel, err))
-					result.Errors++
-				}
-				phase.Increment(1)
-				continue
-			}
-			phase.Logf(ui.DetailVerbose, "Dir: %s", rel)
-			result.DirsWritten++
-			phase.Increment(1)
-			continue
-		}
-
-		if meta.ContentHash == "" {
-			phase.Increment(1)
-			continue
-		}
-
-		// A sequential writer runs inline, not through the pool. Even a pool of
-		// one would let a file write overlap the MkdirAll of a later entry on
-		// this goroutine, and for a zip that means a directory header written
-		// into the middle of an open file entry.
-		if !concurrent {
-			_ = restoreFile(meta, rel)()
-			continue
-		}
-		g.Go(restoreFile(meta, rel))
+	// A sequential writer runs inline, not through the pool. Even a pool of one
+	// would let a file write overlap the MkdirAll of a later entry on the
+	// traversal goroutine, and for a zip that means a directory header written
+	// into the middle of an open file entry.
+	if !e.concurrent {
+		_ = work()
+		return
 	}
+	e.g.Go(work)
+}
 
-	if err := g.Wait(); err != nil {
-		phase.Error()
-		return nil, err
+// fail reports the phase as failed and drains outstanding writes.
+func (e *restoreEmitter) fail() {
+	if e.g != nil {
+		_ = e.g.Wait()
 	}
+	e.phase.Error()
+}
 
-	phase.Done()
-	if err := writer.Close(); err != nil {
-		return nil, err
+// finish waits for outstanding writes and closes the writer.
+func (e *restoreEmitter) finish() error {
+	if e.cfg.dryRun {
+		e.phase.Done()
+		return nil
 	}
-	result.BytesWritten = writer.BytesWritten()
-	return result, nil
+	if err := e.g.Wait(); err != nil {
+		e.phase.Error()
+		return err
+	}
+	e.phase.Done()
+	if err := e.writer.Close(); err != nil {
+		return err
+	}
+	e.result.BytesWritten = e.writer.BytesWritten()
+	return nil
 }
 
 // restoreFileConcurrency picks how many files to reconstruct at once.
@@ -308,34 +371,104 @@ func restoreFileConcurrency(s store.ObjectStore) int {
 	return min(store.GetConcurrencyHint(s, 8), 16)
 }
 
-func (rm *RestoreManager) prepareRestore(ctx context.Context, snapshotRef string, opts ...RestoreOption) (restorePlan, error) {
-	var cfg restoreConfig
-	for _, opt := range opts {
-		opt(&cfg)
-	}
+// countEntries is how many entries the snapshot's tree holds.
+//
+// It reads nodes and no filemeta, so it costs a fraction of what the entries
+// themselves do, and it is the only thing that makes derivation safe to rely on:
+// derived order enumerates by primary parent, and this is the number the walk's
+// own count is checked against before the restore is called complete.
+func (rm *RestoreManager) countEntries(ctx context.Context, root string) (int64, error) {
+	var n int64
+	err := rm.tree.Walk(ctx, root, func(string, string) error {
+		n++
+		return nil
+	})
+	return n, err
+}
 
-	snap, resolvedRef, err := rm.resolveSnapshot(ctx, snapshotRef)
+// restoreUnreached restores whatever the derived walk could not enumerate.
+//
+// Three kinds of entry land here, and all three are why restoreOrder's fallback
+// passes were written: an entry whose primary parent is missing from the
+// snapshot, one whose primary-parent chain is a cycle, and one routed by a build
+// predating affinity keys — for which the derivation's descent looks in a
+// subtree the entry is not in. This is the O(files) plan the ordinary path
+// exists to avoid, and it is built only when the count says something was
+// missed.
+//
+// One narrow difference from restoring everything this way: under -path, a
+// directory the derivation reached but deferred creating (nothing under it
+// matched) stays uncreated even if a *complement* entry below it now matches. No
+// file is lost — fsRestoreWriter creates a missing parent on the way to the file
+// — but that directory's own recorded mode and mtime are not applied. It needs a
+// snapshot that is both malformed and being partially restored to reach.
+func (rm *RestoreManager) restoreUnreached(ctx context.Context, root string, cfg restoreConfig, out *restoreEmitter) error {
+	byID, walkOrder, routing, err := rm.collectMetadata(ctx, root)
 	if err != nil {
-		return restorePlan{}, err
-	}
-
-	byID, walkOrder, err := rm.collectMetadata(ctx, snap.Root)
-	if err != nil {
-		return restorePlan{}, err
+		return err
 	}
 
 	sorted := restoreOrder(byID, walkOrder)
 	if cfg.pathFilter != "" {
 		sorted = filterByPath(sorted, byID, cfg.pathFilter)
 	}
+	reached := derivedReachable(byID, routing)
+	remaining := sorted[:0]
+	for _, id := range sorted {
+		if !reached[id] {
+			remaining = append(remaining, id)
+		}
+	}
 
-	return restorePlan{
-		cfg:         cfg,
-		sorted:      sorted,
-		byID:        byID,
-		snapshotRef: resolvedRef,
-		root:        snap.Root,
-	}, nil
+	// This phase declares nothing either, for the reason the derived walk gives
+	// (restore_derived.go) and #500 measured: admission consumes a declaration as
+	// a claim about when the objects will be read, and a write phase fanning out
+	// across restoreFileConcurrency files touches every pack before returning to
+	// any of them.
+	for _, id := range remaining {
+		meta := byID[id]
+		rel := buildRestorePath(meta, byID)
+		if meta.Type == core.FileTypeFolder {
+			out.dir(meta, rel)
+			continue
+		}
+		out.file(meta, rel)
+	}
+	return nil
+}
+
+// derivedReachable replays the derived walk over a materialised snapshot,
+// reporting exactly which entries it would have claimed.
+//
+// It is a replay rather than an equivalent rule, and the difference matters. The
+// obvious analytic test — "the primary-parent chain reaches the root through
+// folders" — says yes for every entry of a pre-affinity repository, whose
+// entries the descent cannot find at all. Believing it would silently restore
+// nothing. Comparing each entry's stored routing prefix against the one its
+// primary parent implies is what the descent actually does.
+func derivedReachable(byID map[string]core.FileMeta, routing map[string]string) map[string]bool {
+	children := make(map[string][]string, len(byID))
+	for id, meta := range byID {
+		parent := primaryParentID(&meta)
+		children[parent] = append(children[parent], id)
+	}
+
+	reached := make(map[string]bool, len(byID))
+	var descend func(dirID string)
+	descend = func(dirID string) {
+		want := childRoutingPrefix(dirID)
+		for _, id := range children[dirID] {
+			if reached[id] || routing[id] != want {
+				continue
+			}
+			reached[id] = true
+			if byID[id].Type == core.FileTypeFolder {
+				descend(id)
+			}
+		}
+	}
+	descend("")
+	return reached
 }
 
 func secureRestorePath(root, rel string) (string, error) {
@@ -618,24 +751,6 @@ func checkSymlinkPath(p string) error {
 	return nil
 }
 
-func (rm *RestoreManager) dryRunRestore(sorted []string, byID map[string]core.FileMeta, snapshotRef, root string) *RestoreResult {
-	result := &RestoreResult{
-		SnapshotRef: snapshotRef,
-		Root:        root,
-		DryRun:      true,
-	}
-	for _, id := range sorted {
-		meta := byID[id]
-		if meta.Type == core.FileTypeFolder {
-			result.DirsWritten++
-		} else if meta.ContentHash != "" {
-			result.FilesWritten++
-			result.BytesWritten += meta.Size
-		}
-	}
-	return result
-}
-
 type countingWriter struct {
 	w     io.Writer
 	count int64
@@ -782,7 +897,14 @@ func (rm *RestoreManager) resolveSnapshot(ctx context.Context, ref string) (*cor
 // ---------------------------------------------------------------------------
 
 // collectMetadata loads every entry in the snapshot, and reports the order the
-// tree walk yielded them in as well as the entries themselves.
+// tree walk yielded them in and the routing prefix each was stored under as well
+// as the entries themselves.
+//
+// **This is the O(files) plan, and the ordinary restore no longer builds one.**
+// Only restoreUnreached calls it, for a snapshot whose entries the derived walk
+// could not enumerate — so the cost of holding a whole snapshot's metadata is
+// now paid by malformed and pre-affinity repositories rather than by every
+// restore.
 //
 // The order matters to what comes after, and the two orders are different.
 // Restore *writes* in walk order, because that is the order backup laid entries
@@ -791,14 +913,28 @@ func (rm *RestoreManager) resolveSnapshot(ctx context.Context, ref string) (*cor
 // order the store says is cheapest, which on a repository built by several
 // backups is not walk order at all: each backup's entries sit in its own packs,
 // so the walk interleaves them. See the grouping below.
-func (rm *RestoreManager) collectMetadata(ctx context.Context, root string) (map[string]core.FileMeta, []string, error) {
-	var refs []string
-	err := rm.tree.Walk(ctx, root, func(_, valueRef string) error {
+func (rm *RestoreManager) collectMetadata(ctx context.Context, root string) (map[string]core.FileMeta, []string, map[string]string, error) {
+	var (
+		refs     []string
+		prefixes []string
+	)
+	err := rm.tree.WalkRouted(ctx, root, func(routingKey, _, valueRef string) error {
 		refs = append(refs, valueRef)
+		// A key too short to carry a prefix records none, which matches no
+		// directory and so leaves the entry to this traversal rather than to
+		// the derived one — the safe direction.
+		//
+		// Cloned rather than sliced: a routing key is a field of a cached node,
+		// and holding a four-character view of it would pin the whole node.
+		prefix := ""
+		if len(routingKey) >= derivedPrefixLen {
+			prefix = strings.Clone(routingKey[:derivedPrefixLen])
+		}
+		prefixes = append(prefixes, prefix)
 		return nil
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	phase := rm.reporter.StartPhase("Loading metadata", int64(len(refs)), false)
@@ -813,6 +949,7 @@ func (rm *RestoreManager) collectMetadata(ctx context.Context, root string) (map
 	// arrives, and that must not decide the order the restore writes in.
 	byID := make(map[string]core.FileMeta, len(refs))
 	walkOrder := make([]string, len(refs))
+	routing := make(map[string]string, len(refs))
 	var mu sync.Mutex
 
 	// Fetch in the groups the store says are cheapest, which is not the order
@@ -848,6 +985,7 @@ func (rm *RestoreManager) collectMetadata(ctx context.Context, root string) (map
 				mu.Lock()
 				byID[fm.FileID] = *fm
 				walkOrder[f.index] = fm.FileID
+				routing[fm.FileID] = prefixes[f.index]
 				mu.Unlock()
 				phase.Increment(1)
 			}
@@ -856,10 +994,10 @@ func (rm *RestoreManager) collectMetadata(ctx context.Context, root string) (map
 	}
 	if err := g.Wait(); err != nil {
 		phase.Error()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	phase.Done()
-	return byID, walkOrder, nil
+	return byID, walkOrder, routing, nil
 }
 
 // ---------------------------------------------------------------------------

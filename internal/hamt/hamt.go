@@ -122,6 +122,43 @@ func (t *Tree) Walk(ctx context.Context, root string, fn func(key, value string)
 	return walk(ctx, t.nodes, child{ref: root}, 0, fn)
 }
 
+// WalkRouted is Walk with each entry's routing key.
+//
+// It exists for the caller that has to reason about *where* an entry sits
+// rather than only about what it names — a prefix descent finds an entry only
+// if its routing key agrees with the prefix, so deciding whether a descent
+// would have found one means comparing the key it was actually stored under.
+// Legacy entries carrying no stored routing key report the one the tree routes
+// them by, which is what Walk itself follows.
+func (t *Tree) WalkRouted(ctx context.Context, root string, fn func(routingKey, key, value string) error) error {
+	if root == "" {
+		return nil
+	}
+	return walkRouted(ctx, t.nodes, child{ref: root}, 0, fn)
+}
+
+// ScanPrefix visits every (key, value) pair whose routing key begins with
+// prefixHex, in the same order Walk would yield them.
+//
+// This is the read half of the locality a caller buys by choosing routing keys
+// with a shared prefix: entries sharing one are in the same subtree, so
+// enumerating them is a descent to that subtree rather than a pass over the
+// whole tree. The tree still never interprets a routing key — the caller
+// decides what a prefix means, and here it means "the same primary parent"
+// (see engine.AffinityKey).
+//
+// prefixHex must be 1-8 hex characters. An empty prefix is Walk.
+func (t *Tree) ScanPrefix(ctx context.Context, root, prefixHex string, fn func(key, value string) error) error {
+	if root == "" {
+		return nil
+	}
+	p, err := newPrefix(prefixHex)
+	if err != nil {
+		return err
+	}
+	return scanPrefix(ctx, t.nodes, child{ref: root}, 0, p, fn)
+}
+
 // Diff structurally compares two persisted trees and calls fn for every entry
 // added, removed, or modified between root1 and root2.
 func (t *Tree) Diff(ctx context.Context, root1, root2 string, fn func(DiffEntry) error) error {
@@ -650,6 +687,146 @@ func walk(ctx context.Context, ns *NodeStore, c child, depth int, fn func(key, v
 	}
 	for _, cc := range n.children {
 		if err := walk(ctx, ns, cc, depth+1, fn); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// scanPrefix is walk restricted to a routing prefix: it skips any child whose
+// bucket the prefix rules out, and filters the leaves it does reach.
+//
+// The leaf filter is not redundant with the pruning. A prefix wider than the
+// bits consumed on the way down — and 16 bits is, for any tree shallow enough
+// that a leaf sits above level 4 — leaves entries in that leaf that share the
+// path but not the prefix. Those belong to a different parent and must not be
+// reported, which is what makes the scan a listing rather than a neighbourhood.
+func scanPrefix(ctx context.Context, ns *NodeStore, c child, depth int, p prefix, fn func(key, value string) error) error {
+	if depth > maxTreeDepth {
+		return errTooDeep(depth)
+	}
+	n, err := resolve(ctx, ns, c)
+	if err != nil {
+		return err
+	}
+	if n.leaf {
+		for _, e := range n.entries {
+			r, err := routingForEntry(e)
+			if err != nil {
+				continue
+			}
+			if !p.matches(r) {
+				continue
+			}
+			if err := fn(e.Key, e.Value); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for pos, idx := range bucketIndexes(n.bitmap) {
+		if !p.allows(idx, depth) {
+			continue
+		}
+		if err := scanPrefix(ctx, ns, n.children[pos], depth+1, p, fn); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// bucketIndexes yields (position in the packed children array, bucket index)
+// for every child a bitmap declares.
+func bucketIndexes(bitmap uint32) func(func(int, int) bool) {
+	return func(yield func(int, int) bool) {
+		pos := 0
+		for idx := 0; idx < branching; idx++ {
+			if bitmap&(uint32(1)<<idx) == 0 {
+				continue
+			}
+			if !yield(pos, idx) {
+				return
+			}
+			pos++
+		}
+	}
+}
+
+// prefix is a parsed routing-key prefix: its bits, left-aligned in the same
+// 32-bit window routing uses, and how many of them are significant.
+type prefix struct {
+	bits uint32
+	n    int // significant bits, 4 per hex character
+}
+
+func newPrefix(hexPrefix string) (prefix, error) {
+	if len(hexPrefix) == 0 {
+		return prefix{}, nil
+	}
+	if len(hexPrefix) > 8 {
+		return prefix{}, fmt.Errorf("routing prefix %q is longer than a 32-bit key", hexPrefix)
+	}
+	val, err := strconv.ParseUint(hexPrefix, 16, 32)
+	if err != nil {
+		return prefix{}, fmt.Errorf("routing prefix %q: %w", hexPrefix, err)
+	}
+	n := len(hexPrefix) * 4
+	return prefix{bits: uint32(val) << (32 - n), n: n}, nil
+}
+
+// matches reports whether a routing key starts with this prefix.
+func (p prefix) matches(r routing) bool {
+	if p.n == 0 {
+		return true
+	}
+	return r.prefix>>(32-p.n) == p.bits>>(32-p.n)
+}
+
+// allows reports whether a child in bucket idx at this level can hold an entry
+// matching the prefix.
+//
+// A level consumes bitsPerLevel bits, and the prefix constrains some, all or
+// none of them: the last constrained level is usually straddled, since a prefix
+// of whole hex characters is a multiple of 4 bits and a level is 5. Only the
+// overlapping high bits of the bucket index are compared there, which is why
+// the boundary level admits several buckets rather than one.
+func (p prefix) allows(idx, level int) bool {
+	consumed := level * bitsPerLevel
+	overlap := min(p.n-consumed, bitsPerLevel)
+	if overlap <= 0 {
+		return true
+	}
+	want := (p.bits >> (32 - consumed - overlap)) & ((1 << overlap) - 1)
+	return uint32(idx)>>(bitsPerLevel-overlap) == want
+}
+
+func walkRouted(ctx context.Context, ns *NodeStore, c child, depth int, fn func(routingKey, key, value string) error) error {
+	if depth > maxTreeDepth {
+		return errTooDeep(depth)
+	}
+	n, err := resolve(ctx, ns, c)
+	if err != nil {
+		return err
+	}
+	if n.leaf {
+		for _, e := range n.entries {
+			// An unparseable routing key is reported verbatim rather than
+			// failing the walk. Walk itself never looks at one, so an entry
+			// carrying a malformed key has always been readable; refusing it
+			// here would make the fallback traversal that needs this the one
+			// place a restore cannot recover it.
+			key := e.PathKey
+			if r, err := routingForEntry(e); err == nil {
+				key = r.hex
+			}
+			if err := fn(key, e.Key, e.Value); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, cc := range n.children {
+		if err := walkRouted(ctx, ns, cc, depth+1, fn); err != nil {
 			return err
 		}
 	}

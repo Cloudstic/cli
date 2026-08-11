@@ -86,12 +86,20 @@ func TestRestoreManager_CollectMetadata_FetchesConcurrently(t *testing.T) {
 		t.Fatalf("resolveSnapshot: %v", err)
 	}
 
-	byID, walkOrder, err := rsMgr.collectMetadata(ctx, snap.Root)
+	byID, walkOrder, routing, err := rsMgr.collectMetadata(ctx, snap.Root)
 	if err != nil {
 		t.Fatalf("collectMetadata: %v", err)
 	}
 	if len(byID) == 0 {
 		t.Fatal("expected at least one file/dir in collected metadata")
+	}
+	// The routing prefix is what tells restoreUnreached whether the derived
+	// walk would have found an entry, so a gap in it is a silently unrestorable
+	// entry rather than a cosmetic one.
+	for id := range byID {
+		if len(routing[id]) != derivedPrefixLen {
+			t.Errorf("entry %s has routing prefix %q, want %d hex characters", id, routing[id], derivedPrefixLen)
+		}
 	}
 	// Walk order is what the pack-locality ordering rests on, so it must be
 	// complete and free of the gaps a concurrent fetch would leave if results

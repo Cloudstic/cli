@@ -511,20 +511,21 @@ func singletonGroups(keys []string) [][]string {
 //
 // Admission compares a pack's wanted bytes against its total, so it needs that
 // total, and asking the backend would cost a request per pack — defeating the
-// purpose. The catalog already holds every entry's offset and length, so the
-// region is the furthest end among them, found in one pass over the catalog
-// rather than one per pack.
+// purpose. The catalog maintains it on write (packCatalog.PackExtent), so this
+// is one lookup per pack the plan names.
+//
+// It used to scan the whole catalog instead, which made planning cost a pass
+// over the repository no matter how few keys were being planned — and, because
+// iterating entries rebuilds their key strings, allocate three times per object
+// in the repository to discard every one of them. See PackExtent.
 func (s *PackStore) fillPackSizes(plan *packGroupPlan) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	s.catalog.Each(func(_ string, e PackEntry) {
-		if _, wanted := plan.count[e.PackRef]; !wanted {
-			return
+	for ref := range plan.count {
+		if end, ok := s.catalog.PackExtent(ref); ok {
+			plan.size[ref] = end
 		}
-		if end := e.Offset + e.Length; end > plan.size[e.PackRef] {
-			plan.size[e.PackRef] = end
-		}
-	})
+	}
 }
 
 // groupPlan returns the plan recorded by the most recent grouping, if any.

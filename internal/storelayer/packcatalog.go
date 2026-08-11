@@ -31,6 +31,10 @@ type packCatalog struct {
 
 	packRefs []string
 	packIdx  map[string]uint32
+	// packEnd is parallel to packRefs: the highest Offset+Length recorded for
+	// that pack, maintained on write so nobody has to scan for it. See
+	// PackExtent.
+	packEnd []int64
 }
 
 // compactKey is a namespace byte followed by a decoded SHA-256.
@@ -86,8 +90,42 @@ func (c *packCatalog) internPack(ref string) uint32 {
 	}
 	i := uint32(len(c.packRefs))
 	c.packRefs = append(c.packRefs, ref)
+	c.packEnd = append(c.packEnd, 0)
 	c.packIdx[ref] = i
 	return i
+}
+
+// PackExtent reports how far into ref the entries recorded here reach — the
+// highest Offset+Length seen for it — and whether ref is known at all.
+//
+// It is maintained on write because the alternative was reading it: admission
+// needs a pack's size to decide whether transferring it whole beats ranging
+// into it, and computing that by scanning the catalog made *every* PlanReads
+// call allocate in proportion to the whole repository rather than to the keys
+// it was asked about. Measured on a 512-key request: 2.1 MB and 30,013
+// allocations against a 10,000-entry catalog, 41.6 MB and 600,013 against
+// 200,000 — three allocations per object in the repository, spent rebuilding
+// key strings that fillPackSizes then discarded. Backup made that visible by
+// planning once per batch, but every planning caller was paying it.
+//
+// This is a high-water mark and does not fall when entries are deleted, which
+// is deliberate: a deleted entry's bytes stay in the stored packfile until
+// `Repack` rewrites it, so the mark tracks what fetching the pack would
+// actually transfer. Recomputing from surviving entries — what the scan did —
+// understated that for any repository that had pruned.
+func (c *packCatalog) PackExtent(ref string) (int64, bool) {
+	i, ok := c.packIdx[ref]
+	if !ok {
+		return 0, false
+	}
+	return c.packEnd[i], true
+}
+
+// noteExtent records that pack idx is occupied at least up to end.
+func (c *packCatalog) noteExtent(idx uint32, end int64) {
+	if end > c.packEnd[idx] {
+		c.packEnd[idx] = end
+	}
 }
 
 func (c *packCatalog) Len() int { return len(c.compact) + len(c.fallback) }
@@ -136,12 +174,16 @@ func (c *packCatalog) Set(key string, entry PackEntry) {
 		// pack share one string" should hold whatever shape the key has —
 		// otherwise the property depends on which branch an entry happened to
 		// take, which is not something a caller can reason about.
-		entry.PackRef = c.packRefs[c.internPack(entry.PackRef)]
+		idx := c.internPack(entry.PackRef)
+		entry.PackRef = c.packRefs[idx]
+		c.noteExtent(idx, entry.Offset+entry.Length)
 		c.fallback[key] = entry
 		return
 	}
+	idx := c.internPack(entry.PackRef)
+	c.noteExtent(idx, entry.Offset+entry.Length)
 	c.compact[k] = compactEntry{
-		pack:   c.internPack(entry.PackRef),
+		pack:   idx,
 		offset: uint32(entry.Offset),
 		length: uint32(entry.Length),
 	}

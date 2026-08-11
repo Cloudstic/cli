@@ -2,6 +2,7 @@ package storelayer
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -124,6 +125,122 @@ func TestPackStore_UngroupedReadStillProbes(t *testing.T) {
 	}
 	if _, total := counter.packFetches(); total != 0 {
 		t.Errorf("%d whole-pack transfers for a single unplanned read", total)
+	}
+}
+
+// A pack's budget belongs to the keys it was formed from. Reading something
+// else that happens to live in the same pack is not one of them.
+//
+// Packs mix five namespaces, so this is the ordinary case rather than a corner:
+// a traversal declares a batch of filemeta refs and then reads, undeclared, the
+// content objects those refs name, the HAMT nodes it discovers mid-walk, and
+// whatever path resolution needs — a good share of which sit in the very packs
+// it just declared against. Counting each of those against the declared budget
+// retires it early, and the declared reads behind them are handed to the
+// estimator the declaration existed to replace.
+func TestPackGroupPlan_UndeclaredReadKeepsDeclaredBudget(t *testing.T) {
+	const ref = "packs/a"
+	declared := []string{"filemeta/1", "filemeta/2", "filemeta/3", "filemeta/4"}
+
+	plan := &packGroupPlan{
+		declared: map[string]int{},
+		count:    map[string]int{ref: len(declared)},
+		bytes:    map[string]int64{ref: 4 * 1024},
+		size:     map[string]int64{ref: 64 * 1024},
+	}
+	for _, key := range declared {
+		plan.declared[key] = 1
+	}
+
+	// As many undeclared reads out of that pack as it has declared objects —
+	// enough to spend the budget outright when they are counted against it.
+	for i := range declared {
+		plan.consume(fmt.Sprintf("content/%d", i), ref)
+	}
+
+	for _, key := range declared {
+		if _, planned := plan.fetchWhole(key, ref); !planned {
+			t.Fatalf("%s is no longer planned after %d undeclared reads of %s: "+
+				"reads nobody declared spent the budget formed for these keys", key, len(declared), ref)
+		}
+	}
+
+	// And the declared reads themselves still retire it, so a finished pass
+	// cannot decide for a later one.
+	for _, key := range declared {
+		plan.consume(key, ref)
+	}
+	if _, planned := plan.fetchWhole(declared[0], ref); planned {
+		t.Error("the pack is still planned after every declared object was read; a spent plan must retire")
+	}
+}
+
+// The same property where it is paid for: at the backend, in requests.
+//
+// The declared reads happen last and against an evicted body, so what they cost
+// is what the store decided about them rather than what an earlier phase left in
+// cache. With the budget intact they cost the one transfer the plan states; with
+// it spent by the undeclared reads in front of them they cost the probe sequence
+// the plan exists to remove.
+func TestPackStore_UndeclaredReadDoesNotSpendAPlannedPacksBudget(t *testing.T) {
+	ctx := context.Background()
+	const perPack = 100
+	const declaredCount = 40
+
+	keys, w := seedPacks(t, ctx, newLocal(t), 2, perPack)
+	if err := w.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	counter := newRangeCounter(newLocal(t))
+	copyRepo(t, ctx, w, counter)
+
+	// One pack's worth of residency, so a body does not survive the next pack's
+	// arrival and the declared phase below has to be decided rather than served.
+	reader, err := NewPackStore(counter, withPackBodyCacheBudget(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	packA, packB := keys[:perPack], keys[perPack:]
+	declared, undeclared := packA[:declaredCount], packA[declaredCount:]
+
+	plan := reader.PlanReads(ctx, declared)
+	if len(plan.Groups) != 1 {
+		t.Fatalf("declared keys formed %d groups, want 1: they share a pack", len(plan.Groups))
+	}
+
+	// Everything else in that pack, none of it declared.
+	for _, key := range undeclared {
+		if _, err := reader.Get(ctx, key); err != nil {
+			t.Fatalf("get %s: %v", key, err)
+		}
+	}
+
+	// Push the body out, so the declared reads below are answered by the plan
+	// rather than by whatever the reads above left resident.
+	for _, key := range packB[:packPromoteAfter+1] {
+		if _, err := reader.Get(ctx, key); err != nil {
+			t.Fatalf("get %s: %v", key, err)
+		}
+	}
+
+	rangesBefore := counter.ranges
+	_, fetchesBefore := counter.packFetches()
+
+	for _, key := range declared {
+		if _, err := reader.Get(ctx, key); err != nil {
+			t.Fatalf("get %s: %v", key, err)
+		}
+	}
+
+	_, fetchesAfter := counter.packFetches()
+	if ranged := counter.ranges - rangesBefore; ranged != 0 {
+		t.Errorf("%d ranged reads serving %d declared keys, want 0: the plan stated this pack's worth, "+
+			"and %d undeclared reads in front of them spent it", ranged, declaredCount, len(undeclared))
+	}
+	if fetched := fetchesAfter - fetchesBefore; fetched != 1 {
+		t.Errorf("%d whole-pack transfers for one declared group, want 1", fetched)
 	}
 }
 

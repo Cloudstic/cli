@@ -36,7 +36,7 @@ const packRequestBytes = 1 << 20
 const packReadConcurrency = packBodyCacheBudget / maxPackSize
 
 // packGroupPlan is what a caller's declared read set says about each pack it
-// touches: how many objects are wanted, and how many bytes they come to.
+// touches: which objects are wanted, how many, and how many bytes they come to.
 //
 // It exists because admission is otherwise a guess. Without it PackStore learns
 // a pack's worth one miss at a time — ranged-reading up to packPromoteAfter
@@ -44,10 +44,31 @@ const packReadConcurrency = packBodyCacheBudget / maxPackSize
 // inferring from a later eviction that it was not. A caller that has just handed
 // over its whole read set has already answered the question exactly.
 //
-// It is bounded by the packs one grouping spans, not by the objects in them, and
-// it is replaced wholesale by the next grouping rather than accumulating.
+// The per-pack totals are bounded by the packs one grouping spans; declared is
+// bounded by the keys the caller handed over, which is one batch — 8,192 refs
+// for every streaming traversal (engine.entryBatch), and restore's plan, which
+// is O(files) in a phase that already holds an O(files) plan of its own. It is
+// deliberately *not* bounded by the catalog: the keys are shared with the
+// caller's slice, so an entry costs a header and a map slot rather than a copy,
+// and nothing here scales with what the repository holds. The whole thing is
+// replaced wholesale by the next grouping rather than accumulating.
+//
+// **declared is what makes the counts mean anything.** Holding only a per-pack
+// count, `consume` had no way to tell a declared read from one that merely
+// landed in the same pack — and packs mix five namespaces, so a traversal's
+// declared filemeta reads are routinely interleaved with undeclared content,
+// node and path-resolution reads out of those same packs. Each of those spent a
+// slot in a budget it was never part of, and the declared reads behind them
+// found it empty and fell back to the estimate. Keys, not a tally.
 type packGroupPlan struct {
-	mu    sync.Mutex
+	mu sync.Mutex
+
+	// Declared reads still outstanding, per key. A count rather than a set
+	// because a caller may legitimately declare the same key twice — a
+	// deduplicated content object is read once per referencing file — and
+	// RFC 0025 records de-duplicating those as a measured mistake.
+	declared map[string]int
+
 	count map[string]int   // wanted objects per pack, still unread
 	bytes map[string]int64 // wanted bytes per pack
 	size  map[string]int64 // the pack's object region, from the catalog
@@ -63,12 +84,27 @@ type packGroupPlan struct {
 // a pass that has already finished. Spent means spent: a later read of the same
 // pack has nothing declared and falls back to the estimate, which is the honest
 // answer for a read nobody planned.
-func (p *packGroupPlan) consume(packRef string) {
+//
+// A read of a key the plan never named spends nothing. It is not one of the
+// objects the count was formed from, so counting it against them retires a
+// budget early and hands the reads it was formed for to the estimator.
+func (p *packGroupPlan) consume(key, packRef string) {
 	if p == nil {
 		return
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	outstanding, declared := p.declared[key]
+	if !declared {
+		return
+	}
+	if outstanding <= 1 {
+		delete(p.declared, key)
+	} else {
+		p.declared[key] = outstanding - 1
+	}
+
 	n, ok := p.count[packRef]
 	if !ok {
 		return
@@ -82,18 +118,24 @@ func (p *packGroupPlan) consume(packRef string) {
 	p.count[packRef] = n - 1
 }
 
-// fetchWhole reports whether the pack should be transferred as a unit, and
-// whether the plan knows about it at all.
+// fetchWhole reports whether the pack should be transferred as a unit for this
+// key, and whether the plan knows about the key at all.
 //
-// A pack the plan does not name falls back to the miss-counting heuristic: an
-// unplanned read — cat of one file, a dedup probe during backup — has nothing
-// to state and nothing better to go on.
-func (p *packGroupPlan) fetchWhole(packRef string) (whole, planned bool) {
+// The question is asked per key rather than per pack because a pack being named
+// by the plan says nothing about a read the plan does not name. A cat of one
+// file, a dedup probe, a node read discovered mid-walk — each may land in a pack
+// some other caller declared eighty objects from, and answering it from those
+// eighty transfers 8 MB to return one object. An undeclared read has nothing to
+// state and falls back to the miss-counting heuristic, whatever pack it is in.
+func (p *packGroupPlan) fetchWhole(key, packRef string) (whole, planned bool) {
 	if p == nil {
 		return false, false
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.declared[key] == 0 {
+		return false, false
+	}
 	k, ok := p.count[packRef]
 	if !ok {
 		return false, false

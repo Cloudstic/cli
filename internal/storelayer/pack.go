@@ -393,11 +393,21 @@ func (s *PackStore) Get(ctx context.Context, key string) ([]byte, error) {
 		data := make([]byte, entry.Length)
 		copy(data, packData[entry.Offset:entry.Offset+entry.Length])
 		s.debugf("get %s: hit lru pack cache %s (len=%d)", key, entry.PackRef, entry.Length)
-		s.groupPlan().consume(entry.PackRef)
+		s.groupPlan().consume(key, entry.PackRef)
 		return data, nil
 	}
 
-	return s.resolveFromPack(ctx, key, entry)
+	// A miss is a read too. Counting only the cache hits left the plan claiming
+	// one object still outstanding on every pack it named — the one whose miss
+	// brought the body in — so `count` never reached the zero that retires it,
+	// and a pack read entirely by ranged reads kept stating the demand it began
+	// with rather than what was left of it.
+	data, err := s.resolveFromPack(ctx, key, entry)
+	if err != nil {
+		return nil, err
+	}
+	s.groupPlan().consume(key, entry.PackRef)
+	return data, nil
 }
 
 // PlanReads partitions keys so that objects sharing a packfile are read
@@ -467,16 +477,22 @@ func (s *PackStore) PlanReads(ctx context.Context, keys []string) store.ReadPlan
 		return packed[i].entry.Offset < packed[j].entry.Offset
 	})
 
+	// The declared set is sized to the keys being planned, and holds the caller's
+	// own strings rather than copies. That is what keeps it a per-batch cost: the
+	// keys were materialised above to sort them, so naming them costs a map slot
+	// apiece and nothing that scales with the catalog.
 	plan := &packGroupPlan{
-		count: make(map[string]int),
-		bytes: make(map[string]int64),
-		size:  make(map[string]int64),
+		declared: make(map[string]int, len(packed)),
+		count:    make(map[string]int),
+		bytes:    make(map[string]int64),
+		size:     make(map[string]int64),
 	}
 	var groups [][]string
 	for i := 0; i < len(packed); {
 		ref := packed[i].entry.PackRef
 		j := i
 		for j < len(packed) && packed[j].entry.PackRef == ref {
+			plan.declared[packed[j].key]++
 			plan.count[ref]++
 			plan.bytes[ref] += packed[j].entry.Length
 			j++
@@ -586,7 +602,7 @@ func (s *PackStore) resolveFromPack(ctx context.Context, key string, entry PackE
 	// the estimate is not consulted alongside it — it is replaced by it. Probing
 	// exists only to approximate the number the plan already carries.
 	var misses int
-	fetchWhole, planned := s.groupPlan().fetchWhole(entry.PackRef)
+	fetchWhole, planned := s.groupPlan().fetchWhole(key, entry.PackRef)
 	if !planned {
 		misses, fetchWhole = s.admission.recordMiss(entry.PackRef)
 	}

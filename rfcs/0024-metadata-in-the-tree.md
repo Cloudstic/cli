@@ -3,7 +3,7 @@
 - **Status:** Draft (exploratory)
 - **Date:** 2026-08-04, revised 2026-08-08
 - **Affects:** repository format, `internal/hamt`, `internal/engine`, `internal/storelayer`
-- **See also:** [RFC 0025](0025-traversal-order-and-demand-counted-reads.md), which
+- **See also:** [RFC 0025](0025-traversal-order-and-pack-contiguous-reads.md), which
   covers how a snapshot is *read*. It was split out of this document because it
   needs no format change and can proceed independently.
 
@@ -366,12 +366,12 @@ produces, which is exactly what should be measured rather than assumed.
 
   The two do compose at one specific seam, worth naming because it is not
   obvious. A pack mixes namespaces, and on today's format a restore of small
-  files reads roughly as many `content/` objects as metadata objects — they are
-  read in a different phase, with reference-counted rather than single-use
-  demand, so RFC 0025's manifest has to treat them as a separate kind and covers
-  only about half a restore's packed reads. Inlining small-file content here
+  files reads roughly as many `content/` objects as metadata objects — read in a
+  different phase, so RFC 0025's pack grouping forms them into a separate set and
+  a pack holding both is fetched once per phase. Inlining small-file content here
   collapses the two classes into one, at which point the traversal set *is* the
-  read set. Neither RFC needs the other; each makes the other worth more.
+  read set and that double fetch disappears. Neither RFC needs the other; each
+  makes the other worth more.
 
 ## Open questions
 

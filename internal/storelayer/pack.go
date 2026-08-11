@@ -76,6 +76,11 @@ type PackStore struct {
 	// Whether a pack is worth transferring whole, estimated from read history.
 	// See packadmission.go, including why it is expected to be deleted.
 	admission *packAdmission
+
+	// The most recent grouping's plan, guarded separately from mu because it is
+	// read on every packed miss and written only when a caller groups.
+	planMu sync.RWMutex
+	plan   *packGroupPlan
 }
 
 // PackEntry represents the location of a small object within a packfile.
@@ -388,14 +393,15 @@ func (s *PackStore) Get(ctx context.Context, key string) ([]byte, error) {
 		data := make([]byte, entry.Length)
 		copy(data, packData[entry.Offset:entry.Offset+entry.Length])
 		s.debugf("get %s: hit lru pack cache %s (len=%d)", key, entry.PackRef, entry.Length)
+		s.groupPlan().consume(entry.PackRef)
 		return data, nil
 	}
 
 	return s.resolveFromPack(ctx, key, entry)
 }
 
-// GroupByLocality orders keys so that objects sharing a packfile are read
-// consecutively, implementing store.LocalityGrouper.
+// PlanReads partitions keys so that objects sharing a packfile are read
+// consecutively, implementing store.ReadPlanner.
 //
 // A pack is transferred as a unit once enough of it is wanted (see
 // packPromoteAfter), and stays cached only while it is the recently-used one.
@@ -405,7 +411,14 @@ func (s *PackStore) Get(ctx context.Context, key string) ([]byte, error) {
 // only the order changes, and only the caller knows the whole set in advance.
 //
 // Ordering is by (pack ref, offset), so reads also run forwards through each
-// pack rather than seeking around inside it.
+// pack rather than seeking around inside it, and each pack's keys form one
+// group. Consuming the groups in order is what bounds residency: a pack is
+// wanted across one group and never again, so the body can go when the group
+// does, whatever the read set's total size.
+//
+// Grouping also records what each pack is worth to this caller (see
+// packGroupPlan), which is what lets admission decide on the actual quantities
+// instead of probing to estimate them.
 //
 // Keys with no catalog entry — large objects stored standalone, anything not
 // packed — keep their relative order and follow the packed ones. They are
@@ -415,9 +428,19 @@ func (s *PackStore) Get(ctx context.Context, key string) ([]byte, error) {
 //
 // This is a hint, not a contract: the result is always a permutation of the
 // input, so a caller that ignores it reads exactly the same objects.
-func (s *PackStore) GroupByLocality(keys []string) []string {
-	if len(keys) < 2 {
-		return keys
+func (s *PackStore) PlanReads(ctx context.Context, keys []string) store.ReadPlan {
+	if len(keys) == 0 {
+		return store.ReadPlan{Concurrency: packReadConcurrency}
+	}
+
+	// Load the catalog rather than working from whatever is already known.
+	// Without it every key looks unpacked, grouping returns singletons, and
+	// admission silently falls back to the probe sequence it exists to replace —
+	// a performance cliff with no error anywhere. A caller groups because it is
+	// about to read these keys, so the load is not speculative.
+	if err := s.ensureCatalogLoaded(ctx); err != nil {
+		s.debugf("plan reads: catalog unavailable, not grouping: %v", err)
+		return store.ReadPlan{Groups: singletonGroups(keys), Concurrency: packReadConcurrency}
 	}
 
 	type placed struct {
@@ -437,10 +460,6 @@ func (s *PackStore) GroupByLocality(keys []string) []string {
 	}
 	s.mu.RUnlock()
 
-	// The catalog is consulted without loading it. Grouping is an optimisation,
-	// and forcing a catalog load here would turn a hint into an I/O dependency
-	// on a path that has not asked to read anything yet; an unloaded catalog
-	// simply yields the input order back.
 	sort.SliceStable(packed, func(i, j int) bool {
 		if packed[i].entry.PackRef != packed[j].entry.PackRef {
 			return packed[i].entry.PackRef < packed[j].entry.PackRef
@@ -448,11 +467,80 @@ func (s *PackStore) GroupByLocality(keys []string) []string {
 		return packed[i].entry.Offset < packed[j].entry.Offset
 	})
 
-	out := make([]string, 0, len(keys))
-	for _, p := range packed {
-		out = append(out, p.key)
+	plan := &packGroupPlan{
+		count: make(map[string]int),
+		bytes: make(map[string]int64),
+		size:  make(map[string]int64),
 	}
-	return append(out, loose...)
+	var groups [][]string
+	for i := 0; i < len(packed); {
+		ref := packed[i].entry.PackRef
+		j := i
+		for j < len(packed) && packed[j].entry.PackRef == ref {
+			plan.count[ref]++
+			plan.bytes[ref] += packed[j].entry.Length
+			j++
+		}
+		group := make([]string, 0, j-i)
+		for _, pl := range packed[i:j] {
+			group = append(group, pl.key)
+		}
+		groups = append(groups, group)
+		i = j
+	}
+	s.fillPackSizes(plan)
+
+	s.planMu.Lock()
+	s.plan = plan
+	s.planMu.Unlock()
+
+	// Unpacked keys get a group each. They share no body, so grouping them
+	// together would claim a locality that does not exist and would serialise a
+	// caller that treats a group as its unit of concurrency.
+	for _, key := range loose {
+		groups = append(groups, []string{key})
+	}
+	return store.ReadPlan{Groups: groups, Concurrency: packReadConcurrency}
+}
+
+// singletonGroups gives each key a group of its own — the answer when nothing
+// is known about where objects live. One group of everything would claim a
+// locality that was never established and would serialise a caller that makes
+// the group its unit of concurrency.
+func singletonGroups(keys []string) [][]string {
+	groups := make([][]string, len(keys))
+	for i, k := range keys {
+		groups[i] = []string{k}
+	}
+	return groups
+}
+
+// fillPackSizes records the object-region size of every pack the plan names.
+//
+// Admission compares a pack's wanted bytes against its total, so it needs that
+// total, and asking the backend would cost a request per pack — defeating the
+// purpose. The catalog maintains it on write (packCatalog.PackExtent), so this
+// is one lookup per pack the plan names.
+//
+// It used to scan the whole catalog instead, which made planning cost a pass
+// over the repository no matter how few keys were being planned — and, because
+// iterating entries rebuilds their key strings, allocate three times per object
+// in the repository to discard every one of them. See PackExtent.
+func (s *PackStore) fillPackSizes(plan *packGroupPlan) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for ref := range plan.count {
+		if end, ok := s.catalog.PackExtent(ref); ok {
+			plan.size[ref] = end
+		}
+	}
+}
+
+// groupPlan returns the plan recorded by the most recent grouping, if any.
+func (s *PackStore) groupPlan() *packGroupPlan {
+	s.planMu.RLock()
+	defer s.planMu.RUnlock()
+	return s.plan
 }
 
 // rangesNatively reports whether a ranged read on s reaches a backend that
@@ -494,7 +582,14 @@ func (s *PackStore) resolveFromPack(ctx context.Context, key string, entry PackE
 	ranger, canRange := s.ObjectStore.(store.RangeGetter)
 	canRange = canRange && rangesNatively(s.ObjectStore)
 
-	misses, fetchWhole := s.admission.recordMiss(entry.PackRef)
+	// A caller that grouped its reads has stated this pack's worth exactly, so
+	// the estimate is not consulted alongside it — it is replaced by it. Probing
+	// exists only to approximate the number the plan already carries.
+	var misses int
+	fetchWhole, planned := s.groupPlan().fetchWhole(entry.PackRef)
+	if !planned {
+		misses, fetchWhole = s.admission.recordMiss(entry.PackRef)
+	}
 
 	if canRange && !fetchWhole {
 		data, err := ranger.GetRange(ctx, entry.PackRef, entry.Offset, entry.Length)

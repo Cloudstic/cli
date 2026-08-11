@@ -23,9 +23,9 @@ event (`docs/compatibility.md`).
 |---|---|---|---|---|
 | `KeyCacheStore.knownDigests` / `knownKeys` | `internal/storelayer/keycache.go` | raw digest (fallback: object key) → exists | one `backup` run | every key under the preloaded prefixes |
 | `PackStore.catalog` / `packKeys` | `internal/storelayer/pack.go` | object key → pack ref + offset | `Client` | one entry per packed object |
-| `PackStore.packCache` | `internal/storelayer/pack.go` | pack ref → raw packfile bytes | `Client` | LRU, 4 packs (~32 MB at 8 MB/pack) |
+| `PackStore.packCache` | `internal/storelayer/packbodycache.go` | pack ref → raw packfile bytes | `Client` | LRU bounded by bytes, `packBodyCacheBudget` (64 MB) |
 | `NodeStore.cache` | `internal/hamt/nodestore.go` | node ref → decoded `*node` | `hamt.Tree` | LRU, 4096 nodes |
-| `metaLoader.cache` | `internal/engine/metaloader.go` | filemeta ref → decoded `core.FileMeta` | manager | unbounded; enabled only for `backup` and `diff` |
+| `metaLoader.cache` | `internal/engine/metaloader.go` | filemeta ref → decoded `core.FileMeta` | `diff`: manager. `backup`: the scan phase only — released before the upload | unbounded while enabled; enabled only for `backup` and `diff` |
 | `findScanner.evaluated` | `internal/engine/find_scan.go` | 16-byte ref digest → match verdict | one `find` run | one small entry per distinct filemeta ref |
 | `Resolver.cache` | `pkg/secretref/secretref.go` | `scheme://path` → secret | `Resolver` | only `keychain`, `wincred`, `secret-service` |
 | `Client.repoIDCache`, `openCfg` | `client.go` | — → repository marker fields | `Client` | one value each |
@@ -163,6 +163,13 @@ work rather than by a constant:
   they are the two that read the same ref more than once — `diff` walks both
   roots, and an unchanged file keeps its filemeta from one snapshot to the
   next. `ls`, `restore`, `find` and `prune` read through.
+
+  `backup` releases it once the scan returns, which is where its hits come
+  from: change detection reads the previous filemeta of every entry and
+  revisits parents, while the upload that follows reads almost none of them.
+  Carrying it through would hold a `FileMeta` per scanned file across the
+  longest and most allocation-heavy phase of the run. `countRemoved` still
+  loads afterwards, and reads through — it only touches entries that are gone.
 
 Two operations take an uncached loader for reasons worth stating, since both
 look at first glance like they should memoize:

@@ -112,13 +112,19 @@ func (lm *LsSnapshotManager) resolveSnapshot(ctx context.Context, id string) (*c
 
 func (lm *LsSnapshotManager) collectMeta(ctx context.Context, root string) (map[string]core.FileMeta, error) {
 	refToMeta := make(map[string]core.FileMeta)
-	err := lm.tree.Walk(ctx, root, func(_, valueRef string) error {
-		fm, err := lm.metas.load(ctx, valueRef)
-		if err != nil {
-			return err
+	err := walkEntriesBatched(ctx, lm.tree, root, func(entries []treeEntry) error {
+		refs := make([]string, len(entries))
+		for i, e := range entries {
+			refs[i] = e.ref
 		}
-		refToMeta[valueRef] = *fm
-		return nil
+		return readGrouped(ctx, lm.store, refs, func(ref string) error {
+			fm, err := lm.metas.load(ctx, ref)
+			if err != nil {
+				return err
+			}
+			refToMeta[ref] = *fm
+			return nil
+		})
 	})
 	return refToMeta, err
 }

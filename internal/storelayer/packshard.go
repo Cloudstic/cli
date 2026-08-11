@@ -235,17 +235,45 @@ func (s *PackStore) loadShardsLocked(ctx context.Context) (int, error) {
 	return entries, nil
 }
 
+// IndexObjectCount reports how many stored index objects this store has
+// absorbed — every shard it merged, plus the legacy monolithic catalog if the
+// repository still has one.
+//
+// It is what compaction costs are measured against, because it is exactly the
+// number of requests the *next* operation will spend opening the repository:
+// loadShardsLocked reads each one. A caller deciding whether consolidation is
+// worth it is asking about that number and not about the catalog's size, which
+// consolidation does not change.
+//
+// Zero before the catalog is loaded, which reads correctly as "nothing to
+// consolidate" — a store that has not opened the index has not paid for it
+// either.
+func (s *PackStore) IndexObjectCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.mergedIndex)
+}
+
 // CompactCatalog folds every shard, and the legacy monolithic catalog, into a
 // single shard and removes what it replaced.
 //
 // Shards accumulate one per flush, so without compaction opening a repository
-// costs a request per flush ever made. Callers must hold the repository's
-// exclusive lock: this is the one operation that removes index material, and
-// doing it alongside a concurrent writer could drop a shard written between the
-// merge and the delete.
+// costs a request per flush ever made.
 //
-// The consolidated shard is written before anything is deleted. A reader that
-// lists midway sees both it and its inputs, which merge to the same result.
+// Nothing is ever lost by compacting concurrently with another writer: the
+// consolidated shard is written before anything is deleted, the delete set is
+// only what this store itself absorbed — never a shard someone else wrote and
+// we never read — and a reader that lists midway sees both the consolidation
+// and its inputs, which merge to the same result.
+//
+// What a concurrent compaction *can* do is fail a reader that listed the shards
+// before the delete and reads them after: loadShardsLocked treats a shard it
+// cannot read as fatal, on purpose, because a partial merge is how a prune
+// deletes objects it could not see. That is a spurious error rather than data
+// loss, but it is why callers that are merely tidying up hold the exclusive
+// lock (see BackupManager.compactPackIndex) while Flush — which compacts only
+// to make its own deletions durable, under the exclusive lock its caller
+// already holds — does not need to take another.
 func (s *PackStore) CompactCatalog(ctx context.Context) (int, error) {
 	if err := s.ensureCatalogLoaded(ctx); err != nil {
 		return 0, err

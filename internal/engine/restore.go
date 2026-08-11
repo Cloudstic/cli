@@ -218,6 +218,8 @@ func (rm *RestoreManager) runWithWriter(ctx context.Context, plan restorePlan, w
 		}
 	}
 
+	declareContentReads(ctx, rm.store, plan)
+
 	for _, id := range plan.sorted {
 		meta := plan.byID[id]
 		rel := buildRestorePath(meta, plan.byID)
@@ -786,51 +788,42 @@ func (rm *RestoreManager) collectMetadata(ctx context.Context, root string) (map
 	walkOrder := make([]string, len(refs))
 	var mu sync.Mutex
 
-	// Fetch in the order the store says is cheapest, which is not the order the
-	// walk produced. Walk order matches the layout of whichever backup wrote
+	// Fetch in the groups the store says are cheapest, which is not the order
+	// the walk produced. Walk order matches the layout of whichever backup wrote
 	// each entry, so on a repository built by several backups it interleaves
 	// packs — and a pack read in pieces spread across the fetch is transferred,
 	// evicted and transferred again. Handing the whole set over first lets
 	// PackStore group it, because it is the layer that knows where objects live
 	// and this is the one moment the full set is known in advance.
 	//
+	// **The unit of concurrency is the group, not the ref**, and that is what
+	// makes grouping worth anything. Spreading every ref across the errgroup
+	// interleaves the packs again as soon as more than one worker runs, which is
+	// the arrangement grouping exists to prevent; one worker per group reads a
+	// pack's objects consecutively while other workers read other packs. The
+	// concurrency hint therefore bounds how many pack bodies are live at once.
+	//
 	// walkOrder is unaffected: it is filled by index below, so the order results
 	// are *fetched* in is independent of the order restore *writes* in, which
 	// must stay walk order (RFC 0023 §5).
-	order := make([]int, len(refs))
-	for i := range refs {
-		order[i] = i
-	}
-	if len(refs) > 1 {
-		byRef := make(map[string][]int, len(refs))
-		for i, ref := range refs {
-			byRef[ref] = append(byRef[ref], i)
-		}
-		order = order[:0]
-		for _, ref := range store.GroupByLocality(rm.store, refs) {
-			// A ref can appear more than once when two entries share a
-			// filemeta object; each occurrence gets its own index, and the
-			// grouped list names the ref once per occurrence.
-			idx := byRef[ref]
-			order = append(order, idx[0])
-			byRef[ref] = idx[1:]
-		}
-	}
+	plan := store.PlanReads(ctx, rm.store, refs)
+	groups := indexGroups(plan.Groups, refs)
 
 	g, gCtx := errgroup.WithContext(ctx)
-	g.SetLimit(store.GetConcurrencyHint(rm.store, 10))
-	for _, i := range order {
-		ref := refs[i]
+	g.SetLimit(plan.Concurrency)
+	for _, group := range groups {
 		g.Go(func() error {
-			fm, err := rm.metas.load(gCtx, ref)
-			if err != nil {
-				return err
+			for _, f := range group {
+				fm, err := rm.metas.load(gCtx, f.ref)
+				if err != nil {
+					return err
+				}
+				mu.Lock()
+				byID[fm.FileID] = *fm
+				walkOrder[f.index] = fm.FileID
+				mu.Unlock()
+				phase.Increment(1)
 			}
-			mu.Lock()
-			byID[fm.FileID] = *fm
-			walkOrder[i] = fm.FileID
-			mu.Unlock()
-			phase.Increment(1)
 			return nil
 		})
 	}
@@ -1100,4 +1093,82 @@ func chunkWeight(avgChunkSize int64) int64 {
 		return cdcMaxSize
 	}
 	return max(minWeight, min(avgChunkSize, cdcMaxSize))
+}
+
+// metaFetch pairs a ref with the slot its result belongs in. The slot is
+// carried because fetch order and walk order are deliberately different: a ref
+// fetched third may be the first entry the restore writes.
+type metaFetch struct {
+	ref   string
+	index int
+}
+
+// indexGroups pairs each ref in a plan's groups with its original index.
+//
+// A ref can appear more than once when two entries share a filemeta object, so
+// occurrences are handed out in order rather than looked up: the plan names the
+// ref once per occurrence, and each occurrence needs its own slot.
+func indexGroups(groups [][]string, refs []string) [][]metaFetch {
+	byRef := make(map[string][]int, len(refs))
+	for i, ref := range refs {
+		byRef[ref] = append(byRef[ref], i)
+	}
+	out := make([][]metaFetch, 0, len(groups))
+	for _, group := range groups {
+		fetches := make([]metaFetch, 0, len(group))
+		for _, ref := range group {
+			idx := byRef[ref]
+			if len(idx) == 0 {
+				continue // a key the store invented; not possible for a partition
+			}
+			fetches = append(fetches, metaFetch{ref: ref, index: idx[0]})
+			byRef[ref] = idx[1:]
+		}
+		if len(fetches) > 0 {
+			out = append(out, fetches)
+		}
+	}
+	return out
+}
+
+// declareContentReads tells the store which content objects the write phase is
+// about to read, and deliberately keeps writing in the order it already had.
+//
+// Contiguity and declared demand are separate properties, and the write phase
+// had only the first. Its order is already pack-contiguous — restoreOrder emits
+// leaves in walk order, which is the order backup wrote them and therefore the
+// order they sit in packfiles (#455). What it lacked was any statement of
+// demand, so the store still had to probe each bundle it touched to estimate a
+// number this caller already knew. Measured at 82 packs, that was 986 ranged
+// reads out of 1,258 total requests: the single largest cost in a restore, and
+// entirely avoidable.
+//
+// **The returned plan's grouping is discarded on purpose**, which store.PlanReads
+// documents as a supported use. Reordering the leaves by pack was tried and is a
+// regression on every axis — requests +25%, bytes +87%, peak RSS +38% — because
+// it replaces walk order with pack-hash order and throws away the locality
+// backup already established.
+//
+// Declaring is a statement about what will be read, not about when, so it stays
+// true under the existing order.
+func declareContentReads(ctx context.Context, s store.ObjectStore, plan restorePlan) {
+	keys := make([]string, 0, len(plan.sorted))
+	for _, id := range plan.sorted {
+		meta, ok := plan.byID[id]
+		if !ok || meta.Type == core.FileTypeFolder {
+			continue
+		}
+		hash := meta.ContentRef
+		if hash == "" {
+			hash = meta.ContentHash
+		}
+		if hash == "" {
+			continue
+		}
+		keys = append(keys, "content/"+hash)
+	}
+	if len(keys) < 2 {
+		return
+	}
+	store.PlanReads(ctx, s, keys)
 }

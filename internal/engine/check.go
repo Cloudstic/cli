@@ -179,8 +179,14 @@ func (cm *CheckManager) checkSnapshot(ctx context.Context, ref string, result *C
 	}
 
 	// 3. Walk leaf entries — verify filemeta → content → chunks.
-	if err := cm.tree.Walk(ctx, snap.Root, func(_, valueRef string) error {
-		return cm.checkFileMeta(ctx, valueRef, result, cfg, phase)
+	if err := walkEntriesBatched(ctx, cm.tree, snap.Root, func(entries []treeEntry) error {
+		refs := make([]string, len(entries))
+		for i, e := range entries {
+			refs[i] = e.ref
+		}
+		return readGrouped(ctx, cm.store, refs, func(ref string) error {
+			return cm.checkFileMeta(ctx, ref, result, cfg, phase)
+		})
 	}); err != nil {
 		result.Errors = append(result.Errors, CheckError{
 			Key: snap.Root, Type: "read_error", Message: fmt.Sprintf("cannot walk HAMT entries: %v", err),

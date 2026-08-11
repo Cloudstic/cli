@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/internal/hamt"
 	"github.com/cloudstic/cli/internal/storelayer"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/store"
@@ -68,6 +70,82 @@ func TestPruneManager_EmptyRepositorySucceeds(t *testing.T) {
 	if result.ObjectsDeleted != 0 {
 		t.Errorf("expected 0 deletions, got %d", result.ObjectsDeleted)
 	}
+}
+
+// The reachable set holds keys in a compact form that only "<namespace><64
+// lowercase hex>" fits. Every key that does not fit must survive it anyway.
+//
+// docs/compatibility.md is normative: a garbage collector must never read
+// "cannot represent" as "not referenced". A key dropped on the way into the
+// reachable set is an object the sweep then lists, fails to find marked, and
+// deletes — a live object destroyed by a representation choice. So this walks a
+// real repository whose chunk refs take shapes the compact form refuses, and
+// requires them to be there afterwards.
+func TestPruneManager_KeepsObjectsWhoseKeysDoNotFitTheCompactForm(t *testing.T) {
+	ctx := context.Background()
+	mockStore := NewMockStore()
+
+	// One key of each shape the compact encoding accepts and refuses: a
+	// canonical digest, a short legacy name, and uppercase hex — which decodes
+	// under a case-insensitive hex decoder and would then be filed under the
+	// same entry as its lowercase twin.
+	chunkRefs := []string{
+		"chunk/" + strings.Repeat("ab", 32),
+		"chunk/legacy-chunk-name",
+		"chunk/" + strings.ToUpper(strings.Repeat("cd", 32)),
+	}
+	for _, ref := range chunkRefs {
+		if err := mockStore.Put(ctx, ref, []byte("data")); err != nil {
+			t.Fatalf("put %s: %v", ref, err)
+		}
+	}
+
+	content := core.Content{Chunks: chunkRefs}
+	_, contentData, _ := core.ComputeJSONHash(&content)
+	contentRef := "content/legacy-content-name"
+	if err := mockStore.Put(ctx, contentRef, contentData); err != nil {
+		t.Fatalf("put content: %v", err)
+	}
+
+	meta := core.FileMeta{ContentHash: "legacy-content-name", Name: "legacy.txt"}
+	metaHash, metaData, _ := core.ComputeJSONHash(&meta)
+	metaRef := "filemeta/" + metaHash
+	if err := mockStore.Put(ctx, metaRef, metaData); err != nil {
+		t.Fatalf("put filemeta: %v", err)
+	}
+
+	rootRef, err := insertCommit(ctx, hamt.NewTree(mockStore), "", "", "file1", metaRef)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	snap := core.Snapshot{Root: rootRef, Seq: 1}
+	snapHash, snapData, _ := core.ComputeJSONHash(&snap)
+	if err := mockStore.Put(ctx, "snapshot/"+snapHash, snapData); err != nil {
+		t.Fatalf("put snapshot: %v", err)
+	}
+
+	// Something must actually be collectable, or a prune that marked everything
+	// by accident would pass this test.
+	if err := mockStore.Put(ctx, "chunk/garbage", []byte("trash")); err != nil {
+		t.Fatalf("put garbage: %v", err)
+	}
+
+	pm := NewPruneManager(Deps{
+		Store:    storelayer.NewMeteredStore(mockStore),
+		Reporter: ui.NewNoOpReporter(),
+	})
+	if _, err := pm.Run(ctx); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+
+	for _, ref := range chunkRefs {
+		assertExists(t, ctx, mockStore, ref)
+	}
+	assertExists(t, ctx, mockStore, contentRef)
+	assertExists(t, ctx, mockStore, metaRef)
+	assertExists(t, ctx, mockStore, rootRef)
+	assertNotExists(t, ctx, mockStore, "chunk/garbage")
 }
 
 // A listing that fails during the sweep must abort, not be skipped.

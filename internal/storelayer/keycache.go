@@ -8,12 +8,9 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 
+	"github.com/cloudstic/cli/internal/objkey"
 	"github.com/cloudstic/cli/pkg/store"
 )
-
-// digestHexLen is the length of a hex-encoded sha256 digest, the suffix shape
-// of every content-addressed key this store preloads (chunk/, content/, node/).
-const digestHexLen = 64
 
 // KeyCacheStore wraps an store.ObjectStore and caches key existence from List calls,
 // so that Exists returns immediately for known keys. Thread-safe.
@@ -170,46 +167,14 @@ func (s *KeyCacheStore) forgetLocked(prefix, key string) {
 // hex chars>", so callers fall back to string-keyed storage instead of
 // mis-filing a key that doesn't have that shape.
 //
-// Only the canonical lowercase spelling decodes. core.ComputeHash always
-// produces lowercase hex, so every key this store ever writes or preloads
-// takes that form; a decoder that also accepted uppercase would fold two
-// byte-distinct object keys ("aa..." and "AA...") into one digest and let a
-// write for one be elided because the other was seen — the exact "permissive
-// direction" failure the prefix matching above is written to avoid. A
-// non-canonical key simply isn't recognized as a digest and falls back to the
-// string map, where it stays byte-exact.
-//
-// This is called on every Exists and Put for a content-addressed key, so it
-// decodes by hand rather than through hex.DecodeString: that call allocates a
-// fresh []byte per invocation, which would put a heap allocation back on the
-// hot path this cache exists to keep allocation-free.
-func decodeDigest(prefix, key string) (digest [32]byte, ok bool) {
-	suffix := key[len(prefix):]
-	if len(suffix) != digestHexLen {
-		return digest, false
-	}
-	for i := range 32 {
-		hi, ok1 := lowerHexNibble(suffix[2*i])
-		lo, ok2 := lowerHexNibble(suffix[2*i+1])
-		if !ok1 || !ok2 {
-			return digest, false
-		}
-		digest[i] = hi<<4 | lo
-	}
-	return digest, true
-}
-
-// lowerHexNibble decodes a single canonical (lowercase) hex digit. It
-// deliberately rejects 'A'-'F': see decodeDigest.
-func lowerHexNibble(c byte) (byte, bool) {
-	switch {
-	case c >= '0' && c <= '9':
-		return c - '0', true
-	case c >= 'a' && c <= 'f':
-		return c - 'a' + 10, true
-	default:
-		return 0, false
-	}
+// Only the canonical lowercase spelling decodes, which objkey.DecodeDigest
+// documents at length. The consequence here is specific: a decoder that also
+// accepted uppercase would fold two byte-distinct object keys ("aa..." and
+// "AA...") into one digest and let a write for one be elided because the other
+// was seen — the exact "permissive direction" failure the prefix matching above
+// is written to avoid.
+func decodeDigest(prefix, key string) ([32]byte, bool) {
+	return objkey.DecodeDigest(key[len(prefix):])
 }
 
 func (s *KeyCacheStore) Get(ctx context.Context, key string) ([]byte, error) {

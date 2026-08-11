@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/cloudstic/cli/internal/objkey"
 	"github.com/cloudstic/cli/pkg/store"
 )
 
@@ -288,7 +289,7 @@ func TestKeyCacheStore_OverlappingPrefixesResolveLongestMatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	key := "chunk/a" + strings.Repeat("b", digestHexLen)
+	key := "chunk/a" + strings.Repeat("b", objkey.DigestHexLen)
 	for range 20 {
 		prefix, ok := kc.contentAddressedPrefix(key)
 		if !ok || prefix != "chunk/a" {
@@ -304,7 +305,7 @@ func TestKeyCacheStore_NonHexKeyUnderListedPrefixFallsBack(t *testing.T) {
 	// a character that isn't a hex nibble.
 	cases := map[string]string{
 		"wrong-length": "chunk/not-a-valid-digest",
-		"bad-nibble":   "chunk/" + strings.Repeat("a", digestHexLen-1) + "g",
+		"bad-nibble":   "chunk/" + strings.Repeat("a", objkey.DigestHexLen-1) + "g",
 	}
 	for name, nonHexKey := range cases {
 		t.Run(name, func(t *testing.T) {

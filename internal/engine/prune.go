@@ -7,6 +7,7 @@ import (
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
+	"github.com/cloudstic/cli/internal/objkey"
 	"github.com/cloudstic/cli/internal/storelayer"
 	"github.com/cloudstic/cli/internal/ui"
 )
@@ -122,8 +123,17 @@ func (pm *PruneManager) Run(ctx context.Context, opts ...PruneOption) (*PruneRes
 	return result, nil
 }
 
-func (pm *PruneManager) mark(ctx context.Context, phase ui.Phase) (map[string]bool, error) {
-	reachable := make(map[string]bool)
+// mark walks every snapshot and records the key of every object reachable from
+// one. Its result is the largest structure prune holds — one entry per live
+// object — so it is an objkey.Set rather than the map[string]bool it reads as.
+//
+// The representation is load-bearing beyond memory. A key missing from this set
+// is an object the sweep below deletes, so the set must be total over the keys
+// that reach it: objkey.Set keeps a key it cannot encode compactly rather than
+// dropping it, which is docs/compatibility.md's rule that a garbage collector
+// must never read "cannot represent" as "not referenced".
+func (pm *PruneManager) mark(ctx context.Context, phase ui.Phase) (*objkey.Set, error) {
+	reachable := objkey.NewSet()
 
 	snapRefs, err := pm.collectSnapshots(ctx, reachable)
 	if err != nil {
@@ -177,7 +187,7 @@ func (pm *PruneManager) firstObject(ctx context.Context) (string, error) {
 	return "", nil
 }
 
-func (pm *PruneManager) collectSnapshots(ctx context.Context, reachable map[string]bool) (map[string]bool, error) {
+func (pm *PruneManager) collectSnapshots(ctx context.Context, reachable *objkey.Set) (map[string]bool, error) {
 	keys, err := pm.store.List(ctx, "snapshot/")
 	if err != nil {
 		return nil, fmt.Errorf("list snapshots: %w", err)
@@ -189,20 +199,19 @@ func (pm *PruneManager) collectSnapshots(ctx context.Context, reachable map[stri
 	}
 
 	if exists, _ := pm.store.Exists(ctx, "index/latest"); exists {
-		reachable["index/latest"] = true
+		reachable.Add("index/latest")
 	}
 	if exists, _ := pm.store.Exists(ctx, "index/packs"); exists {
-		reachable["index/packs"] = true
+		reachable.Add("index/packs")
 	}
 
 	return snapRefs, nil
 }
 
-func (pm *PruneManager) markSnapshot(ctx context.Context, ref string, reachable map[string]bool) error {
-	if reachable[ref] {
+func (pm *PruneManager) markSnapshot(ctx context.Context, ref string, reachable *objkey.Set) error {
+	if !reachable.Add(ref) {
 		return nil
 	}
-	reachable[ref] = true
 
 	snap, err := pm.loadSnapshot(ctx, ref)
 	if err != nil {
@@ -210,7 +219,7 @@ func (pm *PruneManager) markSnapshot(ctx context.Context, ref string, reachable 
 	}
 
 	if err := pm.tree.NodeRefs(ctx, snap.Root, func(r string) error {
-		reachable[r] = true
+		reachable.Add(r)
 		return nil
 	}); err != nil {
 		return err
@@ -256,11 +265,10 @@ func (pm *PruneManager) markSnapshot(ctx context.Context, ref string, reachable 
 //
 // It returns "" when there is nothing to read: the entry has no content, or its
 // filemeta was already marked by another snapshot.
-func (pm *PruneManager) markFileMeta(ctx context.Context, ref string, reachable map[string]bool) (string, error) {
-	if reachable[ref] {
+func (pm *PruneManager) markFileMeta(ctx context.Context, ref string, reachable *objkey.Set) (string, error) {
+	if !reachable.Add(ref) {
 		return "", nil
 	}
-	reachable[ref] = true
 
 	meta, err := pm.metas.load(ctx, ref)
 	if err != nil {
@@ -276,11 +284,10 @@ func (pm *PruneManager) markFileMeta(ctx context.Context, ref string, reachable 
 	return "content/" + contentKey, nil
 }
 
-func (pm *PruneManager) markContent(ctx context.Context, ref string, reachable map[string]bool) error {
-	if reachable[ref] {
+func (pm *PruneManager) markContent(ctx context.Context, ref string, reachable *objkey.Set) error {
+	if !reachable.Add(ref) {
 		return nil
 	}
-	reachable[ref] = true
 
 	data, err := pm.store.Get(ctx, ref)
 	if err != nil {
@@ -292,7 +299,7 @@ func (pm *PruneManager) markContent(ctx context.Context, ref string, reachable m
 	}
 
 	for _, c := range content.Chunks {
-		reachable[c] = true
+		reachable.Add(c)
 	}
 	return nil
 }
@@ -311,7 +318,7 @@ func (pm *PruneManager) markContent(ctx context.Context, ref string, reachable m
 // is the point: not being able to *enumerate* means not knowing what is there,
 // while not being able to delete one object means one object survives — safe,
 // visible in the count, and reclaimed by the next run.
-func (pm *PruneManager) sweep(ctx context.Context, reachable map[string]bool, cfg *pruneConfig) (*PruneResult, error) {
+func (pm *PruneManager) sweep(ctx context.Context, reachable *objkey.Set, cfg *pruneConfig) (*PruneResult, error) {
 	listing := make(map[string][]string, len(objectPrefixes))
 	var totalKeys int
 	for _, prefix := range objectPrefixes {
@@ -336,7 +343,7 @@ func (pm *PruneManager) sweep(ctx context.Context, reachable map[string]bool, cf
 	for _, prefix := range objectPrefixes {
 		for _, key := range listing[prefix] {
 			result.ObjectsScanned++
-			if reachable[key] {
+			if reachable.Has(key) {
 				phase.Increment(0)
 				continue
 			}

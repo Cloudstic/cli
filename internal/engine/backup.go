@@ -131,8 +131,18 @@ type BackupManager struct {
 	newMetas     map[string]core.FileMeta
 	metas        *metaLoader
 	pendingMetas map[string][]byte // deferred filemeta PUTs (ref → JSON)
-	parentIndex  map[string]string // fileID → primary parent fileID (for AffinityKey lookups)
-	hmacKey      []byte
+
+	// parentIndex maps fileID → primary parent fileID, so lookupMetaByFileID can
+	// build an AffinityKey instead of walking the tree. It is allocated by
+	// scanIncremental and stays nil on the full-scan path: its only reader is
+	// reached from processEntry's len(meta.Paths) == 0 branch, which a full Walk
+	// never takes because every source populates Paths there. Holding two strings
+	// per scanned entry for a map nothing reads is what the nil avoids.
+	//
+	// A nil map reads as empty, and a miss is answered by LookupByKey — so the
+	// gate can only cost a slower lookup, never a wrong one.
+	parentIndex map[string]string
+	hmacKey     []byte
 }
 
 func NewBackupManager(d Deps, src source.Source, opts ...BackupOption) *BackupManager {
@@ -159,7 +169,6 @@ func NewBackupManager(d Deps, src source.Source, opts ...BackupOption) *BackupMa
 		newMetas:     make(map[string]core.FileMeta),
 		metas:        newMetaLoader(keyCache),
 		pendingMetas: make(map[string][]byte),
-		parentIndex:  make(map[string]string),
 		hmacKey:      d.HMACKey,
 	}
 }

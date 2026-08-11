@@ -91,7 +91,21 @@ func TestCompactCatalog_EmptiedCatalogRemovesItsShards(t *testing.T) {
 		}
 	}
 
-	// A fresh reader must not resurrect the deleted entries.
+	// A fresh reader answers the same way through every path.
+	//
+	// It answers "present". Compaction emptied the index, and an index that
+	// lists nothing is indistinguishable from one that was lost, so the load
+	// heals from the pack's own footer -- which still names both objects,
+	// because the now-orphaned pack has not been repacked away. That is
+	// TestPackStore_HealsWhenLegacyCatalogIsEmpty's deliberate behaviour, not an
+	// artefact here: reading an empty index as authoritative is what made a
+	// packed object report missing while its pack was intact.
+	//
+	// What this pins is that the three paths agree. Exists used to answer
+	// "absent" here purely because it was the one read path that never loaded
+	// the catalog, so it fell through to the backend, where a packed object has
+	// no standalone copy -- while List and Get, on the same store and the same
+	// key, both said "present".
 	fresh, err := NewPackStore(mem)
 	if err != nil {
 		t.Fatal(err)
@@ -99,9 +113,19 @@ func TestCompactCatalog_EmptiedCatalogRemovesItsShards(t *testing.T) {
 	for _, k := range keys {
 		if ok, err := fresh.Exists(ctx, k); err != nil {
 			t.Errorf("Exists(%s): %v", k, err)
-		} else if ok {
-			t.Errorf("%s came back after compaction removed it", k)
+		} else if !ok {
+			t.Errorf("Exists(%s) = false, but Get and List both resolve it", k)
 		}
+		if _, err := fresh.Get(ctx, k); err != nil {
+			t.Errorf("Get(%s): %v", k, err)
+		}
+	}
+	listed, err := fresh.List(ctx, "filemeta/")
+	if err != nil {
+		t.Fatalf("List(filemeta/): %v", err)
+	}
+	if len(listed) != len(keys) {
+		t.Errorf("List(filemeta/) = %v, want the %d healed keys", listed, len(keys))
 	}
 }
 

@@ -279,6 +279,19 @@ var packablePrefixes = []string{
 	"content/",
 }
 
+// hasPackablePrefix reports whether key lives in a namespace this store
+// bundles, and so may be recorded in the catalog rather than stored as a
+// standalone backend object. A key outside them is never in the catalog, so a
+// lookup for one needs no catalog at all.
+func hasPackablePrefix(key string) bool {
+	for _, prefix := range packablePrefixes {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // isSmallObject determines if a key/data pair should be bundled into a packfile.
 func (s *PackStore) isSmallObject(key string, data []byte) bool {
 	// We only pack metadata and small blobs to keep large data files randomly
@@ -286,12 +299,7 @@ func (s *PackStore) isSmallObject(key string, data []byte) bool {
 	if len(data) > maxObjectSize {
 		return false
 	}
-	for _, prefix := range packablePrefixes {
-		if strings.HasPrefix(key, prefix) {
-			return true
-		}
-	}
-	return false
+	return hasPackablePrefix(key)
 }
 
 // prepareFlushLocked takes the current buffer, prepares a pack object, updates the catalog,
@@ -520,6 +528,20 @@ func (s *PackStore) resolveFromPack(ctx context.Context, key string, entry PackE
 }
 
 // Exists checks the un-flushed buffer, the catalog, or falls back to inner.
+//
+// The catalog is loaded before the fallback, for the same reason Delete loads
+// it: a packed object has no standalone copy in the backend, so asking an
+// unloaded store about one finds it in neither the buffer nor the (empty)
+// catalog, forwards the question down, and reports (false, nil) for an object
+// the repository holds. That is the permissive direction this package refuses
+// everywhere else — loadCatalogLocked and loadShardsLocked exist so that
+// "cannot read the index" is never answered as "there is nothing packed", and a
+// catalog that has not been read yet is no more evidence of absence than one
+// that failed to decode.
+//
+// Only keys under a packable prefix pay for the load. Nothing else can be in
+// the catalog, so lock, key-slot and index lookups keep forwarding straight to
+// the backend.
 func (s *PackStore) Exists(ctx context.Context, key string) (bool, error) {
 	s.mu.RLock()
 	if _, ok := s.packKeys[key]; ok {
@@ -531,6 +553,18 @@ func (s *PackStore) Exists(ctx context.Context, key string) (bool, error) {
 		return true, nil
 	}
 	s.mu.RUnlock()
+
+	if hasPackablePrefix(key) {
+		if err := s.ensureCatalogLoaded(ctx); err != nil {
+			return false, fmt.Errorf("look up %s: %w", key, err)
+		}
+		s.mu.RLock()
+		packed := s.catalog.Has(key)
+		s.mu.RUnlock()
+		if packed {
+			return true, nil
+		}
+	}
 
 	return s.ObjectStore.Exists(ctx, key)
 }

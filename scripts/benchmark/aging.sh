@@ -59,6 +59,28 @@ CHECKPOINTS=${CHECKPOINTS:-"1 5 10 20 30 40"}
 # grow in step.
 OPS=${OPS:-"restore check"}
 
+# Policies are variants of the same binary, each measured at every checkpoint
+# against the same repository.
+#
+# Running the script twice to compare two builds does not work, and the reason
+# is the same one that makes a single MinIO cell a weak control: pack
+# composition is not deterministic, so two runs age into two different
+# repositories and the difference between them is not the change under test.
+# `check` and `prune` have both been seen to move by more than 2x across runs on
+# code that was not touched (RFC 0025 §6, §7). A policy axis reads *one*
+# repository several ways, at the same moment, so everything except the policy
+# is held — which is also what turns an untouched command into a usable control:
+# `check` is identical across policies at every size in §7's table.
+#
+# Format is a ';'-separated list of `label=VAR=value VAR=value`, with an empty
+# assignment list meaning the binary's own defaults:
+#
+#   POLICIES='baseline=; nodecl=CLOUDSTIC_TEST_DECLARE_CONTENT=off'
+#
+# The default is a single baseline policy, so an unset POLICIES measures
+# exactly what this script measured before the axis existed.
+POLICIES=${POLICIES:-"baseline="}
+
 FILES=${FILES:-5000}
 PROFILE=${PROFILE:-source}
 CHURN=${CHURN:-200}
@@ -85,6 +107,24 @@ for cp in $CHECKPOINTS; do
     [ "$cp" -gt "$TOTAL_BACKUPS" ] && TOTAL_BACKUPS=$cp
 done
 [ "$TOTAL_BACKUPS" -gt 0 ] || { echo "CHECKPOINTS is empty" >&2; exit 2; }
+
+# Split POLICIES once, here, rather than juggling IFS around the run loop.
+# Validated up front for the same reason CHECKPOINTS is: a malformed entry
+# should fail now and not forty backups in.
+POLICY_LIST=()
+while IFS= read -r entry; do
+    entry=${entry#"${entry%%[![:space:]]*}"}
+    entry=${entry%"${entry##*[![:space:]]}"}
+    [ -n "$entry" ] || continue
+    case "$entry" in
+        *=*) ;;
+        *) echo "POLICIES entry must be 'label=assignments', got '$entry'" >&2; exit 2 ;;
+    esac
+    POLICY_LIST+=("$entry")
+done <<EOF
+$(echo "$POLICIES" | tr ';' '\n')
+EOF
+[ "${#POLICY_LIST[@]}" -gt 0 ] || { echo "POLICIES is empty" >&2; exit 2; }
 
 WORK=$(mktemp -d -t cloudstic-aging-XXXXXX)
 MINIO_STARTED=0
@@ -128,8 +168,8 @@ PACK_PREFIX="packs/"
 # benchreport's schema. The axis here is backup count, and forcing it into those
 # columns would misreport it as a size sweep.
 measure_op() {
-    local op=$1 backups=$2
-    shift 2
+    local op=$1 backups=$2 policy=$3
+    shift 3
 
     local err out
     err="$WORK/stderr"; out="$WORK/stdout"
@@ -145,7 +185,7 @@ measure_op() {
         /usr/bin/time -v "$@" >"$out" 2>"$err" || rc=$?
     fi
     if [ "$rc" != 0 ]; then
-        echo "  $op at $backups backups FAILED (exit $rc)" >&2
+        echo "  $op ($policy) at $backups backups FAILED (exit $rc)" >&2
         sed 's/^/    /' "$err" >&2
         return 1
     fi
@@ -180,11 +220,11 @@ measure_op() {
     packs=$(pack_count)
     peak_mb=$(echo "scale=1; $peak_kb / 1024" | bc)
 
-    printf '%d,%d,%s,%s,%s,%d,%s\n' \
-        "$backups" "$packs" "$op" "$seconds" "$peak_mb" "$requests" "$sent_mb" >>"$OUT"
+    printf '%d,%d,%s,%s,%s,%s,%d,%s\n' \
+        "$backups" "$packs" "$op" "$policy" "$seconds" "$peak_mb" "$requests" "$sent_mb" >>"$OUT"
 
-    printf '    %-10s %6d packs %7ss %8s MB peak %6d req %8s MB sent\n' \
-        "$op" "$packs" "$seconds" "$peak_mb" "$requests" "$sent_mb"
+    printf '    %-8s %-12s %5d packs %8ss %8s MB peak %7d req %10s MB sent\n' \
+        "$op" "$policy" "$packs" "$seconds" "$peak_mb" "$requests" "$sent_mb"
 }
 
 # read_checkpoint measures every operation in OPS against the current
@@ -196,24 +236,34 @@ measure_op() {
 # cost is "how many backups contributed to this snapshot" rather than "how many
 # packs the repository has".
 read_checkpoint() {
-    local backups=$1 flags target
+    local backups=$1 flags target label assignments
     flags=$(store_flags)
 
+    # Policy is the inner loop so that the runs being compared sit next to each
+    # other in time as well as against the same repository. Reads mutate
+    # nothing, so their order carries no state between them.
     for op in $OPS; do
-        case "$op" in
-            restore)
-                target=$(fresh_restore_target)
-                rm -rf "$target"; mkdir -p "$target"
-                measure_op restore "$backups" \
-                    "$CLOUDSTIC_BIN" restore $flags -output "$target" latest -quiet
-                rm -rf "$target"
-                ;;
-            check)
-                measure_op check "$backups" "$CLOUDSTIC_BIN" check $flags -quiet
-                ;;
-            *)
-                echo "unknown op '$op' in OPS" >&2; return 2 ;;
-        esac
+        for entry in "${POLICY_LIST[@]}"; do
+            label=${entry%%=*}
+            assignments=${entry#*=}
+
+            case "$op" in
+                restore)
+                    target=$(fresh_restore_target)
+                    rm -rf "$target"; mkdir -p "$target"
+                    measure_op restore "$backups" "$label" \
+                        env $assignments \
+                        "$CLOUDSTIC_BIN" restore $flags -output "$target" latest -quiet
+                    rm -rf "$target"
+                    ;;
+                check)
+                    measure_op check "$backups" "$label" \
+                        env $assignments "$CLOUDSTIC_BIN" check $flags -quiet
+                    ;;
+                *)
+                    echo "unknown op '$op' in OPS" >&2; return 2 ;;
+            esac
+        done
     done
 }
 
@@ -249,7 +299,7 @@ export AWS_ACCESS_KEY_ID="$MINIO_USER" AWS_SECRET_ACCESS_KEY="$MINIO_PASSWORD"
 export CLOUDSTIC_PASSWORD="$PASSWORD"
 
 mkdir -p "$(dirname "$OUT")"
-echo "backups,packs,op,seconds,peak_mb,requests,sent_mb" >"$OUT"
+echo "backups,packs,op,policy,seconds,peak_mb,requests,sent_mb" >"$OUT"
 
 flags=$(store_flags)
 "$CLOUDSTIC_BIN" init $flags -quiet

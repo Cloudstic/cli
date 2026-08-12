@@ -34,7 +34,12 @@
 #   scripts/benchmark/aging.sh
 #   CHECKPOINTS="1 5 10 20 40 80" scripts/benchmark/aging.sh
 #   FILES=20000 CHURN=500 scripts/benchmark/aging.sh
-#   OPS="restore check" scripts/benchmark/aging.sh
+#   OPS="restore check ls find diff" FINAL_OPS="backup prune" scripts/benchmark/aging.sh
+#
+# Comparing two builds against one repository, which is how a read-policy change
+# should be measured — see ATTACH below:
+#   KEEP_STORE=1 CHECKPOINTS=80 BENCH_CLOUDSTIC_BIN=/tmp/a scripts/benchmark/aging.sh
+#   ATTACH=1 DATA=<tree> CHECKPOINTS=80 BENCH_CLOUDSTIC_BIN=/tmp/b scripts/benchmark/aging.sh
 
 set -euo pipefail
 
@@ -57,7 +62,16 @@ CHECKPOINTS=${CHECKPOINTS:-"1 5 10 20 30 40"}
 # check still reads in walk order. If the linear term is a re-contact cost the
 # two should diverge; if it is a first-contact cost (RFC 0025 §1) they should
 # grow in step.
-OPS=${OPS:-"restore check"}
+#
+# Read-only operations only. ls, find and diff traverse the same tree by
+# different routes and were added because RFC 0025 counts them separately: what
+# a traversal declares to the store, and whether it then reads it, differs per
+# command, and an aggregate over "the traversals" hides that.
+#
+# `${OPS-...}` rather than `${OPS:-...}`, so OPS="" means "no read operations"
+# instead of silently meaning "the default two". Measuring only FINAL_OPS is a
+# real thing to want, and the colon form ran a restore and a check first.
+OPS=${OPS-"restore check"}
 
 # Policies are variants of the same binary, each measured at every checkpoint
 # against the same repository.
@@ -79,7 +93,28 @@ OPS=${OPS:-"restore check"}
 #
 # The default is a single baseline policy, so an unset POLICIES measures
 # exactly what this script measured before the axis existed.
+#
+# POLICIES and ATTACH answer the same question for different shapes of change.
+# A policy is a knob on one binary, so the variants can be interleaved within a
+# single run and compared at every checkpoint. Two *builds* cannot be — there is
+# one BENCH_CLOUDSTIC_BIN — so comparing commits goes through ATTACH instead:
+# age once, then re-invoke against the store that is already there. Use POLICIES
+# when the change can be expressed as an environment variable and ATTACH when it
+# cannot.
 POLICIES=${POLICIES:-"baseline="}
+
+# Operations that change the repository, run once after the last checkpoint.
+#
+# They cannot be in OPS, and the separation is not tidiness. A backup adds a
+# backup, which is the script's independent variable; a prune deletes snapshots
+# and rewrites packs. Either one at a checkpoint silently redefines every
+# checkpoint after it, so the curve would be measured against a repository the
+# earlier rows no longer describe.
+#
+# prune's request count carries a 65% run-to-run spread (RFC 0025 §6) because
+# Repack's work depends on which objects happened to share a pack. A single
+# figure from it means nothing; it is here to be sampled, not to be quoted.
+FINAL_OPS=${FINAL_OPS:-""}
 
 FILES=${FILES:-5000}
 PROFILE=${PROFILE:-source}
@@ -89,6 +124,22 @@ MAX_BYTES=${MAX_BYTES:-$((2 * 1024 * 1024 * 1024))}
 OUT=${OUT:-benchmark-results/aging.csv}
 KEEP=${KEEP:-0}
 PASSWORD=${BENCH_REPO_PASSWORD:-benchmark-password}
+
+# ATTACH=1 measures against the repository that is already in MinIO, taking no
+# backups and generating no tree.
+#
+# Aging to eighty backups is most of an hour, and the thing usually being
+# compared is two builds' read policy. Running the whole script twice compares
+# them against two repositories rather than one — and pack composition is not
+# deterministic (PackStore.Put uploads outside the lock while backup uploads
+# concurrently), which is where `check`'s 70% spread on identical code comes
+# from. Age once with KEEP_STORE=1, then attach each build in turn, and the
+# layout is held fixed instead of resampled.
+#
+# DATA is where the source tree lives; ATTACH needs it only for `backup`.
+ATTACH=${ATTACH:-0}
+KEEP_STORE=${KEEP_STORE:-0}
+DATA=${DATA:-""}
 
 CLOUDSTIC_BIN=${BENCH_CLOUDSTIC_BIN:-"$REPO_ROOT/bin/cloudstic"}
 GENTREE_BIN="$REPO_ROOT/bin/gentree"
@@ -129,7 +180,9 @@ EOF
 WORK=$(mktemp -d -t cloudstic-aging-XXXXXX)
 MINIO_STARTED=0
 cleanup() {
-    [ "$MINIO_STARTED" = "1" ] && minio_stop
+    if [ "$MINIO_STARTED" = "1" ] && [ "$KEEP_STORE" != "1" ]; then
+        minio_stop
+    fi
     [ "$KEEP" = "1" ] || rm -rf "$WORK"
     rm -rf "$RESTORE_DIR"
 }
@@ -260,10 +313,83 @@ read_checkpoint() {
                     measure_op check "$backups" "$label" \
                         env $assignments "$CLOUDSTIC_BIN" check $flags -quiet
                     ;;
+                ls)
+                    measure_op ls "$backups" "$label" \
+                        env $assignments "$CLOUDSTIC_BIN" ls $flags latest
+                    ;;
+                find)
+                    # A pattern nothing matches, on purpose: find's cost is the
+                    # walk over every snapshot, and matches would add output
+                    # formatting to it without adding traversal. RFC 0025 uses
+                    # find as the control that does not move, so it has to be the
+                    # same walk every time.
+                    measure_op find "$backups" "$label" \
+                        env $assignments "$CLOUDSTIC_BIN" find $flags -name 'no-such-file-*'
+                    ;;
+                diff)
+                    # Oldest against latest, which is the whole-tree traversal.
+                    # Adjacent snapshots differ by one churn step and would
+                    # measure the churn rather than the tree.
+                    local first last
+                    first=$(snapshot_ids | tail -1)
+                    last=$(snapshot_ids | head -1)
+                    if [ -z "$first" ] || [ -z "$last" ] || [ "$first" = "$last" ]; then
+                        echo "  diff needs two snapshots, have '$first' and '$last'" >&2
+                        return 1
+                    fi
+                    measure_op diff "$backups" "$label" \
+                        env $assignments "$CLOUDSTIC_BIN" diff $flags "$first" "$last"
+                    ;;
                 *)
                     echo "unknown op '$op' in OPS" >&2; return 2 ;;
             esac
         done
+    done
+}
+
+# snapshot_ids prints every snapshot hash, newest first.
+#
+# Read from -json rather than the table, whose column widths are presentation
+# and have changed before. diff is the reason this exists at all: four rounds of
+# this harness invoked it without the two IDs it requires, so it failed instantly
+# and reported zero (RFC 0025 §6).
+snapshot_ids() {
+    local flags
+    flags=$(store_flags)
+    "$CLOUDSTIC_BIN" list $flags -json 2>/dev/null \
+        | awk -F'"' '/"Ref"[[:space:]]*:[[:space:]]*"snapshot\// { n = split($4, a, "/"); print a[n] }'
+}
+
+# final_ops runs the state-changing operations, once, after the curve is done.
+final_ops() {
+    local backups=$1 flags label assignments
+    flags=$(store_flags)
+
+    # Each of these changes the repository, so unlike read_checkpoint the policy
+    # loop cannot be the inner one: the second policy would measure the state the
+    # first left behind. Runs with more than one policy therefore measure
+    # FINAL_OPS under the first, and the rest is a note rather than a number.
+    for op in $FINAL_OPS; do
+        label=${POLICY_LIST[0]%%=*}
+        assignments=${POLICY_LIST[0]#*=}
+        if [ "${#POLICY_LIST[@]}" -gt 1 ]; then
+            echo "  (FINAL_OPS runs under policy '$label' only; it mutates the repository)"
+        fi
+
+        case "$op" in
+            backup)
+                [ -d "$data" ] || { echo "backup needs a source tree; set DATA" >&2; return 2; }
+                measure_op backup "$backups" "$label" \
+                    env $assignments \
+                    "$CLOUDSTIC_BIN" backup $flags -source "local:$data" -quiet
+                ;;
+            prune)
+                measure_op prune "$backups" "$label" \
+                    env $assignments "$CLOUDSTIC_BIN" prune $flags -quiet
+                ;;
+            *)
+                echo "unknown op '$op' in FINAL_OPS" >&2; return 2 ;;
+        esac
     done
 }
 
@@ -285,6 +411,27 @@ else
     echo "Building cloudstic..."
     go build -o "$CLOUDSTIC_BIN" "$REPO_ROOT/cmd/cloudstic"
 fi
+export AWS_ACCESS_KEY_ID="$MINIO_USER" AWS_SECRET_ACCESS_KEY="$MINIO_PASSWORD"
+export CLOUDSTIC_PASSWORD="$PASSWORD"
+
+mkdir -p "$(dirname "$OUT")"
+echo "backups,packs,op,policy,seconds,peak_mb,requests,sent_mb" >"$OUT"
+
+if [ "$ATTACH" = "1" ]; then
+    [ -n "$DATA" ] && data="$DATA"
+    curl -fs --max-time "$MINIO_CURL_TIMEOUT" "$(minio_endpoint)/minio/health/live" >/dev/null 2>&1 \
+        || { echo "ATTACH=1 but nothing is answering on $(minio_endpoint)" >&2; exit 1; }
+    # Deliberately not MINIO_STARTED=1: this run did not start the container and
+    # must not take it down, or attaching a second build would find nothing.
+    echo "Attached to the repository already in $(minio_endpoint)"
+    echo ""
+    read_checkpoint "$TOTAL_BACKUPS"
+    final_ops "$TOTAL_BACKUPS"
+    echo ""
+    echo "Wrote $OUT"
+    exit 0
+fi
+
 go build -o "$GENTREE_BIN" "$REPO_ROOT/internal/cmd/gentree"
 
 echo "Generating $PROFILE tree of $FILES files..."
@@ -295,11 +442,6 @@ echo "Starting MinIO..."
 minio_start || { echo "could not start minio" >&2; exit 1; }
 MINIO_STARTED=1
 minio_reset_bucket
-export AWS_ACCESS_KEY_ID="$MINIO_USER" AWS_SECRET_ACCESS_KEY="$MINIO_PASSWORD"
-export CLOUDSTIC_PASSWORD="$PASSWORD"
-
-mkdir -p "$(dirname "$OUT")"
-echo "backups,packs,op,policy,seconds,peak_mb,requests,sent_mb" >"$OUT"
 
 flags=$(store_flags)
 "$CLOUDSTIC_BIN" init $flags -quiet
@@ -338,5 +480,13 @@ while [ "$backups" -lt "$TOTAL_BACKUPS" ]; do
     done
 done
 
+final_ops "$backups"
+
 echo ""
 echo "Wrote $OUT"
+if [ "$KEEP_STORE" = "1" ]; then
+    echo "MinIO left running on $(minio_endpoint); source tree at $data"
+    echo "Measure another build against this same repository with:"
+    echo "  ATTACH=1 DATA=$data CHECKPOINTS=$TOTAL_BACKUPS BENCH_CLOUDSTIC_BIN=... $0"
+    echo "Stop it with: docker rm -f $MINIO_CONTAINER"
+fi

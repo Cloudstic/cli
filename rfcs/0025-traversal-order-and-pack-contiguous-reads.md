@@ -303,13 +303,20 @@ answer:
   `TestPackStore_UngroupedReadStillProbes` pins. That is not a gap to be closed
   later: it is why the estimator survives, and the counts below show it carries
   the majority of misses.
+
+  "A key in one of those packs that was not declared" is decided per key rather
+  than per pack, and that is load-bearing for the counts below as well as for
+  the behaviour: a pack being named by the plan says nothing about a read the
+  plan does not name.
 - **No `packPenalized`, no `packMissWindow`, no `packAdmission`.** These exist
   to detect and bound repeated-eviction failure. Contiguity makes that failure
   unreachable.
 
   **Measured false** — see "The estimator is load-bearing" below. The estimator
   serves the majority of misses in every command, and this bullet is retained
-  only because it is the claim that section refutes.
+  only because it is the claim that section refutes. What that section now adds
+  is *which* misses: 96–100% of them are `node/`, so the estimator's remaining
+  job is tree descent rather than traversal at large.
 - **No `packBodyCacheBudget` as a tuning constant.** The buffer is
   `W × maxPackSize` where *W* is fetch concurrency — a number chosen for
   throughput, not for repository shape.
@@ -931,6 +938,19 @@ which is not a special fact about `check`, and is the reason to re-derive spread
 after any change that alters what dominates a cost, rather than carrying an
 older figure forward.
 
+**That spread is a property of the protocol, not of `check`, and the protocol
+can remove it.** The 186/254/316 above are three repositories, because each run
+of the script ages its own — and pack composition is not deterministic, since
+`PackStore.Put` uploads a filled pack outside the lock while backup uploads
+concurrently. Aging *once* and attaching each build to the same store
+(`ATTACH=1`, added to `aging.sh` for this) holds the layout fixed, and the
+spread collapses: two passes over three builds gave `check` 712, 712 / 712, 712
+/ 761, 761 and `ls`, `find`, `diff` identical to the digit in all six. A
+7% difference is legible against that and invisible against a 70% one. **A
+read-policy comparison should age one repository and attach to it**; running the
+whole script per build resamples the very variable the comparison is trying to
+hold still.
+
 Two further notes for anyone reading the CI benchmark against this branch. It
 runs six backups against a fresh repository, so `backup`'s index consolidation
 (threshold 16) never fires there and is invisible by construction — that term is
@@ -978,26 +998,62 @@ makes it the next lever rather than a parallel idea.
 once reads are planned, and lists `packAdmission`, `packPromoteAfter`,
 `packPenalized` and `packMissWindow` as deletions the design earns. **That is
 wrong**, and it was measured by counting, per command, how many pack misses
-arrive with a plan against how many do not:
+arrive with a plan against how many do not.
 
-| command | planned | unplanned |
-|---|---|---|
-| `restore` | 420 | 480 |
-| `check` | 134 | 596 |
-| `ls` | 59 | 480 |
-| `find` | 2 | 640 |
-| `backup` | 0 | 848 |
-| `prune` | 46 | 1,296 |
+The first version of that count was taken on broken accounting — `packGroupPlan`
+held a bare per-pack tally, so a read nobody declared spent a declared pack's
+budget — and this section previously argued the count therefore understated how
+far declaration reaches. **The accounting is now fixed and the count barely
+moved**, which is a finding of its own and is recorded below. What changed the
+conclusion is not the totals but the breakdown, which nobody had taken.
 
-The estimator handles the majority of misses in every command, restore
-included. Two things put it there, and both are consequences of decisions this
-RFC records approvingly.
+Counted at 82 backups against MinIO, per key prefix, with the plan naming its
+keys:
 
-**Retiring a spent plan manufactures unplanned reads.** `consume` exists so a
-finished pass cannot decide for a later one, which is right — but the moment a
-pack's declared objects are read, every further read of that pack is undeclared
-and falls to the estimator. The two mechanisms are not layered, they are
-interleaved, and the estimator is the one carrying the load.
+| command | planned | unplanned | what the unplanned are |
+|---|---|---|---|
+| `restore` | 345 | 473 | `node/` 472, `snapshot/` 1 |
+| `check` | 60 | 696 | `node/` 577, `content/` 118, `snapshot/` 1 |
+| `ls` | 66 | 473 | `node/` 472, `snapshot/` 1 |
+| `find` | 0 | 656 | `node/` 632, `filemeta/` 24 |
+| `backup` | 64 | 473 | `node/` 473 |
+| `prune` | 275 | 4,556 | `node/` 4,523, `snapshot/` 33 |
+
+The estimator still handles the majority of misses in every command. **But
+96–100% of what it handles is `node/`**, and that is not a declaration anyone
+failed to make. A HAMT descent cannot state its next read: which node comes next
+is a field of the node currently being decoded, so the keys do not exist until
+the read before them has returned. `restore`, `ls`, `backup` and `diff` have
+essentially *nothing else* left unplanned — 472 or 473 node reads and one
+snapshot apiece.
+
+So the estimator's job is permanent, and it is narrower than "the majority of
+misses" suggests: it is tree descent, plus two deliberate abstentions. `find`
+declares nothing at all (reverted in §6, on 2 planned reads out of 642) and
+`check` deliberately does not declare content (reverted for costing 752 -> 819
+requests). Those two are choices this RFC already made and could revisit;
+`node/` is not.
+
+**Deleting `packAdmission` therefore means answering one question, not six:
+what should a tree descent do at a pack miss?** That is a much better-posed
+problem than the old table implied, and it is the one a successor to this
+section should take up. Two shapes are available and neither is costed:
+descend a level at a time and declare each level's children as a batch, which
+turns O(depth) unplanned reads into O(depth) declared batches; or accept that
+descent is inherently unplanned and give it a rule of its own — *K*=1, always
+ranged — which is what "Grouping covers only the keys a caller hands over"
+already proposes for stray reads.
+
+**Retiring a spent plan does not manufacture unplanned reads.** An
+earlier revision of this section claimed it did, and reasoned that because
+`consume` retires a pack the moment its declared objects are read, every later
+read of that pack falls to the estimator. Measured against a build with
+key-aware accounting on the same repository, the count moves by 0–3 misses out
+of ~500: `restore` 347 -> 350, `ls` 52 -> 52, `find` 0 -> 0, `diff` 45 -> 45.
+The mechanism is real — a unit test pins it — and its magnitude on these
+traversals is nil. The reason is that a traversal's undeclared reads are
+overwhelmingly `node/`, and the plan's packs are the ones holding `filemeta/`;
+the two populations barely overlap.
 
 **A plan is only worth having when the caller reads what it declares.** Restore
 does. `check`, `prune` and `find` all skip a large fraction of a batch through a
@@ -1009,8 +1065,54 @@ why planning `find` moved it 743 -> 729 on 2 planned reads out of 642.
 
 So the simplification this RFC promised is not available on the evidence. What
 grouping buys is real and measured (§6), but it buys it *alongside* the
-heuristics rather than in place of them, and any future attempt to delete them
-should start by re-running this count rather than by re-reading §2.
+heuristics rather than in place of them.
+
+#### What honest accounting cost, and what it bought
+
+Making the plan name its keys is two changes, and separating them mattered
+because only one of them is free. Three builds, one repository, two passes each
+— `base` before the fix, `mid` with `consume` spending only declared keys, `fix`
+with `fetchWhole` also answered per key:
+
+| requests, 82 packs | base | mid | fix |
+|---|---|---|---|
+| `restore` | 851, 849 | 854, 861 | 851, 855 |
+| `check` | 712, 712 | 712, 712 | **761, 761** |
+| `ls` | 547, 547 | 547, 547 | 547, 547 |
+| `find` | 679, 679 | 679, 679 | 679, 679 |
+| `diff` | 539, 539 | 539, 538 | 539, 539 |
+
+**The accounting fix is free; asking per key costs `check` 7%, and only
+`check`.** The mechanism is visible in both instruments at once — the
+synchronous counter and a `-debug` trace of the same process, which agree
+prefix by prefix:
+
+| `check`, `content/` | base | fix |
+|---|---|---|
+| whole-pack transfers | 18 | 10 |
+| ranged reads | 41 | 95 |
+| served from a cached body | 4,412 | 4,366 |
+
+Eight whole-pack transfers stop happening. They were made *on behalf of content
+objects `check` never declared*, which reached the plan only because they shared
+a pack with declared `filemeta/`; each transfer then populated the body cache
+and served around six later content reads as hits. **That was a subsidy, not a
+decision** — the plan was answering for reads it had never been told about, and
+it is the same conflation that let an undeclared read spend a declared budget.
+
+Whether to keep it is a real question rather than a rhetorical one. Against it:
+a single unplanned read inheriting another operation's eighty-object whole-fetch
+decision transfers 8 MB to return a few hundred bytes, which is the
+one-plan-per-`PackStore` hazard listed under "What this does not solve" and the
+reason `TestPackStore_UngroupedReadStillProbes` exists. For it: 49 requests on
+`check`.
+
+There is a third option, recorded rather than built. An undeclared read could
+ride a whole fetch **the plan is going to make anyway** for its declared
+objects, while still being reported as unplanned and still spending nothing.
+That recovers the 49 requests without reintroducing the conflation, because the
+transfer it rides is one that was going to happen. It needs its own measurement
+and is not claimed here.
 
 ### Check, which does not work
 
@@ -1313,21 +1415,20 @@ requirement; it was an accident of building the plan first, and it was load-bear
   RFC 0024 removes the class distinction entirely.
 - **`prune`'s sweep still materialises every key.** `ObjectStore.List` returns a
   slice; a streaming enumeration is a public-API change and its own RFC.
-- **An undeclared read depletes a plan it was never part of.** `packGroupPlan`
-  holds a *count* per pack, and `consume` runs on every serve from a packed
-  location — so a read nobody declared decrements a declared pack's budget. Every
-  traversal mixes the two: a batch of declared filemeta reads interleaved with
-  undeclared content reads, node reads and path resolution. Declared reads later
-  in the batch then find the budget spent and fall back to the estimate.
+- ~~**An undeclared read depletes a plan it was never part of.**~~ **Fixed.**
+  `packGroupPlan` held a *count* per pack and `consume` ran on every serve from
+  a packed location, so a read nobody declared decremented a declared pack's
+  budget. It now names its keys — bounded by the batch, 8,192 refs for a
+  streaming traversal, never by the catalog — and spends only a declared one.
 
-  This matters for the count in "The estimator is load-bearing": an unknown share
-  of the unplanned misses recorded there are declared reads whose slot was taken,
-  not reads nobody planned — so that table understates how far declaration
-  reaches, and it is the wrong basis for concluding the estimator cannot be
-  removed. The fix is contained (hold the declared key set rather than a bare
-  count; one batch of string headers, not catalog-sized), and **it has to land
-  before the count is re-run**, which is itself the precondition that section
-  sets for deleting anything.
+  This bullet predicted the count in "The estimator is load-bearing" would move
+  once the accounting was honest, on the reasoning that an unknown share of the
+  unplanned misses were declared reads whose slot had been taken. **The
+  prediction was wrong**: the count moves by 0–3 misses out of ~500. The two
+  populations barely overlap, because a traversal's undeclared reads are
+  `node/` and its declared ones are `filemeta/`. The re-run was still what
+  established that, and it produced the prefix breakdown that did change the
+  conclusion.
 - **A `PackStore` holds one plan, not one per caller.** `PlanReads` records into
   a single field, so two operations sharing a `Client` — and therefore a store —
   overwrite each other's declarations. The consequence is bounded: a read

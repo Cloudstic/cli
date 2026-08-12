@@ -91,7 +91,14 @@ Three layers, in cost order:
   MinIO — request count is the measurement, and a local store reports none.
   Manual, like `compare.sh`, and for the same reason: a run is dozens of
   backups, far too slow for per-PR CI, and it answers a design question rather
-  than guarding a regression.
+  than guarding a regression. `POLICIES` reads one repository several ways at
+  each checkpoint — `POLICIES='baseline=; probe=CLOUDSTIC_TEST_X=1'` — because
+  running the script twice to compare two builds ages into two *different*
+  repositories, and the difference between them is not the change under test
+  (RFC 0025 §7). Note also that the backup-count axis does not vary what
+  `packBodyCache` bounds, which is bytes: forty backups of small churn keep
+  every pack body resident, so a policy that only matters under eviction shows
+  nothing along it.
 
 ## Architecture
 

@@ -218,8 +218,35 @@ func (rm *RestoreManager) runWithWriter(ctx context.Context, plan restorePlan, w
 		}
 	}
 
-	declareContentReads(ctx, rm.store, plan)
-
+	// The write phase declares nothing, and that is a decision rather than an
+	// omission.
+	//
+	// It used to hand its whole content read set to store.PlanReads (#496), on the
+	// reasoning that a declaration is a statement about *what* will be read and so
+	// stays true whatever order the reads arrive in. The statement is true; the use
+	// admission makes of it is not. PlanReads records how many objects each pack
+	// owes this caller, and resolveFromPack promotes a pack to a whole transfer once
+	// that count says a transfer beats the ranged reads it replaces — which is only
+	// cheaper if the caller reads those objects while the body is still resident.
+	//
+	// The metadata phase earns that: it reads group by group, one worker per group,
+	// with concurrency bounded to the body cache's capacity. This phase cannot. It
+	// writes in walk order across up to restoreFileConcurrency files at once, so it
+	// touches every pack before returning to any of them, and a declaration that
+	// marks them all worth transferring whole turns every read into a whole-pack
+	// fetch that is evicted before its next object is wanted.
+	//
+	// Measured against MinIO on a 20,000-file repository of 11 full packs
+	// (RFC 0025 §7): declaring cost 18,416 MB of transfer and 93.5 s where declaring
+	// nothing cost 160 MB and 3.1 s, for 2,274 requests against 4,726. Bounding the
+	// declared window to 2,048 entries does not help — 19,236 MB — because a window
+	// that size still spans every pack. Below roughly 42 packs the whole working set
+	// fits the body cache and all three are indistinguishable.
+	//
+	// So the write phase reads undeclared, and its packs are admitted by the
+	// estimator in packadmission.go, whose eviction penalty is exactly the feedback
+	// a declaration overrides. Restore's *metadata* phase still declares (see
+	// collectMetadata) and is where the measured win lives.
 	for _, id := range plan.sorted {
 		meta := plan.byID[id]
 		rel := buildRestorePath(meta, plan.byID)
@@ -1129,46 +1156,4 @@ func indexGroups(groups [][]string, refs []string) [][]metaFetch {
 		}
 	}
 	return out
-}
-
-// declareContentReads tells the store which content objects the write phase is
-// about to read, and deliberately keeps writing in the order it already had.
-//
-// Contiguity and declared demand are separate properties, and the write phase
-// had only the first. Its order is already pack-contiguous — restoreOrder emits
-// leaves in walk order, which is the order backup wrote them and therefore the
-// order they sit in packfiles (#455). What it lacked was any statement of
-// demand, so the store still had to probe each bundle it touched to estimate a
-// number this caller already knew. Measured at 82 packs, that was 986 ranged
-// reads out of 1,258 total requests: the single largest cost in a restore, and
-// entirely avoidable.
-//
-// **The returned plan's grouping is discarded on purpose**, which store.PlanReads
-// documents as a supported use. Reordering the leaves by pack was tried and is a
-// regression on every axis — requests +25%, bytes +87%, peak RSS +38% — because
-// it replaces walk order with pack-hash order and throws away the locality
-// backup already established.
-//
-// Declaring is a statement about what will be read, not about when, so it stays
-// true under the existing order.
-func declareContentReads(ctx context.Context, s store.ObjectStore, plan restorePlan) {
-	keys := make([]string, 0, len(plan.sorted))
-	for _, id := range plan.sorted {
-		meta, ok := plan.byID[id]
-		if !ok || meta.Type == core.FileTypeFolder {
-			continue
-		}
-		hash := meta.ContentRef
-		if hash == "" {
-			hash = meta.ContentHash
-		}
-		if hash == "" {
-			continue
-		}
-		keys = append(keys, "content/"+hash)
-	}
-	if len(keys) < 2 {
-		return
-	}
-	store.PlanReads(ctx, s, keys)
 }

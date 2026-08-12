@@ -1034,6 +1034,135 @@ The consequence is that `check` needs restructuring rather than a buffer, and
 that its benefit is unmeasurable until that is written: a trace records the order
 the current code produces.
 
+## 7. The write phase declares nothing, and repository age was the wrong axis
+
+`declareContentReads` (#496) handed restore's whole content read set to
+`PlanReads` before the write phase started. It shipped on the reasoning in its
+own doc comment: a declaration is a statement about *what* will be read, so it
+stays true whatever order the reads arrive in.
+
+The statement is true. The use admission makes of it is not, and the difference
+cost 18 GB of transfer on an 11-pack repository.
+
+### What the declaration actually tells admission
+
+`PlanReads` records *K*, how many objects each pack owes this caller, and *B*,
+what they come to in bytes. `fetchWhole` promotes a pack once
+`(K-1) x packRequestBytes > S - B` — the requests saved outweighing the bytes
+added. Over a 50,000-key plan, *K* per pack is in the hundreds, so the left side
+is hundreds of megabytes and every pack the plan names is marked worth
+transferring whole.
+
+That arithmetic is sound only if the caller reads a pack's declared objects
+while the body is resident. **The declaration says nothing about that**, and the
+planned path is the one place admission has no feedback to fall back on:
+`resolveFromPack` consults `groupPlan().fetchWhole` and, when the plan knows the
+pack, never calls `recordMiss` — so `packAdmission`'s eviction penalty, the
+mechanism that exists precisely to stop a working set larger than the cache
+paying for the same transfer forever, is skipped. Declaring does not merely fail
+to help; it disables the thing that was containing the damage.
+
+The two restore phases sit on opposite sides of this, and the contrast is the
+whole finding:
+
+| | declares | consumes | bounded residency |
+|---|---|---|---|
+| metadata (`collectMetadata`) | whole ref set | group by group, `plan.Concurrency` workers | yes, by construction |
+| write phase (removed) | whole content set | walk order, `restoreFileConcurrency` workers | no |
+
+`plan.Concurrency` is `packBodyCacheBudget / maxPackSize`. The metadata phase's
+residency is bounded by the cache's own capacity because the plan's concurrency
+*is* that capacity. The write phase runs 16 workers over walk order and touches
+every pack before returning to any of them.
+
+Isolated in a unit test — same declared set, same store, only the consumption
+order differing (`packdeclaredresidency_test.go`): in plan order, 12 transfers
+for 12 packs. Out of plan order, **192 transfers for 192 reads**, 12.9 MB moved
+to deliver 768 KB.
+
+### Measured across repository age, which turned out not to be the variable
+
+`aging.sh` grew a policy axis for this. Comparing builds by running it twice does
+not work — two runs age into two different repositories, which is the same
+non-determinism that makes `check` and `prune` unusable as cross-run controls —
+so `POLICIES` now reads *one* repository several ways at the same checkpoint.
+`check` is identical across policies at every size below, which is what makes the
+restore column attributable.
+
+5,000 files, `source` profile, MinIO, `SAMPLES=1`, restore requests and MB sent:
+
+| packs | baseline | declare nothing | window 2,048 | plan respects penalty |
+|---|---|---|---|---|
+| 3 | 26 / 24.6 | 26 / 24.6 | 26 / 24.6 | 26 / 24.6 |
+| 12 | 107 / 34.5 | 107 / 34.5 | 107 / 34.5 | 107 / 34.5 |
+| 22 | 180 / 46.1 | 180 / 46.1 | 182 / 47.1 | 180 / 46.1 |
+| 42 | 329 / 69.5 | 331 / 69.5 | 331 / 70.5 | 329 / 69.5 |
+| 82 | 871 / 433.3 | 1,087 / 240.7 | 871 / 413.5 | 1,048 / 310.8 |
+
+**Below 82 packs every policy is identical**, and the reason is the one thing
+the aging axis was not built to vary: `packBodyCache` bounds *bytes*, not packs,
+so a repository of small incremental packs keeps every body resident however
+many of them there are. Forty backups of 200-file churn reach 42 packs and
+69.5 MB — a working set that fits — and admission's decisions cannot matter
+because nothing is ever evicted. The 82-pack row is the first that overruns the
+64 MB budget, and it reproduces §6's stage table closely: declaring buys −20%
+requests for +80% bytes, which is the frontier §6 already described rather than
+progress along it.
+
+**The storm lives on the other axis.** 20,000 files, where packs are full rather
+than incremental:
+
+| | requests | transferred | wall | peak RSS |
+|---|---|---|---|---|
+| 11 packs, baseline | 2,274 | 18,416 MB | 93.5 s | 439 MB |
+| 11 packs, declare nothing | 4,726 | **160 MB** | **3.1 s** | **272 MB** |
+| 11 packs, window 2,048 | 2,378 | 19,236 MB | 70.8 s | 430 MB |
+| 11 packs, plan respects penalty | 4,620 | 628 MB | 4.8 s | 438 MB |
+| 15 packs, baseline | 3,836 | 28,182 MB | 103.8 s | 428 MB |
+| 15 packs, declare nothing | 7,524 | **771 MB** | **5.6 s** | 395 MB |
+| 15 packs, window 2,048 | 3,874 | 28,429 MB | 103.7 s | 438 MB |
+| 15 packs, plan respects penalty | 5,894 | 805 MB | 5.5 s | 424 MB |
+
+**Eleven packs and one backup.** Repository age is not what produces this, and
+the §5 *F* ≈ 59 framing — a cost that arrives after eighty backups — pointed the
+investigation at the wrong axis. What produces it is a working set of full packs
+larger than the body cache, which a *single* backup of a large tree already has
+and which forty backups of small churn never reach.
+
+### What this decides
+
+- **The write-phase declaration is removed**, not windowed. 115x the bytes and
+  30x the wall time, for 2x the requests, is not a trade that needs positioning.
+- **A window is not a mitigation.** 2,048 measured *worse than baseline* — a
+  window that size still spans all eleven packs, so it still marks all of them
+  whole. §7's earlier suggestion that the derived walk's 30x transfer reduction
+  was "a property of the window" is wrong as stated: 2,048 refs of *walk order*
+  buys nothing, so whatever the derived walk gained came from its batches being
+  pack-local by construction of the descent, not from their size.
+- **Making admission residency-aware is the right general fix and is not this
+  change.** Having the planned path respect the eviction penalty recovers most of
+  it (18,416 -> 628 MB) and, in the unit test, fixes the out-of-order case
+  without touching the in-order one — and by 15 packs it has converged with
+  declaring nothing on bytes (805 against 771 MB) while spending 22% fewer
+  requests to get there, which is the better answer if it holds up. What stops it
+  shipping here is blast radius: it applies to *every* planned caller, and
+  `check` — which declares and also reads in walk order — went 705 -> 1,292
+  requests for −20 MB under it. That is a second frontier trade dressed as a bug
+  fix, and it wants its own measurement rather than a ride on this one. Removing
+  the declaration is strictly narrower: it touches the one caller whose order was
+  never compatible with the arithmetic, and `check` is bit-identical across it at
+  every size measured.
+- **§6's −56% is untouched.** That figure is the metadata phase's grouping, the
+  `grouped reads` row of §6's stage table, not this declaration — whose own row
+  moved 1,178 -> 936 requests while moving 245 -> 434 MB. The two results were
+  never in tension, and the premise that they were the same arithmetic in two
+  regimes was a misreading of which row earned what.
+
+`packdeclaredresidency_test.go` keeps both halves: the in-order case as a guard
+on the property the metadata phase depends on, and the out-of-order case as a
+tripwire that fails if admission is ever made residency-aware — at which point
+this deletion is worth revisiting.
+
 ## What this does not solve
 
 - **Restore cost still grows with backup count.** §2 takes a pack visit to one

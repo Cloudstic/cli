@@ -1163,6 +1163,143 @@ on the property the metadata phase depends on, and the out-of-order case as a
 tripwire that fails if admission is ever made residency-aware — at which point
 this deletion is worth revisiting.
 
+## 8. Stage 3 built, measured, and abandoned: streaming is incompatible with residency
+
+Stage 3 was built (branch `claude/lucid-germain-20ae25`, PR #501, closed
+unmerged). `restore` descended `hash(parentID)[:4]`, listed a directory, wrote
+what it found and recursed, with a new `hamt.ScanPrefix` supplying the descent —
+no `collectMetadata`, no `restoreOrder`, none of the six O(files) structures.
+
+**It works and it is correct. It is also a substantial performance regression,
+and the reason is structural rather than a matter of tuning.** This section
+records it because the mechanism generalises to any streaming traversal over a
+packed store, and because §1's construction is still sound — it is the *use* of
+it in §3 that fails.
+
+### The derivation itself holds
+
+Every claim §1 makes about `AffinityKey` was confirmed. A prefix descent reaches
+every entry a backup wrote; the completeness check — the walk's own count of what
+it claimed against the tree's entry count, read from nodes without touching a
+filemeta — never fired on a repository written by any released build. The cases
+it does fire for are the ones `restoreOrder`'s fallback passes exist for: a
+missing primary parent, a parent cycle, and a pre-affinity repository whose
+entries are routed by `SHA256(fileID)` and which no descent can find.
+
+One trap is worth recording, because the obvious implementation is wrong. The
+fallback has to know *which* entries the descent missed, and the natural test —
+"the primary-parent chain reaches the root through folders" — is true of every
+entry in a pre-affinity repository. Believing it restores nothing while reporting
+success. The check has to compare each entry's stored routing prefix against the
+one its primary parent implies, which means replaying the descent rather than
+approximating it.
+
+### The retention win is real, and an order of magnitude too small
+
+`BenchmarkRestoreTraversal` measures what each traversal holds live — the term
+that grows — rather than peak RSS, which is transient-dominated:
+
+| files | materialised plan | derived walk |
+|---|---|---|
+| 5,000 | 751 B/entry | 287 B/entry |
+| 50,000 | 583 B/entry | 128 B/entry |
+
+At 50,000 files that is 29.4 MB against 6.5 MB, and the 6.5 MB is almost entirely
+the HAMT node cache, which both traversals pay. This confirms §3's estimate
+rather than discovering anything: the plan's floor was predicted at 555 B/entry
+and measures 583.
+
+### What it cost
+
+Measured on the `Benchmark` workflow's own MinIO cell — `source` profile, 5,000
+files, `SAMPLES=1`, three builds against the same repository shape:
+
+| restore | wall | peak RSS | allocation | requests | transferred |
+|---|---|---|---|---|---|
+| `main` (post-#500) | 4.44 s | 420 MB | 2,333 MB | 5,669 | 334.5 MB |
+| derived walk | 14.21 s | 429 MB | 9,039 MB | 3,360 | 3,144.6 MB |
+| derived walk, metadata declaration removed | 13.48 s | 441 MB | 6,191 MB | 16,496 | 1,746.6 MB |
+
+**3x the wall time and 5-9x the bytes.** The third row is the first hypothesis
+being killed: the walk declares each batch of refs to `PlanReads` separately, so
+a pack spanning several batches is declared and promoted more than once, and
+removing the declaration halves the bytes — but does not come close to
+recovering `main`. The regression is the traversal, not the declaration.
+
+`-debug` counts whole-pack transfers directly, and is what identified it. On a
+10-pack local repository:
+
+| build | whole-pack downloads | distinct packs | most-refetched pack | peak RSS |
+|---|---|---|---|---|
+| `main` (post-#500) | 40 | 9 | 8x | 282 MB |
+| derived walk | **237** | 10 | **56x** | 462 MB |
+| derived walk, no declaration | 122 | 10 | 28x | 505 MB |
+
+One pack transferred 56 times. That is §5's *F* ≈ 59 refetch storm, produced by
+the read order rather than by the cache budget.
+
+It does **not** reproduce on a small repository: at 6 packs the working set is
+48 MB, fits the 64 MB body budget, and all three builds are byte-for-byte
+indistinguishable in their transfer counts. This is the same regime boundary §7
+found from the other direction, and it is why a benchmark that fits the budget
+prices none of this.
+
+### The cause: streaming removes the phase separation restore had for free
+
+The Sequencing section already states the constraint, arrived at from `check` and
+`prune`:
+
+> A batch must cover one namespace at a time. … `restore` gets this for free by
+> having two phases already; a traversal that reads both per entry has to be
+> split deliberately.
+
+The materialised restore reads **all** `filemeta/`, then writes **all**
+`content/`. Each phase's pack residency is bounded because nothing else is
+reading while it runs. The derived walk dispatches a directory's file writes and
+immediately gathers the next directory's metadata, so `content/` reads evict the
+`filemeta/` bodies mid-group and vice versa. Residency becomes unbounded again —
+precisely the property §2 exists to establish.
+
+So the tension is between §3 and §2, and it is not a parameter:
+
+- **§3 wants the phases interleaved**, because that is what "write the first file
+  after the first directory rather than after the last" means. Its memory win is
+  a consequence of not holding one phase's output for the other.
+- **§2 wants them separated**, because a pack body must survive from the first of
+  its objects to the last, and two namespaces interleaved guarantee it does not.
+
+The trade is bad at every size measured, and not marginally: +180 MB of peak RSS
+and 6x the whole-pack transfers, to save 23 MB of plan at 50,000 files. The thing
+the change is for is an order of magnitude smaller than what it costs, and the
+cost lands on exactly the repositories restore matters for.
+
+### What this does and does not close
+
+- **§1 stands.** Derived order is available a directory at a time and enumerates
+  correctly. `hamt.ScanPrefix` and the completeness check are the parts worth
+  recovering if this is ever revisited.
+- **§3 does not stand as written.** "Operations become streaming" is stated there
+  as a memory win with no cost beyond wall time, and that is wrong: on a packed
+  store, streaming a traversal that reads two namespaces is a residency
+  regression. §3 should be read as conditional on the traversal reading one
+  namespace at a time — which is exactly what makes `check`, `ls` and `prune`'s
+  stage 4 batching work and `restore`'s streaming fail.
+- **One idea is untried.** Completing both phases per batch — read a batch's
+  metadata, write its files to completion, then gather the next — restores the
+  separation at batch granularity, at the cost of pipelining across batches. It
+  is the only shape that satisfies both sections, and it was not measured.
+- **Open question 6 is answered in the negative for now.** Streaming does not
+  start to pay at any size this repository shape reaches, because the residency
+  cost arrives long before the retention win does. The question was "at what
+  repository size does streaming start to pay"; the measured answer is that on a
+  packed store it has to stop costing before it can start paying.
+
+**The general lesson is the one §6 keeps restating in new clothes.** A change was
+justified by the resource it obviously moves — plan retention, measured, real —
+and regressed a resource nobody measured because the previous design happened to
+protect it. Restore's two-phase structure was never written down as a
+requirement; it was an accident of building the plan first, and it was load-bearing.
+
 ## What this does not solve
 
 - **Restore cost still grows with backup count.** §2 takes a pack visit to one
@@ -1201,12 +1338,14 @@ this deletion is worth revisiting.
   plan token threaded through `ReadPlanner`, which is a public-interface change
   and is not worth making before there is a measurement showing the collision
   costs anything.
-- **Streaming is not primarily a wall-clock win on a local store.** Measured on a
-  20,000-file restore to a local backend, metadata collection is 189 ms of
-  1.53 s — about 12%. The win is that memory stops scaling with file count, that
-  the ordering logic disappears, and that a remote backend reads a directory at a
-  time. Anyone expecting restore to get 2x faster on a local disk will be
-  disappointed.
+- **Streaming restore is a residency regression, not a wall-clock one.** This
+  bullet used to say only that streaming is not primarily a speed win — metadata
+  collection is 189 ms of a 1.53 s local restore, about 12% — and that the real
+  win is memory. §8 built it and measured the rest of the sentence: interleaving
+  the metadata and content phases costs 3x the wall time and 6x the whole-pack
+  transfers on a packed store, because each phase's pack bodies evict the
+  other's. Streaming is available to a traversal reading **one** namespace at a
+  time; restore reads two.
 - **Grouping covers only the keys a caller hands over.** A read outside any
   group — `cat` of one file, a dedup probe during backup, a lookup the caller did
   not plan — still arrives one key at a time. Those should take the arithmetic
@@ -1244,7 +1383,7 @@ started and needs no format change to replace.
 | 0 | trace-replay harness for pack policy | none | **done** (§6) | reproduces the shipped policy's instrumented breakdown exactly at 42 packs |
 | 1 | grouped reads + arithmetic admission in `restore` | none | not started | **1,207 → 176 requests, 64 MB → ~13 MB** on a real 82-pack trace (§6) |
 | 2 | bound the read window; delete `packAdmission`, `packPenalized`, `packMissWindow` | none | not started | an 8,192-ref window is within 3% of holding the whole plan (§6) |
-| 3 | derived traversal order (§1), for **write** ordering | none | not started | −47%/−61% above the budget when sorted (#481) |
+| 3 | derived traversal order (§1), for **write** ordering | none | **built and abandoned** (§8) | correct, and 3x wall / 6x whole-pack transfers against `main`; the retention win is 23 MB at 50,000 files |
 | 4 | batch entry refs in streaming traversals | none | **done** for `check`, `ls`, `prune` | `check` −57%, `ls` −55% at 82 packs; `prune` too noisy to measure (§6) |
 | 5 | layout-driven compaction (#486) | none | blocked on 1–2 | −74% requests at 22 packs; **+603% bytes at 82** standalone (§5) |
 
@@ -1342,7 +1481,10 @@ reach.** The sequencing above puts a cheap feedback loop first for that reason.
    65,536. Widening to 6 hex characters gives 16M buckets and keeps junk
    negligible at any plausible scale; the fileID half retains ample entropy
    either way. It is currently 4 because that is what `AffinityKey` was written
-   with, which is not a reason.
+   with, which is not a reason. §8 promotes this from hypothetical to measured
+   cost: a colliding directory's entries are read, discarded, and read again when
+   their own parent is listed, so the prefix width is a read-amplification
+   parameter for any derived listing, not only for junk in a result set.
 1. **What is the exchange rate between a request and a byte?** §2's admission
    rule compares `(K-1)` requests against `(S-B)` bytes, and the constant
    relating them is a property of the backend — latency, per-request price,
@@ -1370,20 +1512,23 @@ reach.** The sequencing above puts a cheap feedback loop first for that reason.
    it can never bring a working set under a byte budget, and the previous claim
    that it is "the only thing that keeps a repository out of the penalized
    regime" was wrong.
-1. **At what repository size does streaming start to pay?** §3's benefit is a
-   memory one, and the plan's floor of 555 bytes per entry puts it at 2.8 MB for
-   5,000 files against ~192 MB of buffers a restore holds regardless. Nothing in
-   this RFC was measured above 50,000 files, where it is still inside the
-   run-to-run spread. A restore at 200,000 and 1,000,000 files would establish
-   whether §3 is a change worth making at all, and it is cheap relative to
-   implementing it. Until then §3 is the one part of this proposal with no
-   supporting measurement.
-1. **Does derivation hold up under a partial restore?** `-path` filtering selects
-   a subtree. Derivation should be *better* here than a global order — it can
-   descend straight to the directories it wants — and grouping degrades
-   gracefully: fewer objects per pack means smaller *K*, which the arithmetic
-   rule turns into ranged reads without any special case. Worth confirming rather
-   than assuming.
+1. **At what repository size does streaming start to pay?** **Answered in the
+   negative, and the question was aimed at the wrong resource.** §8 built it: the
+   plan's floor measures 583 B/entry against the 555 predicted here, so the
+   retention arithmetic was right — 29.4 MB against 6.5 MB at 50,000 files — and
+   irrelevant, because interleaving the two read phases costs +180 MB of peak RSS
+   and 6x the whole-pack transfers long before the retention win clears the
+   noise. The size at which streaming pays is not reachable by making the
+   repository larger; it needs a traversal whose phases do not interleave. The
+   unmeasured variant is one batch completing both phases before the next.
+1. **Does derivation hold up under a partial restore?** Yes, and for a weaker
+   reason than this question assumed. §8's implementation kept `-path` selecting
+   exactly what it selected before, at exactly the cost it cost before, because
+   descending straight to the selected subtree is **not sound**: a snapshot
+   predating RFC 0015 persists its own paths, and a persisted path need not agree
+   with where the entry sits in the tree, so a subtree cannot be excluded on its
+   directory's path alone. Pruning a derived walk by path needs that discrepancy
+   ruled out first.
 1. **What does a secondary-parent index cost?** Out of scope here, but the
    multi-parent case is real and `ls` needs it. Whether it is a second routing of
    the same entry, or a side index, changes the write cost of a multi-parent file.

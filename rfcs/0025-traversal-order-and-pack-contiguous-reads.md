@@ -1236,7 +1236,7 @@ pack body that was transferred and dropped:
 |---|---|---|---|
 | main | 3.04 s | 558 MB | 22,227 MB |
 | main, content declaration removed | 3.00 s | 313 MB | 1,763 MB |
-| derived walk (declares per batch) | 3.62 s | 418 MB | 3,255 MB |
+| derived walk (declared per batch; since removed) | 3.62 s | 418 MB | 3,255 MB |
 
 **Declaring the write phase's reads all at once is what causes the storm, and
 declaring none at all is better than either.** The mechanism is the one §5 states
@@ -1247,21 +1247,31 @@ before its objects are consumed, and fetched again. A declaration is a statement
 about *what*, and admission needs *when*; handing over more of the what makes the
 gap worse, not better.
 
-The derived walk improves on `main` only because streaming forces the
-declaration to be windowed — 2,048 refs rather than the whole snapshot — so its
-30x transfer reduction is a property of the window, not of the descent. Three
-consequences:
+This section first attributed the derived walk's advantage in those rows to
+streaming having forced the declaration to be *windowed* — 2,048 refs rather
+than the whole snapshot — and concluded that the 30x transfer reduction was a
+property of the window rather than of the descent. **That attribution is wrong,
+and §7 is the measurement that broke it.** A 2,048-entry window over the
+materialised plan costs 19,236 MB, slightly *worse* than declaring the whole
+snapshot, because a window that size still spans every pack. Size was never the
+variable. What the derived walk had instead was batches that are pack-local by
+construction — a descent lists one directory, and a directory's entries were
+written together — so its declaration named few packs rather than merely fewer
+keys.
 
-- **The window is now the parameter**, and `derivedScanBatch` is currently set
-  from a locality argument rather than a residency one. Where it should sit is
-  the same question as open question 3, arriving from the reader's side.
-- **This is a live regression on `main`, not a historical note.** It shipped with
-  #496 and it is worst on exactly the repositories restore matters for. It wants
-  its own change; a window is a mitigation, and "declare nothing" measured better
-  than both here while §6 measured declaring worth −56% requests on an 80-backup
-  repository. Those two results are not in conflict — they are the same
-  admission arithmetic in the two regimes — and picking between them is a
-  measurement across repository age, which is `aging.sh`'s axis.
+Three consequences, the first two settled by measuring the declaration directly:
+
+- **A window is not a mitigation, so there is nothing left to tune.** The
+  derived walk declares nothing on its write phase, matching what §7 does to the
+  materialised one; `derivedScanBatch` sizes a read batch and no longer sizes a
+  declaration. The end-to-end rows above were taken before that removal and
+  understate the walk.
+- **This was a live regression on `main`, not a historical note.** It shipped
+  with #496 and was worst on exactly the repositories restore matters for. §7 is
+  the change that removes it. The apparent tension with §6's −56% resolved the
+  other way from the guess recorded here: that figure is the *metadata* phase's
+  grouping, not this declaration, so the two results were never in conflict and
+  repository age was never the axis that separated them.
 - **`check` and `prune` in the same runs are unusable as controls.** `check` went
   434 → 158 requests at 5,000 files and 1,294 → 2,611 at 20,000, on code this
   change does not touch, and `prune` 2,705 → 11,830. That is the layout
@@ -1367,7 +1377,7 @@ started and needs no format change to replace.
 | 0 | trace-replay harness for pack policy | none | **done** (§6) | reproduces the shipped policy's instrumented breakdown exactly at 42 packs |
 | 1 | grouped reads + arithmetic admission in `restore` | none | not started | **1,207 → 176 requests, 64 MB → ~13 MB** on a real 82-pack trace (§6) |
 | 2 | bound the read window; delete `packAdmission`, `packPenalized`, `packMissWindow` | none | not started | an 8,192-ref window is within 3% of holding the whole plan (§6) |
-| 3 | derived traversal order (§1), for **write** ordering | none | **done** (§8) | retention 583 → 128 B/entry at 50,000 files; the end-to-end numbers are the declaration window, not the order |
+| 3 | derived traversal order (§1), for **write** ordering | none | **done** (§8) | retention 583 → 128 B/entry at 50,000 files; the end-to-end numbers were the write-phase declaration (§7), not the order |
 | 4 | batch entry refs in streaming traversals | none | **done** for `check`, `ls`, `prune` | `check` −57%, `ls` −55% at 82 packs; `prune` too noisy to measure (§6) |
 | 5 | layout-driven compaction (#486) | none | blocked on 1–2 | −74% requests at 22 packs; **+603% bytes at 82** standalone (§5) |
 

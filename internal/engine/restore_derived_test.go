@@ -429,7 +429,7 @@ func TestDerivedWalk_RetainsOnlyDirectories(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	found, err := walk.emit(ctx, scans, metas)
+	found, err := walk.emit(scans, metas)
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}

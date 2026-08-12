@@ -106,7 +106,7 @@ func (w *derivedWalk) run(ctx context.Context, root string) (int64, error) {
 		if err != nil {
 			return w.reached, err
 		}
-		found, err := w.emit(ctx, scans, metas)
+		found, err := w.emit(scans, metas)
 		if err != nil {
 			return w.reached, err
 		}
@@ -194,10 +194,8 @@ func (w *derivedWalk) read(ctx context.Context, refs []string) (map[string]core.
 }
 
 // emit writes a batch's entries and returns the directories it discovered.
-func (w *derivedWalk) emit(ctx context.Context, scans []dirScan, metas map[string]core.FileMeta) ([]*restoreDir, error) {
+func (w *derivedWalk) emit(scans []dirScan, metas map[string]core.FileMeta) ([]*restoreDir, error) {
 	var found []*restoreDir
-
-	w.declareContent(ctx, scans, metas)
 
 	for _, scan := range scans {
 		for _, ref := range scan.refs {
@@ -252,45 +250,29 @@ func (w *derivedWalk) emit(ctx context.Context, scans []dirScan, metas map[strin
 	return found, nil
 }
 
-// declareContent tells the store which content objects this batch is about to be
-// written from, without reordering them.
+// The write phase declares nothing, and that is a decision rather than an
+// omission this streaming walk happens to make.
 //
-// It is the streaming form of what declareContentReads does for the materialised
-// plan, and it carries that function's constraint: the declaration is a statement
-// about what will be read, not about when, so the returned grouping is discarded
-// and the walk keeps listing order — which is the order backup wrote these
-// objects and therefore the order they sit in packfiles.
+// Declaring it looked free: a statement about *what* will be read stays true
+// whatever order the reads arrive in, and the walk already reads a batch in
+// listing order. But admission consumes the statement as a claim about *when* —
+// PlanReads records how many objects each pack owes the caller, and a pack is
+// promoted to a whole transfer once that count beats the ranged reads it
+// replaces, which is cheaper only if the caller reads those objects while the
+// body is still resident. A batch spanning every pack marks every pack worth
+// transferring whole, and files are then written across restoreFileConcurrency
+// workers that touch each pack once and move on.
 //
-// **The unit is the batch, not the directory.** A directory's files are a
-// handful of keys, and a plan that small tells the store almost nothing: it sees
-// two objects wanted from a bundle and correctly declines to transfer it, over
-// and over. Declaring the whole batch is what keeps the demand statement close to
-// the one an unbounded plan makes.
-func (w *derivedWalk) declareContent(ctx context.Context, scans []dirScan, metas map[string]core.FileMeta) {
-	var keys []string
-	for _, scan := range scans {
-		for _, ref := range scan.refs {
-			meta, ok := metas[ref]
-			if !ok || meta.Type == core.FileTypeFolder || primaryParentID(&meta) != scan.dir.id {
-				continue
-			}
-			if key := contentKeyOf(meta); key != "" {
-				keys = append(keys, "content/"+key)
-			}
-		}
-	}
-	if len(keys) < 2 {
-		return
-	}
-	store.PlanReads(ctx, w.store, keys)
-}
-
-func contentKeyOf(meta core.FileMeta) string {
-	if meta.ContentRef != "" {
-		return meta.ContentRef
-	}
-	return meta.ContentHash
-}
+// Bounding the batch does not fix it. RFC 0025 §7 measures a 2,048-entry window
+// at 19,236 MB against 18,416 MB for the whole plan and 160 MB for declaring
+// nothing — a window that size still spans every pack, and this walk's batch is
+// exactly that size. Its batches are pack-local in a way a window over walk
+// order is not, which is why declaring them looked cheaper than it was.
+//
+// The *metadata* phase still declares (see derivedWalk.read), and is where the
+// measured win lives: it reads group by group, one worker per group, with
+// concurrency bounded to the body cache's own capacity, so its residency is
+// bounded by construction.
 
 // derivedPrefixLen is how much of a routing key comes from the parent, in hex
 // characters. It is AffinityKey's own split and cannot be chosen here: widening

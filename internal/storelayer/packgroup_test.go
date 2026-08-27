@@ -284,3 +284,88 @@ func newLocal(t *testing.T) store.ObjectStore {
 	}
 	return s
 }
+
+// blockingRanger holds a ranged read open until released, so a test can do
+// something to the store while a read is in flight.
+type blockingRanger struct {
+	store.ObjectStore
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *blockingRanger) GetRange(ctx context.Context, key string, off, length int64) ([]byte, error) {
+	s.once.Do(func() {
+		close(s.entered)
+		<-s.release
+	})
+	return s.ObjectStore.(store.RangeGetter).GetRange(ctx, key, off, length)
+}
+
+func (s *blockingRanger) Unwrap() store.ObjectStore { return s.ObjectStore }
+
+// A read decides admission against one plan, so it must spend its slot in that
+// same plan.
+//
+// PlanReads replaces the recorded plan wholesale, and a read blocked on the
+// backend can outlive the grouping it belongs to. Looking the plan up a second
+// time after the transfer lets such a read consume from a plan formed after it
+// started — which spends a declaration the new plan's own read then cannot
+// find, and hands that read to the estimator. It is the defect this type was
+// changed to fix, arriving through the store rather than through the plan.
+func TestPackStore_ReadKeepsItsOwnPlanAcrossASwap(t *testing.T) {
+	ctx := context.Background()
+	keys, w := seedPacks(t, ctx, newLocal(t), 1, 20)
+	if err := w.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	blocker := &blockingRanger{
+		ObjectStore: newLocal(t),
+		entered:     make(chan struct{}),
+		release:     make(chan struct{}),
+	}
+	copyRepo(t, ctx, w, blocker.ObjectStore)
+
+	reader, err := NewPackStore(blocker)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The first plan declares one key, so its read takes a ranged read and
+	// blocks inside the backend.
+	first := keys[0]
+	reader.PlanReads(ctx, []string{first})
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := reader.Get(ctx, first)
+		done <- err
+	}()
+	<-blocker.entered
+
+	// A second grouping lands while that read is still in the backend, and it
+	// declares the very same key.
+	reader.PlanReads(ctx, []string{first})
+	close(blocker.release)
+	if err := <-done; err != nil {
+		t.Fatalf("get %s: %v", first, err)
+	}
+
+	// The in-flight read belonged to the first plan. The second must still hold
+	// the declaration it made.
+	if _, planned := reader.groupPlan().fetchWhole(first, packRefOf(t, reader, first)); !planned {
+		t.Error("the second plan lost its declaration to a read that started before it existed")
+	}
+}
+
+func packRefOf(t *testing.T, s *PackStore, key string) string {
+	t.Helper()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	entry, ok := s.catalog.Get(key)
+	if !ok {
+		t.Fatalf("key %s is not in the catalog", key)
+	}
+	return entry.PackRef
+}

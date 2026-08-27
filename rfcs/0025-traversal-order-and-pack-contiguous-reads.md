@@ -1037,12 +1037,29 @@ requests). Those two are choices this RFC already made and could revisit;
 **Deleting `packAdmission` therefore means answering one question, not six:
 what should a tree descent do at a pack miss?** That is a much better-posed
 problem than the old table implied, and it is the one a successor to this
-section should take up. Two shapes are available and neither is costed:
-descend a level at a time and declare each level's children as a batch, which
-turns O(depth) unplanned reads into O(depth) declared batches; or accept that
-descent is inherently unplanned and give it a rule of its own — *K*=1, always
-ranged — which is what "Grouping covers only the keys a caller hands over"
-already proposes for stray reads.
+section should take up.
+
+**Declaring by level is the shape that can work.** A HAMT descent cannot state
+its next read, but a *level* can: once every node at depth *d* is decoded, the
+union of their children is the complete key set for depth *d+1*, so a
+breadth-first prefetch declares one batch per level and `maxTreeDepth` bounds
+how many. It needs no change to `walk` — `NodeStore.load` consults a 4,096-entry
+cache first, so a prefetch pass leaves the existing depth-first walk hitting
+memory, and fetch order separates from visit order exactly as
+`collectMetadata` already separates it from write order. Emission order is
+untouched, which is what makes it available to `find` and `ls` where declaring
+their *entries* was not. Uncosted, and with four things to settle: the node
+cache becomes load-bearing (a level wider than it turns a prefetch into a double
+read); bytes as well as requests, since every move here has slid along that
+frontier rather than advancing it; partial traversals (`restore -path`, `prune`'s
+`reachable` skip) would prefetch what they never visit, which is the failure that
+cost `check` 752 -> 819; and `diff` must be excluded, because its walk prunes
+identical subtrees by ref and prefetching whole levels destroys that.
+
+**Giving descent a *K*=1 always-ranged rule is the shape that cannot.** See
+"Grouping covers only the keys a caller hands over" under "What this does not
+solve": `ls` is 100% `node/` and is a scan, so ranged-only costs it a request per
+object.
 
 **Retiring a spent plan does not manufacture unplanned reads.** An
 earlier revision of this section claimed it did, and reasoned that because
@@ -1113,6 +1130,44 @@ objects, while still being reported as unplanned and still spending nothing.
 That recovers the 49 requests without reintroducing the conflation, because the
 transfer it rides is one that was going to happen. It needs its own measurement
 and is not claimed here.
+
+#### What the fix costs restore, and why the bug was protecting it
+
+The figures above were taken before #500 removed restore's write-phase content
+declaration. Retaken after it, on the rebased code, the cost moves to a
+different axis and a different command:
+
+| `restore`, 82 packs | base | key-aware `consume` | + per-key `fetchWhole` |
+|---|---|---|---|
+| requests | 1,122 / 1,122 | 1,054 / 1,074 | 1,061 / 1,071 |
+| transferred | **257 / 260 MB** | **305 / 309 MB** | 303 / 313 MB |
+
+Requests are flat; **bytes rise 14–18%**, and they rise at the accounting fix
+rather than at either of the changes layered on it. Two repositories agree on
+the effect (+14% and +18%) while disagreeing on base's absolute bytes
+(229 against 257 MB), which is the cross-run drift this section's protocol note
+exists for — only the within-run comparison is worth reading.
+
+The mechanism is that **the defect was doing damage control.** `consume` ran
+only on cache hits, so every pack's count stalled at one and never reached the
+zero that retires it. At *K*=1 the admission arithmetic is `0 > excess`, which
+is always ranged, and the planned path skips `recordMiss` — so a stalled plan
+said "never transfer this pack whole, and never reconsider". Restore's write
+phase reads content out of packs the *metadata* plan named, so it spent its
+whole duration behind that rule. It is precisely the policy §7 concluded the
+write phase should have, arrived at by accident and by a bug.
+
+Fixing the accounting removes the accident. Those reads reach `packAdmission`,
+which promotes after `packPromoteAfter` misses, and the bytes follow. This is
+the third time this workstream has found a cost mechanism that was also a
+protection — after §5's penalized path and §7's missing `recordMiss` — and the
+pattern is worth naming: **every one of them arises because the planned path has
+no residency feedback, so whatever accidentally limits it is load-bearing.**
+
+The consequence for sequencing is that the accounting fix should not land
+alone. It is correct, and correcting it exposes an unbounded promotion the write
+phase cannot support. What pairs with it is §7's residency-aware admission, not
+another special case.
 
 ### Check, which does not work
 
@@ -1449,8 +1504,20 @@ requirement; it was an accident of building the plan first, and it was load-bear
   time; restore reads two.
 - **Grouping covers only the keys a caller hands over.** A read outside any
   group — `cat` of one file, a dedup probe during backup, a lookup the caller did
-  not plan — still arrives one key at a time. Those should take the arithmetic
-  rule with *K*=1, which is always a ranged read, and need no heuristic at all.
+  not plan — still arrives one key at a time.
+
+  An earlier revision said those "should take the arithmetic rule with *K*=1,
+  which is always a ranged read, and need no heuristic at all", written as though
+  it described the code. **It does not, and as a proposal it is now measured
+  wrong.** Today an undeclared read falls to `packAdmission`, which is what
+  "The estimator is load-bearing" counts and what
+  `TestPackStore_UngroupedReadStillProbes` pins. Making *K*=1 the rule instead
+  would suit the reads that motivated the sentence — a `cat`, a stray probe — and
+  ruin the ones that dominate the count: `ls`'s unplanned misses are 100%
+  `node/`, a scan that walks a pack's objects consecutively and depends on
+  promotion, so a blanket ranged rule would cost it one request per object. The
+  two populations want opposite policies and arrive through the same door, which
+  is the sharper form of why the estimator survives.
 - **Sorted ordering alone does not retire the heuristics.** `packPromoteAfter`
   and `packPenalized` answer a question — *is this pack worth fetching whole?* —
   that a flat permutation does not ask. Measured in #481 (§1). It is the group

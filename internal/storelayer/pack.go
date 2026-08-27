@@ -385,7 +385,18 @@ func (s *PackStore) Get(ctx context.Context, key string) ([]byte, error) {
 		}
 	}
 
-	// 3. We know it's in a pack. Do we have the pack in the LRU cache?
+	// 3. We know it's in a pack. One plan serves this whole read.
+	//
+	// Read once and carried, rather than fetched again after the transfer,
+	// because a read blocked on the backend can outlive the grouping it belongs
+	// to: PlanReads replaces s.plan wholesale, so a second lookup here can hand
+	// this read a plan formed after it started. Deciding admission against one
+	// plan and then spending a slot in another is the same defect this type was
+	// changed to fix, one level up — the later plan loses a declaration to a read
+	// that was never part of it, and the read that *was* falls back to the
+	// estimate.
+	plan := s.groupPlan()
+
 	if packData, ok := s.packCache.Get(entry.PackRef); ok {
 		if int64(len(packData)) < entry.Offset+entry.Length {
 			return nil, fmt.Errorf("packfile %s is smaller than expected for key %s", entry.PackRef, key)
@@ -393,7 +404,7 @@ func (s *PackStore) Get(ctx context.Context, key string) ([]byte, error) {
 		data := make([]byte, entry.Length)
 		copy(data, packData[entry.Offset:entry.Offset+entry.Length])
 		s.debugf("get %s: hit lru pack cache %s (len=%d)", key, entry.PackRef, entry.Length)
-		s.groupPlan().consume(key, entry.PackRef)
+		plan.consume(key, entry.PackRef)
 		return data, nil
 	}
 
@@ -402,11 +413,11 @@ func (s *PackStore) Get(ctx context.Context, key string) ([]byte, error) {
 	// brought the body in — so `count` never reached the zero that retires it,
 	// and a pack read entirely by ranged reads kept stating the demand it began
 	// with rather than what was left of it.
-	data, err := s.resolveFromPack(ctx, key, entry)
+	data, err := s.resolveFromPack(ctx, key, entry, plan)
 	if err != nil {
 		return nil, err
 	}
-	s.groupPlan().consume(key, entry.PackRef)
+	plan.consume(key, entry.PackRef)
 	return data, nil
 }
 
@@ -594,7 +605,7 @@ func rangesNatively(s store.ObjectStore) bool {
 // scanned and wrong when it is being sampled, and the two are indistinguishable
 // at the first miss. Which of the two this is, is packAdmission's judgement;
 // whether the backend can serve a ranged read at all is this function's.
-func (s *PackStore) resolveFromPack(ctx context.Context, key string, entry PackEntry) ([]byte, error) {
+func (s *PackStore) resolveFromPack(ctx context.Context, key string, entry PackEntry, plan *packGroupPlan) ([]byte, error) {
 	ranger, canRange := s.ObjectStore.(store.RangeGetter)
 	canRange = canRange && rangesNatively(s.ObjectStore)
 
@@ -602,7 +613,7 @@ func (s *PackStore) resolveFromPack(ctx context.Context, key string, entry PackE
 	// the estimate is not consulted alongside it — it is replaced by it. Probing
 	// exists only to approximate the number the plan already carries.
 	var misses int
-	fetchWhole, planned := s.groupPlan().fetchWhole(key, entry.PackRef)
+	fetchWhole, planned := plan.fetchWhole(key, entry.PackRef)
 	if !planned {
 		misses, fetchWhole = s.admission.recordMiss(entry.PackRef)
 	}

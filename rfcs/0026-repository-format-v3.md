@@ -61,14 +61,57 @@ that overflows is partitioned by the next routing bits, and its children never
 merge back, so leaves settle at roughly *budget ÷ arity*. At the HAMT's
 inherited 5 bits that is a thirty-second: leaves measured 13 KB against a
 512 KB budget, and a repository held ~25x more objects than the format
-intends. v3 therefore routes **2 bits per level** with a **2 MB budget**.
-Raising the budget alone cannot fix this — the overshoot is a ratio, and a
-32x budget rewrites 32x more bytes when one file changes.
+intends. v3 therefore routes **2 bits per level**.
+
+**Fill then hit its ceiling, and the ceiling is the split geometry.** At 2
+bits a full leaf partitions into quarters that refill to the budget, so the
+steady state runs between 25% and 100% — measured at 883 KB average and
+1.07 MB median against a 2 MB budget, 44% and 53%. That is the floor of the
+geometry, not slack left on the table, and narrowing further does not help:
+1-bit routing raises the fill floor to 50% but buys a level of interior nodes
+for every bit it stops routing, and measured *worse* overall (761 stored
+objects against 700, check and restore unmoved). 3 bits is worse again (928
+objects, check 904 → 1,268 requests). Arity is settled and there is no fill
+left to recover, which leaves the byte budget as the only dial on how many
+objects a repository holds.
+
+**The budget was counting the wrong bytes.** It counts a leaf's *encoded*
+size, while the 8 MB packfiles this format replaces are 8 MB *stored*. A leaf
+passes through `CompressedStore` on its way out, and zstd takes a leaf of real
+file content to roughly a fifth of its encoded size, so a 2 MB budget was
+producing ~190 KB objects — 667 of them where the packfile format held 21.
+That, and not leaves failing to fill, is where v3's request counts on a fresh
+repository came from. The budget is now **8 MB**, the size the packfile layer
+used for the same purpose.
 
 **A cache bounded by entry count means nothing when entries are sized in
 bytes.** The node cache held 128 entries, which at the sawtooth fill above was
 ~6 MB of a ~60 MB leaf set, so every per-entry lookup missed. It is now
-bounded by bytes as well.
+bounded by bytes, and sized as a multiple of the leaf budget (32 of them)
+rather than as a flat figure, because what it has to hold is a working set
+counted in leaves. A v3 backup reads every leaf — change detection looks each
+scanned entry up in the previous snapshot, in batches sorted by routing key,
+so each batch sweeps the whole key space once — which makes the cache the
+difference between one sweep and one per batch. `backup-dedup` was falling off
+exactly that cliff: a 221 MB tree against a 128 MB cache re-read 438 distinct
+nodes 1,911 times.
+
+**Whole-file dedup of inline content was measured and rejected.** v2
+deduplicates a small file by probing `content/<ref>`; v3 has no such object,
+so a second file with the same bytes inlines a second copy. The only globally
+content-addressed namespace v3 still writes is `chunk/`, so recovering the
+behaviour means promoting duplicated content into a chunk and referencing it
+from both entries. Implemented and measured, that trades bytes for requests in
+the wrong direction: content inside a leaf is read for free by any operation
+that reads the leaf, while content in a chunk costs its own request *once per
+referencing file*. On `source` it saved 2% of stored bytes and cost restore
+46% more requests (229 → 335, a chunk shared by nine files fetched nine
+times); on `mixed`, 4.5% of bytes for 32% more restore requests (421 → 555).
+Even a perfect chunk cache leaves restore worse than not promoting, because 70
+distinct objects replaced content the leaves were being read for anyway. The
+decision is therefore option 4 of issue #514 — inline content stays inline —
+and what actually made `backup-dedup` expensive was the node-cache cliff and
+the object count above, not the duplicated bytes.
 
 **Reading a leaf twice is the same mistake as fetching a pack twice.** Three
 paths did it: restore looked each file up separately after collecting
@@ -508,10 +551,16 @@ Each stage is a PR or small series; the format flips only once.
 
 ## Open questions
 
-1. **Leaf byte budget.** 256 KB target / 512 KB split is a guess with the
-   right shape; targets 1 and 4 bound it from opposite sides and the harness
-   decides. Bigger leaves also raise restore's decode granularity, which is
-   free memory-wise only while a leaf is consumed then released.
+1. ~~**Leaf byte budget.**~~ **Answered: 8 MB.** Swept at 2, 4, 8 and 16 MB
+   on the `source` profile. Requests fall almost exactly as 1/budget — check
+   904 → 408 → 206 → 102, restore 915 → 229 → 128 → 76 — and what pays for it
+   is write amplification, since a changed entry rewrites its whole leaf
+   including its neighbours' untouched content: a single-file incremental
+   uploads 0.4, 0.6, 1.6 and 1.6 MB across the same sweep. 8 MB is where the
+   read side stops improving cheaply. The stored-size spread the sweep also
+   shows (79 → 91 → 104 MB) is retention, not format: those figures hold six
+   snapshots' trees, and a repository kept at one snapshot stores 54 MB at
+   2 MB and 52 MB at 8 MB, against the packfile format's 79 MB.
 1. **Inline content budget.** 64 KB default; the trade is leaf rewrite volume
    on churn against object count and restore requests. Measured on
    `backup-incremental-1` / `-1000` per RFC 0024's open question 1.
@@ -520,10 +569,12 @@ Each stage is a PR or small series; the format flips only once.
    second encoding.
 1. **Xattrs/ACLs.** Side table keyed by entry index, present when flagged
    (carried from RFC 0024).
-1. **Cross-directory metadata dedup.** Two identical files in different
-   directories shared a `filemeta/` object in v2 and do not share leaf bytes
-   in v3. Quantify on the `mixed` profile; expected small against the object
-   count win, but it should be a number.
+1. ~~**Cross-directory metadata dedup.**~~ **Answered: leave it.** Quantified
+   on `mixed` and `source` by building the chunk-promotion design and
+   measuring it — see "Whole-file dedup of inline content" above. The bytes
+   are real (2–4.5% of stored size) and cost more in restore requests than
+   they are worth, because a leaf's bytes are already being read while a
+   chunk's are not.
 1. **Does `index/snapshots` want the same treatment later?** It is already a
    reconciling cache; nothing here changes it, but a v3 follow-up could fold
    snapshot summaries into a leaf-like object. Out of scope now.

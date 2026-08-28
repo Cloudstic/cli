@@ -1,6 +1,7 @@
 package hamt
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"testing"
@@ -172,3 +173,116 @@ func (c *countingNodeStore) TotalSize(ctx context.Context) (int64, error) {
 	return c.inner.TotalSize(ctx)
 }
 func (c *countingNodeStore) Flush(ctx context.Context) error { return c.inner.Flush(ctx) }
+
+// Replacement is the third way a tree's shape can drift from its contents, and
+// the one only format v3 exposes.
+//
+// v2 splits a leaf on entry count, which a replacement cannot change, so
+// overwriting an entry there is shape-neutral by construction. v3 splits on
+// encoded bytes and a v3 entry carries the file's own bytes, so replacing one
+// moves a leaf's size by as much as inserting or deleting it does: a small file
+// growing large overfills a leaf that never reconsiders splitting, and a large
+// one shrinking leaves behind a subtree that split under content it no longer
+// holds. Both produce a root that a fresh build of the same entries does not,
+// which is what node-level deduplication between snapshots rests on.
+//
+// This reaches a real repository through the change-feed scans
+// (gdrive-changes, onedrive-changes), which edit the previous snapshot's tree
+// in place rather than rebuilding it, so every changed file is a replacement.
+
+// v3EntriesWithOneSized builds n entries whose payloads are all smallBytes long
+// except entry `at`, which is bigBytes long.
+func v3EntriesWithOneSized(n, at, size int) []*Payload {
+	out := make([]*Payload, n)
+	for i := range out {
+		body := 1024
+		if i == at {
+			body = size
+		}
+		out[i] = &Payload{
+			Meta:   fmt.Appendf(nil, `{"fileId":"file-%d"}`, i),
+			Size:   int64(body),
+			Inline: bytes.Repeat([]byte{byte('a' + i%26)}, body),
+		}
+	}
+	return out
+}
+
+// v3TreeFrom builds a v3 tree holding exactly payloads and returns its root.
+func v3TreeFrom(t *testing.T, payloads []*Payload) string {
+	t.Helper()
+	tree, _ := v3TestTree()
+	tx := tree.Edit("")
+	for i, p := range payloads {
+		key := fmt.Sprintf("file-%d", i)
+		if err := tx.InsertWithPayload(ctx, routingKeyFor(i), key, fmt.Sprintf("filemeta/%064d", i), p); err != nil {
+			t.Fatalf("insert %d: %v", i, err)
+		}
+	}
+	root, err := tx.Commit(ctx)
+	if err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	return root
+}
+
+func TestV3RootHashIsReplacementHistoryIndependent(t *testing.T) {
+	// Enough entries at a megabyte each that the set is several leaf budgets
+	// wide, so the tree genuinely splits and there is a shape to get wrong.
+	const n = 24
+	const big = 1024 * 1024
+	const target = 7
+
+	t.Run("shrink", func(t *testing.T) {
+		// One entry carries the whole set over the budget on its own, so the
+		// tree splits to hold it and must collapse back to a single leaf once
+		// it no longer does.
+		start := v3EntriesWithOneSized(n, target, leafSplitBytesV3+big)
+		tree, _ := v3TestTree()
+		tx := tree.Edit("")
+		for i, p := range start {
+			if err := tx.InsertWithPayload(ctx, routingKeyFor(i), fmt.Sprintf("file-%d", i), fmt.Sprintf("filemeta/%064d", i), p); err != nil {
+				t.Fatalf("insert %d: %v", i, err)
+			}
+		}
+		end := v3EntriesWithOneSized(n, -1, 0)
+		if err := tx.InsertWithPayload(ctx, routingKeyFor(target), fmt.Sprintf("file-%d", target),
+			fmt.Sprintf("filemeta/%064d", target), end[target]); err != nil {
+			t.Fatalf("replace: %v", err)
+		}
+		got, err := tx.Commit(ctx)
+		if err != nil {
+			t.Fatalf("commit: %v", err)
+		}
+
+		if want := v3TreeFrom(t, end); got != want {
+			t.Fatalf("shrinking an entry produced %s, building the same entries directly produced %s", got, want)
+		}
+	})
+
+	t.Run("grow", func(t *testing.T) {
+		// Built small, then overwritten big: a leaf pushed past the budget by a
+		// replacement must split exactly as one pushed past it by an insert.
+		start := v3EntriesWithOneSized(n, -1, 0)
+		tree, _ := v3TestTree()
+		tx := tree.Edit("")
+		for i, p := range start {
+			if err := tx.InsertWithPayload(ctx, routingKeyFor(i), fmt.Sprintf("file-%d", i), fmt.Sprintf("filemeta/%064d", i), p); err != nil {
+				t.Fatalf("insert %d: %v", i, err)
+			}
+		}
+		end := v3EntriesWithOneSized(n, target, leafSplitBytesV3+big)
+		if err := tx.InsertWithPayload(ctx, routingKeyFor(target), fmt.Sprintf("file-%d", target),
+			fmt.Sprintf("filemeta/%064d", target), end[target]); err != nil {
+			t.Fatalf("replace: %v", err)
+		}
+		got, err := tx.Commit(ctx)
+		if err != nil {
+			t.Fatalf("commit: %v", err)
+		}
+
+		if want := v3TreeFrom(t, end); got != want {
+			t.Fatalf("growing an entry produced %s, building the same entries directly produced %s", got, want)
+		}
+	})
+}

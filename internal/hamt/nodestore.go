@@ -26,16 +26,28 @@ const (
 
 	// The v3 bounds. Leaves are sized in bytes, so the byte budget is the one
 	// that means anything and the entry cap is set high enough not to bind
-	// before it: at the observed ~50 KB average fill, 128 MB is ~2,600 leaves,
-	// and capping at 128 entries (as this first did) held ~6 MB of a ~60 MB
-	// leaf set and thrashed every per-entry lookup — measured as a 39x request
-	// blowup against v2 on the 5,000-file tree.
+	// before it: capping at 128 entries (as this first did) held ~6 MB of a
+	// ~60 MB leaf set and thrashed every per-entry lookup — measured as a 39x
+	// request blowup against v2 on the 5,000-file tree.
 	//
-	// 128 MB is chosen against what the alternative costs rather than as a
-	// memory target: a miss is a whole leaf re-fetched over the network, and
-	// the metadata working set of a mid-sized repository fits inside it.
+	// The byte budget is sized against the tree, not as a memory target,
+	// because a miss is a whole leaf re-fetched over the network. A v3 backup
+	// reads every leaf: change detection looks up each scanned entry in the
+	// previous snapshot, and it does so in batches of entryBatch sorted by
+	// routing key, so each batch sweeps the whole key space once. A cache that
+	// holds the tree costs one sweep; a cache that does not costs one per
+	// batch. That cliff is exactly what backup-dedup was falling off — a
+	// 221 MB tree against a 128 MB cache re-read 438 distinct nodes 1,911
+	// times, and raising the cache alone took the step from 2,067 requests to
+	// 594 with no effect on what is written.
+	//
+	// 32 leaf budgets is the shape of the number rather than a round figure:
+	// what the cache has to hold is a working set counted in leaves, so it has
+	// to move when the leaf size does. A tree larger than this still falls off
+	// the cliff — the cache can only move it, not remove it — which is why the
+	// leaf budget carries the other half of the fix.
 	nodeCacheSizeV3  = 8192
-	nodeCacheBytesV3 = 128 * 1024 * 1024
+	nodeCacheBytesV3 = 32 * leafSplitBytesV3
 )
 
 // NodeStore is the only part of this package that knows HAMT nodes are bytes.

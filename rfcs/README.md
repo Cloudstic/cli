@@ -26,3 +26,4 @@
 - [RFC 0024: Metadata in the Tree](0024-metadata-in-the-tree.md) — absorbed into RFC 0026
 - [RFC 0025: Traversal Order and Pack-Contiguous Reads](0025-traversal-order-and-pack-contiguous-reads.md) — closed, partially superseded by RFC 0026
 - [RFC 0026: Repository Format v3 (Fat Leaves, No Packfiles)](0026-repository-format-v3.md)
+- [RFC 0027: Decoupling Read and Write Layout](0027-decoupling-read-and-write-layout.md)

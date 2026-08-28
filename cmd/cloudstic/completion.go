@@ -46,6 +46,12 @@ _cloudstic() {
 
     local global_flags="@@GLOBAL_FLAGS@@"
 
+    # Complete a value flag's argument, wherever the flag appears. Generated
+    # from the flag declarations, one arm per completer.
+    case "$prev" in
+@@BASH_FLAG_VALUES@@
+    esac
+
     # Identify the subcommand
     local cmd=""
     local i
@@ -54,9 +60,9 @@ _cloudstic() {
             -*)
                 # skip flags and their values
                 case "${words[i]}" in
-					@@VALUE_FLAGS@@)
-						((i++)) ;;
-				esac
+                    @@VALUE_FLAGS@@)
+                        ((i++)) ;;
+                esac
                 ;;
             *)
                 cmd="${words[i]}"
@@ -67,17 +73,6 @@ _cloudstic() {
 
     # Complete subcommand
     if [[ -z "$cmd" ]]; then
-        case "$prev" in
-            -profile)
-                COMPREPLY=($(compgen -W "$(_cloudstic_query profile-names "$cur" "${words[@]:1:$((cword-1))}")" -- "$cur"))
-                return ;;
-            -store)
-                COMPREPLY=($(compgen -W "local: s3: b2: sftp://" -- "$cur"))
-                return ;;
-            -source-sftp-key|-store-sftp-key|-output|-profiles-file)
-                _filedir
-                return ;;
-        esac
         COMPREPLY=($(compgen -W "$commands" -- "$cur"))
         return
     fi
@@ -86,26 +81,6 @@ _cloudstic() {
     local cmd_flags=""
     case "$cmd" in
 @@BASH_CMD_FLAGS@@
-    esac
-
-    case "$prev" in
-        -profile)
-            COMPREPLY=($(compgen -W "$(_cloudstic_query profile-names "$cur" "${words[@]:1:$((cword-1))}")" -- "$cur"))
-            return ;;
-        -auth-ref)
-            COMPREPLY=($(compgen -W "$(_cloudstic_query auth-names "$cur" "${words[@]:1:$((cword-1))}")" -- "$cur"))
-            return ;;
-        -store)
-            # URI completion hint: show scheme prefixes
-            COMPREPLY=($(compgen -W "local: s3: b2: sftp://" -- "$cur"))
-            return ;;
-        -source)
-            # URI completion hint: show scheme prefixes and bare keywords
-            COMPREPLY=($(compgen -W "local: sftp:// gdrive gdrive-changes onedrive onedrive-changes" -- "$cur"))
-            return ;;
-        -source-sftp-key|-store-sftp-key|-output|-profiles-file)
-            _filedir
-            return ;;
     esac
 
     if [[ -z "$cur" || "$cur" == -* ]]; then
@@ -192,9 +167,9 @@ _cloudstic() {
             -*)
                 # Skip flags with values
                 case "${words[i]}" in
-					-store|-profile|-profiles-file|-s3-endpoint|-s3-region|-s3-profile|-s3-access-key|-s3-secret-key|-source-sftp-password|-source-sftp-key|-store-sftp-password|-store-sftp-key|-encryption-key|-password|-recovery-key|-kms-key-arn|-kms-region|-kms-endpoint|-source|-auth-ref|-google-credentials|-google-credentials-ref|-google-credentials-json|-google-token-file|-google-token-ref|-onedrive-client-id|-onedrive-token-file|-onedrive-token-ref|-tag|-output|-keep-last|-keep-hourly|-keep-daily|-keep-weekly|-keep-monthly|-keep-yearly|-group-by|-account)
-						(( i++ )) ;;
-				esac
+                    @@VALUE_FLAGS@@)
+                        (( i++ )) ;;
+                esac
                 ;;
             *)
                 cmd="${words[i]}"

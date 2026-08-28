@@ -11,6 +11,25 @@ import (
 	"github.com/cloudstic/cli/internal/engine"
 )
 
+// plural renders a count with its noun, adding a trailing "s" for anything but
+// one. Every noun this is used with pluralizes that way.
+func plural(n int, noun string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, noun)
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+// firstNonEmpty returns the first value that is not blank once trimmed.
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 // formatBytes returns a human-readable representation of a byte count.
 func formatBytes(b int64) string {
 	const (

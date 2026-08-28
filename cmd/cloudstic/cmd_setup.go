@@ -36,31 +36,31 @@ func declareSetupWorkstationArgs(g *globalFlags) (*setupWorkstationArgs, command
 	}}
 }
 
-func runSetupWorkstation(r *runner, ctx context.Context, args *setupWorkstationArgs) int {
-	args.storeRef = strings.TrimSpace(args.storeRef)
-	cfg, err := loadProfilesOrInit(args.profilesFile)
+func runSetupWorkstation(r *runner, ctx context.Context, a *setupWorkstationArgs) int {
+	a.storeRef = strings.TrimSpace(a.storeRef)
+	cfg, err := loadProfilesOrInit(a.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
 	}
 	ensureProfilesMaps(cfg)
 
-	if !args.dryRun && args.storeRef == "" {
+	if !a.dryRun && a.storeRef == "" {
 		if len(cfg.Stores) == 0 {
-			if !r.canPrompt() || args.yes {
+			if !r.canPrompt() || a.yes {
 				return r.fail("No store is configured; create one first with 'cloudstic store new' or rerun interactively")
 			}
 			ref, created, selErr := promptStoreSelection(r, ctx, cfg)
 			if selErr != nil {
 				return r.fail("Failed to %v", selErr)
 			}
-			args.storeRef = ref
+			a.storeRef = ref
 			if created {
-				s := cfg.Stores[args.storeRef]
+				s := cfg.Stores[a.storeRef]
 				if !storeHasExplicitEncryption(s) {
-					promptEncryptionConfig(r, ctx, cfg, args.storeRef, args.profilesFile, args.configDir)
+					promptEncryptionConfig(r, ctx, cfg, a.storeRef, a.profilesFile, a.configDir)
 				}
-				if err := checkOrInitStoreWithRecovery(r, ctx, cfg, args.storeRef, args.profilesFile, checkOrInitOptions{
-					configDir:            args.configDir,
+				if err := checkOrInitStoreWithRecovery(r, ctx, cfg, a.storeRef, a.profilesFile, checkOrInitOptions{
+					configDir:            a.configDir,
 					allowMissingSecrets:  true,
 					warnOnMissingSecrets: true,
 					offerInit:            true,
@@ -69,31 +69,31 @@ func runSetupWorkstation(r *runner, ctx context.Context, args *setupWorkstationA
 				}
 			}
 		} else if len(cfg.Stores) > 1 {
-			if !r.canPrompt() || args.yes {
+			if !r.canPrompt() || a.yes {
 				return r.fail("Multiple stores are configured; pass -store-ref or rerun interactively")
 			}
 			ref, _, selErr := promptStoreSelection(r, ctx, cfg)
 			if selErr != nil {
 				return r.fail("Failed to %v", selErr)
 			}
-			args.storeRef = ref
+			a.storeRef = ref
 		}
 	}
 
 	opts := []workstation.SetupOption{workstation.WithProfiles(cfg)}
-	if args.storeRef != "" {
-		opts = append(opts, workstation.WithStoreRef(args.storeRef))
+	if a.storeRef != "" {
+		opts = append(opts, workstation.WithStoreRef(a.storeRef))
 	}
 	plan, err := planWorkstationSetup(ctx, opts...)
 	if err != nil {
 		return r.fail("Failed to plan workstation setup: %v", err)
 	}
 
-	if args.jsonOutput {
+	if a.jsonOutput {
 		return r.writeJSON(plan)
 	}
 
-	if !args.dryRun && !args.yes {
+	if !a.dryRun && !a.yes {
 		if !r.canPrompt() {
 			return r.fail("setup workstation requires an interactive terminal or -yes")
 		}
@@ -112,8 +112,8 @@ func runSetupWorkstation(r *runner, ctx context.Context, args *setupWorkstationA
 		}
 	}
 
-	printWorkstationSetupPlan(r.out, plan, args.dryRun)
-	if args.dryRun {
+	printWorkstationSetupPlan(r.out, plan, a.dryRun)
+	if a.dryRun {
 		return 0
 	}
 
@@ -124,7 +124,7 @@ func runSetupWorkstation(r *runner, ctx context.Context, args *setupWorkstationA
 		_, _ = fmt.Fprintln(r.out, "\nNothing to save.")
 		return 0
 	}
-	if !args.yes {
+	if !a.yes {
 		ok, err := r.promptConfirm(ctx, "Save workstation setup?", true)
 		if err != nil {
 			return r.fail("Failed to confirm workstation setup: %v", err)
@@ -139,10 +139,10 @@ func runSetupWorkstation(r *runner, ctx context.Context, args *setupWorkstationA
 	if err != nil {
 		return r.fail("Failed to apply workstation setup plan: %v", err)
 	}
-	if err := profile.Save(args.profilesFile, cfg); err != nil {
+	if err := profile.Save(a.profilesFile, cfg); err != nil {
 		return r.fail("Failed to save profiles: %v", err)
 	}
-	_, _ = fmt.Fprintf(r.out, "\nSaved %d profile(s) in %s", len(result.ProfileNames), args.profilesFile)
+	_, _ = fmt.Fprintf(r.out, "\nSaved %d profile(s) in %s", len(result.ProfileNames), a.profilesFile)
 	if result.ProfilesCreated > 0 || result.ProfilesUpdated > 0 {
 		_, _ = fmt.Fprintf(r.out, " (%d created, %d updated)", result.ProfilesCreated, result.ProfilesUpdated)
 	}
@@ -172,7 +172,7 @@ func printWorkstationSetupPlan(out io.Writer, plan *workstation.SetupPlan, dryRu
 			t.AppendRow(table.Row{
 				profile.Name,
 				profile.SourceURI,
-				firstNonEmptyCLI(profile.StoreRef, "(none)"),
+				firstNonEmpty(profile.StoreRef, "(none)"),
 				strings.Join(profile.Tags, ","),
 				workstationDraftDecisionLabel(profile),
 			})
@@ -200,15 +200,6 @@ func printWorkstationCoverage(out io.Writer, plan *workstation.SetupPlan) {
 	writeWorkstationLines("Skipped intentionally", plan.Coverage.SkippedIntentionally)
 	writeWorkstationLines("Not available now", plan.Coverage.NotAvailableNow)
 	writeWorkstationLines("Warnings", plan.Coverage.Warnings)
-}
-
-func firstNonEmptyCLI(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 type workstationReviewPrompts struct {
@@ -362,7 +353,7 @@ func refreshWorkstationCoverage(plan *workstation.SetupPlan) {
 	plan.Coverage.ProtectedNow = nil
 	plan.Coverage.SkippedIntentionally = preservedSkipped
 	for _, draft := range plan.Profiles {
-		label := firstNonEmptyCLI(draft.DisplayLabel, draft.SourceURI)
+		label := firstNonEmpty(draft.DisplayLabel, draft.SourceURI)
 		if draft.Selected {
 			plan.Coverage.ProtectedNow = append(plan.Coverage.ProtectedNow, label)
 		} else {

@@ -81,6 +81,7 @@ func renderCompletion(script string) string {
 		placeholderCommandNames, completionCommandNames(),
 		placeholderGlobalFlags, dashPrefixed(globalFlagNames(), " "),
 		placeholderValueFlags, dashPrefixed(allValueFlagNames(), "|"),
+		placeholderBashFlagValues, bashFlagValueCases(),
 		placeholderZshCommands, zshCommandLines(),
 		placeholderFishCommands, fishCommandLines(),
 		placeholderBashCmdFlags, bashCommandCases(),
@@ -306,9 +307,10 @@ func fishGlobalFlagLines() string {
 // subcommand list and each subcommand's flags come from the same declarations
 // that dispatch and help use.
 const (
-	placeholderZshGroups  = "@@ZSH_GROUPS@@"
-	placeholderFishGroups = "@@FISH_GROUPS@@"
-	placeholderValueFlags = "@@VALUE_FLAGS@@"
+	placeholderZshGroups      = "@@ZSH_GROUPS@@"
+	placeholderFishGroups     = "@@FISH_GROUPS@@"
+	placeholderValueFlags     = "@@VALUE_FLAGS@@"
+	placeholderBashFlagValues = "@@BASH_FLAG_VALUES@@"
 )
 
 // visibleGroups returns the top-level commands that dispatch to children.
@@ -331,6 +333,24 @@ func childNames(c command) []string {
 	return names
 }
 
+// visitAllSpecs calls fn for the global flag specifications and then for every
+// command's own, walking the whole tree. A flag declared by several commands is
+// visited once per declaration; callers that need uniqueness deduplicate by
+// name.
+func visitAllSpecs(fn func(flagSpec)) {
+	for _, s := range globalFlagSpecsFor(&globalFlags{}, allGlobalGroups) {
+		fn(s)
+	}
+	walk(commandRegistry(), func(_ string, c command) {
+		if c.flags == nil {
+			return
+		}
+		for _, s := range c.flags().ownSpecs() {
+			fn(s)
+		}
+	})
+}
+
 // allValueFlagNames returns every non-boolean flag declared anywhere in the
 // tree, global or command-specific. Shells use this to know which flags consume
 // the following word, so it must cover the whole surface rather than a
@@ -338,20 +358,12 @@ func childNames(c command) []string {
 func allValueFlagNames() []string {
 	seen := map[string]bool{}
 	var names []string
-	add := func(specs []flagSpec) {
-		for _, s := range specs {
-			if s.isBool || seen[s.name] {
-				continue
-			}
-			seen[s.name] = true
-			names = append(names, s.name)
+	visitAllSpecs(func(s flagSpec) {
+		if s.isBool || seen[s.name] {
+			return
 		}
-	}
-	add(globalFlagSpecsFor(&globalFlags{}, allGlobalGroups))
-	walk(commandRegistry(), func(_ string, c command) {
-		if c.flags != nil {
-			add(c.flags().ownSpecs())
-		}
+		seen[s.name] = true
+		names = append(names, s.name)
 	})
 	return names
 }
@@ -415,6 +427,77 @@ func fishGroupLines() string {
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// bashValueAction renders the bash commands that complete one completer's
+// value. Dynamic completers query the hidden __complete command; fixed value
+// sets reuse the same word lists positional completion uses. An empty result
+// means the completer has no bash translation, which
+// TestDeclaredCompletersHaveBashValueAction turns into a failure.
+func bashValueAction(completer string) string {
+	switch completer {
+	case "_files":
+		return "_filedir"
+	case "_cloudstic_profile_names":
+		return `COMPREPLY=($(compgen -W "$(_cloudstic_query profile-names "$cur" "${words[@]:1:$((cword-1))}")" -- "$cur"))`
+	case "_cloudstic_auth_names":
+		return `COMPREPLY=($(compgen -W "$(_cloudstic_query auth-names "$cur" "${words[@]:1:$((cword-1))}")" -- "$cur"))`
+	default:
+		words := bashCompleterWords(completer)
+		if words == "" {
+			return ""
+		}
+		return fmt.Sprintf("COMPREPLY=($(compgen -W %q -- \"$cur\"))", words)
+	}
+}
+
+// bashFlagValueCases renders the `case "$prev"` body that completes a flag's
+// value: one arm per declared completer, listing every flag declared with it
+// anywhere in the tree, plus a final arm that keeps the remaining value flags
+// from being offered command or flag names in place of the value they consume.
+// Generating the body is what lets a new `-something-file` flag complete files
+// without a template edit.
+//
+// The body is keyed on the flag name alone, so it can only complete a value
+// whose meaning does not depend on which command the flag was typed for. A
+// name whose declarations disagree on the completer (`-name` is an auth entry
+// for `auth login` and a glob for `find`) falls to the completion-less arm;
+// zsh and fish, which complete per command, still offer the specific values.
+func bashFlagValueCases() string {
+	const conflicting = "\x00conflicting"
+	completerByName := map[string]string{}
+	visitAllSpecs(func(s flagSpec) {
+		if s.isBool {
+			return
+		}
+		if known, ok := completerByName[s.name]; ok && known != s.completer {
+			completerByName[s.name] = conflicting
+			return
+		}
+		completerByName[s.name] = s.completer
+	})
+
+	byCompleter := map[string][]string{}
+	var order, plain []string
+	for _, name := range allValueFlagNames() {
+		completer := completerByName[name]
+		if completer == "" || completer == conflicting || bashValueAction(completer) == "" {
+			plain = append(plain, name)
+			continue
+		}
+		if byCompleter[completer] == nil {
+			order = append(order, completer)
+		}
+		byCompleter[completer] = append(byCompleter[completer], name)
+	}
+
+	var b strings.Builder
+	for _, completer := range order {
+		fmt.Fprintf(&b, "        %s)\n            %s\n            return ;;\n",
+			dashPrefixed(byCompleter[completer], "|"), bashValueAction(completer))
+	}
+	fmt.Fprintf(&b, "        %s)\n            return ;;", dashPrefixed(plain, "|"))
+	return b.String()
 }
 
 // bashCompleterWords maps a declared completer to a literal bash word list,

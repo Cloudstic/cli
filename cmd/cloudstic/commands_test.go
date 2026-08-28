@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -351,6 +352,45 @@ func TestDeclaredCompletersHaveFishMapping(t *testing.T) {
 		}
 		if got := fishValueSpec(s.completer); got == " -x" && s.completer != "" {
 			t.Errorf("flag -%s declares completer %q with no fish mapping; it will lose value suggestions", s.name, s.completer)
+		}
+	}
+}
+
+// TestDeclaredCompletersHaveBashValueAction ensures every completer has a bash
+// translation, so the generated `case "$prev"` body completes each declared
+// flag's value instead of silently dropping it.
+func TestDeclaredCompletersHaveBashValueAction(t *testing.T) {
+	for _, s := range allDeclaredSpecs() {
+		if s.completer == "" || s.isBool {
+			continue
+		}
+		if bashValueAction(s.completer) == "" {
+			t.Errorf("flag -%s declares completer %q with no bash value action; its value will not complete", s.name, s.completer)
+		}
+	}
+}
+
+// TestBashCompletesEveryDeclaredFlagValue ensures the rendered bash script
+// carries an arm for every value flag: either the arm of its completer, or the
+// completer-less arm that suppresses flag and command suggestions in value
+// position.
+func TestBashCompletesEveryDeclaredFlagValue(t *testing.T) {
+	script := completionScripts(t)["bash"]
+	for _, name := range allValueFlagNames() {
+		token := "-" + name
+		found := false
+		for _, line := range strings.Split(script, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if !strings.HasSuffix(trimmed, ")") || strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			if slices.Contains(strings.Split(strings.TrimSuffix(trimmed, ")"), "|"), token) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("bash completion has no value arm covering -%s", name)
 		}
 	}
 }

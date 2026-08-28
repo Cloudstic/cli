@@ -57,8 +57,8 @@ func printCopyResult(out io.Writer, result *cloudstic.CopyResult) {
 	}
 
 	_, _ = fmt.Fprintf(out, "\ncopied %s, skipped %s (read %s, wrote %s) in %s\n",
-		pluralSnapshots(len(result.Copied)),
-		pluralSnapshots(len(result.Skipped)),
+		plural(len(result.Copied), "snapshot"),
+		plural(len(result.Skipped), "snapshot"),
 		formatBytes(result.BytesRead),
 		formatBytes(result.BytesWritten),
 		result.Duration.Round(time.Millisecond),
@@ -72,7 +72,7 @@ func printCopyPending(out io.Writer, result *cloudstic.CopyResult) {
 		return
 	}
 	_, _ = fmt.Fprintf(out, "\nwould copy %s, skip %s\n",
-		pluralSnapshots(len(result.Copied)), pluralSnapshots(len(result.Skipped)))
+		plural(len(result.Copied), "snapshot"), plural(len(result.Skipped), "snapshot"))
 }
 
 func copySnapshotSuffix(source *cloudstic.SourceInfo, created string) string {
@@ -88,11 +88,4 @@ func copySnapshotSuffix(source *cloudstic.SourceInfo, created string) string {
 		return label + " at " + at.Local().Format("2006-01-02 15:04:05 -0700")
 	}
 	return label
-}
-
-func pluralSnapshots(n int) string {
-	if n == 1 {
-		return "1 snapshot"
-	}
-	return fmt.Sprintf("%d snapshots", n)
 }

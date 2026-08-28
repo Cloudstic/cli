@@ -827,3 +827,72 @@ cloudstic,restore,5000,4.00,300.0
 		t.Error("report without aging rows still rendered an Aging section")
 	}
 }
+
+// The retention table is the only place the aging stage's writes are visible.
+// The aging backups are setup rather than measurements, so nothing they store
+// appears in a repo_delta, and a delta taken around a read is zero however much
+// history the repository is carrying (issue #525).
+func TestAgingReportsWhatARetainedSnapshotCosts(t *testing.T) {
+	csv := `tool,backend,profile,scale,sample,operation,seconds,peak_mb,alloc_mb,requests,sent_mb,by_api,repo_delta,packs,backups,policy,stored_kb
+cloudstic,local,source,2000,1,restore@1,0.40,150.0,60.0,,,,0 KB,,1,baseline,6144
+cloudstic,local,source,2000,1,restore@3,0.42,151.0,61.0,,,,0 KB,,3,baseline,17408
+cloudstic,local,source,2000,1,restore@5,0.44,152.0,62.0,,,,0 KB,,5,baseline,28672
+`
+	var b strings.Builder
+	if err := Render(&b, parse(t, csv), "test"); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	out := b.String()
+
+	for _, want := range []string{
+		"**Retained size**",
+		"| 1 | 6.0 | — |",    // the first checkpoint has no interval to average over
+		"| 3 | 17.0 | 5.5 |", // (17.0 - 6.0) / 2 backups
+		"| 5 | 28.0 | 5.5 |",
+		"1 → 5 backups: **5.5 MB per retained snapshot**",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rendered report is missing %q\n%s", want, out)
+		}
+	}
+}
+
+// AGE_FINAL_OPS runs `backup` and `prune` after the last checkpoint under that
+// checkpoint's backup count. A prune's total is the repository with its history
+// collected, which is the opposite of what the retention table reports, so the
+// first row at each checkpoint is the one that counts.
+func TestRetainedSizeIgnoresPostCheckpointMutations(t *testing.T) {
+	csv := `tool,backend,profile,scale,sample,operation,seconds,peak_mb,alloc_mb,requests,sent_mb,by_api,repo_delta,packs,backups,policy,stored_kb
+cloudstic,local,source,2000,1,restore@1,0.40,150.0,60.0,,,,0 KB,,1,baseline,6144
+cloudstic,local,source,2000,1,restore@5,0.44,152.0,62.0,,,,0 KB,,5,baseline,28672
+cloudstic,local,source,2000,1,prune@5,2.10,200.0,80.0,,,,-22 MB,,5,baseline,6400
+`
+	var b strings.Builder
+	if err := Render(&b, parse(t, csv), "test"); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	out := b.String()
+
+	if !strings.Contains(out, "| 5 | 28.0 | 5.5 |") {
+		t.Errorf("retained size at 5 backups was taken from the prune row, not the checkpoint read\n%s", out)
+	}
+	if strings.Contains(out, "| 5 | 6.2 |") {
+		t.Error("the pruned repository size was reported as the retained size")
+	}
+}
+
+// A run without the stored_kb column — an older CSV, or compare.sh — must not
+// grow an empty table.
+func TestNoRetentionTableWithoutStoredSizes(t *testing.T) {
+	csv := `tool,backend,profile,scale,sample,operation,seconds,peak_mb,alloc_mb,requests,sent_mb,by_api,repo_delta,packs,backups,policy
+cloudstic,minio,source,5000,1,restore@1,0.40,150.0,60.0,23,8.1,,0 KB,1,1,baseline
+cloudstic,minio,source,5000,1,restore@25,0.55,158.0,70.0,199,20.4,,0 KB,25,25,baseline
+`
+	var b strings.Builder
+	if err := Render(&b, parse(t, csv), "test"); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.Contains(b.String(), "**Retained size**") {
+		t.Error("a report with no stored sizes still rendered a retention table")
+	}
+}

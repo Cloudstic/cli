@@ -545,6 +545,8 @@ func renderAging(b *strings.Builder, rep *Report) {
 		"column means reading a snapshot costs what its data costs. A rising one means\n" +
 		"it costs what the repository's history costs.\n\n")
 
+	renderRetention(b, rows)
+
 	for _, k := range order {
 		curve := curves[k]
 		sort.Slice(curve, func(i, j int) bool { return curve[i].Backups < curve[j].Backups })
@@ -600,6 +602,109 @@ func renderAging(b *strings.Builder, rep *Report) {
 			}
 		}
 	}
+}
+
+// renderRetention renders what retaining a snapshot costs, which is the one
+// thing the aging stage measures that no per-operation table can show. The
+// aging backups are setup rather than measurements, so their writes appear in
+// no row's repo_delta, and a delta taken around a read is zero however much
+// history the repository is carrying.
+//
+// The number that matters is the slope, not the total: a format that rewrites
+// a whole leaf for one changed entry keeps a superseded copy of every leaf a
+// backup touched, so each retained snapshot costs about the directories it
+// touched times the leaf size — a figure independent of repository size, and
+// invisible on a repository with one backup in it (RFC 0026, issue #525).
+//
+// Only the first row at each checkpoint is used. AGE_FINAL_OPS runs `backup`
+// and `prune` after the last checkpoint under the same backup count, and a
+// prune's total would otherwise read as that checkpoint's retained size.
+func renderRetention(b *strings.Builder, rows []Row) {
+	type point struct {
+		backups int
+		stored  float64
+	}
+	byPolicy := map[string][]point{}
+	var order []string
+	seen := map[string]bool{}
+	for _, row := range rows {
+		if row.StoredMB == 0 {
+			continue
+		}
+		key := row.Policy + "\x00" + strconv.Itoa(row.Backups)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if _, ok := byPolicy[row.Policy]; !ok {
+			order = append(order, row.Policy)
+		}
+		byPolicy[row.Policy] = append(byPolicy[row.Policy], point{row.Backups, row.StoredMB})
+	}
+	if len(order) == 0 {
+		return
+	}
+
+	b.WriteString("**Retained size**\n\n")
+	b.WriteString("| Backups |")
+	for _, p := range order {
+		// A policy name identifies a column only when there is something to
+		// tell it apart from. A lone "baseline (MB)" names the default and
+		// says nothing.
+		name := "Stored"
+		if len(order) > 1 {
+			name = p
+		}
+		fmt.Fprintf(b, " %s (MB) | per backup |", name)
+	}
+	b.WriteString("\n|---:|")
+	for range order {
+		b.WriteString("---:|---:|")
+	}
+	b.WriteString("\n")
+
+	// Checkpoints are shared across policies — they are measured against one
+	// aged repository — so one row per checkpoint of the first policy covers
+	// every column.
+	for _, p := range order {
+		sort.Slice(byPolicy[p], func(i, j int) bool { return byPolicy[p][i].backups < byPolicy[p][j].backups })
+	}
+	for i, ref := range byPolicy[order[0]] {
+		fmt.Fprintf(b, "| %d |", ref.backups)
+		for _, p := range order {
+			pts := byPolicy[p]
+			if i >= len(pts) {
+				b.WriteString(" — | — |")
+				continue
+			}
+			fmt.Fprintf(b, " %.1f |", pts[i].stored)
+			// The marginal cost of the backups since the previous checkpoint,
+			// which is the retained cost of one snapshot averaged over the
+			// interval. The first checkpoint has no interval to average over.
+			if i == 0 {
+				b.WriteString(" — |")
+				continue
+			}
+			prev := pts[i-1]
+			if n := pts[i].backups - prev.backups; n > 0 {
+				fmt.Fprintf(b, " %.1f |", (pts[i].stored-prev.stored)/float64(n))
+			} else {
+				b.WriteString(" — |")
+			}
+		}
+		b.WriteString("\n")
+	}
+
+	first := byPolicy[order[0]]
+	if len(first) >= 2 {
+		last := first[len(first)-1]
+		if n := last.backups - first[0].backups; n > 0 && first[0].stored > 0 {
+			fmt.Fprintf(b, "\n%d → %d backups: **%.1f MB per retained snapshot**, %.2fx total.\n",
+				first[0].backups, last.backups,
+				(last.stored-first[0].stored)/float64(n), last.stored/first[0].stored)
+		}
+	}
+	b.WriteString("\n")
 }
 
 func ratioOrZero(a, b float64) float64 {

@@ -67,6 +67,14 @@ type Row struct {
 	Backups int
 	Packs   int
 	Policy  string
+
+	// StoredMB is the repository's total size when the row was measured, as
+	// opposed to RepoDelta's contribution of the one operation. It is what
+	// makes the retention cost visible: the aging stage's backups are setup
+	// rather than measurements, so their growth appears nowhere else, and a
+	// delta taken around a read is zero whatever the history cost. Zero means
+	// unmeasured — a repository that has been initialised is never empty.
+	StoredMB float64
 }
 
 // IsAging reports whether this row came from the aging stage rather than from
@@ -217,6 +225,13 @@ func Parse(r io.Reader) (*Report, error) {
 			if row.Packs, err = strconv.Atoi(v); err != nil {
 				return nil, fmt.Errorf("row %d: packs %q: %w", n+2, v, err)
 			}
+		}
+		if v := get(rec, "stored_kb"); v != "" {
+			kb, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				return nil, fmt.Errorf("row %d: stored_kb %q: %w", n+2, v, err)
+			}
+			row.StoredMB = kb / 1024
 		}
 		if v := get(rec, "peak_mb"); v != "" {
 			if row.PeakMB, err = strconv.ParseFloat(v, 64); err != nil {

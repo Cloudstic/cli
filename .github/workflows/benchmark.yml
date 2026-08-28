@@ -32,6 +32,11 @@ on:
         required: false
         default: "5000 20000 50000"
         type: string
+      repo_format:
+        description: "Repository format to init (empty = build default; 3 = packless fat-leaf, RFC 0026)"
+        required: false
+        default: ""
+        type: string
   pull_request:
     types: [labeled, synchronize]
 
@@ -68,6 +73,7 @@ jobs:
         env:
           SIZES: ${{ github.event.inputs.sizes || '5000 20000 50000' }}
           PROFILES: source
+          REPO_FORMAT: ${{ github.event.inputs.repo_format || '' }}
         run: |
           set -euo pipefail
           mkdir -p benchmark-results
@@ -140,6 +146,7 @@ jobs:
           PROFILES: source
           BACKENDS: minio
           SAMPLES: "1"
+          REPO_FORMAT: ${{ github.event.inputs.repo_format || '' }}
         run: |
           set -euo pipefail
           mkdir -p benchmark-results

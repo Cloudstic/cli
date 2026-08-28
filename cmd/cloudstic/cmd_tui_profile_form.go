@@ -22,15 +22,6 @@ func profileAuthOptions(cfg *profile.Config, provider string) []string {
 	return options
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
 func sourceTypeFromSource(raw string) string {
 	parts, err := config.ParseSourceURI(raw)
 	if err != nil {

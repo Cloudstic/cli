@@ -81,8 +81,8 @@ func TestPrintCopyBannerNamesBothRepositories(t *testing.T) {
 
 func TestPluralSnapshots(t *testing.T) {
 	for n, want := range map[int]string{0: "0 snapshots", 1: "1 snapshot", 2: "2 snapshots"} {
-		if got := pluralSnapshots(n); got != want {
-			t.Errorf("pluralSnapshots(%d) = %q, want %q", n, got, want)
+		if got := plural(n, "snapshot"); got != want {
+			t.Errorf("plural(%d, snapshot) = %q, want %q", n, got, want)
 		}
 	}
 }

@@ -304,15 +304,6 @@ func printFindRestoreHint(out io.Writer, result *cloudstic.FindResult) {
 		m.Path(), m.Path(), shortSnapshotRef(snap.Ref))
 }
 
-// plural renders a count with its noun, adding a trailing "s" for anything but
-// one. Every noun this is used with pluralizes that way.
-func plural(n int, noun string) string {
-	if n == 1 {
-		return fmt.Sprintf("%d %s", n, noun)
-	}
-	return fmt.Sprintf("%d %ss", n, noun)
-}
-
 func shortFilemetaRef(ref string) string {
 	return "filemeta/" + shortHash(strings.TrimPrefix(ref, "filemeta/"))
 }

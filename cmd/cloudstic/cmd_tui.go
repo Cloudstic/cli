@@ -18,11 +18,11 @@ func declareTUIArgs(g *globalFlags) (*tuiArgs, commandInput) {
 	}}
 }
 
-func runTUI(r *runner, ctx context.Context, args *tuiArgs) int {
+func runTUI(r *runner, ctx context.Context, a *tuiArgs) int {
 	if !r.canPrompt() {
 		return r.fail("cloudstic tui requires an interactive terminal")
 	}
-	return runTUIProgram(r, ctx, args.profilesFile, args.configDir)
+	return runTUIProgram(r, ctx, a.profilesFile, a.configDir)
 }
 
 // tuiCommand declares the `tui` command.

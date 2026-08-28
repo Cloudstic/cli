@@ -437,7 +437,7 @@ func (bm *BackupManager) insertFolder(ctx context.Context, meta *core.FileMeta, 
 		// The metadata rides in the leaf; there is no standalone object to
 		// defer, and nothing for flushPendingMetas to write.
 		return bm.txn.InsertWithPayload(ctx, AffinityKey(primaryParentID(meta), meta.FileID),
-			meta.FileID, metaRef, &hamt.Payload{Meta: metaData})
+			meta.FileID, metaRef, newLeafPayload(metaData, contentBody{}))
 	}
 	if !bm.metas.cached(metaRef) {
 		bm.pendingMetas[metaRef] = metaData

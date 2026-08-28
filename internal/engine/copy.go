@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -127,6 +128,16 @@ type CopyResult struct {
 type CopySide struct {
 	Store  store.ObjectStore
 	RepoID string
+
+	// FormatV3 marks the source as a recorded format-v3 repository (RFC 0026),
+	// where an entry's metadata and small content ride in the leaf and there
+	// are no filemeta/ or content/ objects to read.
+	//
+	// It is not a hint. Routing arity is a property of the tree that wrote it,
+	// and Diff descends by bucket, so a source tree opened at the wrong format
+	// compares the wrong subtrees against each other and reports changes that
+	// are not there.
+	FormatV3 bool
 }
 
 // CopyManager transfers snapshots from one repository into another.
@@ -142,6 +153,13 @@ type CopyManager struct {
 	dst     store.ObjectStore
 	dstHMAC []byte
 	dstID   string
+
+	// srcV3 and dstV3 are the two repositories' recorded formats. They are
+	// independent: copy is what crosses between them, so all four combinations
+	// are supported and the destination's format alone decides what is written
+	// (docs/compatibility.md — a repository never holds a mixture).
+	srcV3 bool
+	dstV3 bool
 
 	reporter ui.Reporter
 	log      *logger.Logger
@@ -169,7 +187,7 @@ type CopyManager struct {
 	// per file per snapshot.
 	chunkRefs   map[string]string
 	contentRefs map[string]string
-	metaRefs    map[string]copiedMeta
+	metaRefs    map[string]copiedEntry
 
 	// lastCopied remembers, per lineage, the source tree most recently copied
 	// in this run and the destination tree it produced. Holding both is what
@@ -183,16 +201,32 @@ type CopyManager struct {
 	bytesRead int64
 }
 
-// copiedMeta is what the remap table remembers about a filemeta already
+// copiedEntry is what the remap table remembers about a tree entry already
 // rebuilt in the destination.
 //
 // The affinity key is stored alongside the ref because reconstructing it needs
 // the file's parent, which is only in the metadata object. Keeping it here is
 // what lets a cache hit skip the source read entirely — and a hit is the common
 // case, since a file that did not change between two snapshots appears in both.
-type copiedMeta struct {
+type copiedEntry struct {
 	ref         string
 	affinityKey string
+
+	// payload is the leaf body this entry is inserted with, for a format-v3
+	// destination only; a v2 destination writes standalone objects and leaves
+	// it nil.
+	payload *hamt.Payload
+
+	// payloadElided marks a cache entry whose payload was dropped rather than
+	// kept: inline content is bounded per entry but not in aggregate, and
+	// holding every inlined file of a run at once is how a copy of a tree of
+	// small files runs a machine out of memory.
+	//
+	// It has to be distinguishable from "no payload". Inserting a v3 entry
+	// without one writes a leaf whose metadata is simply absent — a tree that
+	// commits, verifies, and cannot be restored — so a hit on an elided entry
+	// rebuilds instead of reusing.
+	payloadElided bool
 }
 
 // copiedTree pairs a source tree with the destination tree copy produced from
@@ -207,20 +241,31 @@ type copiedTree struct {
 // dstHMAC is the destination's dedup key, and is what every rewritten
 // reference is computed under; pass nil for an unencrypted destination.
 func NewCopyManager(d Deps, src CopySide, dstRepoID string) *CopyManager {
+	// The two trees are opened at their own repositories' formats. Only the
+	// destination's comes from Deps; the source's is the caller's to state,
+	// because a copy is the one operation reading a repository it is not
+	// writing.
+	srcOpts := []hamt.TreeOption{hamt.WithLogger(d.LogSink)}
+	if src.FormatV3 {
+		srcOpts = append([]hamt.TreeOption{hamt.WithFormatV3()}, srcOpts...)
+	}
+
 	return &CopyManager{
 		src:         src,
 		dst:         d.Store,
 		dstHMAC:     d.HMACKey,
 		dstID:       dstRepoID,
+		srcV3:       src.FormatV3,
+		dstV3:       d.FormatV3,
 		reporter:    d.Reporter,
 		log:         defaultCopyLog.To(d.LogSink),
 		srcCatalog:  newSnapshotCatalog(src.Store, d.LogSink),
 		dstCatalog:  newSnapshotCatalog(d.Store, d.LogSink),
-		srcTree:     hamt.NewTree(src.Store, hamt.WithLogger(d.LogSink)),
+		srcTree:     hamt.NewTree(src.Store, srcOpts...),
 		dstTree:     hamt.NewTree(d.Store, d.treeOptions(hamt.WithLogger(d.LogSink))...),
 		chunkRefs:   map[string]string{},
 		contentRefs: map[string]string{},
-		metaRefs:    map[string]copiedMeta{},
+		metaRefs:    map[string]copiedEntry{},
 		lastCopied:  map[string]copiedTree{},
 	}
 }
@@ -542,16 +587,16 @@ func (cm *CopyManager) copySnapshot(ctx context.Context, entry SnapshotEntry, se
 // path taken for the first snapshot of a lineage in a run, where there is no
 // earlier source tree to compare against.
 func (cm *CopyManager) applyWholeTree(ctx context.Context, txn *hamt.Txn, root string, phase ui.Phase) error {
-	return cm.srcTree.Walk(ctx, root, func(fileID, srcMetaRef string) error {
+	return cm.srcTree.WalkEntries(ctx, root, func(fileID, srcMetaRef string, p *hamt.Payload) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		copied, err := cm.copyFileMeta(ctx, srcMetaRef)
+		copied, err := cm.copyEntry(ctx, srcMetaRef, p)
 		if err != nil {
-			return fmt.Errorf("filemeta %s: %w", shortRef(srcMetaRef), err)
+			return fmt.Errorf("entry %s: %w", shortRef(srcMetaRef), err)
 		}
 		phase.Increment(1)
-		return txn.Insert(ctx, copied.affinityKey, fileID, copied.ref)
+		return txn.InsertWithPayload(ctx, copied.affinityKey, fileID, copied.ref, copied.payload)
 	})
 }
 
@@ -580,39 +625,36 @@ func (cm *CopyManager) applySourceDiff(
 
 		if entry.NewValue == "" {
 			// Removed. The routing key has to come from the metadata the entry
-			// used to point at, which the source still holds — every object is
-			// content-addressed, so nothing was deleted there.
-			key, err := cm.affinityKeyFor(ctx, entry.OldValue)
+			// used to point at — which a v2 source still holds as an object,
+			// every object being content-addressed, and a v3 source hands over
+			// in the diff entry's own payload.
+			key, err := cm.affinityKeyFor(ctx, entry.OldValue, entry.OldPayload)
 			if err != nil {
-				return fmt.Errorf("filemeta %s: %w", shortRef(entry.OldValue), err)
+				return fmt.Errorf("entry %s: %w", shortRef(entry.OldValue), err)
 			}
 			return txn.Delete(ctx, key, entry.Key)
 		}
 
-		copied, err := cm.copyFileMeta(ctx, entry.NewValue)
+		copied, err := cm.copyEntry(ctx, entry.NewValue, entry.NewPayload)
 		if err != nil {
-			return fmt.Errorf("filemeta %s: %w", shortRef(entry.NewValue), err)
+			return fmt.Errorf("entry %s: %w", shortRef(entry.NewValue), err)
 		}
-		return txn.Insert(ctx, copied.affinityKey, entry.Key, copied.ref)
+		return txn.InsertWithPayload(ctx, copied.affinityKey, entry.Key, copied.ref, copied.payload)
 	})
 }
 
 // affinityKeyFor returns the routing key an existing source filemeta was filed
 // under, without copying it. A ref already copied in this run is answered from
 // the remap table.
-func (cm *CopyManager) affinityKeyFor(ctx context.Context, srcMetaRef string) (string, error) {
+func (cm *CopyManager) affinityKeyFor(ctx context.Context, srcMetaRef string, p *hamt.Payload) (string, error) {
 	if cached, ok := cm.metaRefs[srcMetaRef]; ok {
 		return cached.affinityKey, nil
 	}
-	data, err := cm.get(ctx, srcMetaRef)
+	meta, err := cm.readSourceMeta(ctx, srcMetaRef, p)
 	if err != nil {
 		return "", err
 	}
-	var meta core.FileMeta
-	if err := json.Unmarshal(data, &meta); err != nil {
-		return "", fmt.Errorf("parse filemeta: %w", err)
-	}
-	return AffinityKey(primaryParentID(&meta), meta.FileID), nil
+	return AffinityKey(primaryParentID(meta), meta.FileID), nil
 }
 
 // primeLastCopied recovers, per lineage, a source tree the destination already
@@ -705,58 +747,108 @@ func (cm *CopyManager) writeSnapshot(
 // Object rebuild
 // ---------------------------------------------------------------------------
 
-// copyFileMeta rewrites one file's metadata for the destination and returns its
-// destination ref together with the routing key it must be filed under. Only
-// the content reference changes; every other field is carried over byte for
-// byte, which is what preserves names, timestamps, ownership and xattrs.
+// copyEntry rewrites one tree entry for the destination and returns its
+// destination ref, the routing key it must be filed under, and — for a
+// format-v3 destination — the leaf body it is inserted with. Only the content
+// reference changes; every other metadata field is carried over byte for byte,
+// which is what preserves names, timestamps, ownership and xattrs.
+//
+// This is where the two formats meet. What an entry is made of does not change
+// across the seam — metadata, and content that is either inline or chunked —
+// only where each part is kept, so the read side takes it from whichever form
+// the source uses and the write side emits whichever the destination records.
 //
 // The cache is consulted before the source is read, so a file unchanged across
 // a run of snapshots is fetched once no matter how many snapshots contain it.
-func (cm *CopyManager) copyFileMeta(ctx context.Context, srcRef string) (copiedMeta, error) {
-	if cached, ok := cm.metaRefs[srcRef]; ok {
+func (cm *CopyManager) copyEntry(ctx context.Context, srcRef string, srcPayload *hamt.Payload) (copiedEntry, error) {
+	if cached, ok := cm.metaRefs[srcRef]; ok && !cached.payloadElided {
 		return cached, nil
 	}
 
-	data, err := cm.get(ctx, srcRef)
+	meta, err := cm.readSourceMeta(ctx, srcRef, srcPayload)
 	if err != nil {
-		return copiedMeta{}, err
-	}
-	var meta core.FileMeta
-	if err := json.Unmarshal(data, &meta); err != nil {
-		return copiedMeta{}, fmt.Errorf("parse filemeta: %w", err)
+		return copiedEntry{}, err
 	}
 
+	var body contentBody
 	// A folder carries no content, and backup clears its ContentHash rather
 	// than recording one for an empty stream.
 	if meta.ContentHash != "" && meta.Type != core.FileTypeFolder {
-		contentRef, err := cm.copyContent(ctx, &meta)
+		contentRef, copiedBody, err := cm.copyContent(ctx, meta, srcPayload)
 		if err != nil {
-			return copiedMeta{}, err
+			return copiedEntry{}, err
 		}
 		meta.ContentRef = contentRef
+		body = copiedBody
 	}
 
-	destRef, encoded, err := core.FileMetaRef(&meta)
+	destRef, encoded, err := core.FileMetaRef(meta)
 	if err != nil {
-		return copiedMeta{}, err
-	}
-	if err := cm.putIfMissing(ctx, destRef, encoded); err != nil {
-		return copiedMeta{}, err
+		return copiedEntry{}, err
 	}
 
-	copied := copiedMeta{ref: destRef, affinityKey: AffinityKey(primaryParentID(&meta), meta.FileID)}
-	cm.metaRefs[srcRef] = copied
+	copied := copiedEntry{ref: destRef, affinityKey: AffinityKey(primaryParentID(meta), meta.FileID)}
+	if cm.dstV3 {
+		copied.payload = newLeafPayload(encoded, body)
+		copied.payloadElided = len(copied.payload.Inline) > 0
+	} else if err := cm.putIfMissing(ctx, destRef, encoded); err != nil {
+		return copiedEntry{}, err
+	}
+
+	cached := copied
+	if cached.payloadElided {
+		cached.payload = nil
+	}
+	cm.metaRefs[srcRef] = cached
 	return copied, nil
 }
 
-// copyContent rebuilds one content manifest and returns its destination
-// reference (the bare hex ref, as stored on FileMeta.ContentRef).
+// readSourceMeta returns one entry's metadata, from the leaf payload the walk
+// already delivered (v3) or from the standalone object the value names (v2).
+//
+// A v3 entry without a payload is a corrupt tree, not an entry to copy
+// verbatim: its metadata exists nowhere else, so continuing would write a
+// destination entry with no name, type or timestamps.
+func (cm *CopyManager) readSourceMeta(ctx context.Context, srcRef string, p *hamt.Payload) (*core.FileMeta, error) {
+	var data []byte
+	switch {
+	case p != nil:
+		data = p.Meta
+		// Payload bytes arrive through the tree rather than through get, so
+		// they are counted here to keep BytesRead meaning the same thing in
+		// both formats: plaintext the copy had to materialise.
+		cm.bytesRead += int64(len(data))
+	case cm.srcV3:
+		return nil, fmt.Errorf("v3 leaf entry %s carries no payload", shortRef(srcRef))
+	default:
+		var err error
+		if data, err = cm.get(ctx, srcRef); err != nil {
+			return nil, err
+		}
+	}
+
+	var meta core.FileMeta
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return nil, fmt.Errorf("parse filemeta %s: %w", shortRef(srcRef), err)
+	}
+	return &meta, nil
+}
+
+// copyContent rebuilds one entry's content for the destination and returns its
+// destination content reference (the bare hex ref, as stored on
+// FileMeta.ContentRef) together with the body a v3 leaf carries.
+//
+// The returned body is meaningful only for a v3 destination. A v2 destination
+// has already had the content written as its own object by the time this
+// returns, and its caller has nothing to put in a leaf.
 //
 // The destination reference is derived from the plaintext content hash the
 // filemeta already records, so it does not have to be recomputed from the
-// stream. What does have to be rebuilt is the manifest body: it lists chunk
-// refs, and those are named under the destination's key.
-func (cm *CopyManager) copyContent(ctx context.Context, meta *core.FileMeta) (string, error) {
+// stream. What does have to be rebuilt is the chunk list: chunks are named
+// under the destination's key.
+func (cm *CopyManager) copyContent(
+	ctx context.Context, meta *core.FileMeta, p *hamt.Payload,
+) (string, contentBody, error) {
 	destContentRef := meta.ContentHash
 	if len(cm.dstHMAC) > 0 {
 		destContentRef = crypto.ComputeHMAC(cm.dstHMAC, []byte(meta.ContentHash))
@@ -766,53 +858,92 @@ func (cm *CopyManager) copyContent(ctx context.Context, meta *core.FileMeta) (st
 	if meta.ContentRef == "" {
 		srcKey = "content/" + meta.ContentHash
 	}
-	if _, done := cm.contentRefs[srcKey]; done {
-		return destContentRef, nil
+
+	// Both short-circuits below rest on the destination holding content as its
+	// own object: finding one there means its chunks are there too, so nothing
+	// needs reading. A v3 destination has no such object — the body has to be
+	// materialised for the leaf on every entry — so neither applies to it.
+	if !cm.dstV3 {
+		if _, done := cm.contentRefs[srcKey]; done {
+			return destContentRef, contentBody{}, nil
+		}
+		exists, err := cm.dst.Exists(ctx, "content/"+destContentRef)
+		if err != nil {
+			return "", contentBody{}, err
+		}
+		if exists {
+			// Already present, either from an interrupted earlier run or
+			// because the destination independently holds this exact content.
+			cm.contentRefs[srcKey] = destContentRef
+			return destContentRef, contentBody{}, nil
+		}
 	}
 
-	destKey := "content/" + destContentRef
-	exists, err := cm.dst.Exists(ctx, destKey)
+	body, err := cm.readSourceContent(ctx, srcKey, p)
 	if err != nil {
-		return "", err
+		return "", contentBody{}, err
 	}
-	if exists {
-		// Already present, either from an interrupted earlier run or because
-		// the destination independently holds this exact content. Either way
-		// its chunks are present too, so there is nothing to transfer.
-		cm.contentRefs[srcKey] = destContentRef
-		return destContentRef, nil
+
+	if len(body.chunks) > 0 {
+		rebuilt := make([]string, len(body.chunks))
+		for i, chunkRef := range body.chunks {
+			destChunkRef, err := cm.copyChunk(ctx, chunkRef)
+			if err != nil {
+				return "", contentBody{}, err
+			}
+			rebuilt[i] = destChunkRef
+		}
+		body.chunks = rebuilt
+	}
+
+	if cm.dstV3 {
+		return destContentRef, body, nil
+	}
+
+	encoded, err := json.Marshal(core.Content{
+		Type:          core.ObjectTypeContent,
+		Size:          body.size,
+		Chunks:        body.chunks,
+		DataInlineB64: body.inline,
+	})
+	if err != nil {
+		return "", contentBody{}, err
+	}
+	if err := cm.dst.Put(ctx, "content/"+destContentRef, encoded); err != nil {
+		return "", contentBody{}, err
+	}
+	cm.contentRefs[srcKey] = destContentRef
+	return destContentRef, body, nil
+}
+
+// readSourceContent returns where one entry's content lives in the source: from
+// the leaf payload it travelled with (v3), or from the content object the
+// filemeta names (v2). The chunk refs are still the source's; the caller
+// remaps them.
+func (cm *CopyManager) readSourceContent(
+	ctx context.Context, srcKey string, p *hamt.Payload,
+) (contentBody, error) {
+	if p != nil {
+		body := contentBody{size: p.Size, chunks: p.Chunks}
+		if len(p.Inline) > 0 {
+			// Copied out: a payload is shared with the source tree's node
+			// cache and must not be retained past the walk callback, and this
+			// one lives until the destination tree commits.
+			body.inline = bytes.Clone(p.Inline)
+			cm.bytesRead += int64(len(p.Inline))
+		}
+		return body, nil
 	}
 
 	raw, err := cm.get(ctx, srcKey)
 	if err != nil {
-		return "", err
+		return contentBody{}, err
 	}
 	var content core.Content
 	if err := json.Unmarshal(raw, &content); err != nil {
-		return "", fmt.Errorf("parse content %s: %w", shortRef(srcKey), err)
+		return contentBody{}, fmt.Errorf("parse content %s: %w", shortRef(srcKey), err)
 	}
-
-	if len(content.Chunks) > 0 {
-		rebuilt := make([]string, len(content.Chunks))
-		for i, chunkRef := range content.Chunks {
-			destChunkRef, err := cm.copyChunk(ctx, chunkRef)
-			if err != nil {
-				return "", err
-			}
-			rebuilt[i] = destChunkRef
-		}
-		content.Chunks = rebuilt
-	}
-
-	encoded, err := json.Marshal(content)
-	if err != nil {
-		return "", err
-	}
-	if err := cm.dst.Put(ctx, destKey, encoded); err != nil {
-		return "", err
-	}
-	cm.contentRefs[srcKey] = destContentRef
-	return destContentRef, nil
+	return contentBody{size: content.Size, inline: content.DataInlineB64, chunks: content.Chunks}, nil
 }
 
 // copyChunk transfers one chunk, re-addressing it under the destination's key.

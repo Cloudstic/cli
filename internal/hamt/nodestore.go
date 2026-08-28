@@ -41,13 +41,26 @@ const (
 	// times, and raising the cache alone took the step from 2,067 requests to
 	// 594 with no effect on what is written.
 	//
-	// 32 leaf budgets is the shape of the number rather than a round figure:
+	// 16 leaf budgets is the shape of the number rather than a round figure:
 	// what the cache has to hold is a working set counted in leaves, so it has
 	// to move when the leaf size does. A tree larger than this still falls off
 	// the cliff — the cache can only move it, not remove it — which is why the
 	// leaf budget carries the other half of the fix.
-	nodeCacheSizeV3  = 8192
-	nodeCacheBytesV3 = 32 * leafSplitBytesV3
+	//
+	// The size is a threshold rather than a curve, which is what settles it.
+	// Holding leaves at 8 MB and sweeping the cache, 64 MB and 128 MB produced
+	// *identical* request counts (restore 220, check 207, backup-dedup 532)
+	// and 128 MB cost 150 MB more peak RSS: a cache either holds the working
+	// set or it does not, and a partial one buys nothing. So the only useful
+	// settings are "small" and "holds the tree", and at the 4 MB leaf budget
+	// this is 64 MB — the point where check, restore and prune all use less
+	// memory than the packfile format while keeping the request wins.
+	nodeCacheSizeV3 = 8192
+
+	// nodeCacheLeaves is that budget expressed in leaves, which is the unit it
+	// means something in: the working set is counted in leaves, so the cache has
+	// to move when the leaf size does. See nodeCacheBytes().
+	nodeCacheLeaves = 16
 )
 
 // NodeStore is the only part of this package that knows HAMT nodes are bytes.
@@ -208,7 +221,7 @@ func (ns *NodeStore) leafOverfull(entries []leafEntry) bool {
 	var size int
 	for i := range entries {
 		size += entries[i].approxSize()
-		if size > leafSplitBytesV3 {
+		if size > v3LeafSplitBytes() {
 			return true
 		}
 	}

@@ -73,22 +73,36 @@ const (
 	// the packfile format held 21 — which is where v3's request counts on a
 	// fresh repository came from, not from leaves failing to fill.
 	//
-	// 8 MB is the size the packfile layer used for the same purpose, and
-	// measured on the benchmark pipeline over a 2,000-file `source` tree it is
-	// where the read side stops improving cheaply. Against the 2 MB it
-	// replaces: check 904 → 206 requests, restore 915 → 128, prune 1,023 →
-	// 200, backup-dedup 2,067 → 178, and the repository holds 213 objects
-	// instead of 667.
+	// 4 MB is chosen against four axes rather than against request count alone,
+	// which is what an earlier 8 MB setting optimised. Sweeping 2/4/8 MB on the
+	// benchmark pipeline over a 2,000-file `source` tree, against the packfile
+	// format's figures:
 	//
-	// What pays for it is write amplification, because a changed entry
-	// rewrites its whole leaf including the untouched content of its
-	// neighbours. A single-file incremental uploads 1.6 MB instead of 0.4 MB.
-	// That is the honest cost and it is bounded by the budget itself; it does
-	// not compound, because it is per changed leaf rather than per snapshot —
-	// a repository kept at one snapshot stores 52 MB at either budget, and the
-	// 79 MB → 104 MB spread seen with six snapshots retained is the retention,
-	// not the format.
-	leafSplitBytesV3 = 8 * 1024 * 1024
+	//	                 packfile     2 MB     4 MB     8 MB
+	//	 restore req          994      918      422      131
+	//	 check req            118      905      409      207
+	//	 restore sent MB      345      100       98       52
+	//	 stored            81.2 MB  77.1 MB  89.3 MB  103.9 MB
+	//	 restore peak RSS   442 MB   214 MB   354 MB   518 MB
+	//
+	// Requests fall monotonically with the budget and both storage and memory
+	// rise with it, so there is no setting that wins everything and the choice
+	// is which axis to spend. 4 MB keeps the wins that matter — restore 2.4x
+	// fewer requests than the packfile format and 3.5x fewer bytes, and the flat
+	// aging curve the format exists for — while holding stored size to +10%
+	// rather than +28% and read memory below the packfile format's.
+	//
+	// What 8 MB buys over it is restore 422 -> 131 requests and backup-dedup
+	// 966 -> 181, which is real and is the right setting for someone restoring
+	// over a metered or high-latency link. It is a configuration rather than a
+	// correction, and the reason both remain reachable.
+	//
+	// What pays for any of this is write amplification: a changed entry rewrites
+	// its whole leaf including the untouched content of its neighbours, so the
+	// budget is also the granularity of an incremental. That cost is bounded by
+	// the budget itself and does not compound — it is per changed leaf rather
+	// than per snapshot.
+	leafSplitBytesV3 = 4 * 1024 * 1024
 	maxLeafEntriesV3 = 2048
 
 	nodePrefix = "node/"
@@ -172,7 +186,7 @@ func WithLogger(w io.Writer) TreeOption {
 func WithFormatV3() TreeOption {
 	return func(ns *NodeStore) {
 		ns.v3 = true
-		ns.cache.Configure(nodeCacheSizeV3, nodeCacheBytesV3)
+		ns.cache.Configure(nodeCacheSizeV3, v3NodeCacheBytes())
 	}
 }
 

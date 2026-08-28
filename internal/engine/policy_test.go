@@ -296,3 +296,51 @@ func TestGroupSnapshots_MixedIdentityAndLegacy(t *testing.T) {
 		t.Errorf("expected 2 groups (identity vs legacy), got %d", len(groups))
 	}
 }
+
+// makeSeqEntry is makeEntry with an explicit sequence number, for the case
+// where the timestamp cannot distinguish two snapshots.
+func makeSeqEntry(ref, created string, seq int) SnapshotEntry {
+	e := makeEntry(ref, created, nil, nil)
+	e.Snap.Seq = seq
+	return e
+}
+
+// Two backups taken in the same second carry the same Created, which is
+// RFC3339 and has no sub-second precision. Retention must still know which is
+// newer, or `forget --keep-last 1` can delete the newest backup and keep an
+// older one — silently, since both are legitimate snapshots.
+//
+// The input order is varied deliberately: the bug this covers was an unstable
+// sort over a comparator that returned false both ways for equal timestamps,
+// so it reproduced only for whichever order the catalog happened to yield.
+func TestApplyPolicy_KeepLastBreaksTiesOnSequence(t *testing.T) {
+	const sameSecond = "2024-01-05T12:00:00Z"
+
+	for _, tc := range []struct {
+		name    string
+		entries []SnapshotEntry
+	}{
+		{"newest first", []SnapshotEntry{
+			makeSeqEntry("newer", sameSecond, 2),
+			makeSeqEntry("older", sameSecond, 1),
+		}},
+		{"oldest first", []SnapshotEntry{
+			makeSeqEntry("older", sameSecond, 1),
+			makeSeqEntry("newer", sameSecond, 2),
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			keep, remove := applyPolicy(tc.entries, ForgetPolicy{KeepLast: 1})
+
+			if len(keep) != 1 || len(remove) != 1 {
+				t.Fatalf("keep %d, remove %d, want 1 and 1", len(keep), len(remove))
+			}
+			if got := keep[0].Entry.Ref; got != "snapshot/newer" {
+				t.Errorf("kept %s, want snapshot/newer: the higher sequence number is the newer backup", got)
+			}
+			if got := remove[0].Ref; got != "snapshot/older" {
+				t.Errorf("removed %s, want snapshot/older", got)
+			}
+		})
+	}
+}

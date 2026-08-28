@@ -89,6 +89,23 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 		}()
 	}
 
+	// In v3 the pending list is dispatched in routing-key order rather than in
+	// walk order, which is what lets the tree be committed mid-run (see
+	// commitIfLarge). Uploads then complete in roughly leaf order, so a leaf
+	// sealed by an intermediate commit is rarely touched again — and a leaf
+	// touched after it was sealed has to be rewritten, its first copy becoming
+	// garbage.
+	//
+	// Only v3 reorders. In v2 the upload order is the order newly written
+	// objects land in a packfile, so it is the locality of the repository
+	// being written and must stay the walk's (RFC 0025).
+	if bm.v3 {
+		sort.Slice(pending, func(i, j int) bool {
+			return AffinityKey(primaryParentID(&pending[i]), pending[i].FileID) <
+				AffinityKey(primaryParentID(&pending[j]), pending[j].FileID)
+		})
+	}
+
 	go func() {
 		for _, m := range pending {
 			jobs <- m
@@ -124,19 +141,60 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 		return nil
 	}
 
+	// A v3 entry carries its file's content, and the transaction holds every
+	// entry it has been given until it is committed — so without this the
+	// backup's memory is the total inlined bytes of the run rather than a
+	// working set. Measured before it existed: 800 MB peak for a backup adding
+	// 200 MB of small files, 1,675 MB for 600 MB, against 548 MB for the
+	// packfile format doing the same work (#526).
+	//
+	// Committing releases them: Commit seals the dirty spine, writes it, and
+	// leaves the transaction holding one clean root ref, so every node it was
+	// carrying — payloads included — becomes unreachable. A tree committed in
+	// several steps ends at the same root as one committed at the end, because
+	// nodes are content-addressed and the shape is a pure function of the
+	// contents; the superseded intermediate nodes are ordinary garbage that
+	// prune collects.
+	var retained int
+	commitRetained := func() error {
+		if _, err := bm.txn.Commit(ctx); err != nil {
+			return fmt.Errorf("commit tree during upload: %w", err)
+		}
+		retained = 0
+		return nil
+	}
+
 	for range pending {
 		res := <-results
 		if res.err != nil {
 			phase.Error()
 			return res.err
 		}
+		if res.payload != nil {
+			retained += len(res.payload.Inline) + len(res.payload.Meta)
+		}
 		buf = append(buf, res)
-		if len(buf) < insertBatch {
+
+		// Two independent triggers, because they bound different things. The
+		// entry count keeps the insert batch large enough to be worth sorting;
+		// the byte count is what bounds memory, and it has to be able to fire
+		// on its own — a run of half-megabyte inlined files reaches the byte
+		// budget in a couple of hundred entries and would otherwise wait for a
+		// batch that is ten times further off.
+		full := len(buf) >= insertBatch
+		heavy := retained >= uploadCommitBytes
+		if !full && !heavy {
 			continue
 		}
 		if err := flush(); err != nil {
 			phase.Error()
 			return err
+		}
+		if heavy {
+			if err := commitRetained(); err != nil {
+				phase.Error()
+				return err
+			}
 		}
 	}
 	if err := flush(); err != nil {
@@ -147,6 +205,17 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 	phase.Done()
 	return nil
 }
+
+// uploadCommitBytes is how much inlined content a v3 backup accumulates in the
+// working tree before committing it, which is what bounds the phase's memory.
+//
+// It is counted in bytes rather than entries because bytes are what is being
+// bounded: a run of large inlined files and a run of tiny ones hold wildly
+// different amounts for the same entry count. 64 MB is comfortably below the
+// 150 MB the upload workers are already allowed in flight, so the tree stops
+// being the dominant term without adding commits frequent enough for their
+// rewrites to show.
+const uploadCommitBytes = 64 * 1024 * 1024
 
 // insertBatch is how many uploaded entries are buffered before being inserted
 // into the working tree in routing-key order. Large enough that a batch spans

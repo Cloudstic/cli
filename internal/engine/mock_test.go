@@ -20,11 +20,44 @@ import (
 type MockStore struct {
 	mu   sync.RWMutex
 	Data map[string][]byte
+	// puts counts every Put per key, including repeats. Content-addressed
+	// writes are idempotent, so Data alone cannot show that an object was
+	// written twice — which is exactly what a test asserting the tree is
+	// committed more than once needs to see.
+	puts map[string]int
+}
+
+// PutCount reports how many Put calls have targeted keys under prefix,
+// counting repeats.
+func (s *MockStore) PutCount(prefix string) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var n int
+	for key, c := range s.puts {
+		if strings.HasPrefix(key, prefix) {
+			n += c
+		}
+	}
+	return n
+}
+
+// CountPrefix reports how many distinct keys under prefix the store holds.
+func (s *MockStore) CountPrefix(prefix string) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var n int
+	for key := range s.Data {
+		if strings.HasPrefix(key, prefix) {
+			n++
+		}
+	}
+	return n
 }
 
 func NewMockStore() *MockStore {
 	return &MockStore{
 		Data: make(map[string][]byte),
+		puts: make(map[string]int),
 	}
 }
 
@@ -36,6 +69,7 @@ func (s *MockStore) Put(_ context.Context, key string, data []byte) error {
 	// that contract, silently corrupting previously "stored" entries the
 	// moment a caller's buffer gets reused.
 	s.mu.Lock()
+	s.puts[key]++
 	s.Data[key] = append([]byte(nil), data...)
 	s.mu.Unlock()
 	return nil

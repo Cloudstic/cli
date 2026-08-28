@@ -339,3 +339,62 @@ func TestV3Prune_RefusesPayloadlessEntry(t *testing.T) {
 		t.Fatalf("prune over a payload-less v3 entry: err=%v", err)
 	}
 }
+
+// A v3 backup must not hold every file it writes until the end: the working
+// tree carries each entry's content, so without an intermediate commit the
+// phase's memory is the run's total inlined bytes rather than a working set
+// (#526).
+//
+// The bound is asserted through its observable signature rather than through
+// peak RSS, which is not measurable from here. Committing mid-run seals a
+// spine that later inserts then supersede, and because nodes are
+// content-addressed those superseded versions are *different keys* — so they
+// stay in the store as garbage that the final root does not reach. A backup
+// that committed once leaves none.
+func TestV3BackupCommitsIncrementally(t *testing.T) {
+	ctx := context.Background()
+	dest := NewMockStore()
+	src := NewMockSource()
+
+	// Enough inlined content to cross uploadCommitBytes several times over.
+	body := bytes.Repeat([]byte("payload"), 40*1024) // ~280 KB each
+	for i := range 400 {
+		src.AddFile(fmt.Sprintf("f-%d.bin", i), fmt.Sprintf("id-%d", i), body)
+	}
+
+	res, err := NewBackupManager(v3Deps(dest), src).Run(ctx)
+	if err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+
+	snap, err := loadSnapshotByRef(ctx, dest, res.SnapshotRef)
+	if err != nil {
+		t.Fatalf("load snapshot: %v", err)
+	}
+	tree := hamt.NewTree(dest, hamt.WithFormatV3())
+	reachable := 0
+	if err := tree.NodeRefs(ctx, snap.Root, func(string) error { reachable++; return nil }); err != nil {
+		t.Fatalf("walk nodes: %v", err)
+	}
+	total := dest.CountPrefix("node/")
+
+	if total <= reachable {
+		t.Errorf("%d node objects stored and %d reachable: the upload phase never "+
+			"committed mid-run, so it held every payload to the end", total, reachable)
+	}
+
+	// The garbage is the price of the bound, not a licence for any amount of
+	// it: a run committing on every batch would leave far more than it keeps.
+	if total > 3*reachable {
+		t.Errorf("%d node objects stored against %d reachable — committing far too often", total, reachable)
+	}
+
+	// And the result must still be exactly right.
+	checkRes, err := NewCheckManager(v3Deps(dest)).Run(ctx, WithReadData())
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if len(checkRes.Errors) != 0 {
+		t.Fatalf("check after incremental commits: %v", checkRes.Errors)
+	}
+}

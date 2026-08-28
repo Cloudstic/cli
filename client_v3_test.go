@@ -3,13 +3,16 @@ package cloudstic
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/internal/storelayer"
 	"github.com/cloudstic/cli/pkg/source/local"
+	"github.com/cloudstic/cli/pkg/store"
 	localstore "github.com/cloudstic/cli/pkg/store/local"
 )
 
@@ -284,6 +287,80 @@ func TestClientV3_EncryptedRoundTrip(t *testing.T) {
 		t.Fatalf("restore: %v", err)
 	}
 	assertRestored(t, out, files)
+}
+
+// TestClientV3_ChainHasNoPackStore pins the layering claim RFC 0026 makes:
+// a v3 client's store chain contains no packfile layer at all.
+//
+// Asserted on the chain rather than on the objects a run happens to write,
+// because those are a consequence. A PackStore present but idle would still
+// load a catalog, hold it, and answer reads through it — the residency the
+// format exists to remove — and the physical-namespace assertions elsewhere
+// would not notice.
+func TestClientV3_ChainHasNoPackStore(t *testing.T) {
+	ctx := context.Background()
+	storeDir := t.TempDir()
+
+	// WithPackfile(true) is passed deliberately: the repository's format must
+	// win over the caller's preference.
+	base, err := localstore.New(storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InitRepo(ctx, base, WithInitFormat(core.RepoFormatV3)); err != nil {
+		t.Fatalf("init v3: %v", err)
+	}
+	client, err := NewClient(ctx, base, WithPackfile(true))
+	if err != nil {
+		t.Fatalf("open v3 client: %v", err)
+	}
+
+	var layers []string
+	for s := client.Store(); s != nil; {
+		layers = append(layers, fmt.Sprintf("%T", s))
+		if _, isPack := s.(*storelayer.PackStore); isPack {
+			t.Fatalf("v3 store chain contains a PackStore: %v", layers)
+		}
+		un, ok := s.(store.Unwrapper)
+		if !ok {
+			break
+		}
+		s = un.Unwrap()
+	}
+	if len(layers) < 2 {
+		t.Fatalf("v3 store chain looks degenerate: %v", layers)
+	}
+	t.Logf("v3 chain: %v", layers)
+
+	// And the same client on a default-format repository still packs, so the
+	// absence above is the format's doing and not a broken chain builder.
+	v2Dir := t.TempDir()
+	v2Base, err := localstore.New(v2Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InitRepo(ctx, v2Base); err != nil {
+		t.Fatalf("init v2: %v", err)
+	}
+	v2Client, err := NewClient(ctx, v2Base, WithPackfile(true))
+	if err != nil {
+		t.Fatalf("open v2 client: %v", err)
+	}
+	var foundPack bool
+	for s := v2Client.Store(); s != nil; {
+		if _, isPack := s.(*storelayer.PackStore); isPack {
+			foundPack = true
+			break
+		}
+		un, ok := s.(store.Unwrapper)
+		if !ok {
+			break
+		}
+		s = un.Unwrap()
+	}
+	if !foundPack {
+		t.Fatal("a default-format client with packfiles enabled has no PackStore")
+	}
 }
 
 // TestClientV3_RefusesReinitFromV2 pins the migration boundary: a packfile-era

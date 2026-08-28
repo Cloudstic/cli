@@ -31,6 +31,25 @@ type PruneResult struct {
 
 var objectPrefixes = []string{"chunk/", "content/", "filemeta/", "node/", "snapshot/"}
 
+// objectPrefixesV3 are the namespaces a format-v3 repository actually stores
+// in. filemeta/ and content/ do not exist there — an entry's metadata and its
+// small content live in the leaf — so listing them would spend a request per
+// prune to enumerate nothing, on every backend, forever.
+//
+// Sweeping a prefix that cannot exist is not merely wasteful, it is a claim
+// about the format that stops being true if it is ever wrong: a listing that
+// failed would fail the prune (docs/compatibility.md requires it), so the
+// honest set is the one the format writes.
+var objectPrefixesV3 = []string{"chunk/", "node/", "snapshot/"}
+
+// prefixes returns the namespaces this repository's format stores objects in.
+func (pm *PruneManager) prefixes() []string {
+	if pm.v3 {
+		return objectPrefixesV3
+	}
+	return objectPrefixes
+}
+
 // PruneManager implements mark-and-sweep garbage collection over the object store.
 type PruneManager struct {
 	store    *storelayer.MeteredStore
@@ -85,7 +104,10 @@ func (pm *PruneManager) Run(ctx context.Context, opts ...PruneOption) (*PruneRes
 		return nil, err
 	}
 
-	if !cfg.dryRun {
+	// Repacking is a packfile-layer operation; a v3 repository has no packs to
+	// fragment, and its garbage is ordinary unreferenced objects the sweep
+	// above already removed.
+	if !cfg.dryRun && !pm.v3 {
 		// Attempt to repack fragmented packfiles, if this repository packs at all.
 		packStore := findPackStore(pm.store)
 
@@ -180,7 +202,7 @@ func (pm *PruneManager) mark(ctx context.Context, phase ui.Phase) (*objkey.Set, 
 // repository holds none. Errors are propagated: an unreadable listing must not
 // be mistaken for an empty repository.
 func (pm *PruneManager) firstObject(ctx context.Context) (string, error) {
-	for _, prefix := range objectPrefixes {
+	for _, prefix := range pm.prefixes() {
 		keys, err := pm.store.List(ctx, prefix)
 		if err != nil {
 			return "", fmt.Errorf("list %s: %w", prefix, err)
@@ -206,8 +228,12 @@ func (pm *PruneManager) collectSnapshots(ctx context.Context, reachable *objkey.
 	if exists, _ := pm.store.Exists(ctx, "index/latest"); exists {
 		reachable.Add("index/latest")
 	}
-	if exists, _ := pm.store.Exists(ctx, "index/packs"); exists {
-		reachable.Add("index/packs")
+	// index/packs belongs to the packfile layer, which a v3 repository does
+	// not have: asking would cost a request to learn it is absent.
+	if !pm.v3 {
+		if exists, _ := pm.store.Exists(ctx, "index/packs"); exists {
+			reachable.Add("index/packs")
+		}
 	}
 
 	return snapRefs, nil
@@ -353,9 +379,9 @@ func (pm *PruneManager) markContent(ctx context.Context, ref string, reachable *
 // while not being able to delete one object means one object survives — safe,
 // visible in the count, and reclaimed by the next run.
 func (pm *PruneManager) sweep(ctx context.Context, reachable *objkey.Set, cfg *pruneConfig) (*PruneResult, error) {
-	listing := make(map[string][]string, len(objectPrefixes))
+	listing := make(map[string][]string, len(pm.prefixes()))
 	var totalKeys int
-	for _, prefix := range objectPrefixes {
+	for _, prefix := range pm.prefixes() {
 		keys, err := pm.store.List(ctx, prefix)
 		if err != nil {
 			return nil, fmt.Errorf("list %s: %w", prefix, err)
@@ -374,7 +400,7 @@ func (pm *PruneManager) sweep(ctx context.Context, reachable *objkey.Set, cfg *p
 	// The listing taken above is the one swept, rather than being taken a second
 	// time. Two passes could disagree, and the progress total would then describe
 	// a different set of objects than the one being deleted.
-	for _, prefix := range objectPrefixes {
+	for _, prefix := range pm.prefixes() {
 		for _, key := range listing[prefix] {
 			result.ObjectsScanned++
 			if reachable.Has(key) {

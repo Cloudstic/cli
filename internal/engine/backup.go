@@ -234,6 +234,12 @@ func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
 // again, and turning "someone else holds the lock" into a backup failure would
 // be strictly worse than reading a few more index objects.
 func (bm *BackupManager) compactPackIndex(ctx context.Context) {
+	// A v3 repository has no packfile layer and therefore no index to
+	// consolidate. Asked rather than discovered through findPackStore's walk,
+	// so the format decides rather than the chain's shape happening to agree.
+	if bm.v3 {
+		return
+	}
 	ps := findPackStore(bm.store)
 	if ps == nil || ps.IndexObjectCount() <= packIndexCompactThreshold {
 		return
@@ -368,7 +374,14 @@ func (bm *BackupManager) run(ctx context.Context) (*RunResult, error) {
 	}
 
 	// Wait for key cache to finish preloading from inner lists.
-	if err := bm.store.PreloadKeys(ctx, "chunk/", "content/", "node/"); err != nil {
+	// content/ is a v2 namespace: in v3 a small file's bytes live in its leaf
+	// and a chunked file's manifest with it, so listing it would cost a
+	// request per backup to enumerate nothing.
+	preload := []string{"chunk/", "content/", "node/"}
+	if bm.v3 {
+		preload = []string{"chunk/", "node/"}
+	}
+	if err := bm.store.PreloadKeys(ctx, preload...); err != nil {
 		return nil, fmt.Errorf("preload key cache: %w", err)
 	}
 

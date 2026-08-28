@@ -843,7 +843,7 @@ func TestTraversalRefusesUnboundedNesting(t *testing.T) {
 	nodes := NewNodeStore(persistent)
 
 	t.Run("walk", func(t *testing.T) {
-		assertTooDeep(t, walk(ctx, nodes, child{ref: root}, 0, func(string, string) error { return nil }))
+		assertTooDeep(t, walk(ctx, nodes, child{ref: root}, 0, func(leafEntry) error { return nil }))
 	})
 	t.Run("nodeRefs", func(t *testing.T) {
 		assertTooDeep(t, nodeRefs(ctx, nodes, root, 0, func(string) error { return nil }))
@@ -853,7 +853,7 @@ func TestTraversalRefusesUnboundedNesting(t *testing.T) {
 		if err != nil {
 			t.Fatalf("load: %v", err)
 		}
-		assertTooDeep(t, collectAll(ctx, nodes, n, 0, func(string, string) error { return nil }))
+		assertTooDeep(t, collectAll(ctx, nodes, n, 0, func(leafEntry) error { return nil }))
 	})
 	t.Run("diffNodes", func(t *testing.T) {
 		n, err := nodes.load(ctx, root)
@@ -868,7 +868,7 @@ func TestTraversalRefusesUnboundedNesting(t *testing.T) {
 	// guard is ever reached. "00000000" routes to bucket 0 at every level,
 	// following this chain as far as it can go.
 	t.Run("lookup", func(t *testing.T) {
-		_, err := lookup(ctx, nodes, child{ref: root}, "00000000", "deep")
+		_, _, err := lookupEntry(ctx, nodes, child{ref: root}, "00000000", "deep")
 		if err == nil {
 			t.Fatal("expected Lookup to refuse an over-deep tree")
 		}

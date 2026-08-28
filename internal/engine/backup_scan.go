@@ -40,6 +40,14 @@ type scanState struct {
 	totalBytes int64
 }
 
+// oldEntry is what an entry had in the previous snapshot: the filemeta ref,
+// and — in a v3 repository — the payload the leaf carried with it. A new entry
+// is the zero value.
+type oldEntry struct {
+	ref     string
+	payload *hamt.Payload
+}
+
 // primaryParentID returns the raw source-level parent identifier for a FileMeta.
 // This is the first element of meta.Parents, which contains raw source IDs (e.g. GDrive folder IDs).
 // Returns "" for root-level entries with no parents.
@@ -50,7 +58,8 @@ func primaryParentID(meta *core.FileMeta) string {
 	return ""
 }
 
-func (bm *BackupManager) processEntry(ctx context.Context, meta *core.FileMeta, oldRef string, s *scanState, phase ui.Phase) error {
+func (bm *BackupManager) processEntry(ctx context.Context, meta *core.FileMeta, old oldEntry, s *scanState, phase ui.Phase) error {
+	oldRef := old.ref
 	if meta.Type == core.FileTypeFolder {
 		meta.ContentHash = ""
 		meta.Size = 0
@@ -72,14 +81,19 @@ func (bm *BackupManager) processEntry(ctx context.Context, meta *core.FileMeta, 
 		meta.Paths = []string{bm.buildPathFromTree(ctx, meta)}
 	}
 
-	changed, err := bm.compareWithOld(ctx, oldRef, meta)
+	changed, err := bm.compareWithOld(ctx, old, meta)
 	if err != nil {
 		return err
 	}
 
 	if !changed {
 		bm.recordStat(meta.Type, false, false)
-		if err := bm.txn.Insert(ctx, AffinityKey(primaryParentID(meta), meta.FileID), meta.FileID, oldRef); err != nil {
+		// An unchanged entry is re-inserted with everything it had, payload
+		// included — in v3 the leaf is where its metadata and content live, so
+		// dropping the payload here would drop the file's body from the new
+		// snapshot. Identical entries encode to identical leaves, so this
+		// costs no new node where nothing around it changed.
+		if err := bm.txn.InsertWithPayload(ctx, AffinityKey(primaryParentID(meta), meta.FileID), meta.FileID, oldRef, old.payload); err != nil {
 			return fmt.Errorf("hamt insert: %w", err)
 		}
 		return nil
@@ -146,41 +160,49 @@ func (bm *BackupManager) scan(ctx context.Context, oldRoot string) (pending []co
 // reordering that to match where the *previous* snapshot's metadata happens to
 // live would trade a one-time read win for a permanent write regression.
 func (bm *BackupManager) processBatch(ctx context.Context, oldRoot string, batch []core.FileMeta, s *scanState, phase ui.Phase) error {
-	oldRefs := make([]string, len(batch))
+	olds := make([]oldEntry, len(batch))
 	for i := range batch {
-		ref, err := bm.lookupOldRef(ctx, oldRoot, &batch[i])
+		old, err := bm.lookupOldEntry(ctx, oldRoot, &batch[i])
 		if err != nil {
 			return err
 		}
-		oldRefs[i] = ref
+		olds[i] = old
 	}
 
-	if err := bm.prefetchOldMetas(ctx, oldRefs); err != nil {
+	if err := bm.prefetchOldMetas(ctx, olds); err != nil {
 		return err
 	}
 
 	for i := range batch {
-		if err := bm.processEntry(ctx, &batch[i], oldRefs[i], s, phase); err != nil {
+		if err := bm.processEntry(ctx, &batch[i], olds[i], s, phase); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// prefetchOldMetas reads the batch's previous filemetas in the order the store
-// nominates, leaving them in the loader's cache for the pass that follows.
+// prefetchOldMetas puts the batch's previous filemetas into the loader's cache
+// for the pass that follows.
 //
-// The declaration is exact, which is what makes it worth making. Every ref
-// handed over here is read by compareWithOld moments later, so the store is not
-// told to fetch anything the scan then skips; and a ref cannot repeat within a
+// An entry whose leaf carried a payload (v3) decodes from it — no store read
+// exists to make. The rest are read in the order the store nominates. That
+// declaration is exact, which is what makes it worth making: every ref handed
+// over here is read by compareWithOld moments later, so the store is not told
+// to fetch anything the scan then skips; and a ref cannot repeat within a
 // batch, because a filemeta names its own FileID and two entries cannot share
-// one. Backup's loader memoizes, so reading here and reading again below is one
-// store read, not two.
-func (bm *BackupManager) prefetchOldMetas(ctx context.Context, oldRefs []string) error {
-	refs := make([]string, 0, len(oldRefs))
-	for _, ref := range oldRefs {
-		if ref != "" {
-			refs = append(refs, ref)
+// one. Backup's loader memoizes, so reading here and reading again below is
+// one store read, not two.
+func (bm *BackupManager) prefetchOldMetas(ctx context.Context, olds []oldEntry) error {
+	refs := make([]string, 0, len(olds))
+	for _, old := range olds {
+		switch {
+		case old.ref == "":
+		case old.payload != nil:
+			if _, err := bm.metas.loadMeta(ctx, old.ref, old.payload); err != nil {
+				return err
+			}
+		default:
+			refs = append(refs, old.ref)
 		}
 	}
 	return readGrouped(ctx, bm.store, refs, func(ref string) error {
@@ -218,11 +240,11 @@ func (bm *BackupManager) scanIncremental(ctx context.Context, oldRoot string, in
 			// changed, so there is rarely a batch's worth to group, and buffering
 			// upserts across the deletes interleaved with them would reorder two
 			// operations on the same entry against each other.
-			oldRef, err := bm.lookupOldRef(ctx, oldRoot, &fc.Meta)
+			old, err := bm.lookupOldEntry(ctx, oldRoot, &fc.Meta)
 			if err != nil {
 				return err
 			}
-			return bm.processEntry(ctx, &fc.Meta, oldRef, s, phase)
+			return bm.processEntry(ctx, &fc.Meta, old, s, phase)
 		}
 		return nil
 	})
@@ -237,7 +259,7 @@ func (bm *BackupManager) scanIncremental(ctx context.Context, oldRoot string, in
 }
 
 func (bm *BackupManager) lookupDeleteParentID(ctx context.Context, fileID string) (string, error) {
-	ref, err := bm.txn.LookupByKey(ctx, fileID)
+	ref, p, err := bm.txn.LookupEntryByKey(ctx, fileID)
 	if err != nil {
 		return "", fmt.Errorf("lookup old file for delete %s: %w", fileID, err)
 	}
@@ -245,41 +267,42 @@ func (bm *BackupManager) lookupDeleteParentID(ctx context.Context, fileID string
 		return "", nil
 	}
 
-	oldMeta, err := bm.metas.load(ctx, ref)
+	oldMeta, err := bm.metas.loadMeta(ctx, ref, p)
 	if err != nil {
 		return "", fmt.Errorf("load old file metadata for delete %s: %w", fileID, err)
 	}
 	return primaryParentID(oldMeta), nil
 }
 
-// lookupOldRef finds meta's entry in the previous snapshot, returning an empty
-// ref when the entry is new.
+// lookupOldEntry finds meta's entry in the previous snapshot, returning the
+// zero oldEntry when the entry is new.
 //
 // It is separate from the comparison because it is the half that can be hoisted
 // out of the walk: it reads the previous snapshot's tree, which no part of the
 // current scan modifies, so a batch of entries may resolve all of its refs up
 // front. That is what lets scan declare a batch's filemeta reads before making
 // any of them — see prefetchOldMetas.
-func (bm *BackupManager) lookupOldRef(ctx context.Context, oldRoot string, meta *core.FileMeta) (string, error) {
-	ref, err := bm.tree.Lookup(ctx, oldRoot, AffinityKey(primaryParentID(meta), meta.FileID), meta.FileID)
+func (bm *BackupManager) lookupOldEntry(ctx context.Context, oldRoot string, meta *core.FileMeta) (oldEntry, error) {
+	ref, p, err := bm.tree.LookupEntry(ctx, oldRoot, AffinityKey(primaryParentID(meta), meta.FileID), meta.FileID)
 	if err != nil {
-		return "", fmt.Errorf("hamt lookup: %w", err)
+		return oldEntry{}, fmt.Errorf("hamt lookup: %w", err)
 	}
-	return ref, nil
+	return oldEntry{ref: ref, payload: p}, nil
 }
 
 // compareWithOld compares meta against the entry it had in the previous
-// snapshot, named by oldRef. An empty oldRef means the entry is new.
+// snapshot. A zero old means the entry is new.
 //
 // For sources that do not provide a content hash (e.g. Google Drive), a
 // fast-path compares observable metadata and carries the hash forward to avoid
 // false-positive diffs.
-func (bm *BackupManager) compareWithOld(ctx context.Context, oldRef string, meta *core.FileMeta) (changed bool, err error) {
+func (bm *BackupManager) compareWithOld(ctx context.Context, old oldEntry, meta *core.FileMeta) (changed bool, err error) {
+	oldRef := old.ref
 	if oldRef == "" {
 		return true, nil
 	}
 
-	oldMeta, err := bm.metas.load(ctx, oldRef)
+	oldMeta, err := bm.metas.loadMeta(ctx, oldRef, old.payload)
 	if err != nil {
 		return false, err
 	}
@@ -376,10 +399,16 @@ func (bm *BackupManager) insertFolder(ctx context.Context, meta *core.FileMeta, 
 	if err != nil {
 		return err
 	}
+	bm.trackFileMeta(metaRef, *meta)
+	if bm.v3 {
+		// The metadata rides in the leaf; there is no standalone object to
+		// defer, and nothing for flushPendingMetas to write.
+		return bm.txn.InsertWithPayload(ctx, AffinityKey(primaryParentID(meta), meta.FileID),
+			meta.FileID, metaRef, &hamt.Payload{Meta: metaData})
+	}
 	if !bm.metas.cached(metaRef) {
 		bm.pendingMetas[metaRef] = metaData
 	}
-	bm.trackFileMeta(metaRef, *meta)
 	return bm.txn.Insert(ctx, AffinityKey(primaryParentID(meta), meta.FileID), meta.FileID, metaRef)
 }
 
@@ -465,11 +494,11 @@ func (bm *BackupManager) buildPathFromTree(ctx context.Context, meta *core.FileM
 // entry on the full-scan path, where the index is nil because nothing populates it.
 func (bm *BackupManager) lookupMetaByFileID(ctx context.Context, fileID string) *core.FileMeta {
 	parentID := bm.parentIndex[fileID]
-	ref, err := bm.txn.Lookup(ctx, AffinityKey(parentID, fileID), fileID)
+	ref, p, err := bm.txn.LookupEntry(ctx, AffinityKey(parentID, fileID), fileID)
 	if err != nil || ref == "" {
 		// parentID not in index (e.g. entry from a previous snapshot not re-scanned);
 		// fall back to a walk-based lookup.
-		ref, err = bm.txn.LookupByKey(ctx, fileID)
+		ref, p, err = bm.txn.LookupEntryByKey(ctx, fileID)
 		if err != nil || ref == "" {
 			return nil
 		}
@@ -477,7 +506,7 @@ func (bm *BackupManager) lookupMetaByFileID(ctx context.Context, fileID string) 
 	if fm, ok := bm.newMetas[ref]; ok {
 		return &fm
 	}
-	fm, err := bm.metas.load(ctx, ref)
+	fm, err := bm.metas.loadMeta(ctx, ref, p)
 	if err != nil {
 		return nil
 	}
@@ -492,7 +521,10 @@ func (bm *BackupManager) countRemoved(ctx context.Context, oldRoot string) error
 	}
 	return bm.txn.DiffFrom(ctx, oldRoot, func(d hamt.DiffEntry) error {
 		if d.OldValue != "" && d.NewValue == "" {
-			meta, err := bm.metas.load(ctx, d.OldValue)
+			// Decode from the diff's payload when there is one: countRemoved
+			// runs after the scan cache is released, and in v3 there is no
+			// filemeta object behind the ref to fall back to.
+			meta, err := bm.metas.loadMeta(ctx, d.OldValue, d.OldPayload)
 			if err != nil {
 				return err
 			}

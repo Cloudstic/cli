@@ -22,6 +22,7 @@ type InitResult = engine.InitResult
 var (
 	WithInitCredentials  = engine.WithInitCredentials
 	WithInitRecovery     = engine.WithInitRecovery
+	WithInitFormat       = engine.WithInitFormat
 	WithInitNoEncryption = engine.WithInitNoEncryption
 	WithInitAdoptSlots   = engine.WithInitAdoptSlots
 )

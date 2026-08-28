@@ -55,7 +55,7 @@ func NewDiffManager(d Deps) *DiffManager {
 	return &DiffManager{
 		log:   defaultDiffLog.To(d.LogSink),
 		store: d.Store,
-		tree:  hamt.NewTree(d.Store),
+		tree:  hamt.NewTree(d.Store, d.treeOptions()...),
 		metas: newMetaLoader(d.Store),
 	}
 }
@@ -157,9 +157,9 @@ func (dm *DiffManager) diffRoots(ctx context.Context, root1, root2 string) ([]Fi
 }
 
 func (dm *DiffManager) toFileChange(ctx context.Context, d hamt.DiffEntry, oldFolderByID, newFolderByID map[string]core.FileMeta) (FileChange, error) {
-	ct, metaRef := classifyEntry(d)
+	ct, metaRef, payload := classifyEntry(d)
 
-	meta, err := dm.metas.load(ctx, metaRef)
+	meta, err := dm.metas.loadMeta(ctx, metaRef, payload)
 	if err != nil {
 		return FileChange{}, err
 	}
@@ -177,14 +177,14 @@ func (dm *DiffManager) toFileChange(ctx context.Context, d hamt.DiffEntry, oldFo
 	}, nil
 }
 
-func classifyEntry(d hamt.DiffEntry) (ChangeType, string) {
+func classifyEntry(d hamt.DiffEntry) (ChangeType, string, *hamt.Payload) {
 	switch {
 	case d.OldValue == "":
-		return ChangeAdded, d.NewValue
+		return ChangeAdded, d.NewValue, d.NewPayload
 	case d.NewValue == "":
-		return ChangeRemoved, d.OldValue
+		return ChangeRemoved, d.OldValue, d.OldPayload
 	default:
-		return ChangeModified, d.NewValue
+		return ChangeModified, d.NewValue, d.NewPayload
 	}
 }
 
@@ -206,9 +206,15 @@ func classifyEntry(d hamt.DiffEntry) (ChangeType, string) {
 func (dm *DiffManager) collectFolders(ctx context.Context, root string) (map[string]core.FileMeta, error) {
 	folderByID := make(map[string]core.FileMeta)
 	err := walkEntriesBatched(ctx, dm.tree, root, func(entries []treeEntry) error {
-		refs := make([]string, len(entries))
-		for i, e := range entries {
-			refs[i] = e.ref
+		carried, refs := splitByPayload(entries)
+		for _, e := range carried {
+			fm, err := dm.metas.loadMeta(ctx, e.ref, e.payload)
+			if err != nil {
+				return err
+			}
+			if fm.Type == core.FileTypeFolder {
+				folderByID[fm.FileID] = *fm
+			}
 		}
 		return readGrouped(ctx, dm.store, refs, func(ref string) error {
 			fm, err := dm.metas.load(ctx, ref)

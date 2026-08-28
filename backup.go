@@ -60,7 +60,7 @@ func (c *Client) raiseRepoFormat(ctx context.Context) error {
 	// mutation — see TestDryRunsDoNotStampTheFormat.
 	if cfg := c.openCfg.Swap(&noRepoConfig); cfg != nil && cfg != &noRepoConfig {
 		if cfg.Version >= core.RepoFormatVersion {
-			c.repoFormat.Store(int64(core.RepoFormatVersion))
+			c.noteRepoFormat(int64(cfg.Version))
 			return nil
 		}
 	}
@@ -68,8 +68,23 @@ func (c *Client) raiseRepoFormat(ctx context.Context) error {
 	if err := UpgradeRepoFormat(ctx, c.base, core.RepoFormatVersion, c.encryptionKey); err != nil {
 		return err
 	}
-	c.repoFormat.Store(int64(core.RepoFormatVersion))
+	c.noteRepoFormat(int64(core.RepoFormatVersion))
 	return nil
+}
+
+// noteRepoFormat records that the repository's on-disk format is at least v.
+// The in-process view only ever rises, matching UpgradeRepoFormat's floor on
+// disk — which is what keeps a raise to this build's *default* from demoting
+// the view of a repository recorded at a higher format. Storing the default
+// unconditionally here is how a v3 repository's client once flipped back to
+// writing v2 structures mid-command.
+func (c *Client) noteRepoFormat(v int64) {
+	for {
+		cur := c.repoFormat.Load()
+		if cur >= v || c.repoFormat.CompareAndSwap(cur, v) {
+			return
+		}
+	}
 }
 
 // stampWriteFormat raises the format after a successful mutation, best-effort:

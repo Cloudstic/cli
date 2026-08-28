@@ -37,18 +37,23 @@ type PruneManager struct {
 	tree     *hamt.Tree
 	reporter ui.Reporter
 	metas    *metaLoader
+	// v3 is the repository's recorded format (Deps.FormatV3): an entry's chunk
+	// refs are read from its leaf payload, and there are no filemeta/ or
+	// content/ objects to mark or sweep.
+	v3 bool
 }
 
 func NewPruneManager(d Deps) *PruneManager {
 	meteredStore := storelayer.NewMeteredStore(d.Store)
 	return &PruneManager{
 		store:    meteredStore,
-		tree:     hamt.NewTree(meteredStore),
+		tree:     hamt.NewTree(meteredStore, d.treeOptions()...),
 		reporter: d.Reporter,
 		// Uncached: markFileMeta guards every load behind the reachable set, so
 		// a ref is read at most once per run and a cache could never hit. Holding
 		// one would cost a core.FileMeta per object in the repository for nothing.
 		metas: newUncachedMetaLoader(meteredStore),
+		v3:    d.FormatV3,
 	}
 }
 
@@ -223,6 +228,29 @@ func (pm *PruneManager) markSnapshot(ctx context.Context, ref string, reachable 
 		return nil
 	}); err != nil {
 		return err
+	}
+
+	// v3: an entry's whole chain lives in its leaf, already read by the node
+	// walk above. Marking is one pass over the entries, no reads at all — the
+	// filemeta identity is marked for form (no object bears it), and the chunk
+	// refs are the only physical objects an entry contributes.
+	//
+	// A payload-less entry fails the prune rather than being skipped: its
+	// chunk refs are unknowable, and docs/compatibility.md forbids collecting
+	// garbage over data that could not be fully read.
+	if pm.v3 {
+		return pm.tree.WalkEntries(ctx, snap.Root, func(key, ref string, p *hamt.Payload) error {
+			if !reachable.Add(ref) {
+				return nil
+			}
+			if p == nil {
+				return fmt.Errorf("v3 leaf entry %s (%s) carries no payload; refusing to prune", key, ref)
+			}
+			for _, c := range p.Chunks {
+				reachable.Add(c)
+			}
+			return nil
+		})
 	}
 
 	// Two grouped passes per batch rather than one interleaved pass. Marking an

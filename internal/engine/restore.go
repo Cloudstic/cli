@@ -116,15 +116,20 @@ type RestoreManager struct {
 	metas     *metaLoader
 	reporter  ui.Reporter
 	memBudget *semaphore.Weighted
+	// v3 is the repository's recorded format (Deps.FormatV3): metadata and
+	// content locations are read from leaf payloads, never from filemeta/ or
+	// content/ objects.
+	v3 bool
 }
 
 func NewRestoreManager(d Deps) *RestoreManager {
 	return &RestoreManager{
 		store:     d.Store,
-		tree:      hamt.NewTree(d.Store),
+		tree:      hamt.NewTree(d.Store, d.treeOptions()...),
 		metas:     newUncachedMetaLoader(d.Store),
 		reporter:  d.Reporter,
 		memBudget: semaphore.NewWeighted(restoreMemoryBudget),
+		v3:        d.FormatV3,
 	}
 }
 
@@ -201,7 +206,7 @@ func (rm *RestoreManager) runWithWriter(ctx context.Context, plan restorePlan, w
 	restoreFile := func(meta core.FileMeta, rel string) func() error {
 		return func() error {
 			err := writer.WriteFile(rel, meta, func(out io.Writer) error {
-				return rm.writeFileContent(gCtx, out, meta, !plan.cfg.noVerify)
+				return rm.writeFileContent(gCtx, out, meta, plan.root, !plan.cfg.noVerify)
 			})
 			defer phase.Increment(1)
 			switch {
@@ -647,35 +652,42 @@ func (cw *countingWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func (rm *RestoreManager) writeFileContent(ctx context.Context, w io.Writer, meta core.FileMeta, verify bool) error {
-	contentKey := meta.ContentRef
-	if contentKey == "" {
-		contentKey = meta.ContentHash
-	}
-
-	content, err := rm.loadContent(ctx, contentKey)
-	if err != nil {
-		return err
-	}
-
+func (rm *RestoreManager) writeFileContent(ctx context.Context, w io.Writer, meta core.FileMeta, root string, verify bool) error {
 	// Hash the reconstructed stream as it is written. meta.ContentHash is a
-	// SHA-256 over the whole plaintext for both storage paths — the chunked
-	// path accumulates it in Chunker.ProcessStream, the inline path computes it
-	// directly — so one digest of the output is directly comparable. Nothing
-	// below this line authenticates the bytes otherwise: an object replaced in
-	// the backing store is returned by the store stack without complaint.
+	// SHA-256 over the whole plaintext for every storage path — the chunked
+	// path accumulates it in Chunker.ProcessStream, the inline paths compute
+	// it directly — so one digest of the output is directly comparable.
+	// Nothing below this line authenticates the bytes otherwise: an object
+	// replaced in the backing store is returned by the store stack without
+	// complaint.
 	hasher := sha256.New()
 	out := w
 	if verify {
 		out = io.MultiWriter(w, hasher)
 	}
 
-	if err := rm.writeChunks(ctx, out, content.Chunks, avgChunkSize(content)); err != nil {
-		return err
-	}
-	if len(content.DataInlineB64) > 0 {
-		if _, err := out.Write(content.DataInlineB64); err != nil {
+	if rm.v3 {
+		if err := rm.writeContentFromLeaf(ctx, out, meta, root); err != nil {
 			return err
+		}
+	} else {
+		contentKey := meta.ContentRef
+		if contentKey == "" {
+			contentKey = meta.ContentHash
+		}
+
+		content, err := rm.loadContent(ctx, contentKey)
+		if err != nil {
+			return err
+		}
+
+		if err := rm.writeChunks(ctx, out, content.Chunks, avgChunkSize(content)); err != nil {
+			return err
+		}
+		if len(content.DataInlineB64) > 0 {
+			if _, err := out.Write(content.DataInlineB64); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -684,6 +696,38 @@ func (rm *RestoreManager) writeFileContent(ctx context.Context, w io.Writer, met
 		if got != meta.ContentHash {
 			return fmt.Errorf("content hash mismatch: expected %s, got %s", meta.ContentHash, got)
 		}
+	}
+	return nil
+}
+
+// writeContentFromLeaf reconstructs a file whose content location lives in its
+// leaf entry (format v3): inline bytes are written as they are, chunked files
+// stream through the same pipelined chunk fetcher as v2.
+//
+// The leaf is re-read here rather than carried from the metadata pass, and
+// that is what bounds restore's memory: holding every payload through the
+// write phase would keep the snapshot's whole small-file content resident.
+// The write order is walk order, which affinity routing keeps directory-
+// clustered, so consecutive files overwhelmingly hit the same leaf in the
+// node cache and the re-read costs no request (RFC 0026 §4).
+func (rm *RestoreManager) writeContentFromLeaf(ctx context.Context, out io.Writer, meta core.FileMeta, root string) error {
+	_, p, err := rm.tree.LookupEntry(ctx, root, AffinityKey(primaryParentID(&meta), meta.FileID), meta.FileID)
+	if err != nil {
+		return fmt.Errorf("look up leaf entry for %s: %w", meta.FileID, err)
+	}
+	if p == nil {
+		return fmt.Errorf("leaf entry for %s carries no content payload", meta.FileID)
+	}
+	if len(p.Chunks) > 0 {
+		avg := int64(0)
+		if p.Size > 0 {
+			avg = p.Size / int64(len(p.Chunks))
+		}
+		return rm.writeChunks(ctx, out, p.Chunks, avg)
+	}
+	if len(p.Inline) > 0 {
+		_, err := out.Write(p.Inline)
+		return err
 	}
 	return nil
 }
@@ -791,7 +835,43 @@ func (rm *RestoreManager) resolveSnapshot(ctx context.Context, ref string) (*cor
 // order the store says is cheapest, which on a repository built by several
 // backups is not walk order at all: each backup's entries sit in its own packs,
 // so the walk interleaves them. See the grouping below.
+// collectMetadataFromLeaves is collectMetadata for a v3 repository: every
+// entry's metadata arrives in its leaf, so one walk yields the whole plan with
+// no per-entry reads, no grouping, and nothing to fetch concurrently. Payloads
+// are not retained — the metadata is decoded and the leaf released, which is
+// what keeps the plan's memory proportional to metadata rather than to the
+// snapshot's inline content.
+func (rm *RestoreManager) collectMetadataFromLeaves(ctx context.Context, root string) (map[string]core.FileMeta, []string, error) {
+	phase := rm.reporter.StartPhase("Loading metadata", 0, false)
+
+	byID := make(map[string]core.FileMeta)
+	var walkOrder []string
+	err := rm.tree.WalkEntries(ctx, root, func(_, ref string, p *hamt.Payload) error {
+		if p == nil {
+			return fmt.Errorf("v3 leaf entry %s carries no metadata payload", ref)
+		}
+		fm, err := decodePayloadMeta(ref, p)
+		if err != nil {
+			return err
+		}
+		byID[fm.FileID] = *fm
+		walkOrder = append(walkOrder, fm.FileID)
+		phase.Increment(1)
+		return nil
+	})
+	if err != nil {
+		phase.Error()
+		return nil, nil, err
+	}
+	phase.Done()
+	return byID, walkOrder, nil
+}
+
 func (rm *RestoreManager) collectMetadata(ctx context.Context, root string) (map[string]core.FileMeta, []string, error) {
+	if rm.v3 {
+		return rm.collectMetadataFromLeaves(ctx, root)
+	}
+
 	var refs []string
 	err := rm.tree.Walk(ctx, root, func(_, valueRef string) error {
 		refs = append(refs, valueRef)

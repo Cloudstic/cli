@@ -236,7 +236,7 @@ func NewFindManager(d Deps) *FindManager {
 	// pay off rather than re-reading the same nodes per snapshot.
 	return &FindManager{
 		store:   d.Store,
-		tree:    hamt.NewTree(d.Store),
+		tree:    hamt.NewTree(d.Store, d.treeOptions()...),
 		catalog: newSnapshotCatalog(d.Store, d.LogSink),
 		log:     defaultFindLog.To(d.LogSink),
 	}

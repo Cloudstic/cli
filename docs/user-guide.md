@@ -290,8 +290,14 @@ cloudstic init -encryption-key <hex> -prompt
 | `-add-recovery-key` | Generate a 24-word recovery key during init |
 | `-no-encryption` | Create an unencrypted repository (not recommended) |
 | `-adopt-slots` | Adopt existing key slots (and add new credentials to them) |
+| `-format <version>` | Repository format version to create; `3` selects the packless fat-leaf format (RFC 0026, experimental) |
 
 When `-add-recovery-key` is used, a 24-word seed phrase is displayed **once**. Write it down and store it safely — it's your last resort if you lose your password.
+
+Format 3 stores file metadata and small file content inside the snapshot tree
+itself, eliminating the packfile layer entirely. It is opt-in and experimental:
+older Cloudstic builds refuse to open a format-3 repository, an existing
+repository cannot be converted in place, and `copy` does not support it yet.
 
 ---
 

@@ -148,6 +148,11 @@ type BackupManager struct {
 	// such entries, which is how the engine tests cover that fallback.
 	parentIndex map[string]string
 	hmacKey     []byte
+
+	// v3 is the repository's recorded format (Deps.FormatV3): entries carry
+	// their metadata and small content in the leaf, and no filemeta/ or
+	// content/ objects are written.
+	v3 bool
 }
 
 func NewBackupManager(d Deps, src source.Source, opts ...BackupOption) *BackupManager {
@@ -166,7 +171,7 @@ func NewBackupManager(d Deps, src source.Source, opts ...BackupOption) *BackupMa
 		catalog:      newSnapshotCatalog(keyCache, d.LogSink),
 		source:       src,
 		store:        keyCache,
-		tree:         hamt.NewTree(keyCache, hamt.WithLogger(d.LogSink)),
+		tree:         hamt.NewTree(keyCache, d.treeOptions(hamt.WithLogger(d.LogSink))...),
 		chunker:      NewChunker(keyCache, d.HMACKey),
 		reporter:     d.Reporter,
 		sourceInfo:   sourceInfo,
@@ -175,6 +180,7 @@ func NewBackupManager(d Deps, src source.Source, opts ...BackupOption) *BackupMa
 		metas:        newMetaLoader(keyCache),
 		pendingMetas: make(map[string][]byte),
 		hmacKey:      d.HMACKey,
+		v3:           d.FormatV3,
 	}
 }
 

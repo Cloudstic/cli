@@ -72,9 +72,12 @@ Do **not** raise it for a change earlier builds can still read correctly. A
 needless bump locks users out of their own data for no benefit, which is the
 same harm the gate exists to prevent, arriving from the other direction.
 
-`RepoFormatVersion` tracks it. Every repository this build creates is stamped at
-the current format, and every repository this build **writes to** is raised to
-it.
+`RepoFormatVersion` tracks it within the packfile-era family. Every repository
+this build creates by default is stamped at the current default format, and
+every such repository this build **writes to** is raised to it. Format 3 is the
+exception — see "Format 3 is opt-in" below — which is why the two constants
+diverge while it is: `MaxSupportedRepoFormat` is 3 (this build reads v3), while
+`RepoFormatVersion` stays 2 (this build does not create v3 unasked).
 
 That is a deliberate choice, and a stronger one than "record only what the bytes
 require". The version is not purely a claim about the data present — it is the
@@ -87,6 +90,28 @@ The cost is accepted knowingly: a repository that contains nothing an older
 build could not read may still refuse to open on one, because a newer build
 wrote to it. That is a lockout the user can fix by upgrading, traded against a
 silent divergence they cannot see.
+
+### Format 3 is opt-in
+
+Format 3 (RFC 0026) is different in kind from the version bumps before it: it
+is not a new era inside a mixed repository but a distinct layout — file
+metadata and small content live inside binary HAMT leaves, and the packfile
+layer (`packs/*`, `index/packs`, `index/packmap/*`), the `filemeta/` namespace,
+and standalone `content/` manifests do not exist. The rules while it is opt-in:
+
+- A v3 repository is created only by an explicit `init -format 3`, never by
+  this build touching an existing repository. `UpgradeRepoFormat` stamps at
+  most the default format, and the in-process format view only ever rises, so
+  no mutation can move a repository into or out of v3.
+- A v3 repository contains only v3 structures. There is no mixed era and no
+  opportunistic conversion; `init -adopt-slots -format 3` on a lower-format
+  repository is refused, because rewriting the marker cannot change the stored
+  structures. Migration is the only crossing, and it is a separate tool
+  (RFC 0026).
+- Older builds fail safely: every released build enforces
+  `MaxSupportedRepoFormat = 2` at open, so a v3 repository is refused with the
+  upgrade message, exactly as the gate is designed to do.
+- `copy` refuses when either side is v3, until a payload-aware copy exists.
 
 ### The version is a floor
 

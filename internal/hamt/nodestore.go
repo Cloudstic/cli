@@ -19,6 +19,14 @@ var defaultLog = logger.New("hamt", logger.ColorCyan)
 const (
 	nodeCacheSize       = 4096
 	defaultWriteWorkers = 20
+
+	// nodeCacheSizeV3 is the node cache's entry cap for a format-v3 tree. v3
+	// leaves are sized by a byte budget (leafSplitBytesV3) rather than an entry
+	// count, so 4096 of them could pin gigabytes; 128 caps the cache near
+	// 128 × 512 KB = 64 MB worst case while still holding the working set of a
+	// directory-clustered traversal, which revisits a handful of leaves at a
+	// time (RFC 0026 §4).
+	nodeCacheSizeV3 = 128
 )
 
 // NodeStore is the only part of this package that knows HAMT nodes are bytes.
@@ -34,6 +42,11 @@ type NodeStore struct {
 	// log is this node store's debug sink. It always points at a logger; an
 	// unbound one falls back to the process-wide writer.
 	log *logger.Logger
+
+	// v3 selects the format-v3 binary node encoding for every node this store
+	// seals (RFC 0026). Reading is format-agnostic either way — load sniffs
+	// the bytes — so the flag governs writes and the leaf split rule only.
+	v3 bool
 }
 
 // NewNodeStore returns a NodeStore reading and writing through s.
@@ -58,11 +71,23 @@ func (ns *NodeStore) load(ctx context.Context, ref string) (*node, error) {
 	if err := verifyNodeRef(ref, data); err != nil {
 		return nil, err
 	}
-	var sn storedNode
-	if err := json.Unmarshal(data, &sn); err != nil {
-		return nil, fmt.Errorf("decode node %s: %w", ref, err)
+
+	// The two encodings are distinguished by their first bytes: a v2 node is a
+	// JSON object and starts with '{', a v3 node with its magic. Sniffing here
+	// rather than consulting ns.v3 keeps reading format-agnostic — the flag
+	// decides what this store writes, never what it can read.
+	var n *node
+	if isV3NodeData(data) {
+		if n, err = decodeNodeV3(data); err != nil {
+			return nil, fmt.Errorf("decode v3 node %s: %w", ref, err)
+		}
+	} else {
+		var sn storedNode
+		if err := json.Unmarshal(data, &sn); err != nil {
+			return nil, fmt.Errorf("decode node %s: %w", ref, err)
+		}
+		n = decodeNode(&sn)
 	}
-	n := decodeNode(&sn)
 	ns.cache.Add(ref, n)
 	return n, nil
 }
@@ -71,6 +96,10 @@ func (ns *NodeStore) load(ctx context.Context, ref string) (*node, error) {
 // to write. It performs no I/O, so callers can compute a root ref without
 // committing to it.
 func (ns *NodeStore) seal(sn *storedNode) (string, []byte, error) {
+	if ns.v3 {
+		data := encodeNodeV3(sn)
+		return nodePrefix + core.ComputeHash(data), data, nil
+	}
 	hash, data, err := core.ComputeJSONHash(sn)
 	if err != nil {
 		return "", nil, err
@@ -104,6 +133,30 @@ func (ns *NodeStore) putAll(ctx context.Context, batch map[string][]byte) error 
 		})
 	}
 	return g.Wait()
+}
+
+// leafOverfull reports whether a leaf holding entries is over its split
+// budget. It is the single split predicate: insertion, buildNode's partition
+// base case, and delete's collapse all consult it, which is what keeps a
+// tree's shape a pure function of its contents in both formats.
+//
+// v2 splits on entry count. v3 splits on encoded bytes, with an entry cap so
+// a leaf of tiny entries still bounds its in-leaf linear scans (RFC 0026 §2).
+func (ns *NodeStore) leafOverfull(entries []leafEntry) bool {
+	if !ns.v3 {
+		return len(entries) > maxLeafSize
+	}
+	if len(entries) > maxLeafEntriesV3 {
+		return true
+	}
+	var size int
+	for i := range entries {
+		size += entries[i].approxSize()
+		if size > leafSplitBytesV3 {
+			return true
+		}
+	}
+	return false
 }
 
 // verifyNodeRef checks that data is what ref names.

@@ -71,15 +71,20 @@ type CheckManager struct {
 	// why it is an objkey.Set rather than the map[string]bool it reads as.
 	verified *objkey.Set
 	hmacKey  []byte
+	// v3 is the repository's recorded format (Deps.FormatV3): entries carry
+	// their metadata and content in leaf payloads, so the per-entry chain is
+	// verified from the leaf rather than fetched per object.
+	v3 bool
 }
 
 // NewCheckManager creates a CheckManager.
 func NewCheckManager(d Deps) *CheckManager {
 	return &CheckManager{
 		store:    d.Store,
-		tree:     hamt.NewTree(d.Store),
+		tree:     hamt.NewTree(d.Store, d.treeOptions()...),
 		reporter: d.Reporter,
 		hmacKey:  d.HMACKey,
+		v3:       d.FormatV3,
 	}
 }
 
@@ -183,7 +188,20 @@ func (cm *CheckManager) checkSnapshot(ctx context.Context, ref string, result *C
 		return nil
 	}
 
-	// 3. Walk leaf entries — verify filemeta → content → chunks.
+	// 3. Walk leaf entries — verify filemeta → content → chunks. In v3 the
+	// first two links live in the leaf itself, so the walk is the read and
+	// only chunks remain to fetch.
+	if cm.v3 {
+		if err := cm.tree.WalkEntries(ctx, snap.Root, func(_, ref string, p *hamt.Payload) error {
+			return cm.checkLeafEntry(ctx, ref, p, result, cfg, phase)
+		}); err != nil {
+			result.Errors = append(result.Errors, CheckError{
+				Key: snap.Root, Type: "read_error", Message: fmt.Sprintf("cannot walk HAMT entries: %v", err),
+			})
+		}
+		return nil
+	}
+
 	if err := walkEntriesBatched(ctx, cm.tree, snap.Root, func(entries []treeEntry) error {
 		refs := make([]string, len(entries))
 		for i, e := range entries {
@@ -199,6 +217,117 @@ func (cm *CheckManager) checkSnapshot(ctx context.Context, ref string, result *C
 	}
 
 	return nil
+}
+
+// checkLeafEntry verifies one v3 entry: the metadata bytes its leaf carries
+// against the content address the entry records, the agreement between the
+// meta's two content fields, and the chunk chain when the content is chunked.
+// The leaf's own integrity was already checked when the node was loaded — a
+// node ref names its bytes — so what is verified here are the claims the
+// payload makes, not its transport.
+func (cm *CheckManager) checkLeafEntry(ctx context.Context, ref string, p *hamt.Payload, result *CheckResult, cfg *checkConfig, phase ui.Phase) error {
+	if cm.verified.Has(ref) {
+		return nil
+	}
+	cm.verified.Add(ref)
+
+	if p == nil {
+		result.Errors = append(result.Errors, CheckError{
+			Key: ref, Type: "missing", Message: "v3 leaf entry carries no payload",
+		})
+		return nil
+	}
+
+	if err := core.VerifyRef(ref, p.Meta); err != nil {
+		result.Errors = append(result.Errors, CheckError{
+			Key: ref, Type: "corrupt", Message: err.Error(),
+		})
+		return nil
+	}
+	result.ObjectsVerified++
+	phase.Logf(ui.DetailVerbose, "OK: %s", ref)
+
+	meta, err := decodePayloadMeta(ref, p)
+	if err != nil {
+		result.Errors = append(result.Errors, CheckError{
+			Key: ref, Type: "parse_error", Message: fmt.Sprintf("cannot parse filemeta: %v", err),
+		})
+		return nil
+	}
+
+	if meta.ContentHash == "" {
+		return nil // folder or file with no content
+	}
+
+	if len(cm.hmacKey) > 0 && meta.ContentRef != "" {
+		if want := crypto.ComputeHMAC(cm.hmacKey, []byte(meta.ContentHash)); want != meta.ContentRef {
+			result.Errors = append(result.Errors, CheckError{
+				Key:  ref,
+				Type: "corrupt",
+				Message: fmt.Sprintf("content_ref %s does not derive from content_hash %s",
+					meta.ContentRef, meta.ContentHash),
+			})
+			return nil
+		}
+	}
+
+	for _, chunkRef := range p.Chunks {
+		if err := cm.checkChunk(ctx, chunkRef, result, cfg, phase); err != nil {
+			return err
+		}
+	}
+
+	if cfg.readData {
+		cm.checkLeafContent(ctx, ref, p, meta, result, phase)
+	}
+	return nil
+}
+
+// checkLeafContent is checkManifest for a v3 entry: reconstruct the content
+// from the payload — inline bytes, or the ordered chunk list — and compare it
+// with the hash and size the metadata records.
+func (cm *CheckManager) checkLeafContent(
+	ctx context.Context,
+	ref string,
+	p *hamt.Payload,
+	meta *core.FileMeta,
+	result *CheckResult,
+	phase ui.Phase,
+) {
+	hasher := sha256.New()
+	if len(p.Inline) > 0 {
+		_, _ = hasher.Write(p.Inline)
+	}
+	for _, chunkRef := range p.Chunks {
+		data, err := cm.store.Get(ctx, chunkRef)
+		if err != nil {
+			// The chunk pass above already recorded this as missing; adding a
+			// second finding for the same object would only inflate the count.
+			return
+		}
+		_, _ = hasher.Write(data)
+	}
+
+	got := hex.EncodeToString(hasher.Sum(nil))
+	if got != meta.ContentHash {
+		result.Errors = append(result.Errors, CheckError{
+			Key:  ref,
+			Type: "corrupt",
+			Message: fmt.Sprintf("reconstructed content hashes to %s, filemeta records %s",
+				got, meta.ContentHash),
+		})
+		phase.Log(fmt.Sprintf("CORRUPT: %s", ref))
+		return
+	}
+
+	if p.Size != 0 && p.Size != meta.Size {
+		result.Errors = append(result.Errors, CheckError{
+			Key:  ref,
+			Type: "corrupt",
+			Message: fmt.Sprintf("leaf entry records size %d, filemeta records %d",
+				p.Size, meta.Size),
+		})
+	}
 }
 
 // verifyObject checks that an object can be read from the store.

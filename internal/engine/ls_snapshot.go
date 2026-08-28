@@ -45,7 +45,7 @@ func NewLsSnapshotManager(d Deps) *LsSnapshotManager {
 	return &LsSnapshotManager{
 		store: d.Store,
 		log:   defaultLsLog.To(d.LogSink),
-		tree:  hamt.NewTree(d.Store),
+		tree:  hamt.NewTree(d.Store, d.treeOptions()...),
 		metas: newUncachedMetaLoader(d.Store),
 	}
 }
@@ -113,9 +113,13 @@ func (lm *LsSnapshotManager) resolveSnapshot(ctx context.Context, id string) (*c
 func (lm *LsSnapshotManager) collectMeta(ctx context.Context, root string) (map[string]core.FileMeta, error) {
 	refToMeta := make(map[string]core.FileMeta)
 	err := walkEntriesBatched(ctx, lm.tree, root, func(entries []treeEntry) error {
-		refs := make([]string, len(entries))
-		for i, e := range entries {
-			refs[i] = e.ref
+		carried, refs := splitByPayload(entries)
+		for _, e := range carried {
+			fm, err := lm.metas.loadMeta(ctx, e.ref, e.payload)
+			if err != nil {
+				return err
+			}
+			refToMeta[e.ref] = *fm
 		}
 		return readGrouped(ctx, lm.store, refs, func(ref string) error {
 			fm, err := lm.metas.load(ctx, ref)

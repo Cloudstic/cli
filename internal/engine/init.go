@@ -29,6 +29,7 @@ type initConfig struct {
 	recovery     bool
 	noEncryption bool
 	adoptSlots   bool
+	format       int // 0 means the default, core.RepoFormatVersion
 }
 
 // WithInitCredentials configures the keychain to use for initialization.
@@ -74,8 +75,18 @@ func (m *InitManager) Run(ctx context.Context, opts ...InitOption) (*InitResult,
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	m.log.Debugf("InitRepo: encrypted=%v, noEncryption=%v, adoptSlots=%v, hasChain=%v, recovery=%v",
-		!cfg.noEncryption && len(cfg.chain) > 0, cfg.noEncryption, cfg.adoptSlots, len(cfg.chain) > 0, cfg.recovery)
+	if cfg.format == 0 {
+		cfg.format = core.RepoFormatVersion
+	}
+	// The only formats an init may mint: the default, and v3 by explicit
+	// request. Anything below the default would create a repository claiming
+	// to predate this build's own writes.
+	if cfg.format != core.RepoFormatVersion && cfg.format != core.RepoFormatV3 {
+		return nil, fmt.Errorf("unsupported repository format %d: this build creates format %d (default) or %d",
+			cfg.format, core.RepoFormatVersion, core.RepoFormatV3)
+	}
+	m.log.Debugf("InitRepo: encrypted=%v, noEncryption=%v, adoptSlots=%v, hasChain=%v, recovery=%v, format=%d",
+		!cfg.noEncryption && len(cfg.chain) > 0, cfg.noEncryption, cfg.adoptSlots, len(cfg.chain) > 0, cfg.recovery, cfg.format)
 
 	// Check if already initialized. A read failure that is not "no config yet"
 	// must abort rather than fall through as if this were a fresh repository —
@@ -151,7 +162,7 @@ func (m *InitManager) Run(ctx context.Context, opts ...InitOption) (*InitResult,
 		}
 	}
 
-	if err := m.writeRepoConfig(ctx, encrypted, encryptionKey); err != nil {
+	if err := m.writeRepoConfig(ctx, cfg.format, encrypted, encryptionKey); err != nil {
 		return nil, err
 	}
 
@@ -296,14 +307,14 @@ func (m *InitManager) addRecoverySlot(ctx context.Context, cfg initConfig) (stri
 // writeRepoConfig writes the repository marker, sealing it with encryptionKey
 // when the repository is encrypted. encryptionKey must be non-empty in that
 // case; it is ignored otherwise.
-func (m *InitManager) writeRepoConfig(ctx context.Context, encrypted bool, encryptionKey []byte) error {
+func (m *InitManager) writeRepoConfig(ctx context.Context, formatVersion int, encrypted bool, encryptionKey []byte) error {
 	// The recorded format is a floor and must never move down. Adopting an
 	// existing repository rewrites this marker, and stamping a lower version
 	// than the repository has already reached would advertise it as readable by
 	// builds that would misread it. A transient read failure here must not be
 	// mistaken for "no existing config" — that would silently move the floor
 	// down instead of leaving it alone.
-	version := core.RepoFormatVersion
+	version := formatVersion
 	id := ""
 	existingData, err := m.store.Get(ctx, configKey)
 	switch {
@@ -312,6 +323,20 @@ func (m *InitManager) writeRepoConfig(ctx context.Context, encrypted bool, encry
 		// too. A marker that cannot be opened leaves the floor where it is,
 		// which is the same conservative outcome as an unparseable one.
 		if existing, derr := repoconfig.Decode(existingData, encryptionKey); derr == nil {
+			// Within the packfile family (formats ≤ 2) the marker may move up:
+			// that is the ordinary in-place upgrade, a claim about minimum
+			// reader version over structures every such build reads. Crossing
+			// into v3 is different in kind — v3 names a repository whose
+			// entries live in leaf payloads, which no marker rewrite can make
+			// true of existing objects. Only migration crosses that line
+			// (RFC 0026).
+			if version >= core.RepoFormatV3 && existing.Version < core.RepoFormatV3 {
+				return fmt.Errorf(
+					"cannot re-initialize a format-%d repository as format %d: "+
+						"the stored structures do not change with the marker; migrate instead",
+					existing.Version, version,
+				)
+			}
 			if existing.Version > version {
 				version = existing.Version
 			}
@@ -362,4 +387,11 @@ func WithInitNoEncryption() InitOption {
 // WithInitAdoptSlots allows initialization to succeed even if key slots already exist.
 func WithInitAdoptSlots() InitOption {
 	return func(cfg *initConfig) { cfg.adoptSlots = true }
+}
+
+// WithInitFormat selects the repository format version to create (RFC 0026).
+// Zero means the build's default, core.RepoFormatVersion. Validation happens
+// in Run, since an option is a plain mutator.
+func WithInitFormat(version int) InitOption {
+	return func(cfg *initConfig) { cfg.format = version }
 }

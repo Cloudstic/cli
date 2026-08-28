@@ -10,6 +10,7 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/internal/hamt"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/crypto"
 	"github.com/cloudstic/cli/pkg/store"
@@ -36,12 +37,14 @@ var inlineBufferPool = sync.Pool{
 // before upload begins — so returning a 216-byte struct by value through the
 // results channel would cost memory for every file to no end.
 type uploadResult struct {
-	fileID        string
-	parentID      string // primary parent's raw fileID (for the affinity routing key)
-	ref           string
-	contentRef    string   // content key to cache (empty when dedup'd)
-	contentChunks []string // chunk refs for the content entry (nil for inline)
-	err           error
+	fileID   string
+	parentID string // primary parent's raw fileID (for the affinity routing key)
+	ref      string
+	// payload is the entry's leaf body in a v3 repository: the filemeta bytes
+	// plus either the inline content or its chunk refs. Nil in v2, where both
+	// were persisted as their own objects by the worker.
+	payload *hamt.Payload
+	err     error
 }
 
 // upload processes the pending file queue with concurrent workers and inserts
@@ -98,7 +101,7 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 			phase.Error()
 			return res.err
 		}
-		if err := bm.txn.Insert(ctx, AffinityKey(res.parentID, res.fileID), res.fileID, res.ref); err != nil {
+		if err := bm.txn.InsertWithPayload(ctx, AffinityKey(res.parentID, res.fileID), res.fileID, res.ref, res.payload); err != nil {
 			phase.Error()
 			return fmt.Errorf("hamt insert: %w", err)
 		}
@@ -108,59 +111,94 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 	return nil
 }
 
+// uploadedContent is what uploadContent established about one file's content:
+// its identity, and where its bytes ended up — chunk objects, an inline copy
+// (v3, where the caller places it into the leaf), or nowhere new (dedup'd).
+type uploadedContent struct {
+	hash   string
+	size   int64
+	ref    string   // HMAC(dedupKey, hash), or hash when unencrypted
+	chunks []string // chunk refs; nil for inline or dedup'd content
+	inline []byte   // v3 only: the content itself, owned by the caller
+}
+
 // processFile uploads (or deduplicates) a single file's content and persists
 // its FileMeta. It is safe to call from multiple goroutines.
 func (bm *BackupManager) processFile(ctx context.Context, meta core.FileMeta, phase ui.Phase) uploadResult {
 	phase.Logf(ui.DetailVerbose, "Processing: %s", meta.Name)
 
-	contentHash, size, contentRef, contentChunks, err := bm.uploadContent(ctx, meta, phase)
+	content, err := bm.uploadContent(ctx, meta, phase)
 	if err != nil {
 		return uploadResult{err: err}
 	}
 
-	meta.ContentHash = contentHash
-	meta.ContentRef = contentRef
-	meta.Size = size
+	meta.ContentHash = content.hash
+	meta.ContentRef = content.ref
+	meta.Size = content.size
 
 	persisted := persistedFileMeta(meta)
 	metaRef, metaData, err := core.FileMetaRef(&persisted)
 	if err != nil {
 		return uploadResult{err: err}
 	}
+
+	if bm.v3 {
+		// The filemeta and the content's location ride in the leaf entry; the
+		// only standalone objects a v3 file produces are its chunks.
+		return uploadResult{
+			fileID:   meta.FileID,
+			parentID: primaryParentID(&meta),
+			ref:      metaRef,
+			payload: &hamt.Payload{
+				Meta:   metaData,
+				Size:   content.size,
+				Inline: content.inline,
+				Chunks: content.chunks,
+			},
+		}
+	}
+
 	if err := bm.store.Put(ctx, metaRef, metaData); err != nil {
 		return uploadResult{err: err}
 	}
 	return uploadResult{
-		fileID:        meta.FileID,
-		parentID:      primaryParentID(&meta),
-		ref:           metaRef,
-		contentRef:    contentRef,
-		contentChunks: contentChunks,
+		fileID:   meta.FileID,
+		parentID: primaryParentID(&meta),
+		ref:      metaRef,
 	}
 }
 
-// uploadContent streams, chunks, and stores file content. Skips upload on dedup (contentChunks nil), stores small files inline.
-func (bm *BackupManager) uploadContent(ctx context.Context, meta core.FileMeta, phase ui.Phase) (hash string, size int64, contentRef string, contentChunks []string, err error) {
-	if meta.ContentHash != "" {
-		contentRef = meta.ContentRef
+// contentRefFor derives the repository content identity for a plaintext hash.
+func (bm *BackupManager) contentRefFor(hash string) string {
+	if len(bm.hmacKey) > 0 {
+		return crypto.ComputeHMAC(bm.hmacKey, []byte(hash))
+	}
+	return hash
+}
+
+// uploadContent streams, chunks, and stores file content. Skips upload on
+// dedup, stores small files inline — as a content object in v2, in the
+// returned buffer (bound for the leaf) in v3.
+func (bm *BackupManager) uploadContent(ctx context.Context, meta core.FileMeta, phase ui.Phase) (uploadedContent, error) {
+	// Whole-file dedup against a stored content object is a v2 fast path: v3
+	// has no content objects to probe. Its chunked files still deduplicate
+	// per chunk in storeChunk, which skips the upload but not the local read.
+	if meta.ContentHash != "" && !bm.v3 {
+		contentRef := meta.ContentRef
 		if contentRef == "" {
-			if len(bm.hmacKey) > 0 {
-				contentRef = crypto.ComputeHMAC(bm.hmacKey, []byte(meta.ContentHash))
-			} else {
-				contentRef = meta.ContentHash
-			}
+			contentRef = bm.contentRefFor(meta.ContentHash)
 		}
 
 		exists, err := bm.store.Exists(ctx, "content/"+contentRef)
 		if err == nil && exists {
 			phase.Logf(ui.DetailVerbose, "Deduplicated: %s", meta.Name)
-			return meta.ContentHash, meta.Size, contentRef, nil, nil
+			return uploadedContent{hash: meta.ContentHash, size: meta.Size, ref: contentRef}, nil
 		}
 	}
 
 	rc, err := bm.source.GetFileStream(meta.FileID)
 	if err != nil {
-		return "", 0, "", nil, fmt.Errorf("get stream for %s: %w", meta.FileID, err)
+		return uploadedContent{}, fmt.Errorf("get stream for %s: %w", meta.FileID, err)
 	}
 	defer func() { _ = rc.Close() }()
 
@@ -172,43 +210,51 @@ func (bm *BackupManager) uploadContent(ctx context.Context, meta core.FileMeta, 
 		phase.Increment(n)
 	})
 	if err != nil {
-		return "", 0, "", nil, fmt.Errorf("chunking %s: %w", meta.Name, err)
+		return uploadedContent{}, fmt.Errorf("chunking %s: %w", meta.Name, err)
 	}
 
-	contentRef, err = bm.chunker.CreateContentObject(ctx, chunkRefs, size, hash)
-	if err != nil {
-		return "", 0, "", nil, fmt.Errorf("create content for %s: %w", meta.Name, err)
+	if bm.v3 {
+		return uploadedContent{hash: hash, size: size, ref: bm.contentRefFor(hash), chunks: chunkRefs}, nil
 	}
-	return hash, size, contentRef, chunkRefs, nil
+
+	contentRef, err := bm.chunker.CreateContentObject(ctx, chunkRefs, size, hash)
+	if err != nil {
+		return uploadedContent{}, fmt.Errorf("create content for %s: %w", meta.Name, err)
+	}
+	return uploadedContent{hash: hash, size: size, ref: contentRef, chunks: chunkRefs}, nil
 }
 
-// uploadInline reads the entire file into memory and stores it directly inside
-// the Content object, bypassing the chunker. Uses a sync.Pool to minimize allocations.
-func (bm *BackupManager) uploadInline(ctx context.Context, r io.Reader, meta core.FileMeta, phase ui.Phase) (hash string, size int64, contentRef string, contentChunks []string, err error) {
+// uploadInline reads the entire file into memory and stores it directly — in a
+// Content object in v2, or in the returned buffer for the caller's leaf entry
+// in v3. Uses a sync.Pool to minimize allocations.
+func (bm *BackupManager) uploadInline(ctx context.Context, r io.Reader, meta core.FileMeta, phase ui.Phase) (uploadedContent, error) {
 	bufPtr := inlineBufferPool.Get().(*[]byte)
 	buf := *bufPtr
 	defer inlineBufferPool.Put(bufPtr)
 
 	n, err := io.ReadFull(r, buf)
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-		return "", 0, "", nil, fmt.Errorf("read %s: %w", meta.Name, err)
+		return uploadedContent{}, fmt.Errorf("read %s: %w", meta.Name, err)
 	}
 
 	data := buf[:n]
-	size = int64(n)
+	size := int64(n)
 	phase.Increment(size)
-	hash = core.ComputeHash(data)
+	hash := core.ComputeHash(data)
+	contentRef := bm.contentRefFor(hash)
 
-	if len(bm.hmacKey) > 0 {
-		contentRef = crypto.ComputeHMAC(bm.hmacKey, []byte(hash))
-	} else {
-		contentRef = hash
+	if bm.v3 {
+		// Copied out of the pooled buffer, which goes back to the pool on
+		// return while the payload lives until the tree commits.
+		inline := make([]byte, n)
+		copy(inline, data)
+		return uploadedContent{hash: hash, size: size, ref: contentRef, inline: inline}, nil
 	}
 
 	contentKey := "content/" + contentRef
 	if exists, _ := bm.store.Exists(ctx, contentKey); exists {
 		phase.Logf(ui.DetailVerbose, "Deduplicated: %s", meta.Name)
-		return hash, size, contentRef, nil, nil
+		return uploadedContent{hash: hash, size: size, ref: contentRef}, nil
 	}
 
 	// Manually construct JSON to avoid json.Marshal allocating a huge string for the base64 data
@@ -222,7 +268,7 @@ func (bm *BackupManager) uploadInline(ctx context.Context, r io.Reader, meta cor
 	copy(contentData[len(prefix)+encodedLen:], suffix)
 
 	if err := bm.store.Put(ctx, contentKey, contentData); err != nil {
-		return "", 0, "", nil, err
+		return uploadedContent{}, err
 	}
-	return hash, size, contentRef, nil, nil
+	return uploadedContent{hash: hash, size: size, ref: contentRef}, nil
 }

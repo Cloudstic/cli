@@ -87,3 +87,11 @@ func (s *EncryptedStore) Get(ctx context.Context, key string) ([]byte, error) {
 		ErrPlaintextObject, key,
 	)
 }
+
+// DeleteAll implements store.BatchDeleter by forwarding to the wrapped store.
+// Encryption seals an object's contents and has nothing to say about removing
+// it, so a batched delete passes straight through — key slots included, which
+// are exempt from encryption but not from deletion.
+func (s *EncryptedStore) DeleteAll(ctx context.Context, keys []string) error {
+	return store.DeleteAll(ctx, s.ObjectStore, keys)
+}

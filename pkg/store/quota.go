@@ -35,3 +35,12 @@ func (q *QuotaStore) Put(ctx context.Context, key string, data []byte) error {
 
 // Written returns the total bytes successfully written through this store.
 func (q *QuotaStore) Written() int64 { return q.written.Load() }
+
+// DeleteAll implements BatchDeleter by forwarding to the wrapped store. The
+// quota counts bytes written, so deletion is a passthrough here — but the
+// method must exist, or wrapping a backend in a budget would quietly cost a
+// prune its batching, since an embedded ObjectStore promotes only the methods
+// ObjectStore declares.
+func (q *QuotaStore) DeleteAll(ctx context.Context, keys []string) error {
+	return DeleteAll(ctx, q.ObjectStore, keys)
+}

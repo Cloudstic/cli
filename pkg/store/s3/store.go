@@ -352,3 +352,110 @@ func (s *Store) List(ctx context.Context, prefix string) ([]string, error) {
 
 	return keys, nil
 }
+
+// s3DeleteBatchSize is the hard limit S3 places on DeleteObjects: at most
+// 1,000 keys per request. Longer key lists are split into that many at a time.
+const s3DeleteBatchSize = 1000
+
+// errUnaccountedDelete is the failure recorded for a key the response mentioned
+// neither as deleted nor as an error. S3 promises a result per key, so this
+// should never fire — but "the response did not mention it" is exactly the
+// shape of a partial result that must not be read as success, and an
+// S3-compatible service is not AWS.
+var errUnaccountedDelete = errors.New("not reported in the DeleteObjects response")
+
+// DeleteAll implements store.BatchDeleter over DeleteObjects, taking the sweep
+// from one request per object to one per thousand.
+//
+// The required Content-MD5 (or, on directory buckets, an x-amz-checksum-*
+// header) is computed by the SDK: DeleteObjects registers its input checksum
+// middleware with RequireChecksum, so it is added whether or not the caller
+// asks for a checksum algorithm.
+//
+// The response is read in verbose mode — the default — which names every key
+// deleted as well as every key that failed. That is the point: a key present in
+// neither list is unaccounted for rather than gone, and reporting it as a
+// failure is what keeps a caller from crediting space it did not reclaim.
+func (s *Store) DeleteAll(ctx context.Context, keys []string) error {
+	var failures store.DeleteErrors
+	for start := 0; start < len(keys); start += s3DeleteBatchSize {
+		if err := ctx.Err(); err != nil {
+			// The requests already issued stand; only the rest are unconfirmed.
+			// Issuing them anyway would return this same error more slowly.
+			failures = append(failures, store.UnconfirmedDeletes(keys[start:], err)...)
+			break
+		}
+		end := min(start+s3DeleteBatchSize, len(keys))
+		failures = append(failures, s.deleteBatch(ctx, keys[start:end])...)
+	}
+	if len(failures) > 0 {
+		return failures
+	}
+	return nil
+}
+
+// deleteBatch issues one DeleteObjects request and returns the keys it could
+// not confirm deleted.
+func (s *Store) deleteBatch(ctx context.Context, keys []string) store.DeleteErrors {
+	objects := make([]types.ObjectIdentifier, len(keys))
+	for i, k := range keys {
+		objects[i] = types.ObjectIdentifier{Key: aws.String(s.key(k))}
+	}
+
+	out, err := s.client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+		Bucket: aws.String(s.bucketName),
+		Delete: &types.Delete{Objects: objects},
+	})
+	if err != nil {
+		// The request as a whole failed, so nothing in it is confirmed — but
+		// naming the keys keeps the other batches of this call creditable.
+		return store.UnconfirmedDeletes(keys, err)
+	}
+
+	deleted := make(map[string]bool, len(out.Deleted))
+	for _, d := range out.Deleted {
+		if d.Key != nil {
+			deleted[strings.TrimPrefix(*d.Key, s.prefix)] = true
+		}
+	}
+	reported := make(map[string]error, len(out.Errors))
+	for _, e := range out.Errors {
+		if e.Key == nil {
+			continue
+		}
+		reported[strings.TrimPrefix(*e.Key, s.prefix)] = deleteObjectsError(e)
+	}
+
+	var failures store.DeleteErrors
+	for _, k := range keys {
+		if deleted[k] {
+			continue
+		}
+		if cause, ok := reported[k]; ok {
+			failures = append(failures, store.DeleteError{Key: k, Err: cause})
+			continue
+		}
+		failures = append(failures, store.DeleteError{Key: k, Err: errUnaccountedDelete})
+	}
+	return failures
+}
+
+// deleteObjectsError renders one per-key failure from a DeleteObjects response.
+func deleteObjectsError(e types.Error) error {
+	code, message := "", ""
+	if e.Code != nil {
+		code = *e.Code
+	}
+	if e.Message != nil {
+		message = *e.Message
+	}
+	switch {
+	case code != "" && message != "":
+		return fmt.Errorf("%s: %s", code, message)
+	case code != "":
+		return errors.New(code)
+	case message != "":
+		return errors.New(message)
+	}
+	return errors.New("delete refused without a reason")
+}

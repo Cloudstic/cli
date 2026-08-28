@@ -173,6 +173,13 @@ func TestStore(t *testing.T) {
 	t.Run("RangeGetter", func(t *testing.T) {
 		storetest.AssertRangeGetterConformance(t, st)
 	})
+
+	// Batched deletes are what take a prune's sweep from one request per object
+	// to one per thousand, so hold S3 to the same contract as every other
+	// backend — against MinIO, which is what the benchmarks measure.
+	t.Run("BatchDeleter", func(t *testing.T) {
+		storetest.AssertBatchDeleterConformance(t, st)
+	})
 }
 
 func TestWithPrefix_NormalizesPrefix(t *testing.T) {

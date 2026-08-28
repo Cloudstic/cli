@@ -487,4 +487,10 @@ func TestStore(t *testing.T) {
 	t.Run("RangeGetter", func(t *testing.T) {
 		storetest.AssertRangeGetterConformance(t, st)
 	})
+
+	// B2's native API deletes one file version per call, so DeleteAll is a
+	// loop here — held to the same contract regardless.
+	t.Run("BatchDeleter", func(t *testing.T) {
+		storetest.AssertBatchDeleterConformance(t, st)
+	})
 }

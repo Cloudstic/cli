@@ -28,7 +28,7 @@ type ObjectStore interface {
 type FaultHook func(key string, callNum int) error
 
 // FaultStore wraps an ObjectStore and lets tests inject failures into Get,
-// Put, or List independently of what the backend itself would do —
+// Put, List, or Delete independently of what the backend itself would do —
 // simulating a network blip, a permission error, or a partial outage. Each
 // hook is optional; a nil hook means that method always passes through.
 //
@@ -36,9 +36,10 @@ type FaultHook func(key string, callNum int) error
 type FaultStore struct {
 	ObjectStore
 
-	FailGet  FaultHook
-	FailPut  FaultHook
-	FailList FaultHook
+	FailGet    FaultHook
+	FailPut    FaultHook
+	FailList   FaultHook
+	FailDelete FaultHook
 
 	mu    sync.Mutex
 	calls map[string]int
@@ -70,6 +71,21 @@ func (f *FaultStore) Put(ctx context.Context, key string, data []byte) error {
 		}
 	}
 	return f.ObjectStore.Put(ctx, key, data)
+}
+
+// Delete honours FailDelete. FaultStore deliberately does not implement
+// store.BatchDeleter: this package cannot import pkg/store (pkg/store's own
+// internal tests import it), so it could not return the store.DeleteErrors a
+// batch caller reads per-key failures out of. Leaving the capability
+// unimplemented sends store.DeleteAll down its loop instead, which reports
+// these injected failures per key and in the right type.
+func (f *FaultStore) Delete(ctx context.Context, key string) error {
+	if f.FailDelete != nil {
+		if err := f.FailDelete(key, f.nextCall("Delete")); err != nil {
+			return err
+		}
+	}
+	return f.ObjectStore.Delete(ctx, key)
 }
 
 func (f *FaultStore) List(ctx context.Context, prefix string) ([]string, error) {

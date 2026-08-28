@@ -189,3 +189,15 @@ func (s *Store) List(_ context.Context, prefix string) ([]string, error) {
 	})
 	return keys, err
 }
+
+// DeleteAll implements store.BatchDeleter as a loop, because a filesystem has
+// no bulk-unlink primitive to exploit.
+//
+// It is implemented anyway so that callers need no fallback branch of their
+// own, and so the per-key failure reporting is the same shape here as it is on
+// S3: one unlink that fails does not hide the ones that succeeded. A file that
+// is already gone counts as deleted — os.Remove disagrees, and store.DeleteEach
+// is what reconciles it with what DeleteObjects reports.
+func (s *Store) DeleteAll(ctx context.Context, keys []string) error {
+	return store.DeleteEach(ctx, keys, s.Delete)
+}

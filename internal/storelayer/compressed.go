@@ -262,3 +262,12 @@ func maybeDecompress(data []byte) ([]byte, error) {
 
 	return data, nil
 }
+
+// DeleteAll implements store.BatchDeleter by forwarding to the wrapped store.
+// Compression touches an object's bytes, not its existence, so a batched delete
+// passes straight through — but the method has to be declared for it to, since
+// the capability is looked up on the outermost store and never by unwrapping
+// past a layer that might mean something by a delete.
+func (s *CompressedStore) DeleteAll(ctx context.Context, keys []string) error {
+	return store.DeleteAll(ctx, s.inner, keys)
+}

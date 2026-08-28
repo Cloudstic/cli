@@ -47,6 +47,33 @@ type RangeGetter interface {
 	GetRange(ctx context.Context, key string, offset, length int64) ([]byte, error)
 }
 
+// BatchDeleter is an optional interface for backends that can delete many keys
+// in fewer requests than one per key.
+//
+// Delete is the one direction object stores do batch: S3's DeleteObjects takes
+// up to 1,000 keys per request (MinIO and B2's S3-compatible endpoint
+// included), Azure Blob Batch takes 256, GCS batches at 100, while none of them
+// offers a multi-object GET or PUT — which is why aggregation for reads had to
+// move into the data layout instead (RFC 0026).
+//
+// Implementations report per-key failures rather than collapsing them: return
+// DeleteErrors naming every key that could not be confirmed deleted, and a
+// bare error only when the backend genuinely says nothing per key. A caller
+// must never be able to read a partial failure as "all deleted" — prune is a
+// garbage collector, and docs/compatibility.md forbids it proceeding on data it
+// could not fully act on. FailedDeletes tells the two cases apart.
+//
+// Deleting a key that is not there is not a failure, matching what
+// DeleteObjects reports for a missing key; DeleteEach supplies that behaviour
+// for backends whose single-key Delete errors instead.
+//
+// Backends that cannot batch simply do not implement it, and callers go through
+// the DeleteAll helper, which loops. A custom backend therefore keeps working
+// unchanged.
+type BatchDeleter interface {
+	DeleteAll(ctx context.Context, keys []string) error
+}
+
 // ReadPlan is a store's answer to a caller that is about to read a set of keys.
 //
 // It carries what the store knows and the caller does not: where the objects

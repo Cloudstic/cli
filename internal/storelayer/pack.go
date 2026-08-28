@@ -944,6 +944,15 @@ func (s *PackStore) ensureCatalogLoaded(ctx context.Context) error {
 
 // Delete removes an object. For packed objects, it just removes it from the catalog.
 // The actual packfile is not currently garbage collected.
+//
+// PackStore deliberately does not implement store.BatchDeleter, and the
+// omission is load-bearing rather than an oversight. Most of the keys it is
+// asked to delete are not objects in the backend at all — they are entries in a
+// packfile, removed by rewriting the catalog — so there is nothing for a bulk
+// DeleteObjects to address, and forwarding one to the backend beneath would
+// delete nothing while reporting a thousand successes. Not claiming the
+// capability sends store.DeleteAll down its per-key loop, which arrives here and
+// is correct. TestPackStoreDoesNotClaimBatchDelete pins this.
 func (s *PackStore) Delete(ctx context.Context, key string) error {
 	// Without the catalog a packed key looks unpacked, and the delete would be
 	// forwarded to the backend where the object does not physically exist —

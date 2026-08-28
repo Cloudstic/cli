@@ -1222,6 +1222,13 @@ cloudstic prune -verbose
 
 > **Locking:** `prune` acquires an **exclusive lock** at the start of the run (skipped for `-dry-run`). While the exclusive lock is held, all `backup` and `restore` commands will fail immediately. The lock is released when `prune` exits. If `prune` crashes, the lock expires automatically after 1 minute. Use `break-lock` to remove it sooner.
 
+> **Partial sweeps fail:** if any unreachable object cannot be deleted — a
+> permission error, a backend refusing one key of a batch — `prune` deletes
+> everything else it can and then exits non-zero, naming the count and the
+> first cause. It does not report a success whose "objects deleted" and
+> "space reclaimed" describe a repository that still holds the garbage. Re-run
+> `prune` once the cause is fixed; it re-marks and re-sweeps from scratch.
+
 ---
 
 ### break-lock

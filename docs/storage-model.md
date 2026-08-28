@@ -101,6 +101,26 @@ Running prune after an interrupted backup will delete all orphaned objects and
 restore the repository to a clean state. No data from completed snapshots is
 affected.
 
+### Batched deletion
+
+The sweep hands its unreachable keys to the store in batches rather than one
+at a time, through the optional `store.BatchDeleter` capability. Delete is the
+one direction object stores batch — S3's `DeleteObjects` takes up to 1,000 keys
+per request, and neither S3 nor any other backend offers a multi-object GET or
+PUT — so on an S3-family backend the sweep costs one request per thousand
+objects instead of one per object. A backend without the capability keeps
+working unchanged: `store.DeleteAll` loops for it.
+
+Batching does not loosen what prune may claim. `DeleteObjects` reports success
+and failure per key in one response, and only the keys a store confirms gone
+are counted as deleted or credited as space reclaimed. A key the backend
+refused, and a key its response did not mention at all, both count as still
+there. A sweep that could not delete every object it classified as garbage
+deletes as many as it can and then **fails**, rather than reporting a success
+whose object count and reclaimed total describe a repository that still holds
+the garbage. The next run re-marks and re-sweeps, so failing costs nothing but
+the exit code.
+
 ### Edge case: snapshot written, index not updated
 
 If the interruption occurs between writing the snapshot and updating

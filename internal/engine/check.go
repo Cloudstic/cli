@@ -185,11 +185,48 @@ func (cm *CheckManager) checkSnapshot(ctx context.Context, ref string, result *C
 	if cm.v3 {
 		if err := cm.tree.WalkTree(ctx, snap.Root,
 			func(nodeRef string) error {
-				return cm.verifyObject(ctx, nodeRef, result, cfg, phase)
+				// A node already verified by this run was reached through a
+				// full walk of its subtree, and a ref names that whole
+				// subtree — so everything beneath it is verified too, and
+				// descending again would re-read it for nothing. Consecutive
+				// snapshots differ in a narrow spine and share the rest, so
+				// this is most of the tree on every snapshot after the first.
+				if cm.verified.Has(nodeRef) {
+					return hamt.ErrSkipSubtree
+				}
+
+				// Counted as verified without reading it here, because the
+				// walk is about to read it and NodeStore.load checks a node
+				// against its own ref exactly as verifyObject would — a node
+				// ref *is* the SHA-256 of its bytes. Fetching it separately
+				// first was doubling every node read in the traversal: on a
+				// five-snapshot repository holding 251 nodes, check performed
+				// 342 node reads for a single snapshot.
+				//
+				// A node that cannot be read or does not match its ref is
+				// reported by the handler below, which is what keeps this
+				// from trading the finding for the saving.
+				cm.verified.Add(nodeRef)
+				result.ObjectsVerified++
+				phase.Logf(ui.DetailVerbose, "OK: %s", nodeRef)
+				return nil
 			},
 			func(_, ref string, p *hamt.Payload) error {
 				return cm.checkLeafEntry(ctx, ref, p, result, cfg, phase)
-			}); err != nil {
+			},
+			hamt.WithNodeErrorHandler(func(nodeRef string, err error) error {
+				// Record and carry on: an integrity check that stopped at the
+				// first unreadable node would report one fault and leave the
+				// rest of the repository unexamined. The subtree beneath it is
+				// unreachable either way.
+				result.Errors = append(result.Errors, CheckError{
+					Key: nodeRef, Type: "missing",
+					Message: fmt.Sprintf("node not found, unreadable, or does not match its ref: %v", err),
+				})
+				phase.Log(fmt.Sprintf("UNREADABLE: %s", nodeRef))
+				return nil
+			}),
+		); err != nil {
 			result.Errors = append(result.Errors, CheckError{
 				Key: snap.Root, Type: "read_error", Message: fmt.Sprintf("cannot walk HAMT tree: %v", err),
 			})

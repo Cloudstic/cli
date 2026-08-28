@@ -196,6 +196,22 @@ func NewTreeWithNodes(ns *NodeStore) *Tree {
 	return &Tree{nodes: ns}
 }
 
+// ErrSkipSubtree, returned by WalkTree's onNode, stops the walk descending into
+// that node's children and continues with its siblings.
+//
+// It exists for callers that recognise a subtree they have already covered.
+// Nodes are content-addressed, so a ref identifies its whole subtree: a caller
+// that has fully walked one ref has fully walked everything beneath it, and
+// two snapshots sharing a ref share that entire subtree. Without a way to say
+// so, walking several snapshots re-reads their common structure once per
+// snapshot — which is most of it, since consecutive backups differ in a narrow
+// spine.
+//
+// The caller owns the claim, not the tree: returning this asserts that the
+// subtree's contents have already been accounted for, and a caller that has
+// only *seen* the ref rather than descended it must not return it.
+var ErrSkipSubtree = errors.New("hamt: skip subtree")
+
 // errFoundSentinel is used to short-circuit a Walk in LookupByKey.
 var errFoundSentinel = fmt.Errorf("found")
 
@@ -288,25 +304,58 @@ func (t *Tree) NodeRefs(ctx context.Context, root string, fn func(ref string) er
 //
 // A node is loaded once and reported before its children, so a caller can
 // treat onNode as the point where a node's bytes were read and verified.
-func (t *Tree) WalkTree(ctx context.Context, root string, onNode func(ref string) error, onEntry func(key, value string, p *Payload) error) error {
+func (t *Tree) WalkTree(ctx context.Context, root string, onNode func(ref string) error, onEntry func(key, value string, p *Payload) error, opts ...WalkOption) error {
 	if root == "" {
 		return nil
 	}
-	return walkTree(ctx, t.nodes, root, 0, onNode, onEntry)
+	var cfg walkConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	return walkTree(ctx, t.nodes, root, 0, onNode, onEntry, cfg)
 }
 
-func walkTree(ctx context.Context, ns *NodeStore, ref string, depth int, onNode func(string) error, onEntry func(string, string, *Payload) error) error {
+// WalkOption configures a tree walk.
+type WalkOption func(*walkConfig)
+
+type walkConfig struct {
+	onNodeError func(ref string, err error) error
+}
+
+// WithNodeErrorHandler makes a walk survive a node it cannot read.
+//
+// By default an unreadable or corrupt node fails the whole walk, which is
+// right for a caller that needs the tree it asked for. It is wrong for one
+// whose job is to *find* such nodes: an integrity check that stopped at the
+// first bad object would report one fault and leave the rest of the
+// repository unexamined.
+//
+// The handler is given the ref and the load error. Returning nil skips that
+// subtree — its contents cannot be reached through a node that will not
+// decode — and the walk continues with the node's siblings; returning an
+// error fails the walk as usual.
+func WithNodeErrorHandler(h func(ref string, err error) error) WalkOption {
+	return func(c *walkConfig) { c.onNodeError = h }
+}
+
+func walkTree(ctx context.Context, ns *NodeStore, ref string, depth int, onNode func(string) error, onEntry func(string, string, *Payload) error, cfg walkConfig) error {
 	if depth > ns.maxTreeDepth() {
 		return errTooDeep(ns.maxTreeDepth(), depth)
 	}
 	if onNode != nil {
-		if err := onNode(ref); err != nil {
+		switch err := onNode(ref); {
+		case errors.Is(err, ErrSkipSubtree):
+			return nil
+		case err != nil:
 			return err
 		}
 	}
 	n, err := ns.load(ctx, ref)
 	if err != nil {
-		return err
+		if cfg.onNodeError == nil {
+			return err
+		}
+		return cfg.onNodeError(ref, err)
 	}
 	if n.leaf {
 		if onEntry == nil {
@@ -320,7 +369,7 @@ func walkTree(ctx context.Context, ns *NodeStore, ref string, depth int, onNode 
 		return nil
 	}
 	for _, cc := range n.children {
-		if err := walkTree(ctx, ns, cc.ref, depth+1, onNode, onEntry); err != nil {
+		if err := walkTree(ctx, ns, cc.ref, depth+1, onNode, onEntry, cfg); err != nil {
 			return err
 		}
 	}

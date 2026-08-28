@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -396,5 +397,65 @@ func TestV3BackupCommitsIncrementally(t *testing.T) {
 	}
 	if len(checkRes.Errors) != 0 {
 		t.Fatalf("check after incremental commits: %v", checkRes.Errors)
+	}
+}
+
+// check reads each node once, through the walk that is about to decode it
+// anyway — NodeStore.load already verifies a node against its ref, since a
+// node ref is the SHA-256 of its bytes. Reading it a second time to verify it
+// separately doubled the node reads of every traversal.
+//
+// The saving is only safe if detection survives it, which is what this pins:
+// a repository with several damaged nodes must report *all* of them, not stop
+// at the first, and must still fail.
+func TestV3CheckReportsEveryDamagedNode(t *testing.T) {
+	ctx := context.Background()
+	dest := NewMockStore()
+	src := NewMockSource()
+	// Enough entries to build a tree with several leaves under a spine.
+	body := bytes.Repeat([]byte("content"), 40*1024)
+	for i := range 200 {
+		src.AddFile(fmt.Sprintf("f-%d.bin", i), fmt.Sprintf("id-%d", i), body)
+	}
+	if _, err := NewBackupManager(v3Deps(dest), src).Run(ctx); err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+	if res, err := NewCheckManager(v3Deps(dest)).Run(ctx); err != nil || len(res.Errors) != 0 {
+		t.Fatalf("baseline check: err=%v errors=%v", err, res.Errors)
+	}
+
+	// Damage two leaves in different ways: one whose bytes no longer match its
+	// ref, one that is gone entirely.
+	var leaves []string
+	for key, data := range dest.Data {
+		if strings.HasPrefix(key, "node/") && len(data) > 4096 {
+			leaves = append(leaves, key)
+		}
+	}
+	sort.Strings(leaves) // deterministic choice
+	if len(leaves) < 2 {
+		t.Fatalf("expected several sizeable leaves to damage, got %d", len(leaves))
+	}
+	dest.Data[leaves[0]] = []byte("not the bytes this ref names")
+	delete(dest.Data, leaves[1])
+
+	res, err := NewCheckManager(v3Deps(dest)).Run(ctx)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if len(res.Errors) < 2 {
+		t.Fatalf("check reported %d errors for two damaged nodes: %v\n"+
+			"a check that stops at the first fault leaves the rest of the repository unexamined",
+			len(res.Errors), res.Errors)
+	}
+
+	reported := map[string]bool{}
+	for _, e := range res.Errors {
+		reported[e.Key] = true
+	}
+	for _, want := range leaves[:2] {
+		if !reported[want] {
+			t.Errorf("damaged node %s was not reported; findings: %v", want, res.Errors)
+		}
 	}
 }

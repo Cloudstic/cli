@@ -603,8 +603,10 @@ age_final_ops() {
     for op in $AGE_FINAL_OPS; do
         case "$op" in
             backup)
-                [ -n "$AGE_DATA" ] && [ -d "$AGE_DATA" ] \
-                    || { echo "backup in AGE_FINAL_OPS needs a source tree; set AGE_DATA" >&2; return 2; }
+                if [ ! -d "$AGE_DATA" ]; then
+                    echo "backup in AGE_FINAL_OPS needs a source tree; set AGE_DATA" >&2
+                    return 2
+                fi
                 measure "backup@${backups}${suffix}" \
                     env $assignments \
                     "$CLOUDSTIC_BIN" backup $flags -source "local:$AGE_DATA" -quiet

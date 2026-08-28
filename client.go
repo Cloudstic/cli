@@ -298,3 +298,12 @@ func (c *Client) openRepoConfig(
 }
 
 func (c *Client) Store() store.ObjectStore { return c.store }
+
+// RepoFormat returns the repository format version this client opened.
+//
+// It is the recorded version, not a claim about what the repository contains:
+// within a major format a repository is a permanent mixture of eras, and the
+// version is the oldest build that can still read all of it (see
+// docs/compatibility.md). What it is good for is deciding whether a repository
+// needs migrating and to what — which is why `migrate` reads it.
+func (c *Client) RepoFormat() int { return int(c.repoFormat.Load()) }

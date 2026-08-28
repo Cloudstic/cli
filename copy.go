@@ -53,6 +53,14 @@ var (
 // Nothing is written to the source. A copy needs only read access there, which
 // is what makes read-only source credentials a supported configuration.
 //
+// The two repositories need not share a format. A copy reads whichever form the
+// source stores its entries in — standalone filemeta and content objects, or
+// the leaf payloads of format v3 (RFC 0026) — and writes whichever the
+// destination records, so copying into a repository created with format 3 is
+// how a packfile-era repository is migrated. The destination's recorded format
+// decides what is written for every entry, so a copy never leaves it holding a
+// mixture.
+//
 // Copying is expensive compared with an incremental backup: every object in the
 // selected snapshots is read and decrypted through the source, then re-encrypted
 // and written through the destination, because object names are derived from
@@ -64,18 +72,6 @@ func (c *Client) CopyFrom(ctx context.Context, src *Client, opts ...CopyOption) 
 	}
 	if src == c {
 		return nil, fmt.Errorf("copy: source and destination are the same client")
-	}
-
-	// Copy re-encodes filemeta and content objects between repositories, and a
-	// v3 repository has neither (its entries live in leaf payloads, RFC 0026).
-	// Crossing formats needs a payload-aware copy that has not been built;
-	// refusing beats a run that fails midway or writes a tree v3 readers
-	// cannot restore.
-	if src.formatV3() || c.formatV3() {
-		return nil, fmt.Errorf(
-			"copy: repository format v3 is not yet supported by copy (source v3: %v, destination v3: %v)",
-			src.formatV3(), c.formatV3(),
-		)
 	}
 
 	srcID, err := src.repoID(ctx)
@@ -98,7 +94,11 @@ func (c *Client) CopyFrom(ctx context.Context, src *Client, opts ...CopyOption) 
 		)
 	}
 
-	mgr := engine.NewCopyManager(c.engineDeps(), engine.CopySide{Store: src.store, RepoID: srcID}, dstID)
+	mgr := engine.NewCopyManager(
+		c.engineDeps(),
+		engine.CopySide{Store: src.store, RepoID: srcID, FormatV3: src.formatV3()},
+		dstID,
+	)
 
 	// Bytes written are metered as they land in the backend — after compression
 	// and encryption — which is the number that matches what the destination is

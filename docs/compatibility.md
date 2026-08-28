@@ -111,7 +111,11 @@ and standalone `content/` manifests do not exist. The rules while it is opt-in:
 - Older builds fail safely: every released build enforces
   `MaxSupportedRepoFormat = 2` at open, so a v3 repository is refused with the
   upgrade message, exactly as the gate is designed to do.
-- `copy` refuses when either side is v3, until a payload-aware copy exists.
+- `copy` crosses the two formats in either direction. It reads whichever form
+  the source stores its entries in and writes whichever the destination
+  records, so the destination never ends up holding a mixture, and the source
+  is only ever read. That is what makes migrating a packfile-era repository an
+  ordinary copy into one created with `init -format 3`.
 
 ### The version is a floor
 

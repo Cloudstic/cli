@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -193,5 +194,40 @@ func TestChunker_HMAC_Deduplication(t *testing.T) {
 	}
 	if refs1[0] != refs2[0] {
 		t.Errorf("HMAC dedup failed: refs differ for identical content\n  run1: %s\n  run2: %s", refs1[0], refs2[0])
+	}
+}
+
+// TestChunker_ConcurrentStreamsDoNotRace is a -race test: it has nothing to
+// assert beyond "no report", because the bug it covers is invisible otherwise.
+//
+// fastcdc-go's constructor writes to a package-level table that every running
+// chunker reads. Serializing construction against construction — which is what
+// cdcMu did originally — leaves the construction-against-read half open, so a
+// file entering the chunker while another was mid-stream raced. The seed is
+// zero here, so the write stores the value already there and no repository was
+// ever mis-chunked; that is exactly why it needs a test rather than a symptom.
+func TestChunker_ConcurrentStreamsDoNotRace(t *testing.T) {
+	ctx := context.Background()
+	chunker := NewChunker(NewMockStore(), nil)
+
+	// Above cdcMinSize, so each stream produces several chunks and the streams
+	// genuinely overlap rather than finishing before the next one starts.
+	payload := strings.Repeat("cloudstic concurrent chunking\n", 60000)
+
+	var wg sync.WaitGroup
+	errs := make([]error, 8)
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _, _, errs[i] = chunker.ProcessStream(ctx, strings.NewReader(payload), nil)
+		}()
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("stream %d: %v", i, err)
+		}
 	}
 }

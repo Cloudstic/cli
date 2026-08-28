@@ -24,6 +24,7 @@ Cloudstic is a content-addressable backup tool that creates encrypted, deduplica
   - [find](#find)
   - [diff](#diff)
   - [copy](#copy)
+  - [migrate](#migrate)
   - [forget](#forget)
   - [prune](#prune)
   - [break-lock](#break-lock)
@@ -1144,6 +1145,82 @@ destination retention is not undone on the next run.
 The source and destination need not share a password, key slots, or encryption
 at all. Copying between an encrypted and an unencrypted repository works in
 either direction.
+
+Copying also crosses repository *formats*, which is what `migrate` below is
+built on.
+
+---
+
+### migrate
+
+Move a repository to a newer on-disk format. Format 3 (RFC 0026) stores file
+metadata and small file content inside the tree itself, with no packfile layer —
+a different layout rather than a new revision of the old one, which is why it
+cannot be reached by upgrading a repository in place.
+
+`migrate` creates a new repository at the target format, copies every snapshot
+into it, and verifies the result:
+
+```bash
+# Migrate a local repository to the newest format this build creates
+cloudstic migrate -store local:/srv/backup -to local:/srv/backup-v3 -password <password>
+
+# Migrate a bucket, re-hashing every chunk during verification
+cloudstic migrate -store s3:my-bucket/prod -to s3:my-bucket/prod-v3 -read-data
+
+# Migrate to a specific format rather than the newest
+cloudstic migrate -store local:/srv/backup -to local:/srv/backup-v3 -to-format 3
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-to <uri>` | *(required)* | Destination repository URI, created if it does not exist |
+| `-to-format <n>` | newest this build creates | Repository format to migrate to |
+| `-read-data` | `false` | Re-hash all chunk data during the verification pass |
+
+**The source is never modified or deleted.** Migration is additive: the old
+repository is read, and stays exactly as it was. That is what makes a failed or
+abandoned migration cost nothing — the old repository is the rollback, and it is
+still the only copy until you delete it yourself. `migrate` tells you so and
+stops there.
+
+**The destination inherits the source's configuration.** It is created with the
+same credentials and the same store settings, differing only in where it points
+and what format it records. Migrating between two backends that need *different*
+credentials is an `init` of the destination followed by `copy`, which does the
+same work with both sides configured independently.
+
+**Verification is part of the command.** A `check` over the destination runs
+before success is reported; add `-read-data` to re-hash every chunk rather than
+verifying the reference chain alone. If it fails, the command says the migration
+is *not* complete and leaves both repositories alone.
+
+**Re-running resumes.** An interrupted migration is continued by running the
+same command again: each copied snapshot records where it came from, so the
+second run skips what already arrived.
+
+```text
+Created local:/srv/backup-v3 at format 3 (encrypted: true).
+migrating local:/srv/backup (format 2)
+       to local:/srv/backup-v3 (format 3)
+the source is only read; nothing there is modified or deleted
+
+snapshot 410b18a2 of [local:/Users/ada/Documents] at 2026-04-01 18:15:03 +0000
+snapshot a1b2c3d4 saved
+
+copied 1 snapshot, skipped 0 snapshots (read 4.2 GiB, wrote 3.9 GiB) in 2m04s
+
+Repository check complete.
+  Snapshots checked:  1
+  Objects verified:   1842
+  Errors found:       0
+
+Migration complete. local:/srv/backup is unchanged.
+```
+
+Older builds cannot read a format-3 repository; they refuse it cleanly rather
+than misreading it. Keep the source until every machine sharing the repository
+runs a build that understands the new format.
 
 ---
 

@@ -243,11 +243,23 @@ func applyPolicy(entries []SnapshotEntry, policy ForgetPolicy) (keep []KeepReaso
 		return nil, nil
 	}
 
-	// Sort newest first.
+	// Sort newest first, breaking ties on the sequence number.
+	//
+	// A snapshot's Created is RFC3339 with second precision, so two backups
+	// taken in the same second compare equal — and with an unstable sort their
+	// order is then arbitrary. That is not a rare case: it is what a scripted
+	// run, a test, or any small repository produces, and the consequence is
+	// that `forget --keep-last 1` can keep the *older* of the two and delete
+	// the newest backup. Seq is the monotonic counter that already
+	// distinguishes them, so ordering by it second makes the result total and
+	// deterministic whatever the input order was.
 	sorted := make([]SnapshotEntry, len(entries))
 	copy(sorted, entries)
 	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].Created.After(sorted[j].Created)
+		if !sorted[i].Created.Equal(sorted[j].Created) {
+			return sorted[i].Created.After(sorted[j].Created)
+		}
+		return sorted[i].Snap.Seq > sorted[j].Snap.Seq
 	})
 
 	kept := make(map[string][]string) // ref -> reasons

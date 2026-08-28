@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/cloudstic/cli/internal/core"
@@ -161,8 +162,34 @@ func (bm *BackupManager) scan(ctx context.Context, oldRoot string) (pending []co
 // live would trade a one-time read win for a permanent write regression.
 func (bm *BackupManager) processBatch(ctx context.Context, oldRoot string, batch []core.FileMeta, s *scanState, phase ui.Phase) error {
 	olds := make([]oldEntry, len(batch))
+
+	// Resolve the batch's previous entries in routing-key order rather than in
+	// walk order.
+	//
+	// Every lookup is a descent of the previous snapshot's tree, and the
+	// routing key decides which leaf it lands in. Walk order is directory
+	// order, which for entries the previous tree does not contain — a newly
+	// added directory, a first backup after a large import — scatters the
+	// descents across the whole key space: each one reads a different leaf,
+	// and once the leaf set outgrows the node cache none of them are still
+	// resident when the next lookup wants them. Measured on a backup that
+	// added 20,000 files, that was 2,531 reads against 56 for a format whose
+	// bundling hid the access pattern.
+	//
+	// Sorting the *lookups* makes consecutive descents share a leaf, so each
+	// is read once per batch. Only the resolution order changes: processing
+	// below stays in walk order, because that order becomes the upload order
+	// and with it the locality of everything newly written (RFC 0025).
+	order := make([]int, len(batch))
+	keys := make([]string, len(batch))
 	for i := range batch {
-		old, err := bm.lookupOldEntry(ctx, oldRoot, &batch[i])
+		order[i] = i
+		keys[i] = AffinityKey(primaryParentID(&batch[i]), batch[i].FileID)
+	}
+	sort.Slice(order, func(a, b int) bool { return keys[order[a]] < keys[order[b]] })
+
+	for _, i := range order {
+		old, err := bm.lookupOldEntryByKey(ctx, oldRoot, keys[i], batch[i].FileID)
 		if err != nil {
 			return err
 		}
@@ -283,7 +310,13 @@ func (bm *BackupManager) lookupDeleteParentID(ctx context.Context, fileID string
 // front. That is what lets scan declare a batch's filemeta reads before making
 // any of them — see prefetchOldMetas.
 func (bm *BackupManager) lookupOldEntry(ctx context.Context, oldRoot string, meta *core.FileMeta) (oldEntry, error) {
-	ref, p, err := bm.tree.LookupEntry(ctx, oldRoot, AffinityKey(primaryParentID(meta), meta.FileID), meta.FileID)
+	return bm.lookupOldEntryByKey(ctx, oldRoot, AffinityKey(primaryParentID(meta), meta.FileID), meta.FileID)
+}
+
+// lookupOldEntryByKey is lookupOldEntry for a caller that has already computed
+// the routing key — which processBatch has, because it sorts by it.
+func (bm *BackupManager) lookupOldEntryByKey(ctx context.Context, oldRoot, routingKey, fileID string) (oldEntry, error) {
+	ref, p, err := bm.tree.LookupEntry(ctx, oldRoot, routingKey, fileID)
 	if err != nil {
 		return oldEntry{}, fmt.Errorf("hamt lookup: %w", err)
 	}

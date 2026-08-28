@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -400,36 +401,50 @@ func (rm *RestoreManager) runWithWriterV3(ctx context.Context, plan restorePlan,
 		return nil
 	}
 
-	walkErr := rm.tree.WalkEntries(ctx, plan.root, func(_, ref string, p *hamt.Payload) error {
+	// The entry key is the FileID — backup files each entry under it — so the
+	// metadata this phase needs is already decoded in plan.byID. Decoding the
+	// payload again here would re-parse every file's JSON in the phase whose
+	// wall time is the headline, to reproduce a value the plan is holding.
+	walkErr := rm.tree.WalkEntries(ctx, plan.root, func(fileID, ref string, p *hamt.Payload) error {
 		if err := gCtx.Err(); err != nil {
 			return err
 		}
 		if p == nil {
 			return fmt.Errorf("v3 leaf entry %s carries no payload", ref)
 		}
-		meta, err := decodePayloadMeta(ref, p)
-		if err != nil {
-			return err
+		meta, ok := plan.byID[fileID]
+		if !ok {
+			return nil // filtered out of this restore, or not a file it names
 		}
-		if _, ok := wanted[meta.FileID]; !ok {
+		if _, ok := wanted[fileID]; !ok {
 			return nil
 		}
-		if meta.Type == core.FileTypeFolder || meta.ContentHash == "" {
-			return nil // folders were written above; nothing to do for empty entries
+		if meta.Type == core.FileTypeFolder {
+			return nil // written above, in topological order
+		}
+		if meta.ContentHash == "" {
+			phase.Increment(1)
+			return nil
 		}
 
-		rel := buildRestorePath(*meta, plan.byID)
-		if len(p.Chunks) > 0 && concurrent {
-			// The payload outlives this callback, so the pool must not share
-			// it with the walk. Only the chunk refs are needed — the inline
-			// buffer is nil on this path — so a shallow copy is enough and
-			// costs nothing per file.
-			chunked := &hamt.Payload{Size: p.Size, Chunks: p.Chunks}
-			m := *meta
-			g.Go(func() error { return writeOne(m, rel, chunked) })
-			return nil
+		rel := buildRestorePath(meta, plan.byID)
+		if !concurrent {
+			return writeOne(meta, rel, p)
 		}
-		return writeOne(*meta, rel, p)
+
+		// Every file goes to the pool, inline ones included. Writing them on
+		// this goroutine instead — which this did first — serialises the
+		// majority of a snapshot behind one writer, since most files are
+		// small enough to inline, and that is what made a v3 restore slower
+		// in wall time than v2 while making fewer requests and moving a third
+		// of the bytes.
+		//
+		// Handing the payload over is safe without copying it: a decoded node
+		// is immutable and shared with the cache, so a worker reading it
+		// races with nothing. The pool is bounded, so at most
+		// restoreFileConcurrency payloads are held at once.
+		g.Go(func() error { return writeOne(meta, rel, p) })
+		return nil
 	})
 
 	if err := g.Wait(); err != nil {
@@ -994,24 +1009,86 @@ func (rm *RestoreManager) resolveSnapshot(ctx context.Context, ref string) (*cor
 // are not retained — the metadata is decoded and the leaf released, which is
 // what keeps the plan's memory proportional to metadata rather than to the
 // snapshot's inline content.
+// metaDecodeBatch is how many entries the v3 metadata pass buffers before
+// decoding them in parallel.
+//
+// The walk itself is sequential — it is one pass over the leaves, which is the
+// point — but decoding is per-entry CPU work with no ordering requirement, and
+// a snapshot has as many of them as it has files. Buffering references rather
+// than results is what keeps this bounded: an entry in the buffer is a pointer
+// into a leaf that is live anyway, so the batch costs a few slice headers each
+// and not a copy of the snapshot's inline content.
+const metaDecodeBatch = 2048
+
 func (rm *RestoreManager) collectMetadataFromLeaves(ctx context.Context, root string) (map[string]core.FileMeta, []string, error) {
 	phase := rm.reporter.StartPhase("Loading metadata", 0, false)
 
+	type pending struct {
+		ref     string
+		payload *hamt.Payload
+	}
+
 	byID := make(map[string]core.FileMeta)
 	var walkOrder []string
+	var mu sync.Mutex
+
+	batch := make([]pending, 0, metaDecodeBatch)
+	workers := min(runtime.GOMAXPROCS(0), 8)
+
+	// flush decodes one batch across workers and appends the results in the
+	// order the walk produced them, which is the order restore writes in.
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		decoded := make([]core.FileMeta, len(batch))
+		g, gCtx := errgroup.WithContext(ctx)
+		g.SetLimit(workers)
+		chunk := (len(batch) + workers - 1) / workers
+		for start := 0; start < len(batch); start += chunk {
+			end := min(start+chunk, len(batch))
+			g.Go(func() error {
+				for i := start; i < end; i++ {
+					if err := gCtx.Err(); err != nil {
+						return err
+					}
+					fm, err := decodePayloadMeta(batch[i].ref, batch[i].payload)
+					if err != nil {
+						return err
+					}
+					decoded[i] = *fm
+				}
+				return nil
+			})
+		}
+		if err := g.Wait(); err != nil {
+			return err
+		}
+
+		mu.Lock()
+		for i := range decoded {
+			byID[decoded[i].FileID] = decoded[i]
+			walkOrder = append(walkOrder, decoded[i].FileID)
+		}
+		mu.Unlock()
+		phase.Increment(int64(len(batch)))
+		batch = batch[:0]
+		return nil
+	}
+
 	err := rm.tree.WalkEntries(ctx, root, func(_, ref string, p *hamt.Payload) error {
 		if p == nil {
 			return fmt.Errorf("v3 leaf entry %s carries no metadata payload", ref)
 		}
-		fm, err := decodePayloadMeta(ref, p)
-		if err != nil {
-			return err
+		batch = append(batch, pending{ref: ref, payload: p})
+		if len(batch) < metaDecodeBatch {
+			return nil
 		}
-		byID[fm.FileID] = *fm
-		walkOrder = append(walkOrder, fm.FileID)
-		phase.Increment(1)
-		return nil
+		return flush()
 	})
+	if err == nil {
+		err = flush()
+	}
 	if err != nil {
 		phase.Error()
 		return nil, nil, err

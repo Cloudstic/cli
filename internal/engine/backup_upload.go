@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"sort"
 	"sync"
 
 	"golang.org/x/sync/semaphore"
@@ -95,21 +96,63 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 		close(jobs)
 	}()
 
+	// Results arrive in whichever order the workers finish, which is unrelated
+	// to where their entries belong in the tree. Inserting them as they land
+	// descends to a different leaf every time — the same scattered access that
+	// made change detection expensive — and each descent loads the leaf it
+	// lands in so the transaction can copy it. Buffering a run of results and
+	// inserting them in routing-key order makes consecutive inserts share a
+	// leaf, so it is loaded once instead of once per entry.
+	//
+	// It costs no memory: an insert hands the payload to the transaction,
+	// which holds it until commit either way, so buffering only moves when
+	// that happens rather than adding to it.
+	buf := make([]uploadResult, 0, insertBatch)
+	flush := func() error {
+		if len(buf) == 0 {
+			return nil
+		}
+		sort.Slice(buf, func(i, j int) bool {
+			return AffinityKey(buf[i].parentID, buf[i].fileID) < AffinityKey(buf[j].parentID, buf[j].fileID)
+		})
+		for _, res := range buf {
+			if err := bm.txn.InsertWithPayload(ctx, AffinityKey(res.parentID, res.fileID), res.fileID, res.ref, res.payload); err != nil {
+				return fmt.Errorf("hamt insert: %w", err)
+			}
+		}
+		buf = buf[:0]
+		return nil
+	}
+
 	for range pending {
 		res := <-results
 		if res.err != nil {
 			phase.Error()
 			return res.err
 		}
-		if err := bm.txn.InsertWithPayload(ctx, AffinityKey(res.parentID, res.fileID), res.fileID, res.ref, res.payload); err != nil {
-			phase.Error()
-			return fmt.Errorf("hamt insert: %w", err)
+		buf = append(buf, res)
+		if len(buf) < insertBatch {
+			continue
 		}
+		if err := flush(); err != nil {
+			phase.Error()
+			return err
+		}
+	}
+	if err := flush(); err != nil {
+		phase.Error()
+		return err
 	}
 
 	phase.Done()
 	return nil
 }
+
+// insertBatch is how many uploaded entries are buffered before being inserted
+// into the working tree in routing-key order. Large enough that a batch spans
+// many entries of the same leaf, small enough that the reordering never delays
+// the tree far behind the uploads that feed it.
+const insertBatch = 2048
 
 // uploadedContent is what uploadContent established about one file's content:
 // its identity, and where its bytes ended up — chunk objects, an inline copy

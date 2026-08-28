@@ -1,6 +1,8 @@
 # RFC 0026: Repository Format v3 (Fat Leaves, No Packfiles)
 
-- **Status:** Proposed
+- **Status:** Proposed. Stages 1–3 implemented behind `init -format 3`; see
+  "Implementation outcome" for what the first measurements changed about the
+  design.
 - **Date:** 2026-08-28
 - **Affects:** repository format (major version), `internal/hamt`,
   `internal/storelayer`, `internal/engine`, `internal/core`, `pkg/store`,
@@ -46,6 +48,87 @@ independent of backup count, peak memory independent of repository size, and a
 net deletion of several thousand lines. The unified benchmark harness (aging
 folded into `bench.sh`, part of this RFC) is what verifies each claim against
 the recorded v2 baselines.
+
+## Implementation outcome
+
+Stages 1–3 are built. What the measurements changed about the design is
+recorded here rather than folded silently into the proposal, because two of
+the constants below were wrong by more than an order of magnitude and the
+reasons generalise.
+
+**Splitting decides leaf fill, and 32-way splitting decided it wrong.** A leaf
+that overflows is partitioned by the next routing bits, and its children never
+merge back, so leaves settle at roughly *budget ÷ arity*. At the HAMT's
+inherited 5 bits that is a thirty-second: leaves measured 13 KB against a
+512 KB budget, and a repository held ~25x more objects than the format
+intends. v3 therefore routes **2 bits per level** with a **2 MB budget**.
+Raising the budget alone cannot fix this — the overshoot is a ratio, and a
+32x budget rewrites 32x more bytes when one file changes.
+
+**A cache bounded by entry count means nothing when entries are sized in
+bytes.** The node cache held 128 entries, which at the sawtooth fill above was
+~6 MB of a ~60 MB leaf set, so every per-entry lookup missed. It is now
+bounded by bytes as well.
+
+**Reading a leaf twice is the same mistake as fetching a pack twice.** Three
+paths did it: restore looked each file up separately after collecting
+metadata, and check and prune each enumerated nodes and then walked entries.
+Restore now writes in leaf order from the payload in hand (creating
+directories first, in topological order), and `hamt.WalkTree` gives check and
+prune one traversal.
+
+**Sealing held the whole commit.** `Txn.Commit` built the entire write batch
+before writing any of it — every dirty leaf's encoded bytes, inline content
+included — which took an initial v3 backup's peak RSS to 561 MB against v2's
+183 MB. The seal now streams into bounded flushes.
+
+Measured on a 2,000-file `source` tree against MinIO, v3 beats v2 on restore
+requests (918 vs 992), on bytes moved (restore 100 vs 345 MB, check 100 vs
+252 MB), on check and prune wall time, on incremental upload volume (5.4 vs
+8.1 MB), on stored size (77.1 vs 81.2 MB), and on peak RSS for every read
+operation.
+
+### Aging is the axis this format was for
+
+The single-pipeline numbers above measure a repository with one backup in it,
+which is the packfile layer's best case and the least representative one. The
+aging stage holds the tree fixed and varies how many backups contributed to
+the snapshot being read (2,000 files, 100 files of churn per backup, MinIO):
+
+| after | v2 restore | v3 restore | v2 check | v3 check |
+|---|---|---|---|---|
+| 1 backup | 23 req, 8.1 MB | 52 req, 5.7 MB | 16 req, 8.1 MB | 82 req, 11.1 MB |
+| 10 backups | 103 req, 12.5 MB | 53 req, 6.4 MB | 97 req, 12.5 MB | 83 req, 12.5 MB |
+| 25 backups | 199 req, 20.4 MB | 52 req, 6.8 MB | 210 req, 20.5 MB | 82 req, 13.3 MB |
+| 40 backups | 275 req, 29.2 MB | **92 req, 8.5 MB** | 308 req, 29.2 MB | **160 req, 16.2 MB** |
+
+v2 grows about seven requests per backup — the linear term RFC 0025 measured
+and could not remove, because a snapshot's entries scatter across every pack
+that ever contributed to it. v3 does not have that term: there is nothing to
+scatter into, so the curve is close to flat and the two cross at around ten
+backups, after which v3 wins by a widening margin. At forty backups v3 costs
+a third of v2's requests for a restore and half for a check, moving a third
+of the bytes; peak RSS is flat to within a megabyte for both formats and both
+operations.
+
+Against this RFC's target 1 (≤1.2x at 80 backups) the honest reading is
+"much better, not yet met": restore is 1.8x and check 1.9x at forty backups,
+against v2's 12x and 19x. The remaining growth is the leaf set of the latest
+snapshot getting larger as churn rewrites it, not a per-backup visit cost, so
+it is bounded by tree size rather than by history.
+
+Two gaps remain open, and neither is a defect in the format:
+
+1. **`check` and `prune` request counts** stay above v2's, because v2 answers
+   a full traversal from ~50 packs where v3 reads ~900 leaves. Both are
+   nonetheless faster in wall time and move half the bytes.
+1. **Whole-file dedup of inline content is not reinstated.** v2 skips a
+   duplicate file by probing `content/<hash>`; v3 has no such object, so
+   duplicate small files are re-read and re-inlined. Stored size is
+   unaffected — the redundancy compresses — but the work is wasted. The cheap
+   recovery is to probe the *previous snapshot's* entries, which change
+   detection already reads; a repository-wide content index is the thing this
+   format exists to avoid.
 
 ## Context
 

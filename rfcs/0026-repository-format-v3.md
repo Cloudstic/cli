@@ -131,6 +131,27 @@ requests (918 vs 992), on bytes moved (restore 100 vs 345 MB, check 100 vs
 8.1 MB), on stored size (77.1 vs 81.2 MB), and on peak RSS for every read
 operation.
 
+### What v3 stores, and when
+
+"Format v3 stores more" is the wrong summary and worth correcting here,
+because the pipeline number invites it. Measured on a 2,000-file `source` tree
+with six backups of 200 files of churn between each:
+
+| | 6 snapshots retained | after `forget --keep-last 1 --prune` |
+|---|---|---|
+| packfile format | 12.2 MB | 10.8 MB |
+| v3 | 32.0 MB | **6.3 MB** |
+
+v3 releases 80% of its stored bytes on prune where the packfile format
+releases 11%, and at a single snapshot it stores **42% less** — the object
+count and whole-leaf compression showing through once the garbage is gone.
+
+So the cost is not in the data but in the history: a changed entry rewrites its
+whole leaf, so each retained snapshot keeps a superseded copy of every leaf it
+touched. v3 trades history size for live-data size, and which way that falls
+depends on how a repository is used — pruning regularly is cheaper than on the
+packfile format, keeping every snapshot forever is dearer.
+
 ### Aging is the axis this format was for
 
 The single-pipeline numbers above measure a repository with one backup in it,

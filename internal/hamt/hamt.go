@@ -172,7 +172,7 @@ func WithLogger(w io.Writer) TreeOption {
 func WithFormatV3() TreeOption {
 	return func(ns *NodeStore) {
 		ns.v3 = true
-		ns.cache.Configure(nodeCacheSizeV3, nodeCacheBytesV3)
+		ns.cache.Configure(nodeCacheSizeV3, v3NodeCacheBytes())
 	}
 }
 

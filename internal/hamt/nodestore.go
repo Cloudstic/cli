@@ -46,8 +46,12 @@ const (
 	// to move when the leaf size does. A tree larger than this still falls off
 	// the cliff — the cache can only move it, not remove it — which is why the
 	// leaf budget carries the other half of the fix.
-	nodeCacheSizeV3  = 8192
-	nodeCacheBytesV3 = 32 * leafSplitBytesV3
+	nodeCacheSizeV3 = 8192
+
+	// nodeCacheLeaves is that budget expressed in leaves, which is the unit it
+	// means something in: the working set is counted in leaves, so the cache has
+	// to move when the leaf size does. See nodeCacheBytes().
+	nodeCacheLeaves = 32
 )
 
 // NodeStore is the only part of this package that knows HAMT nodes are bytes.
@@ -208,7 +212,7 @@ func (ns *NodeStore) leafOverfull(entries []leafEntry) bool {
 	var size int
 	for i := range entries {
 		size += entries[i].approxSize()
-		if size > leafSplitBytesV3 {
+		if size > v3LeafSplitBytes() {
 			return true
 		}
 	}

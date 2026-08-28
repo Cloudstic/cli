@@ -310,3 +310,72 @@ func TestV3DecodeRejectsCorruption(t *testing.T) {
 		}
 	}
 }
+
+// The tuning overrides exist so a sweep costs a run rather than a rebuild
+// (#524, #525). They must default to the constants and reject nonsense rather
+// than failing a backup over a typo.
+func TestV3TuningOverrides(t *testing.T) {
+	if got := v3LeafSplitBytes(); got != leafSplitBytesV3 {
+		t.Errorf("unset leaf budget = %d, want the constant %d", got, leafSplitBytesV3)
+	}
+	if got, want := v3NodeCacheBytes(), nodeCacheLeaves*leafSplitBytesV3; got != want {
+		t.Errorf("unset cache budget = %d, want %d", got, want)
+	}
+
+	// Overriding the leaf budget alone must move the cache with it: the cache
+	// is sized in leaves, so holding its bytes fixed would silently change how
+	// many leaves it holds.
+	t.Setenv(envLeafSplitBytesV3, "1048576")
+	if got := v3LeafSplitBytes(); got != 1048576 {
+		t.Errorf("overridden leaf budget = %d", got)
+	}
+	if got, want := v3NodeCacheBytes(), nodeCacheLeaves*1048576; got != want {
+		t.Errorf("cache budget = %d, want %d — it must track the leaf budget", got, want)
+	}
+
+	// An explicit cache override wins over the derived value.
+	t.Setenv(envNodeCacheBytesV3, "12345678")
+	if got := v3NodeCacheBytes(); got != 12345678 {
+		t.Errorf("explicit cache budget = %d", got)
+	}
+
+	for _, bad := range []string{"", "0", "-1", "banana", "8MB"} {
+		t.Setenv(envLeafSplitBytesV3, bad)
+		if got := v3LeafSplitBytes(); got != leafSplitBytesV3 {
+			t.Errorf("leaf budget %q = %d, want the constant: a bad knob must not change behaviour", bad, got)
+		}
+	}
+}
+
+// A leaf budget set by the environment must actually change how leaves split,
+// or the sweep it exists for measures nothing.
+func TestV3LeafBudgetOverrideChangesSplitting(t *testing.T) {
+	count := func(budget string) int {
+		t.Setenv(envLeafSplitBytesV3, budget)
+		tree, store := v3TestTree()
+		tx := tree.Edit("")
+		body := bytes.Repeat([]byte("x"), 32*1024)
+		for i := range 64 {
+			p := &Payload{Meta: fmt.Appendf(nil, `{"i":%d}`, i), Inline: body, Size: int64(len(body))}
+			if err := tx.InsertWithPayload(ctx, routingKeyFor(i), fmt.Sprintf("f-%d", i), "v", p); err != nil {
+				t.Fatalf("insert: %v", err)
+			}
+		}
+		if _, err := tx.Commit(ctx); err != nil {
+			t.Fatalf("commit: %v", err)
+		}
+		var leaves int
+		for _, data := range store.data {
+			if isV3NodeData(data) && data[len(nodeMagicV3)] == nodeKindLeafV3 {
+				leaves++
+			}
+		}
+		return leaves
+	}
+
+	small, large := count("262144"), count("8388608")
+	if small <= large {
+		t.Errorf("a 256 KB budget produced %d leaves and an 8 MB budget %d; "+
+			"the smaller budget must split more", small, large)
+	}
+}

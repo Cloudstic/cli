@@ -17,6 +17,7 @@
 //	gentree -out DIR -profile mixed -files 50000 [-seed 1] [-stats FILE]
 //	gentree -churn DIR -profile mixed [-seed 1] [-fraction 0.05]
 //	gentree -churn DIR -profile mixed [-seed 1] [-count 1000]
+//	gentree -churn DIR -profile mixed [-count 1000] [-churn-dirs 8]
 package main
 
 import (
@@ -135,6 +136,21 @@ func main() {
 		count    = flag.Int("count", 0, "churn: exact number of files to touch; overrides -fraction when > 0")
 		statsOut = flag.String("stats", "", "write a JSON summary of what was generated")
 		maxBytes = flag.Int64("max-bytes", 2<<30, "scale file sizes so the tree fits this budget; 0 disables")
+		// Breadth, held apart from volume. -count says how many files change;
+		// this says across how many directories they are spread. It exists
+		// because breadth is the variable format v3's retention cost is a
+		// function of — a snapshot keeps roughly
+		// `directories touched x leaf size` — and no knob varied it
+		// (RFC 0027 §6).
+		//
+		// The profile's own churnDirZipfS does not express it. That parameter
+		// chooses *which* directories are hot, not how many are reached:
+		// sweeping it from 0 to 2.2 moved the directories touched by 200
+		// changed files only from 53 to 41, because each pass takes a bounded
+		// share of a directory's files and the `source` profile's median
+		// fan-out is 6. Breadth there is budget divided by files-per-directory,
+		// whatever the ranking says.
+		churnDirs = flag.Int("churn-dirs", 0, "churn: spread the change across at most this many directories, taking as many files from each as needed; 0 uses the profile's natural spread")
 	)
 	flag.Parse()
 
@@ -168,7 +184,7 @@ func main() {
 		if *maxBytes > 0 {
 			p = fitToBudget(p, n, *maxBytes)
 		}
-		st, err = applyChurn(*churn, p, *seed, *fraction, *count)
+		st, err = applyChurn(*churn, p, *seed, *fraction, *count, *churnDirs)
 	}
 	if err != nil {
 		fatalf("%v", err)

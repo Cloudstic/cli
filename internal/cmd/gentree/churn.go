@@ -33,7 +33,11 @@ import (
 // changed" has to mean 1000 files at every tree size, which a fraction cannot
 // express without scaling with the tree. Zero defers to fraction, the
 // original size-relative behaviour.
-func applyChurn(root string, p profile, seed int64, fraction float64, count int) (stats, error) {
+// maxDirs, when greater than zero, caps how many directories the churn may
+// reach and lets each give up all of its files rather than a share. Volume and
+// breadth are independent variables and only volume had a knob; this is the
+// other one (RFC 0027 §6).
+func applyChurn(root string, p profile, seed int64, fraction float64, count, maxDirs int) (stats, error) {
 	rng := rand.New(rand.NewSource(seed ^ 0x5eed))
 	st := stats{}
 
@@ -51,6 +55,9 @@ func applyChurn(root string, p profile, seed int64, fraction float64, count int)
 	// directory stays hot, an archive stays cold.
 	sort.Strings(dirs)
 	hot := hotOrder(rng, dirs, p)
+	if maxDirs > 0 && maxDirs < len(hot) {
+		hot = hot[:maxDirs]
+	}
 
 	total, err := countFiles(root)
 	if err != nil {
@@ -117,8 +124,13 @@ func applyChurn(root string, p profile, seed int64, fraction float64, count int)
 
 			// How much of this directory changes this pass, weighted so hot
 			// directories churn hard rather than every directory churning a
-			// little.
+			// little. A capped run takes everything instead: the cap exists to
+			// concentrate the churn, and a share would just spread it over the
+			// next directory in the list.
 			share := 0.2 + 0.6*rng.Float64()
+			if maxDirs > 0 {
+				share = 1
+			}
 			n := int(float64(len(files)) * share)
 			if n < 1 {
 				n = 1

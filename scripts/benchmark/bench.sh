@@ -85,6 +85,15 @@ REPO_FORMAT=${REPO_FORMAT:-}
 # measure exactly what they measured before the stage existed.
 AGE_CHECKPOINTS=${AGE_CHECKPOINTS:-}
 AGE_CHURN=${AGE_CHURN:-200}
+# How many directories that churn is spread across, which is a separate
+# variable from how many files it changes and the one format v3's retention
+# cost is a function of — a snapshot keeps roughly
+# `directories touched x leaf size` (RFC 0027 §6). 0 leaves the profile's
+# natural spread. Note the two are coupled by the tree's fan-out: 200 changed
+# files cannot fit in 4 directories of median fan-out 6, so a cap below
+# roughly `count / fan-out` reduces the volume as well as the breadth, and
+# gentree reports what it actually achieved.
+AGE_CHURN_DIRS=${AGE_CHURN_DIRS:-0}
 
 # Read-only operations measured at each checkpoint. Beyond restore and check,
 # ls, find and diff are accepted: they traverse the same tree by different
@@ -678,6 +687,7 @@ run_aging() {
         if [ "$backups" -gt 0 ]; then
             "$GENTREE_BIN" -churn "$age_data" -profile "$profile" \
                 -seed "$(( 1000 + backups ))" -count "$AGE_CHURN" \
+                ${AGE_CHURN_DIRS:+-churn-dirs "$AGE_CHURN_DIRS"} \
                 -max-bytes "$MAX_BYTES" >/dev/null
         fi
 
@@ -805,7 +815,7 @@ env_file="${OUT%.csv}-env.txt"
     echo "samples:  $SAMPLES"
     echo "format:   ${REPO_FORMAT:-default}"
     if [ -n "$AGE_CHECKPOINTS" ]; then
-        echo "age:      checkpoints=$AGE_CHECKPOINTS churn=$AGE_CHURN ops=$AGE_OPS final=$AGE_FINAL_OPS policies=$POLICIES keep_store=$KEEP_STORE"
+        echo "age:      checkpoints=$AGE_CHECKPOINTS churn=$AGE_CHURN dirs=$AGE_CHURN_DIRS ops=$AGE_OPS final=$AGE_FINAL_OPS policies=$POLICIES keep_store=$KEEP_STORE"
     fi
 } >"$env_file"
 sed 's/^/  /' "$env_file"

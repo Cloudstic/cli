@@ -149,7 +149,7 @@ func TestChurnConcentratesInFewDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	st, err := applyChurn(root, p, 9, 0.05, 0)
+	st, err := applyChurn(root, p, 9, 0.05, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestChurnCountIsExactAcrossTreeSizes(t *testing.T) {
 			if _, err := generate(root, p, files, 9); err != nil {
 				t.Fatal(err)
 			}
-			st, err := applyChurn(root, p, 9, 0.05, count)
+			st, err := applyChurn(root, p, 9, 0.05, count, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -206,7 +206,7 @@ func TestChurnCountIsCappedByTreeSize(t *testing.T) {
 	if _, err := generate(root, p, 100, 3); err != nil {
 		t.Fatal(err)
 	}
-	st, err := applyChurn(root, p, 3, 0.05, 10000)
+	st, err := applyChurn(root, p, 3, 0.05, 10000, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +256,7 @@ func TestChurnDeletionsAreNotRecreated(t *testing.T) {
 	// same path is a collision, and one run may not produce it.
 	for seed := int64(0); seed < 20; seed++ {
 		before := snapshotFiles(t, root)
-		st, err := applyChurn(root, p, seed, 0.30, 0)
+		st, err := applyChurn(root, p, seed, 0.30, 0, 0)
 		if err != nil {
 			t.Fatal(err)
 		}

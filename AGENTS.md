@@ -60,7 +60,11 @@ Three layers, in cost order:
   its lack of duplication and constant fan-out is what made this workstream draw
   wrong conclusions about deduplication and write amplification. Select with
   `PROFILES=source ./scripts/benchmark/bench.sh`; `MAX_BYTES` scales the size
-  distribution to keep a realistic tree runnable.
+  distribution to keep a realistic tree runnable. `-churn-dirs` sets how many
+  directories a churn is spread across, independently of how many files it
+  changes — the profile's own `churnDirZipfS` chooses *which* directories are
+  hot rather than how many are reached, and sweeping it moved the directories
+  touched by 200 changed files only from 53 to 41.
 - **`internal/cmd/leafstat/`** — reports what a format-v3 repository's HAMT
   leaves are made of: their size distribution, how much of each is inline file
   content rather than metadata, and — via `-refs` set-differenced across
@@ -92,7 +96,12 @@ Three layers, in cost order:
 
   Setting `AGE_CHECKPOINTS="1 10 40 80"` adds an **aging stage** per
   (profile, size, backend) cell (absorbing the former `aging.sh`, RFC 0026):
-  one repository is aged with `AGE_CHURN` files of churn per backup and
+  one repository is aged with `AGE_CHURN` files of churn per backup —
+  `AGE_CHURN_DIRS` caps how many directories that churn is spread across,
+  which is a separate variable from how many files it changes and the one
+  format v3's retention cost is a function of (RFC 0027 §6); the two are
+  coupled by fan-out, so a cap below roughly `count / fan-out` reduces volume
+  as well as breadth and `gentree` reports what it achieved — and
   `AGE_OPS` (default `restore check`; also `ls`, `find`, `diff`, which
   traverse the same tree by different routes and are counted separately for
   that reason — `find` uses a never-matching pattern so it is the same walk

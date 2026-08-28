@@ -99,9 +99,41 @@ const (
 	//
 	// What pays for any of this is write amplification: a changed entry rewrites
 	// its whole leaf including the untouched content of its neighbours, so the
-	// budget is also the granularity of an incremental. That cost is bounded by
-	// the budget itself and does not compound — it is per changed leaf rather
-	// than per snapshot.
+	// budget is also the granularity of an incremental — and, because every
+	// retained snapshot keeps the leaves it rewrote, the budget is what a
+	// retained snapshot costs.
+	//
+	// The cost has a shape worth stating, because it is not proportional to
+	// churn (issue #525). A backup rewrites one leaf per *directory* it touched,
+	// since the affinity key routes a directory's entries together, so the bytes
+	// a snapshot retains are about
+	//
+	//	directories touched x mean leaf size
+	//
+	// which is independent of how large the repository is. Measured on `source`
+	// trees, six backups of 200 churned files each — a churn that lands in ~47
+	// directories:
+	//
+	//	                        2,000 files      20,000 files
+	//	 leaves in the tree              19               219
+	//	 nodes rewritten per backup   20/21            ~91/296
+	//	 of the tree                   100%               31%
+	//	 stored per retained snapshot  5.5 MB           23 MB
+	//
+	// The small tree *saturates*: 47 touched directories cannot fit in 19
+	// leaves, so every leaf holds a change and each snapshot costs a full copy
+	// of the repository. That is arithmetic rather than a defect in the routing,
+	// and no locality scheme escapes it — the only cure is more leaves, which is
+	// a smaller budget, which is the trade above. Once leaves outnumber the
+	// touched directories the absolute cost settles at the product and the
+	// fraction decays with every file added.
+	//
+	// So v3 stores less live data and more history. At 20,000 files it holds
+	// 82 MB against the packfile format's 103 MB after `forget --keep-last 1
+	// --prune`, and 198 MB against 105 MB with all six snapshots retained. A
+	// repository that is pruned is smaller than on the packfile format; one that
+	// retains everything is larger, and by ~23 MB per snapshot rather than by a
+	// factor.
 	leafSplitBytesV3 = 4 * 1024 * 1024
 	maxLeafEntriesV3 = 2048
 

@@ -112,26 +112,85 @@ func (bm *BackupManager) processEntry(ctx context.Context, meta *core.FileMeta, 
 	return nil
 }
 
+// scanBatchBytes bounds the scan's lookup batch by the memory it holds rather
+// than by an entry count.
+//
+// The batch decides how many times a full scan sweeps the previous tree.
+// Lookups are sorted within a batch, so one batch is one pass over the whole
+// key space; N batches are N passes, and every pass re-reads whatever the node
+// cache could not keep. On a 20,000-file `source` tree — 25,321 entries against
+// an 8,192-entry batch, so three passes over 306 MB of leaves against a 64 MB
+// cache — that cost 4,630 MB of allocation and 2.7s where one pass costs
+// 2,392 MB and 1.5s (issue #535).
+//
+// Buffering scan entries and caching leaves both buy the same thing, and this
+// is the cheaper side of that trade by three orders of magnitude: a `FileMeta`
+// is on the order of a kilobyte where the leaf carrying it is megabytes, most
+// of which is inline file content that change detection never looks at. So the
+// memory is better spent here than in `nodeCacheBytes`.
+//
+// It is a bound and not a fix: a tree with more entries than one batch holds
+// still sweeps more than once. What removes the sweeps entirely is making the
+// lookups globally ordered rather than ordered within a batch, which is a
+// larger change (RFC 0027 §2.4).
+const scanBatchBytes = 64 << 20
+
+// scanBatch accumulates scanned entries until they are worth resolving as a
+// group, bounding what it holds in bytes rather than in entries.
+type scanBatch struct {
+	metas []core.FileMeta
+	bytes int
+}
+
+// add buffers one entry and reports whether the batch is now full.
+func (b *scanBatch) add(m core.FileMeta) bool {
+	b.bytes += approxMetaSize(&m)
+	b.metas = append(b.metas, m)
+	return b.bytes >= scanBatchBytes
+}
+
+func (b *scanBatch) reset() {
+	b.metas = b.metas[:0]
+	b.bytes = 0
+}
+
+// approxMetaSize estimates a FileMeta's in-memory footprint, for the byte
+// budget above. It counts the variable-length fields and a fixed allowance for
+// the scalars and headers; the budget is a target, not a contract.
+func approxMetaSize(m *core.FileMeta) int {
+	n := 256 + len(m.FileID) + len(m.Name) + len(m.ContentHash) + len(m.ContentRef) + len(m.Owner)
+	for _, p := range m.Parents {
+		n += len(p) + 16
+	}
+	for _, p := range m.Paths {
+		n += len(p) + 16
+	}
+	for k, v := range m.Xattrs {
+		n += len(k) + len(v) + 32
+	}
+	n += len(m.Extra) * 64
+	return n
+}
+
 func (bm *BackupManager) scan(ctx context.Context, oldRoot string) (pending []core.FileMeta, totalBytes int64, err error) {
 	phase := bm.reporter.StartPhase("Scanning", 0, false)
 	bm.txn = bm.tree.Edit("")
 	s := &scanState{}
 
-	batch := make([]core.FileMeta, 0, entryBatch)
+	batch := scanBatch{metas: make([]core.FileMeta, 0, entryBatch)}
 	err = bm.source.Walk(ctx, func(meta core.FileMeta) error {
 		phase.Increment(1)
-		batch = append(batch, meta)
-		if len(batch) < entryBatch {
+		if !batch.add(meta) {
 			return nil
 		}
-		if err := bm.processBatch(ctx, oldRoot, batch, s, phase); err != nil {
+		if err := bm.processBatch(ctx, oldRoot, batch.metas, s, phase); err != nil {
 			return err
 		}
-		batch = batch[:0]
+		batch.reset()
 		return nil
 	})
-	if err == nil && len(batch) > 0 {
-		err = bm.processBatch(ctx, oldRoot, batch, s, phase)
+	if err == nil && len(batch.metas) > 0 {
+		err = bm.processBatch(ctx, oldRoot, batch.metas, s, phase)
 	}
 
 	if err != nil {

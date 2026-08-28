@@ -896,3 +896,35 @@ cloudstic,minio,source,5000,1,restore@25,0.55,158.0,70.0,199,20.4,,0 KB,25,25,ba
 		t.Error("a report with no stored sizes still rendered a retention table")
 	}
 }
+
+// Policies are interleaved at every checkpoint, so their series normally match
+// — but a failed measurement writes no row, and lining the columns up by
+// position would then render a policy's later values against a backup count
+// they were not taken at. A gap has to stay a gap.
+func TestRetainedSizeMatchesEachPolicyByBackupCount(t *testing.T) {
+	csv := `tool,backend,profile,scale,sample,operation,seconds,peak_mb,alloc_mb,requests,sent_mb,by_api,repo_delta,packs,backups,policy,stored_kb
+cloudstic,local,source,2000,1,restore@1,0.40,150.0,60.0,,,,0 KB,,1,baseline,6144
+cloudstic,local,source,2000,1,restore@1:probe,0.40,150.0,60.0,,,,0 KB,,1,probe,5120
+cloudstic,local,source,2000,1,restore@3,0.42,151.0,61.0,,,,0 KB,,3,baseline,17408
+cloudstic,local,source,2000,1,restore@5,0.44,152.0,62.0,,,,0 KB,,5,baseline,28672
+cloudstic,local,source,2000,1,restore@5:probe,0.44,152.0,62.0,,,,0 KB,,5,probe,20480
+`
+	var b strings.Builder
+	if err := Render(&b, parse(t, csv), "test"); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	out := b.String()
+
+	for _, want := range []string{
+		"| Backups | baseline (MB) | per backup | probe (MB) | per backup |",
+		"| 3 | 17.0 | 5.5 | — | — |",
+		// probe's marginal spans the interval it actually measured across —
+		// four backups, not the two the row above it covers.
+		"| 5 | 28.0 | 5.5 | 20.0 | 3.8 |",
+		"1 → 5 backups (probe): **3.8 MB per retained snapshot**",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rendered report is missing %q\n%s", want, out)
+		}
+	}
+}

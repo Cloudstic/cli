@@ -1,7 +1,9 @@
 # RFC 0027: Decoupling Read and Write Layout
 
-- **Status:** Proposed. No implementation. This document exists to force a
-  decision, not to record one.
+- **Status:** Proposed. No implementation, and none recommended yet — the
+  evidence points at a measurement first, and at a real possibility that the
+  answer is "do nothing". This document exists to force a decision, not to
+  record one.
 - **Date:** 2026-08-28
 - **Affects:** repository format (major version), `internal/hamt`,
   `internal/storelayer`, `pkg/crypto`, `docs/compatibility.md`
@@ -263,51 +265,191 @@ Leaf composition, measured with `internal/cmd/leafstat` after six backups:
    costs a full copy whatever the design. No candidate here changes that,
    because it is arithmetic.
 
+## Prior art: what has been built, and what it broke
+
+### Kopia's epoch manager is Family 2a, in production
+
+Kopia already ships tree-level deferred compaction, for its content index.
+Index blobs are append-only and grouped into epochs; a reader starts from the
+most recent "state of the world" checkpoint and merges only what follows.
+A new epoch is started when **more than 20 index blobs exist and more than 24
+hours have passed**, and past epochs compact automatically. The stated
+motivation was ransomware resistance — never deleting a blob — but the
+structure is the one Family 2a would need.
+
+Its issue tracker is, usefully, a list of the edge cases this RFC predicted
+independently:
+
+- **The bound can fail, and then cannot recover.** Kopia #5057: a repository
+  reached **28,467 index blobs** against a healthy baseline under 1,000, and
+  ten consecutive full maintenance runs *increased* the count by 123. Two
+  corrupted session blobs had blocked deletion for a week; afterwards the
+  epoch manager's own safety window — 24 hours to advance plus a 4 hour margin
+  — classified the backlog as "too recent to delete" indefinitely. Kopia warns
+  "Found too many index blobs (28468), this may result in degraded
+  performance." This is edge case 9, realised: a chain bounded only by
+  maintenance, with maintenance itself able to fail silently.
+- **Compaction on a read path breaks read-only credentials.** Kopia #3224: the
+  epoch manager attempts to advance the epoch and compact opportunistically
+  *while loading an index*, and hangs against read-only storage. The
+  maintainers' own conclusion is that this "conflates read and write
+  semantics." This is edge case 6, realised.
+- **Compaction racing readers needs a safety window,** which is what created
+  #5057. The two constraints are in direct tension, and Kopia resolves it with
+  time; this repository resolves the equivalent with absorption ("remove only
+  index objects the store has itself absorbed"), which does not have a clock in
+  it.
+
+**We have also already built a small version of this ourselves.** The v2 pack
+catalog is append-only shards under `index/packmap/` compacted past
+`packIndexCompactThreshold`, and AGENTS.md records why the threshold exists:
+shard count "grows with the number of backups a repository has ever taken, and
+only `prune` ever bounded it." Kopia #5057 is what that failure looks like when
+it is allowed to run for a week.
+
+One difference matters and cuts in 2b's favour: **Kopia's LSM is over a flat
+index**, a `hash → location` map that merges trivially. Family 2a would need to
+merge a *tree*. Nobody has the easy version of that problem.
+
+### Prolly trees do not offer anything v3 lacks
+
+The standard answer to "content-addressed tree with cheap diffs" is a prolly
+tree (Noms, Dolt): content-defined chunk boundaries, history independence,
+structural sharing, and diff by comparing content addresses. v3's
+hash-routed HAMT already has all four — an entry's position is a pure function
+of its key, and `diff` skips identical subtrees by ref (`hamt.go:1060`).
+
+More to the point, prolly trees do not escape the trade either: modifying a
+value rewrites its containing chunk, and Dolt's own documentation puts the
+cost at "4 kilobytes times the size of the tree" per edit. **Their chunks are
+4 KB where ours are 4 MB — a thousandfold difference that is entirely a
+cost-model difference**, local disk against per-request billing. That is the
+clearest external confirmation that our dial is the right dial and that it is
+simply set for a different machine.
+
+### SlateDB inverts one of our assumptions
+
+SlateDB is an LSM built directly on object storage, and its design notes say
+write amplification "is not much of a concern from a cost perspective, as major
+cloud providers don't charge for data transfers to/from the standard tier."
+That is worth internalising: **our write amplification is not paid in transfer,
+it is paid in storage rent** — which is a very different, and much cheaper,
+unit than the one the request counts are in. See the next section.
+
+### Two mechanisms worth knowing about
+
+- **S3 conditional writes** (`If-Match` / `If-None-Match`, generally available
+  since November 2024) give compare-and-swap on a key. That is a lock-free
+  answer to compaction racing a concurrent writer, and a better one than a time
+  window. It is S3-only, so it would be an optimisation over the existing lock
+  rather than a replacement.
+- **`UploadPartCopy`** composes a new object server-side from byte ranges of
+  existing objects, which is exactly what compaction wants and would move zero
+  bytes through the client. **It does not apply at our sizes**: the minimum
+  part is 5 MB and a range source must exceed 5 MB, while a v3 leaf is ~800 KB
+  stored. It would only become available if compaction operated on aggregates
+  much larger than a leaf — which is Family 3, and is worth remembering as an
+  argument for it.
+
+### A note on patents
+
+Several of the obvious designs here appear in granted patents — sparse metadata
+segment trees for reducing read-modify-write amplification in Merkle-represented
+deduplication systems, extent-based global deduplication, and metadata/data
+write coalescing among them. This is a flag for counsel before implementing,
+not a legal opinion, and not a reason to stop thinking.
+
+## What the cost actually is, in money
+
+The retention law says a snapshot costs `directories touched x mean leaf size`,
+**independent of repository size**. That has a consequence worth stating plainly
+before anyone spends a format on it: the overhead is an *absolute* quantity, so
+its share of a repository shrinks as the repository grows.
+
+Daily backups kept for a year, churn in ~47 directories as measured, at S3
+Standard's $0.023/GB-month:
+
+| source | v3 base | v3 history / yr | packfile history / yr | v3 overhead | at $0.023/GB-mo |
+|---|---:|---:|---:|---:|---:|
+| 357 MB | 83 MB | ~8.4 GB | ~0.5 GB | ~7.9 GB | **~$0.18/mo** |
+| 35 GB | ~8 GB | ~8.4 GB | ~0.5 GB | ~7.9 GB | **~$0.18/mo** |
+| 1 TB | ~230 GB | ~8.4 GB | ~0.5 GB | ~7.9 GB | **~$0.18/mo** |
+
+The ratio is alarming and the absolute number is not: 14x more history on the
+small repository, 3% more repository on the large one, and the same fixed
+~$2/year either way. The 2x figure in issue #525 is what this looks like on a
+357 MB tree at six snapshots — the least favourable point on the curve.
+
+Two things would change that conclusion, and both are about the *input* rather
+than the format:
+
+- **A user who churns far more directories.** At 1,000 touched directories per
+  backup the same law gives ~1.4 GB per snapshot and ~500 GB/year — around
+  $11/month, and no longer noise. Directory *breadth* of churn, not volume, is
+  the variable that matters, and it is not something the current benchmark
+  varies.
+- **Anything that makes every directory look touched.** Tooling that rewrites
+  mtimes tree-wide, a `chmod -R`, or a directory rename under a path-identity
+  source (which re-keys the whole subtree) all push towards the saturated
+  regime, where every snapshot costs a full copy.
+
+So the case for spending a format break is not "v3 stores 2x"; it is "v3 stores
+`dirs x leaf` per snapshot, and some real workloads make `dirs` large." That is
+a much narrower claim, and it is testable before any format work — by varying
+churn breadth in the harness, which is a `gentree` change, not a format change.
+
 ## Open questions
 
-1. **What is the target?** RFC 0026 set ≤1.2x at 80 backups and reached 1.8x.
-   Nothing here should start without saying which number it moves and by how
-   much. This gates the rest.
-1. **Is the chain length boundable in practice?** v2's linear term came from a
-   snapshot's entries scattering across every pack that contributed; Family 2
-   reintroduces a bounded version of the same thing, and the bound is the whole
-   design. It has to be measured, not argued — the aging harness now reports
-   the retained-size half of it directly (#531), and the read half is what
-   `AGE_CHECKPOINTS` already measures.
+1. **Is `directories touched` large for any workload we care about?** This now
+   gates everything else. The cost is `dirs x leaf size` per snapshot, fixed in
+   absolute terms at roughly $2/year, so a format break is justified only if
+   real churn is far broader than the ~47 directories measured. Answering it
+   needs a `gentree` knob for churn *breadth* — independent of volume — and one
+   sweep. It is days of work, not a format, and it can say "no".
+1. **What is the target?** RFC 0026 set ≤1.2x requests at 80 backups and
+   reached 1.8x. Nothing here should start without naming the number it moves.
+   Note that the request axis and the retention axis have very different price
+   tags, and only the first has been treated as a headline.
 1. **How many bundles does a leaf accumulate under real churn (2b)?** The
    premise is that a rewrite carrying 1–3% metadata instead of 100% of a leaf
-   cuts retention cost by that factor. The cost is `1 + bundles-per-leaf`
-   requests to read a leaf's content. Both are measurable on the existing
-   harness before any format work, by instrumenting what a backup *would* have
-   written.
+   cuts retention cost by that factor; the cost is `1 + bundles-per-leaf`
+   requests to read a leaf's content. Both are measurable by instrumenting what
+   a backup *would* have written, before any format exists.
+1. **Can the chain be bounded without a clock?** Kopia bounds epochs on count
+   *and* elapsed time, and #5057 is what happens when the time half turns a
+   backlog into a permanent one. This repository's pack-catalog compaction
+   bounds on absorption instead, which has no clock in it. Any Family 2 design
+   should inherit the second, not the first.
 1. **Does Family 1 pay for itself when nothing ranges?** Per-segment framing,
    tags and lost cross-segment compression cost bytes on every leaf, while the
-   operations that benefit — `cat`, `ls <path>`, path-scoped restore, `diff`,
-   incremental sources — are none of the ones the benchmark measures. It may be
-   worth doing for the operations users actually run interactively rather than
-   for a benchmark number, which is a legitimate answer but should be said out
-   loud.
+   beneficiaries — `cat`, `ls <path>`, path-scoped restore, `diff`, incremental
+   sources — are none of the ones the benchmark measures. It may be worth doing
+   for interactive latency rather than for a benchmark number. That is a
+   legitimate answer; it should be said out loud rather than smuggled in.
 1. **Can anything ship without a v4?** Every candidate changes the node
    encoding. v3 is opt-in and not yet the default (#517), so a second format
    break is cheaper now than it will ever be again — an argument for deciding
    before flipping the default, not after.
-1. **Is 2b enough on its own?** It is the least invasive candidate, it keeps
-   content addressing and `diff`'s short-circuit, and it attacks the one number
-   we cannot move. If its measured bundle count is small, the case for 2a and
-   for Family 3 largely evaporates.
 
 ## Sequencing
 
-No implementation until question 1 is answered.
+**No format work is proposed.** The evidence assembled here points at a cheaper
+first step and at a real possibility that the answer is "do nothing".
 
-If the answer justifies proceeding, the order that follows from the analysis
-above is: **measure 2b's two quantities on the existing harness** (retention
-saving, bundles per leaf) without writing a format; then decide 2b against 2a
-on that evidence; then treat Family 1 as a separate, independently justified
-piece of work about interactive latency rather than as a step toward Family 3.
+1. **Vary churn breadth in the harness** (question 1). A `gentree` knob and one
+   sweep. If broad churn is rare, the retention cost is a fixed ~$2/year and
+   this RFC closes with a note in RFC 0026 rather than an implementation.
+1. **If it is not rare, instrument 2b's two quantities** (question 3) against
+   the existing harness, still without writing a format.
+1. **Only then** decide 2b against 2a, on measured numbers, inheriting the
+   absorption-based bound rather than a time-based one.
+1. **Treat Family 1 separately**, justified — or not — by interactive latency
+   on its own terms.
 
-What should *not* happen is another constant sweep. The dial is spent, and
-issue #525 is the record of the last turn of it.
+What should not happen is another constant sweep. The dial is spent, issue #525
+is the record of the last turn of it, and Dolt setting the same dial a
+thousandfold lower for a different cost model is the clearest sign that it is
+the right dial rather than a missing idea.
 
 ## References
 
@@ -318,3 +460,21 @@ issue #525 is the record of the last turn of it.
 - Issue #525 — the retention measurement, and the sweeps it closed out.
 - Issue #514 — chunk promotion, measured and rejected.
 - `docs/compatibility.md` — the rules any format change is bound by.
+- [Kopia #1090](https://github.com/kopia/kopia/issues/1090) — the epoch
+  manager's design: append-only index blobs, epoch advance on >20 blobs and
+  >24 hours, "state of the world" checkpoints.
+- [Kopia #5057](https://github.com/kopia/kopia/issues/5057) — 28,467 index
+  blobs, maintenance unable to reduce them, the safety window holding the
+  backlog permanently.
+- [Kopia #3224](https://github.com/kopia/kopia/issues/3224) — the epoch manager
+  compacting on a read path, and hanging against read-only storage.
+- [Dolt: Prolly Trees](https://www.dolthub.com/blog/2024-03-03-prolly-trees/) —
+  content-defined chunk boundaries, history independence, and a 4 KB target
+  chunk size.
+- [SlateDB design overview](https://slatedb.io/docs/design/overview/) — an LSM
+  on object storage, and its point that byte-level write amplification is not
+  where the cost is.
+- [S3 conditional writes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html)
+  and [`UploadPartCopy`](https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPartCopy.html)
+  — compare-and-swap on a key, and server-side composition from ranges with a
+  5 MB minimum.

@@ -18,9 +18,24 @@ import (
 	"github.com/jotfs/fastcdc-go"
 )
 
-// fastcdc-go mutates a package-level lookup table inside NewChunker,
-// so concurrent calls race. Serialize creation to avoid this.
-var cdcMu sync.Mutex
+// fastcdc-go mutates a package-level lookup table inside NewChunker (it XORs
+// the seed into every entry), so that write races both other constructions and
+// every chunker already running — nextChunk reads the same table for each byte
+// it rolls.
+//
+// Serializing construction alone is therefore not enough, which is what this
+// was before: a second file entering the chunker while a first was mid-stream
+// raced, and `go test -race` reported it as soon as a test backed up two
+// chunked files at once. Construction takes the write lock; each Next takes the
+// read lock, so constructions wait only for the chunk boundaries in flight
+// rather than for whole streams. At a 1 MiB average chunk that is one
+// uncontended RLock per megabyte read.
+//
+// The seed is always zero here, so the write stores each entry's existing
+// value — which is why this went unnoticed and why no repository was ever
+// mis-chunked by it. It is still a data race, and the memory model makes no
+// promises about one.
+var cdcMu sync.RWMutex
 
 // FastCDC boundary sizes.
 const (
@@ -115,7 +130,9 @@ func (c *Chunker) ProcessStream(ctx context.Context, r io.Reader, onProgress fun
 	g.Go(func() error {
 		defer close(jobs)
 		for {
+			cdcMu.RLock()
 			chunk, err := cdc.Next()
+			cdcMu.RUnlock()
 			if errors.Is(err, io.EOF) {
 				break
 			}

@@ -31,13 +31,25 @@ const (
 	// objects in a repository than the format intends and left v3 needing
 	// thousands of requests where v2 needed dozens.
 	//
-	// At 2 bits a split halves-and-halves-again instead, so a leaf holds
-	// between a quarter of the budget and all of it. The tree is deeper in
-	// levels but its interior nodes are tiny and hot in cache, while the
-	// objects that cost a request — the leaves — land near their intended
-	// size. Raising the budget instead would not do this: the overshoot is a
-	// ratio, and a budget 32x larger would rewrite 32x more bytes when one
-	// file in a leaf changes.
+	// At 2 bits a split quarters instead, so a leaf holds between a quarter of
+	// the budget and all of it. The tree is deeper in levels but its interior
+	// nodes are tiny and hot in cache, while the objects that cost a request —
+	// the leaves — land near their intended size.
+	//
+	// 2 is the measured optimum, not a midpoint. Fill is bounded by the split
+	// geometry: a full leaf partitions into quarters and each refills to the
+	// budget, so the steady state runs between 25% and 100% and averages
+	// around half. On a 2,000-file `source` tree that is 883 KB average and
+	// 1.07 MB median against a 2 MB budget — 44% and 53%, the geometric floor
+	// rather than a defect, and the reason there is no fill left to recover by
+	// packing leaves harder. Narrowing to 1 bit raises the floor to 50% but
+	// costs a level of interior nodes for every bit it stops routing, and
+	// measured *worse* overall on the same tree: 761 stored objects against
+	// 700, with check and restore unmoved. Widening to 3 bits drops fill back
+	// toward an eighth: 928 objects, and check from 904 requests to 1,268.
+	//
+	// So arity is settled and fill is at its ceiling. The only remaining dial
+	// on how many objects a repository holds is the byte budget below.
 	bitsPerLevelV3 = 2
 	branchingV3    = 4  // 2^bitsPerLevelV3
 	maxDepthV3     = 15 // 30 of the 32 routing bits, as in v2
@@ -49,8 +61,34 @@ const (
 	// keeps the linear scans inside one leaf bounded when entries are tiny.
 	//
 	// Both are write-path tuning knobs, not compatibility surface: a reader
-	// accepts any leaf size, so revising them changes new nodes only.
-	leafSplitBytesV3 = 2 * 1024 * 1024
+	// accepts any leaf size, so revising them changes new nodes only. Routing
+	// arity is not revisable that way — a routed lookup must use the shape
+	// that wrote the tree — but the budget is.
+	//
+	// The budget counts *encoded* bytes, while the 8 MB packfiles this format
+	// replaces are 8 MB *stored*. Nothing reconciles the two: a leaf passes
+	// through CompressedStore on its way out, and zstd takes a leaf of real
+	// file content to roughly a fifth of its encoded size. A 2 MB budget was
+	// therefore producing ~190 KB objects — a repository of 667 of them where
+	// the packfile format held 21 — which is where v3's request counts on a
+	// fresh repository came from, not from leaves failing to fill.
+	//
+	// 8 MB is the size the packfile layer used for the same purpose, and
+	// measured on the benchmark pipeline over a 2,000-file `source` tree it is
+	// where the read side stops improving cheaply. Against the 2 MB it
+	// replaces: check 904 → 206 requests, restore 915 → 128, prune 1,023 →
+	// 200, backup-dedup 2,067 → 178, and the repository holds 213 objects
+	// instead of 667.
+	//
+	// What pays for it is write amplification, because a changed entry
+	// rewrites its whole leaf including the untouched content of its
+	// neighbours. A single-file incremental uploads 1.6 MB instead of 0.4 MB.
+	// That is the honest cost and it is bounded by the budget itself; it does
+	// not compound, because it is per changed leaf rather than per snapshot —
+	// a repository kept at one snapshot stores 52 MB at either budget, and the
+	// 79 MB → 104 MB spread seen with six snapshots retained is the retention,
+	// not the format.
+	leafSplitBytesV3 = 8 * 1024 * 1024
 	maxLeafEntriesV3 = 2048
 
 	nodePrefix = "node/"
@@ -319,7 +357,7 @@ func (tx *Txn) InsertWithPayload(ctx context.Context, routingKey, key, value str
 		return err
 	}
 	entry := leafEntry{Key: key, PathKey: r.hex, Value: value, payload: p}
-	c, err := tx.insert(ctx, tx.root, r, entry, 0)
+	c, _, err := tx.insert(ctx, tx.root, r, entry, 0)
 	if err != nil {
 		return err
 	}
@@ -531,14 +569,33 @@ func (tx *Txn) own(ctx context.Context, c child) (*node, error) {
 // Internal: insert
 // ---------------------------------------------------------------------------
 
-func (tx *Txn) insert(ctx context.Context, c child, r routing, entry leafEntry, level int) (child, error) {
+// insert places entry in the subtree rooted at c, reporting whether it replaced
+// an entry already under the same key rather than adding a new one.
+//
+// The caller needs that distinction to keep a tree's shape a pure function of
+// its contents, which is what node-level deduplication between snapshots rests
+// on. An addition can only make a leaf bigger, and the split rule covers that.
+// A replacement can move it either way, and in v3 by a lot: an entry's payload
+// carries the file's own bytes, so a small file growing to half a megabyte
+// overfills a leaf that never reconsiders splitting, and the reverse leaves
+// behind a subtree that split under content it no longer holds. The first is
+// handled by putting the replacement through the same split rule as an append
+// (see insertIntoLeaf); the second by collapsing on the way back up, which is
+// exactly the invariant delete already maintains.
+//
+// Only the replacement path pays for it, so the ordinary append — every entry
+// of a full scan, which rebuilds its tree from scratch — is untouched. The
+// path that reaches this is the change-feed scan (gdrive-changes,
+// onedrive-changes), which edits the previous snapshot's tree in place, so
+// every changed file arrives as a replacement.
+func (tx *Txn) insert(ctx context.Context, c child, r routing, entry leafEntry, level int) (child, bool, error) {
 	var n *node
 	if c.isZero() {
 		n = &node{leaf: true}
 	} else {
 		var err error
 		if n, err = tx.own(ctx, c); err != nil {
-			return child{}, err
+			return child{}, false, err
 		}
 	}
 
@@ -548,7 +605,7 @@ func (tx *Txn) insert(ctx context.Context, c child, r routing, entry leafEntry, 
 
 	idx, err := r.indexAt(level, tx.nodes.bits())
 	if err != nil {
-		return child{}, err
+		return child{}, false, err
 	}
 	pos, exists := childPos(n.bitmap, idx)
 
@@ -556,9 +613,9 @@ func (tx *Txn) insert(ctx context.Context, c child, r routing, entry leafEntry, 
 	if exists {
 		cur = n.children[pos]
 	}
-	newChild, err := tx.insert(ctx, cur, r, entry, level+1)
+	newChild, replaced, err := tx.insert(ctx, cur, r, entry, level+1)
 	if err != nil {
-		return child{}, err
+		return child{}, false, err
 	}
 
 	if exists {
@@ -567,13 +624,27 @@ func (tx *Txn) insert(ctx context.Context, c child, r routing, entry leafEntry, 
 		n.bitmap |= uint32(1) << idx
 		n.children = slices.Insert(n.children, pos, newChild)
 	}
-	return child{node: n}, nil
+	if !replaced {
+		return child{node: n}, false, nil
+	}
+	collapsed, _, err := tx.collapse(ctx, n, level)
+	if err != nil {
+		return child{}, false, err
+	}
+	return collapsed, true, nil
 }
 
-func (tx *Txn) insertIntoLeaf(n *node, entry leafEntry, level int) (child, error) {
+func (tx *Txn) insertIntoLeaf(n *node, entry leafEntry, level int) (child, bool, error) {
 	if i := n.indexOfKey(entry.Key); i >= 0 {
 		n.entries[i] = entry
-		return child{node: n}, nil
+		// A replacement can push a leaf over the budget as easily as an
+		// append can — in v3 the new payload may be far larger than the one
+		// it displaces — so it faces the same split rule.
+		if level < tx.nodes.maxDepth() && tx.nodes.leafOverfull(n.entries) {
+			c, err := tx.buildNode(n.entries, level)
+			return c, true, err
+		}
+		return child{node: n}, true, nil
 	}
 
 	n.entries = append(n.entries, entry)
@@ -583,9 +654,10 @@ func (tx *Txn) insertIntoLeaf(n *node, entry leafEntry, level int) (child, error
 	// (see leafOverfull) — unless routing bits have run out, in which case the
 	// leaf may grow past it.
 	if level < tx.nodes.maxDepth() && tx.nodes.leafOverfull(n.entries) {
-		return tx.buildNode(n.entries, level)
+		c, err := tx.buildNode(n.entries, level)
+		return c, false, err
 	}
-	return child{node: n}, nil
+	return child{node: n}, false, nil
 }
 
 // buildNode recursively partitions entries into a subtree starting at level.

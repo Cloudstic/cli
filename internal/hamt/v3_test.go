@@ -140,10 +140,12 @@ func TestV3LeavesSplitOnByteBudget(t *testing.T) {
 	tree, store := v3TestTree()
 	tx := tree.Edit("")
 
-	// 64 entries of 64 KB inline content is ~4 MB — far over one leaf's
-	// budget, far under maxLeafEntriesV3. Only the byte rule can split this.
+	// Four leaf budgets' worth of 64 KB inline entries: far over one leaf's
+	// budget, far under maxLeafEntriesV3, so only the byte rule can split it.
+	// Sized from the budget rather than at a fixed count, because what this
+	// asserts is that the rule fires — not where the budget happens to sit.
 	big := bytes.Repeat([]byte("x"), 64*1024)
-	const n = 64
+	n := 4 * leafSplitBytesV3 / len(big)
 	for i := range n {
 		p := &Payload{Meta: fmt.Appendf(nil, `{"i":%d}`, i), Inline: big, Size: int64(len(big))}
 		if err := tx.InsertWithPayload(ctx, routingKeyFor(i), fmt.Sprintf("file-%d", i), "v", p); err != nil {

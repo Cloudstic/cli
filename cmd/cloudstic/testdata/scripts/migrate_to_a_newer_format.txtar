@@ -1,0 +1,78 @@
+# `migrate` moves a repository to a newer format by copying it into a new one.
+#
+# The property that makes it safe is negative: the source is only read. A
+# migration that fails, or one the operator decides against, costs nothing,
+# because the old repository is still there and still authoritative. So the
+# script checks not only that the history arrives but that nothing at the
+# source moved, and that a second run continues instead of duplicating.
+
+exec cloudstic init -store local:$WORK/old -password repo-pw
+exec cloudstic backup -store local:$WORK/old -password repo-pw -source local:$WORK/data -tag nightly
+stdout 'saved'
+
+# Record what the source holds, so the assertion below is about the bytes on
+# disk rather than about the command's own account of itself.
+exec cloudstic list -store local:$WORK/old -password repo-pw -json
+cp stdout $WORK/before.json
+
+# The destination does not exist yet: migrate creates it at the target format,
+# with the same credentials, and says so before it copies anything.
+exec cloudstic migrate -store local:$WORK/old -to local:$WORK/new -password repo-pw
+stderr 'Created local:.*new at format 3 \(encrypted: true\)'
+stdout 'migrating local:.*old \(format 2\)'
+stdout 'to local:.*new \(format 3\)'
+stdout 'the source is only read'
+stdout 'copied 1 snapshot, skipped 0 snapshots'
+
+# Verification is part of the command, not a step the operator has to remember.
+stderr 'No errors found'
+stderr 'Migration complete'
+stderr 'Only then delete local:.*old'
+
+# The migrated repository is an ordinary repository: its history, its tags and
+# its file contents are the source's.
+exec cloudstic list -store local:$WORK/new -password repo-pw
+stdout 'nightly'
+
+exec cloudstic restore -store local:$WORK/new -password repo-pw -output $WORK/restored
+exists $WORK/restored/notes.txt
+grep 'hello from the repository being migrated' $WORK/restored/notes.txt
+
+# Format 3 is packless and keeps metadata in the leaves, so neither the
+# filemeta/ nor the content/ namespace exists in the destination — this is what
+# distinguishes a real migration from a copy that merely re-encoded v2.
+! exists $WORK/new/filemeta
+! exists $WORK/new/content
+! exists $WORK/new/packs
+
+# The source is untouched: same snapshots, still readable, still at format 2.
+exec cloudstic list -store local:$WORK/old -password repo-pw -json
+cmp stdout $WORK/before.json
+exec cloudstic check -store local:$WORK/old -password repo-pw -read-data
+stderr 'No errors found'
+
+# An interrupted migration is resumed by re-running it: copy skips what the
+# destination's provenance says it already has.
+exec cloudstic migrate -store local:$WORK/old -to local:$WORK/new -password repo-pw
+stdout 'already copied as snapshot'
+stdout 'copied 0 snapshots, skipped 1 snapshot'
+stderr 'Migration complete'
+
+# A repository already at the target format has nothing to migrate to.
+! exec cloudstic migrate -store local:$WORK/new -to local:$WORK/newer -password repo-pw
+stderr 'already records format 3'
+
+# Naming one repository on both sides is refused before either is opened.
+! exec cloudstic migrate -store local:$WORK/old -to local:$WORK/old -password repo-pw
+stderr 'names the repository being migrated'
+
+# The destination has to be named at all.
+! exec cloudstic migrate -store local:$WORK/old -password repo-pw
+stderr 'specify the destination repository with -to'
+
+# A format this build cannot create is refused rather than attempted.
+! exec cloudstic migrate -store local:$WORK/old -to local:$WORK/future -to-format 99 -password repo-pw
+stderr 'not a format this build creates'
+
+-- data/notes.txt --
+hello from the repository being migrated

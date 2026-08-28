@@ -27,6 +27,7 @@ func commandRegistry() []command {
 		forgetCommand(),
 		diffCommand(),
 		copyCommand(),
+		migrateCommand(),
 		breakLockCommand(),
 		keyCommand(),
 		checkCommand(),

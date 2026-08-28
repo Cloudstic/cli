@@ -48,6 +48,13 @@ type restorePlan struct {
 	byID        map[string]core.FileMeta
 	snapshotRef string
 	root        string
+
+	// dirsOnly marks a plan that holds the snapshot's directories and nothing
+	// else — the shape a streaming v3 restore uses. byID is then the directory
+	// index a path is resolved through, and sorted their topological order;
+	// files never enter either, because the write walk meets each one once and
+	// releases it (see runWithWriterV3).
+	dirsOnly bool
 }
 
 // WithRestoreDryRun resolves the snapshot and reports what would be restored without writing output.
@@ -331,7 +338,17 @@ func (rm *RestoreManager) runWithWriterV2(ctx context.Context, plan restorePlan,
 // the bytes are already in hand and a hand-off would only add scheduling.
 func (rm *RestoreManager) runWithWriterV3(ctx context.Context, plan restorePlan, writer RestoreWriter) (*RestoreResult, error) {
 	result := &RestoreResult{SnapshotRef: plan.snapshotRef, Root: plan.root}
-	phase := rm.reporter.StartPhase("Restoring", int64(len(plan.sorted)), false)
+
+	// A streaming restore does not know how many entries it will write until
+	// it has written them — that is the point — so it reports a count rather
+	// than a percentage. plan.sorted holds only directories there, and using
+	// it as the total would show a bar that reaches 100% after the first few
+	// per cent of the work.
+	total := int64(len(plan.sorted))
+	if plan.dirsOnly {
+		total = 0
+	}
+	phase := rm.reporter.StartPhase("Restoring", total, false)
 
 	var mu sync.Mutex
 	bump := func(field *int) {
@@ -347,13 +364,6 @@ func (rm *RestoreManager) runWithWriterV3(ctx context.Context, plan restorePlan,
 		})
 	}
 
-	// Only the entries this restore is meant to write, so a path filter still
-	// filters and the leaf walk can skip everything else.
-	wanted := make(map[string]struct{}, len(plan.sorted))
-	for _, id := range plan.sorted {
-		wanted[id] = struct{}{}
-	}
-
 	// Directories first, in the plan's topological order: leaf order does not
 	// guarantee a parent precedes its children.
 	for _, id := range plan.sorted {
@@ -362,6 +372,9 @@ func (rm *RestoreManager) runWithWriterV3(ctx context.Context, plan restorePlan,
 			continue
 		}
 		rel := buildRestorePath(meta, plan.byID)
+		if !restoreNeedsDir(rel, plan.cfg.pathFilter) {
+			continue
+		}
 		if err := writer.MkdirAll(rel, meta); err != nil {
 			if !errors.Is(err, errRestoreSkipped) {
 				phase.Log(fmt.Sprintf("Failed: %s: %v", rel, err))
@@ -401,10 +414,18 @@ func (rm *RestoreManager) runWithWriterV3(ctx context.Context, plan restorePlan,
 		return nil
 	}
 
-	// The entry key is the FileID — backup files each entry under it — so the
-	// metadata this phase needs is already decoded in plan.byID. Decoding the
-	// payload again here would re-parse every file's JSON in the phase whose
-	// wall time is the headline, to reproduce a value the plan is holding.
+	// Files stream past: each is decoded from the leaf that is already in
+	// hand, written, and released. Nothing accumulates, so what the phase
+	// holds is the directory index and the payloads currently in flight —
+	// not the snapshot.
+	//
+	// This is the streaming restore RFC 0025 §8 built for the packfile format
+	// and withdrew. There it cost 3x the wall time, because metadata and
+	// content lived in different objects and interleaving the two evicted
+	// each other's pack bodies. Here they are the same object: the leaf a
+	// file's metadata comes from is the leaf its content comes from, so
+	// reading it once serves both and the interleaving that was fatal is the
+	// access pattern the format already wants.
 	walkErr := rm.tree.WalkEntries(ctx, plan.root, func(fileID, ref string, p *hamt.Payload) error {
 		if err := gCtx.Err(); err != nil {
 			return err
@@ -412,15 +433,27 @@ func (rm *RestoreManager) runWithWriterV3(ctx context.Context, plan restorePlan,
 		if p == nil {
 			return fmt.Errorf("v3 leaf entry %s carries no payload", ref)
 		}
-		meta, ok := plan.byID[fileID]
-		if !ok {
-			return nil // filtered out of this restore, or not a file it names
-		}
-		if _, ok := wanted[fileID]; !ok {
-			return nil
-		}
-		if meta.Type == core.FileTypeFolder {
+		if _, isDir := plan.byID[fileID]; isDir && plan.dirsOnly {
 			return nil // written above, in topological order
+		}
+
+		var meta core.FileMeta
+		if plan.dirsOnly {
+			fm, err := decodePayloadMeta(ref, p)
+			if err != nil {
+				return err
+			}
+			meta = *fm
+		} else {
+			known, ok := plan.byID[fileID]
+			if !ok {
+				return nil // filtered out of this restore
+			}
+			meta = known
+		}
+
+		if meta.Type == core.FileTypeFolder {
+			return nil
 		}
 		if meta.ContentHash == "" {
 			phase.Increment(1)
@@ -428,6 +461,9 @@ func (rm *RestoreManager) runWithWriterV3(ctx context.Context, plan restorePlan,
 		}
 
 		rel := buildRestorePath(meta, plan.byID)
+		if !matchesRestorePath(rel, plan.cfg.pathFilter) {
+			return nil
+		}
 		if !concurrent {
 			return writeOne(meta, rel, p)
 		}
@@ -486,6 +522,24 @@ func (rm *RestoreManager) prepareRestore(ctx context.Context, snapshotRef string
 	snap, resolvedRef, err := rm.resolveSnapshot(ctx, snapshotRef)
 	if err != nil {
 		return restorePlan{}, err
+	}
+
+	// A v3 restore that is going to write needs only the directories up
+	// front; the files stream past in the write walk. A dry run still
+	// collects everything, because what it reports *is* the entry list.
+	if rm.v3 && !cfg.dryRun {
+		dirs, order, err := rm.collectDirectoriesFromLeaves(ctx, snap.Root)
+		if err != nil {
+			return restorePlan{}, err
+		}
+		return restorePlan{
+			cfg:         cfg,
+			sorted:      restoreOrder(dirs, order),
+			byID:        dirs,
+			snapshotRef: resolvedRef,
+			root:        snap.Root,
+			dirsOnly:    true,
+		}, nil
 	}
 
 	byID, walkOrder, err := rm.collectMetadata(ctx, snap.Root)
@@ -911,6 +965,28 @@ func buildRestorePath(meta core.FileMeta, byID map[string]core.FileMeta) string 
 // If the filter ends with "/", it matches all entries under that subtree.
 // Otherwise it matches only the entry with the exact path.
 // Ancestor directories of matched entries are always included.
+// matchesRestorePath reports whether a restored path is inside the filter —
+// the same rule filterByPath applies, expressed for one path at a time so a
+// streaming restore can test entries as it meets them instead of building the
+// matched set in advance.
+func matchesRestorePath(rel, filter string) bool {
+	if filter == "" {
+		return true
+	}
+	prefix := strings.TrimSuffix(filter, "/")
+	return rel == prefix || strings.HasPrefix(rel, prefix+"/")
+}
+
+// restoreNeedsDir reports whether a directory has to be created for a filtered
+// restore: either it is inside the filter, or it is an ancestor of it and the
+// files below could not otherwise be written.
+func restoreNeedsDir(rel, filter string) bool {
+	if matchesRestorePath(rel, filter) {
+		return true
+	}
+	return strings.HasPrefix(strings.TrimSuffix(filter, "/"), rel+"/")
+}
+
 func filterByPath(sorted []string, byID map[string]core.FileMeta, pathFilter string) []string {
 	isSubtree := strings.HasSuffix(pathFilter, "/")
 	prefix := pathFilter
@@ -1009,6 +1085,52 @@ func (rm *RestoreManager) resolveSnapshot(ctx context.Context, ref string) (*cor
 // are not retained — the metadata is decoded and the leaf released, which is
 // what keeps the plan's memory proportional to metadata rather than to the
 // snapshot's inline content.
+// collectDirectoriesFromLeaves indexes the snapshot's directories, and only
+// those, so a streaming restore can resolve a path without holding the tree.
+//
+// It exists because of what affinity routing puts where. A routing key is the
+// parent's hash prefix followed by the entry's own (see AffinityKey), so every
+// entry of one directory shares the leading routing bits and lands in the same
+// leaf: a leaf walk is a directory-at-a-time walk. What it does *not* give is
+// a parent before its children — a directory is filed under its own parent —
+// so paths still need an index, and this is the smallest one that works.
+//
+// Skipping the files is what makes it cheap, and it is done without decoding
+// them: a directory carries no content, so an entry whose payload has inline
+// bytes or chunk refs cannot be one. That test is a pointer comparison, so the
+// pass reads the leaves and decodes a few per cent of what they hold.
+func (rm *RestoreManager) collectDirectoriesFromLeaves(ctx context.Context, root string) (map[string]core.FileMeta, []string, error) {
+	phase := rm.reporter.StartPhase("Reading directories", 0, false)
+
+	dirs := make(map[string]core.FileMeta)
+	var order []string
+	err := rm.tree.WalkEntries(ctx, root, func(_, ref string, p *hamt.Payload) error {
+		if p == nil {
+			return fmt.Errorf("v3 leaf entry %s carries no metadata payload", ref)
+		}
+		if len(p.Inline) > 0 || len(p.Chunks) > 0 {
+			return nil // has content, so not a directory
+		}
+		fm, err := decodePayloadMeta(ref, p)
+		if err != nil {
+			return err
+		}
+		if fm.Type != core.FileTypeFolder {
+			return nil // an empty file, not a directory
+		}
+		dirs[fm.FileID] = *fm
+		order = append(order, fm.FileID)
+		phase.Increment(1)
+		return nil
+	})
+	if err != nil {
+		phase.Error()
+		return nil, nil, err
+	}
+	phase.Done()
+	return dirs, order, nil
+}
+
 // metaDecodeBatch is how many entries the v3 metadata pass buffers before
 // decoding them in parallel.
 //

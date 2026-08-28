@@ -152,6 +152,52 @@ touched. v3 trades history size for live-data size, and which way that falls
 depends on how a repository is used — pruning regularly is cheaper than on the
 packfile format, keeping every snapshot forever is dearer.
 
+That cost is not proportional to churn, which is the part worth being precise
+about (issue #525). The affinity key routes a directory's entries together, so
+a backup rewrites roughly one leaf per *directory* it touched, and what a
+retained snapshot keeps is about `directories touched x mean leaf size` — a
+figure independent of how large the repository is. On a `source` tree, 200
+churned files land in ~47 directories:
+
+| | 2,000 files (23 MB) | 20,000 files (357 MB) |
+|---|---|---|
+| leaves in the tree | 19 | 219 |
+| nodes rewritten per backup | 20 of 21 | ~91 of 296 |
+| of the tree, by encoded bytes | 100% | 31% |
+| stored per retained snapshot | 5.5 MB | 23 MB |
+
+The small tree **saturates**: 47 touched directories cannot fit into 19 leaves,
+so every leaf holds a change and each snapshot costs a full copy of the
+repository. That is arithmetic, not a defect in the routing — no locality
+scheme places 47 directories into 19 leaves without collision — and the only
+cure is more leaves, which means a smaller budget, which is the read/storage
+trade already settled at 4 MB. Once leaves outnumber the touched directories
+the absolute cost settles at the product above and the *fraction* decays with
+every file added.
+
+At the larger size the comparison against the packfile format is:
+
+| | packfile | v3 |
+|---|---|---|
+| 1 snapshot | 98 MB | 83 MB |
+| 6 snapshots retained | 105 MB | 198 MB |
+| after `forget --keep-last 1 --prune` | 103 MB | **82 MB** |
+| growth per retained snapshot | ~1.4 MB | ~23 MB |
+
+A pruned v3 repository is 20% smaller; a fully retained one is larger from the
+second snapshot on. The gap is an additive ~23 MB per snapshot set by the leaf
+budget and the churn's directory spread, not a multiple of the repository.
+
+Two things this rules out, both measured rather than argued. Giving
+metadata-only leaves a smaller budget has nothing to act on: leaves are 97%
+inline file content and 3% metadata, and a `source` tree has essentially no
+metadata-only leaves at all (0 of 19 at 2,000 files, 13 of 219 holding 7.5 KB
+at 20,000), because the 512 KiB inline threshold catches all but the tail of a
+document tree. Moving that content out to `chunk/` objects instead is the
+design [#514](https://github.com/Cloudstic/cli/issues/514) already rejected,
+for −2% stored bytes against +46% restore requests. `internal/cmd/leafstat`
+is the instrument these come from.
+
 ### Aging is the axis this format was for
 
 The single-pipeline numbers above measure a repository with one backup in it,

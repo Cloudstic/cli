@@ -61,6 +61,13 @@ Three layers, in cost order:
   wrong conclusions about deduplication and write amplification. Select with
   `PROFILES=source ./scripts/benchmark/bench.sh`; `MAX_BYTES` scales the size
   distribution to keep a realistic tree runnable.
+- **`internal/cmd/leafstat/`** — reports what a format-v3 repository's HAMT
+  leaves are made of: their size distribution, how much of each is inline file
+  content rather than metadata, and — via `-refs` set-differenced across
+  snapshots — how much of the tree each backup rewrote. The other tools observe
+  a repository from outside and so cannot answer why a v3 repository grows with
+  retained snapshots, which is a property of individual leaves (issue #525,
+  RFC 0026 "What v3 stores, and when"). Local, unencrypted repositories only.
 - **`scripts/benchmark/bench.sh`** — one pass over the pipeline collecting every
   metric it can yield: wall time and peak RSS from `time(1)`, cumulative
   allocation from the binary's `-memstats`, and — on a MinIO backend — requests

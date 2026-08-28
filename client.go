@@ -115,7 +115,15 @@ func (c *Client) engineDeps() engine.Deps {
 		Reporter: c.reporter,
 		LogSink:  c.logWriter,
 		HMACKey:  c.hmacKey,
+		FormatV3: c.formatV3(),
 	}
+}
+
+// formatV3 reports whether the repository this client opened records format v3
+// (RFC 0026). It reads the same in-process format the framing gate does, so an
+// engine manager cannot be built at a format the repository does not have.
+func (c *Client) formatV3() bool {
+	return c.repoFormat.Load() >= core.RepoFormatV3
 }
 
 func NewClient(ctx context.Context, base store.ObjectStore, opts ...ClientOption) (*Client, error) {
@@ -152,7 +160,16 @@ func NewClient(ctx context.Context, base store.ObjectStore, opts ...ClientOption
 
 	inner := base
 
-	c.log.Debugf("packfile enabled: %v", c.enablePackfile)
+	// A v3 repository has no packfile layer at all (RFC 0026): every object it
+	// stores is large by construction, so there is nothing to bundle and no
+	// catalog to maintain. This overrides WithPackfile — the format is a
+	// property of the repository, not of the caller's preference.
+	v3 := cfg != nil && cfg.Version >= core.RepoFormatV3
+	if v3 {
+		c.enablePackfile = false
+	}
+
+	c.log.Debugf("packfile enabled: %v (format v3: %v)", c.enablePackfile, v3)
 	if c.enablePackfile {
 		// PackStore sits below the encryption layer, so the catalog and pack
 		// footers it writes never pass through EncryptedStore. Give it its own

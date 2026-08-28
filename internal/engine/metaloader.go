@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/internal/hamt"
 	"github.com/cloudstic/cli/pkg/store"
 )
 
@@ -71,6 +72,47 @@ func (l *metaLoader) load(ctx context.Context, ref string) (*core.FileMeta, erro
 	}
 	l.mu.Unlock()
 	return &fm, nil
+}
+
+// prime stores an already-decoded filemeta under ref, so a later load costs no
+// store read. The format-v3 paths use it: a leaf entry carries its meta bytes,
+// and priming lets every ref-keyed consumer stay unchanged while never
+// fetching a filemeta object — which, in a v3 repository, does not exist.
+// A read-through loader (nil cache) drops the prime; v3 callers that may run
+// after releaseCache must decode from the payload instead (decodePayloadMeta).
+func (l *metaLoader) prime(ref string, fm core.FileMeta) {
+	l.mu.Lock()
+	if l.cache != nil {
+		l.cache[ref] = fm
+	}
+	l.mu.Unlock()
+}
+
+// decodePayloadMeta decodes the filemeta a v3 leaf entry carries. ref names
+// the bytes and is only used for the error message — the payload was verified
+// as part of its leaf when the node was loaded.
+func decodePayloadMeta(ref string, p *hamt.Payload) (*core.FileMeta, error) {
+	var fm core.FileMeta
+	if err := json.Unmarshal(p.Meta, &fm); err != nil {
+		return nil, fmt.Errorf("decode leaf filemeta %s: %w", ref, err)
+	}
+	return &fm, nil
+}
+
+// loadMeta returns the filemeta for a tree entry, from its payload when the
+// entry carries one (v3) and through the loader otherwise (v2). A payload hit
+// also primes the loader, so ref-keyed re-reads during the same phase stay
+// free either way.
+func (l *metaLoader) loadMeta(ctx context.Context, ref string, p *hamt.Payload) (*core.FileMeta, error) {
+	if p == nil {
+		return l.load(ctx, ref)
+	}
+	fm, err := decodePayloadMeta(ref, p)
+	if err != nil {
+		return nil, err
+	}
+	l.prime(ref, *fm)
+	return fm, nil
 }
 
 // cached reports whether ref has already been read through this loader. Backup

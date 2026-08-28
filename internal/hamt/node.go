@@ -44,6 +44,18 @@ type leafEntry struct {
 	Key     string `json:"key"`                // caller's entry key (the source file ID)
 	PathKey string `json:"path_key,omitempty"` // routing key; falls back to SHA256(Key) if empty
 	Value   string `json:"filemeta"`           // "filemeta/<sha256>"
+
+	// payload is the entry's format-v3 body (see payload.go): nil on every v2
+	// entry, set on entries written into a v3 tree. Unexported and so invisible
+	// to the JSON encoding above — a v2 node's bytes cannot change by this
+	// field existing. Copied by pointer: a payload is immutable once attached.
+	payload *Payload
+}
+
+// approxSize is the entry's contribution to its leaf's encoded size, for the
+// v3 byte-budget split rule.
+func (e *leafEntry) approxSize() int {
+	return len(e.Key) + len(e.PathKey) + len(e.Value) + 16 + e.payload.approxSize()
 }
 
 // node is the in-memory form of a HAMT node. It differs from storedNode in one

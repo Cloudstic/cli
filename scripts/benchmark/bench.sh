@@ -75,6 +75,12 @@ OUT=${OUT:-benchmark-results/bench.csv}
 KEEP=${KEEP:-0}
 PASSWORD=${BENCH_REPO_PASSWORD:-benchmark-password}
 
+# REPO_FORMAT selects the repository format the pipeline inits — empty for the
+# build's default, 3 for the packless fat-leaf format (RFC 0026). An axis of
+# the *repository*, not of the binary: the same build measured at both values
+# is the v2-versus-v3 comparison the RFC's performance targets are scored on.
+REPO_FORMAT=${REPO_FORMAT:-}
+
 # The aging stage. Off unless checkpoints are given, so CI and a plain run
 # measure exactly what they measured before the stage existed.
 AGE_CHECKPOINTS=${AGE_CHECKPOINTS:-}
@@ -402,7 +408,7 @@ run_pipeline() {
     rm -rf "$restore" "$restore_no_verify"
     mkdir -p "$restore" "$restore_no_verify"
 
-    measure init   "$CLOUDSTIC_BIN" init $flags -quiet
+    measure init   "$CLOUDSTIC_BIN" init $flags ${REPO_FORMAT:+-format "$REPO_FORMAT"} -quiet
     measure backup "$CLOUDSTIC_BIN" backup $flags -source "local:$data" -quiet
 
     # The cheapest possible incremental: nothing in the source changed. Shows
@@ -644,7 +650,7 @@ run_aging() {
     # Setup, not measurement — like the aging backups below, so its chatter
     # (which init writes on stderr as well as stdout) does not interleave with
     # the checkpoint table. Kept on failure, where it is the diagnosis.
-    if ! "$CLOUDSTIC_BIN" init $flags -quiet >"$WORK/age-init.log" 2>&1; then
+    if ! "$CLOUDSTIC_BIN" init $flags ${REPO_FORMAT:+-format "$REPO_FORMAT"} -quiet >"$WORK/age-init.log" 2>&1; then
         echo "aging init failed" >&2
         sed 's/^/    /' "$WORK/age-init.log" >&2
         return 1
@@ -784,6 +790,7 @@ env_file="${OUT%.csv}-env.txt"
     echo "sizes:    $SIZES"
     echo "backends: $BACKENDS"
     echo "samples:  $SAMPLES"
+    echo "format:   ${REPO_FORMAT:-default}"
     if [ -n "$AGE_CHECKPOINTS" ]; then
         echo "age:      checkpoints=$AGE_CHECKPOINTS churn=$AGE_CHURN ops=$AGE_OPS final=$AGE_FINAL_OPS policies=$POLICIES keep_store=$KEEP_STORE"
     fi

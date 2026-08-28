@@ -20,6 +20,39 @@ const (
 	maxDepth     = 6
 	maxLeafSize  = 32
 
+	// Format v3 routes 2 bits per level instead of 5, and this is the
+	// difference between the format working and not.
+	//
+	// Splitting is what sets leaf fill, because a leaf that overflows is
+	// partitioned by the next routing bits and its children never merge back.
+	// At 5 bits each child receives about a thirty-second of the entries, so
+	// leaves settle a factor of ~32 below the budget that triggered the split:
+	// measured at 13 KB average against a 512 KB budget, which put ~25x more
+	// objects in a repository than the format intends and left v3 needing
+	// thousands of requests where v2 needed dozens.
+	//
+	// At 2 bits a split halves-and-halves-again instead, so a leaf holds
+	// between a quarter of the budget and all of it. The tree is deeper in
+	// levels but its interior nodes are tiny and hot in cache, while the
+	// objects that cost a request — the leaves — land near their intended
+	// size. Raising the budget instead would not do this: the overshoot is a
+	// ratio, and a budget 32x larger would rewrite 32x more bytes when one
+	// file in a leaf changes.
+	bitsPerLevelV3 = 2
+	branchingV3    = 4  // 2^bitsPerLevelV3
+	maxDepthV3     = 15 // 30 of the 32 routing bits, as in v2
+
+	// The format-v3 leaf split rule (RFC 0026 §2): a leaf splits when its
+	// encoded size passes a byte budget, not when it holds a fixed number of
+	// entries. Every stored object being large is the property the whole
+	// format rests on, so the budget is the primary bound; the entry cap only
+	// keeps the linear scans inside one leaf bounded when entries are tiny.
+	//
+	// Both are write-path tuning knobs, not compatibility surface: a reader
+	// accepts any leaf size, so revising them changes new nodes only.
+	leafSplitBytesV3 = 2 * 1024 * 1024
+	maxLeafEntriesV3 = 2048
+
 	nodePrefix = "node/"
 
 	// maxTreeDepth bounds every recursive descent. Routing consumes 5 bits per
@@ -33,16 +66,23 @@ const (
 )
 
 // errTooDeep reports a descent past maxTreeDepth.
-func errTooDeep(depth int) error {
-	return fmt.Errorf("hamt node nesting exceeds %d levels at depth %d: tree is cyclic or corrupt", maxTreeDepth, depth)
+func errTooDeep(limit, depth int) error {
+	return fmt.Errorf("hamt node nesting exceeds %d levels at depth %d: tree is cyclic or corrupt", limit, depth)
 }
 
 // DiffEntry represents a single change between two trees.
 // OldValue is empty for additions; NewValue is empty for deletions.
+//
+// The payloads are the entries' format-v3 bodies, nil on v2 entries. They ride
+// along so a v3 caller can read what a removed or replaced entry carried
+// without a store round trip — in v3 there is no standalone object behind the
+// value to fetch.
 type DiffEntry struct {
-	Key      string
-	OldValue string
-	NewValue string
+	Key        string
+	OldValue   string
+	NewValue   string
+	OldPayload *Payload
+	NewPayload *Payload
 }
 
 // Tree reads persistent Hash Array Mapped Tries.
@@ -81,6 +121,23 @@ func WithLogger(w io.Writer) TreeOption {
 	return func(ns *NodeStore) { ns.log = ns.log.To(w) }
 }
 
+// WithFormatV3 puts the tree in repository-format-v3 mode (RFC 0026): nodes
+// seal in the binary encoding, leaves split on the byte budget, entries may
+// carry payloads, and routing consumes bitsPerLevelV3 bits per level.
+//
+// Decoding is unaffected — load sniffs each node, so either format's nodes
+// are readable and a walk crosses formats freely. Routing is not: an entry's
+// position depends on the arity the tree was built with, so a routed lookup
+// must use the shape that wrote the tree. Both follow from the repository's
+// recorded format, which is why this is a property of the tree rather than of
+// any one operation.
+func WithFormatV3() TreeOption {
+	return func(ns *NodeStore) {
+		ns.v3 = true
+		ns.cache.Configure(nodeCacheSizeV3, nodeCacheBytesV3)
+	}
+}
+
 // NewTreeWithNodes creates a Tree over an existing NodeStore, so several trees
 // can share one read cache.
 func NewTreeWithNodes(ns *NodeStore) *Tree {
@@ -98,10 +155,22 @@ var errFoundSentinel = fmt.Errorf("found")
 // ("", nil) if not found. routingKey must be the key the entry was inserted
 // under.
 func (t *Tree) Lookup(ctx context.Context, root, routingKey, key string) (string, error) {
+	value, _, err := t.LookupEntry(ctx, root, routingKey, key)
+	return value, err
+}
+
+// LookupEntry is Lookup returning the entry's payload as well. The payload is
+// nil for an absent entry and for any entry written without one (every v2
+// entry); it is shared with the node cache and must not be mutated.
+func (t *Tree) LookupEntry(ctx context.Context, root, routingKey, key string) (string, *Payload, error) {
 	if root == "" {
-		return "", nil
+		return "", nil, nil
 	}
-	return lookup(ctx, t.nodes, child{ref: root}, routingKey, key)
+	e, ok, err := lookupEntry(ctx, t.nodes, child{ref: root}, routingKey, key)
+	if err != nil || !ok {
+		return "", nil, err
+	}
+	return e.Value, e.payload, nil
 }
 
 // LookupByKey finds a value by walking the entire tree and matching on the raw
@@ -111,15 +180,27 @@ func (t *Tree) LookupByKey(ctx context.Context, root, key string) (string, error
 	if root == "" {
 		return "", nil
 	}
-	return lookupByKey(ctx, t.nodes, child{ref: root}, key)
+	e, _, err := lookupEntryByKey(ctx, t.nodes, child{ref: root}, key)
+	return e.Value, err
 }
 
 // Walk visits every (key, value) pair stored in the tree rooted at root.
 func (t *Tree) Walk(ctx context.Context, root string, fn func(key, value string) error) error {
+	return t.WalkEntries(ctx, root, func(key, value string, _ *Payload) error {
+		return fn(key, value)
+	})
+}
+
+// WalkEntries is Walk delivering each entry's payload as well — nil for
+// entries written without one. Payloads are shared with the node cache and
+// must not be mutated or retained past the callback unless copied.
+func (t *Tree) WalkEntries(ctx context.Context, root string, fn func(key, value string, p *Payload) error) error {
 	if root == "" {
 		return nil
 	}
-	return walk(ctx, t.nodes, child{ref: root}, 0, fn)
+	return walk(ctx, t.nodes, child{ref: root}, 0, func(e leafEntry) error {
+		return fn(e.Key, e.Value, e.payload)
+	})
 }
 
 // Diff structurally compares two persisted trees and calls fn for every entry
@@ -139,6 +220,59 @@ func (t *Tree) NodeRefs(ctx context.Context, root string, fn func(ref string) er
 		return nil
 	}
 	return nodeRefs(ctx, t.nodes, root, 0, fn)
+}
+
+// WalkTree visits every node and every entry in one traversal: onNode for each
+// node ref as it is reached, then onEntry for each entry a leaf holds.
+//
+// It exists because check and prune want both, and asking for them separately
+// — NodeRefs followed by WalkEntries — reads the whole tree twice. In format
+// v2 the second pass was nearly free, since packfiles bundle the nodes and the
+// pack body cache still held them. In v3 the leaves *are* the data: a snapshot
+// whose leaves exceed the node cache pays a second full round of reads, which
+// measured as roughly double the requests for both operations. One traversal
+// makes that structural rather than dependent on what the cache happened to
+// keep.
+//
+// A node is loaded once and reported before its children, so a caller can
+// treat onNode as the point where a node's bytes were read and verified.
+func (t *Tree) WalkTree(ctx context.Context, root string, onNode func(ref string) error, onEntry func(key, value string, p *Payload) error) error {
+	if root == "" {
+		return nil
+	}
+	return walkTree(ctx, t.nodes, root, 0, onNode, onEntry)
+}
+
+func walkTree(ctx context.Context, ns *NodeStore, ref string, depth int, onNode func(string) error, onEntry func(string, string, *Payload) error) error {
+	if depth > ns.maxTreeDepth() {
+		return errTooDeep(ns.maxTreeDepth(), depth)
+	}
+	if onNode != nil {
+		if err := onNode(ref); err != nil {
+			return err
+		}
+	}
+	n, err := ns.load(ctx, ref)
+	if err != nil {
+		return err
+	}
+	if n.leaf {
+		if onEntry == nil {
+			return nil
+		}
+		for _, e := range n.entries {
+			if err := onEntry(e.Key, e.Value, e.payload); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, cc := range n.children {
+		if err := walkTree(ctx, ns, cc.ref, depth+1, onNode, onEntry); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -173,11 +307,19 @@ func (t *Tree) Edit(root string) *Txn {
 // Insert adds or updates the entry for key. routingKey decides the entry's path
 // through the trie; key is stored as the leaf key.
 func (tx *Txn) Insert(ctx context.Context, routingKey, key, value string) error {
+	return tx.InsertWithPayload(ctx, routingKey, key, value, nil)
+}
+
+// InsertWithPayload is Insert carrying the entry's format-v3 body. The payload
+// is stored inside the leaf and returned by LookupEntry and WalkEntries; it
+// must not be mutated after this call. A nil payload is exactly Insert.
+func (tx *Txn) InsertWithPayload(ctx context.Context, routingKey, key, value string, p *Payload) error {
 	r, err := newRouting(routingKey)
 	if err != nil {
 		return err
 	}
-	c, err := tx.insert(ctx, tx.root, r, key, value, 0)
+	entry := leafEntry{Key: key, PathKey: r.hex, Value: value, payload: p}
+	c, err := tx.insert(ctx, tx.root, r, entry, 0)
 	if err != nil {
 		return err
 	}
@@ -206,18 +348,39 @@ func (tx *Txn) Delete(ctx context.Context, routingKey, key string) error {
 // Lookup returns the value for key in the working tree, including changes made
 // in this transaction that have not been committed.
 func (tx *Txn) Lookup(ctx context.Context, routingKey, key string) (string, error) {
+	value, _, err := tx.LookupEntry(ctx, routingKey, key)
+	return value, err
+}
+
+// LookupEntry is Lookup returning the entry's payload as well, under the same
+// sharing rules as Tree.LookupEntry.
+func (tx *Txn) LookupEntry(ctx context.Context, routingKey, key string) (string, *Payload, error) {
 	if tx.root.isZero() {
-		return "", nil
+		return "", nil, nil
 	}
-	return lookup(ctx, tx.nodes, tx.root, routingKey, key)
+	e, ok, err := lookupEntry(ctx, tx.nodes, tx.root, routingKey, key)
+	if err != nil || !ok {
+		return "", nil, err
+	}
+	return e.Value, e.payload, nil
 }
 
 // LookupByKey is Tree.LookupByKey over the working tree.
 func (tx *Txn) LookupByKey(ctx context.Context, key string) (string, error) {
+	value, _, err := tx.LookupEntryByKey(ctx, key)
+	return value, err
+}
+
+// LookupEntryByKey is LookupByKey returning the entry's payload as well.
+func (tx *Txn) LookupEntryByKey(ctx context.Context, key string) (string, *Payload, error) {
 	if tx.root.isZero() {
-		return "", nil
+		return "", nil, nil
 	}
-	return lookupByKey(ctx, tx.nodes, tx.root, key)
+	e, ok, err := lookupEntryByKey(ctx, tx.nodes, tx.root, key)
+	if err != nil || !ok {
+		return "", nil, err
+	}
+	return e.Value, e.payload, nil
 }
 
 // Walk visits every (key, value) pair in the working tree.
@@ -225,7 +388,9 @@ func (tx *Txn) Walk(ctx context.Context, fn func(key, value string) error) error
 	if tx.root.isZero() {
 		return nil
 	}
-	return walk(ctx, tx.nodes, tx.root, 0, fn)
+	return walk(ctx, tx.nodes, tx.root, 0, func(e leafEntry) error {
+		return fn(e.Key, e.Value)
+	})
 }
 
 // DiffFrom compares a persisted tree against the working tree, reporting what
@@ -239,24 +404,69 @@ func (tx *Txn) DiffFrom(ctx context.Context, oldRoot string, fn func(DiffEntry) 
 // anything. Callers that only need to know whether a transaction changed
 // anything — or that are reporting a dry run — use this instead of Commit.
 func (tx *Txn) Root(ctx context.Context) (string, error) {
-	ref, _, err := tx.seal()
-	return ref, err
+	return tx.seal()
 }
+
+// sealFlushBytes is how many bytes of sealed-but-unwritten nodes a commit
+// holds before flushing them.
+//
+// The seal used to build the whole batch first and write it at the end, which
+// on a v2 tree was a map of small JSON documents and on a v3 tree is every
+// dirty leaf's encoded bytes — inline file content included — held alongside
+// the payloads the tree still points at. That is what took an initial v3
+// backup's peak RSS to 561 MB against v2's 183 MB, and 1.2 GB on a 200 MB
+// addition. Flushing as the seal goes bounds it by this budget instead of by
+// how much the backup changed.
+//
+// The value trades that residency against write parallelism: a flush is where
+// concurrency happens (putAll fans out across the batch), so too small a
+// budget serialises the uploads. 32 MB keeps several hundred small nodes, or
+// a few dozen full leaves, in flight per flush.
+const sealFlushBytes = 32 * 1024 * 1024
 
 // Commit writes every node that is actually part of the final tree and returns
 // the new root ref. Superseded intermediate nodes were never serialized, so
 // "dirty" and "reachable" are the same set and no reachability pass is needed.
 //
+// Nodes are written as the seal produces them rather than all at the end, so
+// what the commit holds is bounded by sealFlushBytes and not by the size of
+// the change. Children are sealed before their parents, so a partial write
+// interrupted midway leaves unreferenced nodes — garbage the next prune
+// collects — never a node naming a child that was never written.
+//
 // After Commit the transaction is clean and can be committed again cheaply; a
 // second Commit writes nothing and returns the same ref.
 func (tx *Txn) Commit(ctx context.Context) (string, error) {
-	ref, batch, err := tx.seal()
+	pending := make(map[string][]byte)
+	pendingBytes := 0
+
+	flush := func() error {
+		if len(pending) == 0 {
+			return nil
+		}
+		if err := tx.nodes.putAll(ctx, pending); err != nil {
+			return err
+		}
+		pending = make(map[string][]byte)
+		pendingBytes = 0
+		return nil
+	}
+
+	ref, err := tx.sealChild(tx.root, func(ref string, data []byte) error {
+		pending[ref] = data
+		pendingBytes += len(data)
+		if pendingBytes >= sealFlushBytes {
+			return flush()
+		}
+		return nil
+	})
 	if err != nil {
 		return "", err
 	}
-	if err := tx.nodes.putAll(ctx, batch); err != nil {
+	if err := flush(); err != nil {
 		return "", err
 	}
+
 	// Every node is persisted now, so the whole tree is clean again.
 	if ref == "" {
 		tx.root = child{}
@@ -266,19 +476,16 @@ func (tx *Txn) Commit(ctx context.Context) (string, error) {
 	return ref, nil
 }
 
-// seal serializes the dirty spine bottom-up, returning the root ref and the
-// nodes that would have to be written for that ref to resolve. It performs no
-// I/O: Root discards the batch, Commit writes it.
-func (tx *Txn) seal() (string, map[string][]byte, error) {
-	batch := make(map[string][]byte)
-	ref, err := tx.sealChild(tx.root, batch)
-	if err != nil {
-		return "", nil, err
-	}
-	return ref, batch, nil
+// seal computes the root ref without writing or retaining anything: each
+// node's bytes are hashed and dropped. Root uses it, which is what makes a
+// dry run both read-only and bounded.
+func (tx *Txn) seal() (string, error) {
+	return tx.sealChild(tx.root, func(string, []byte) error { return nil })
 }
 
-func (tx *Txn) sealChild(c child, batch map[string][]byte) (string, error) {
+// sealChild serializes the dirty spine bottom-up, handing every node it seals
+// to sink. Children are sealed — and so handed over — before their parents.
+func (tx *Txn) sealChild(c child, sink func(ref string, data []byte) error) (string, error) {
 	if c.node == nil {
 		return c.ref, nil // clean (or absent): already persisted
 	}
@@ -287,7 +494,7 @@ func (tx *Txn) sealChild(c child, batch map[string][]byte) (string, error) {
 	if !c.node.leaf {
 		childRefs = make([]string, len(c.node.children))
 		for i, cc := range c.node.children {
-			ref, err := tx.sealChild(cc, batch)
+			ref, err := tx.sealChild(cc, sink)
 			if err != nil {
 				return "", err
 			}
@@ -299,7 +506,9 @@ func (tx *Txn) sealChild(c child, batch map[string][]byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	batch[ref] = data
+	if err := sink(ref, data); err != nil {
+		return "", err
+	}
 	return ref, nil
 }
 
@@ -322,7 +531,7 @@ func (tx *Txn) own(ctx context.Context, c child) (*node, error) {
 // Internal: insert
 // ---------------------------------------------------------------------------
 
-func (tx *Txn) insert(ctx context.Context, c child, r routing, key, value string, level int) (child, error) {
+func (tx *Txn) insert(ctx context.Context, c child, r routing, entry leafEntry, level int) (child, error) {
 	var n *node
 	if c.isZero() {
 		n = &node{leaf: true}
@@ -334,10 +543,10 @@ func (tx *Txn) insert(ctx context.Context, c child, r routing, key, value string
 	}
 
 	if n.leaf {
-		return tx.insertIntoLeaf(n, r, key, value, level)
+		return tx.insertIntoLeaf(n, entry, level)
 	}
 
-	idx, err := r.indexAt(level)
+	idx, err := r.indexAt(level, tx.nodes.bits())
 	if err != nil {
 		return child{}, err
 	}
@@ -347,7 +556,7 @@ func (tx *Txn) insert(ctx context.Context, c child, r routing, key, value string
 	if exists {
 		cur = n.children[pos]
 	}
-	newChild, err := tx.insert(ctx, cur, r, key, value, level+1)
+	newChild, err := tx.insert(ctx, cur, r, entry, level+1)
 	if err != nil {
 		return child{}, err
 	}
@@ -361,30 +570,27 @@ func (tx *Txn) insert(ctx context.Context, c child, r routing, key, value string
 	return child{node: n}, nil
 }
 
-func (tx *Txn) insertIntoLeaf(n *node, r routing, key, value string, level int) (child, error) {
-	entry := leafEntry{Key: key, PathKey: r.hex, Value: value}
-
-	if i := n.indexOfKey(key); i >= 0 {
+func (tx *Txn) insertIntoLeaf(n *node, entry leafEntry, level int) (child, error) {
+	if i := n.indexOfKey(entry.Key); i >= 0 {
 		n.entries[i] = entry
 		return child{node: n}, nil
 	}
 
-	// Append if the leaf has room, or if we can no longer split.
-	if len(n.entries) < maxLeafSize || level >= maxDepth {
-		n.entries = append(n.entries, entry)
-		sortEntries(n.entries)
-		return child{node: n}, nil
-	}
+	n.entries = append(n.entries, entry)
+	sortEntries(n.entries)
 
-	// Leaf full: split into an internal node.
-	all := make([]leafEntry, len(n.entries), len(n.entries)+1)
-	copy(all, n.entries)
-	return buildNode(append(all, entry), level)
+	// Split once the leaf is over its budget — entry count in v2, bytes in v3
+	// (see leafOverfull) — unless routing bits have run out, in which case the
+	// leaf may grow past it.
+	if level < tx.nodes.maxDepth() && tx.nodes.leafOverfull(n.entries) {
+		return tx.buildNode(n.entries, level)
+	}
+	return child{node: n}, nil
 }
 
 // buildNode recursively partitions entries into a subtree starting at level.
-func buildNode(entries []leafEntry, level int) (child, error) {
-	if len(entries) <= maxLeafSize || level >= maxDepth {
+func (tx *Txn) buildNode(entries []leafEntry, level int) (child, error) {
+	if !tx.nodes.leafOverfull(entries) || level >= tx.nodes.maxDepth() {
 		sortEntries(entries)
 		return child{node: &node{leaf: true, entries: entries}}, nil
 	}
@@ -395,7 +601,7 @@ func buildNode(entries []leafEntry, level int) (child, error) {
 		if err != nil {
 			return child{}, err
 		}
-		idx, err := r.indexAt(level)
+		idx, err := r.indexAt(level, tx.nodes.bits())
 		if err != nil {
 			return child{}, err
 		}
@@ -403,12 +609,12 @@ func buildNode(entries []leafEntry, level int) (child, error) {
 	}
 
 	n := &node{}
-	for i := 0; i < branching; i++ {
+	for i := range tx.nodes.branching() {
 		bucket, ok := buckets[i]
 		if !ok {
 			continue
 		}
-		c, err := buildNode(bucket, level+1)
+		c, err := tx.buildNode(bucket, level+1)
 		if err != nil {
 			return child{}, err
 		}
@@ -448,7 +654,7 @@ func (tx *Txn) delete(ctx context.Context, c child, r routing, key string, level
 		return child{node: owned}, true, nil
 	}
 
-	idx, err := r.indexAt(level)
+	idx, err := r.indexAt(level, tx.nodes.bits())
 	if err != nil {
 		return c, false, err
 	}
@@ -530,18 +736,19 @@ func (tx *Txn) collapse(ctx context.Context, n *node, level int) (child, bool, e
 // fit in one leaf, reporting false as soon as that stops being possible.
 //
 // The budget is what keeps this affordable on a hot path: a subtree too large
-// to collapse is abandoned after at most maxLeafSize+1 entries have been seen,
-// which for a wide tree means reading a couple of nodes rather than all of them.
+// to collapse is abandoned as soon as the accumulated entries pass the split
+// budget, which for a wide tree means reading a couple of nodes rather than
+// all of them.
 func (tx *Txn) subtreeEntries(ctx context.Context, c child, depth int) ([]leafEntry, bool, error) {
-	if depth > maxTreeDepth {
-		return nil, false, errTooDeep(depth)
+	if depth > tx.nodes.maxTreeDepth() {
+		return nil, false, errTooDeep(tx.nodes.maxTreeDepth(), depth)
 	}
 	n, err := tx.resolve(ctx, c)
 	if err != nil {
 		return nil, false, err
 	}
 	if n.leaf {
-		if len(n.entries) > maxLeafSize {
+		if tx.nodes.leafOverfull(n.entries) {
 			return nil, false, nil
 		}
 		return slices.Clone(n.entries), true, nil
@@ -557,7 +764,7 @@ func (tx *Txn) subtreeEntries(ctx context.Context, c child, depth int) ([]leafEn
 			return nil, false, nil
 		}
 		out = append(out, entries...)
-		if len(out) > maxLeafSize {
+		if tx.nodes.leafOverfull(out) {
 			return nil, false, nil
 		}
 	}
@@ -584,57 +791,57 @@ func resolve(ctx context.Context, ns *NodeStore, c child) (*node, error) {
 	return ns.load(ctx, c.ref)
 }
 
-func lookup(ctx context.Context, ns *NodeStore, c child, routingKey, key string) (string, error) {
+func lookupEntry(ctx context.Context, ns *NodeStore, c child, routingKey, key string) (leafEntry, bool, error) {
 	r, err := newRouting(routingKey)
 	if err != nil {
-		return "", err
+		return leafEntry{}, false, err
 	}
-	for level := 0; level <= maxTreeDepth; level++ {
+	for level := 0; level <= ns.maxTreeDepth(); level++ {
 		n, err := resolve(ctx, ns, c)
 		if err != nil {
-			return "", err
+			return leafEntry{}, false, err
 		}
 		if n.leaf {
 			if i := n.indexOfKey(key); i >= 0 {
-				return n.entries[i].Value, nil
+				return n.entries[i], true, nil
 			}
-			return "", nil
+			return leafEntry{}, false, nil
 		}
 
-		idx, err := r.indexAt(level)
+		idx, err := r.indexAt(level, ns.bits())
 		if err != nil {
-			return "", err
+			return leafEntry{}, false, err
 		}
 		pos, exists := childPos(n.bitmap, idx)
 		if !exists {
-			return "", nil
+			return leafEntry{}, false, nil
 		}
 		if pos >= len(n.children) {
-			return "", fmt.Errorf("corrupt node: bitmap indicates child but array too short")
+			return leafEntry{}, false, fmt.Errorf("corrupt node: bitmap indicates child but array too short")
 		}
 		c = n.children[pos]
 	}
-	return "", errTooDeep(maxTreeDepth)
+	return leafEntry{}, false, errTooDeep(ns.maxTreeDepth(), ns.maxTreeDepth())
 }
 
-func lookupByKey(ctx context.Context, ns *NodeStore, root child, key string) (string, error) {
-	var found string
-	err := walk(ctx, ns, root, 0, func(k, value string) error {
-		if k == key {
-			found = value
+func lookupEntryByKey(ctx context.Context, ns *NodeStore, root child, key string) (leafEntry, bool, error) {
+	var found leafEntry
+	err := walk(ctx, ns, root, 0, func(e leafEntry) error {
+		if e.Key == key {
+			found = e
 			return errFoundSentinel
 		}
 		return nil
 	})
 	if errors.Is(err, errFoundSentinel) {
-		return found, nil
+		return found, true, nil
 	}
-	return "", err
+	return leafEntry{}, false, err
 }
 
-func walk(ctx context.Context, ns *NodeStore, c child, depth int, fn func(key, value string) error) error {
-	if depth > maxTreeDepth {
-		return errTooDeep(depth)
+func walk(ctx context.Context, ns *NodeStore, c child, depth int, fn func(e leafEntry) error) error {
+	if depth > ns.maxTreeDepth() {
+		return errTooDeep(ns.maxTreeDepth(), depth)
 	}
 	n, err := resolve(ctx, ns, c)
 	if err != nil {
@@ -642,7 +849,7 @@ func walk(ctx context.Context, ns *NodeStore, c child, depth int, fn func(key, v
 	}
 	if n.leaf {
 		for _, e := range n.entries {
-			if err := fn(e.Key, e.Value); err != nil {
+			if err := fn(e); err != nil {
 				return err
 			}
 		}
@@ -657,8 +864,8 @@ func walk(ctx context.Context, ns *NodeStore, c child, depth int, fn func(key, v
 }
 
 func nodeRefs(ctx context.Context, ns *NodeStore, ref string, depth int, fn func(string) error) error {
-	if depth > maxTreeDepth {
-		return errTooDeep(depth)
+	if depth > ns.maxTreeDepth() {
+		return errTooDeep(ns.maxTreeDepth(), depth)
 	}
 	if err := fn(ref); err != nil {
 		return err
@@ -700,14 +907,14 @@ func diff(ctx context.Context, ns *NodeStore, c1, c2 child, fn func(DiffEntry) e
 }
 
 func diffNodes(ctx context.Context, ns *NodeStore, n1, n2 *node, level int, fn func(DiffEntry) error) error {
-	if level > maxTreeDepth {
-		return errTooDeep(level)
+	if level > ns.maxTreeDepth() {
+		return errTooDeep(ns.maxTreeDepth(), level)
 	}
 	if n1.leaf && n2.leaf {
 		return diffLeaves(n1, n2, fn)
 	}
 
-	for i := 0; i < branching; i++ {
+	for i := 0; i < ns.branching(); i++ {
 		c1, err := childForBucket(ctx, ns, n1, i, level)
 		if err != nil {
 			return err
@@ -721,11 +928,15 @@ func diffNodes(ctx context.Context, ns *NodeStore, n1, n2 *node, level int, fn f
 		case c1 == nil && c2 == nil:
 			continue
 		case c1 == nil:
-			if err := collectAll(ctx, ns, c2, level, func(k, v string) error { return fn(DiffEntry{Key: k, NewValue: v}) }); err != nil {
+			if err := collectAll(ctx, ns, c2, level, func(e leafEntry) error {
+				return fn(DiffEntry{Key: e.Key, NewValue: e.Value, NewPayload: e.payload})
+			}); err != nil {
 				return err
 			}
 		case c2 == nil:
-			if err := collectAll(ctx, ns, c1, level, func(k, v string) error { return fn(DiffEntry{Key: k, OldValue: v}) }); err != nil {
+			if err := collectAll(ctx, ns, c1, level, func(e leafEntry) error {
+				return fn(DiffEntry{Key: e.Key, OldValue: e.Value, OldPayload: e.payload})
+			}); err != nil {
 				return err
 			}
 		default:
@@ -755,7 +966,7 @@ func childForBucket(ctx context.Context, ns *NodeStore, n *node, idx, level int)
 		if err != nil {
 			continue
 		}
-		i, err := r.indexAt(level)
+		i, err := r.indexAt(level, ns.bits())
 		if err != nil {
 			continue
 		}
@@ -770,42 +981,46 @@ func childForBucket(ctx context.Context, ns *NodeStore, n *node, idx, level int)
 }
 
 func diffLeaves(n1, n2 *node, fn func(DiffEntry) error) error {
-	left := make(map[string]string, len(n1.entries))
+	left := make(map[string]leafEntry, len(n1.entries))
 	for _, e := range n1.entries {
-		left[e.Key] = e.Value
+		left[e.Key] = e
 	}
 
 	for _, e := range n2.entries {
 		old, ok := left[e.Key]
 		if !ok {
-			if err := fn(DiffEntry{Key: e.Key, NewValue: e.Value}); err != nil {
+			if err := fn(DiffEntry{Key: e.Key, NewValue: e.Value, NewPayload: e.payload}); err != nil {
 				return err
 			}
 			continue
 		}
-		if old != e.Value {
-			if err := fn(DiffEntry{Key: e.Key, OldValue: old, NewValue: e.Value}); err != nil {
+		if old.Value != e.Value {
+			if err := fn(DiffEntry{
+				Key:      e.Key,
+				OldValue: old.Value, OldPayload: old.payload,
+				NewValue: e.Value, NewPayload: e.payload,
+			}); err != nil {
 				return err
 			}
 		}
 		delete(left, e.Key)
 	}
 
-	for k, v := range left {
-		if err := fn(DiffEntry{Key: k, OldValue: v}); err != nil {
+	for k, e := range left {
+		if err := fn(DiffEntry{Key: k, OldValue: e.Value, OldPayload: e.payload}); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func collectAll(ctx context.Context, ns *NodeStore, n *node, depth int, fn func(key, value string) error) error {
-	if depth > maxTreeDepth {
-		return errTooDeep(depth)
+func collectAll(ctx context.Context, ns *NodeStore, n *node, depth int, fn func(e leafEntry) error) error {
+	if depth > ns.maxTreeDepth() {
+		return errTooDeep(ns.maxTreeDepth(), depth)
 	}
 	if n.leaf {
 		for _, e := range n.entries {
-			if err := fn(e.Key, e.Value); err != nil {
+			if err := fn(e); err != nil {
 				return err
 			}
 		}
@@ -857,12 +1072,12 @@ func routingForEntry(e leafEntry) (routing, error) {
 	return newRouting(pk)
 }
 
-func (r routing) indexAt(level int) (int, error) {
-	shift := 32 - (level+1)*bitsPerLevel
+func (r routing) indexAt(level, bits int) (int, error) {
+	shift := 32 - (level+1)*bits
 	if shift < 0 {
 		return 0, fmt.Errorf("level too deep for 32-bit key prefix")
 	}
-	return int((r.prefix >> shift) & ((1 << bitsPerLevel) - 1)), nil
+	return int((r.prefix >> shift) & ((1 << bits) - 1)), nil
 }
 
 func sortEntries(entries []leafEntry) {

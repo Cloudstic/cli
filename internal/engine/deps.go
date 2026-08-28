@@ -3,6 +3,7 @@ package engine
 import (
 	"io"
 
+	"github.com/cloudstic/cli/internal/hamt"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/store"
 )
@@ -36,4 +37,22 @@ type Deps struct {
 	// HMACKey is the dedup key that content refs are derived under. Nil for a
 	// repository with no encryption.
 	HMACKey []byte
+
+	// FormatV3 marks the repository as recorded format v3 (RFC 0026): trees
+	// seal binary fat leaves whose entries carry their metadata and small
+	// content as payloads, and the engine neither writes nor reads standalone
+	// filemeta/ or content/ objects. Set from the repository's recorded
+	// version at client open, never per operation.
+	FormatV3 bool
+}
+
+// treeOptions returns the hamt options this dependency set implies, with any
+// extras appended — so a manager cannot construct a tree that disagrees with
+// the repository's format.
+func (d Deps) treeOptions(extra ...hamt.TreeOption) []hamt.TreeOption {
+	var opts []hamt.TreeOption
+	if d.FormatV3 {
+		opts = append(opts, hamt.WithFormatV3())
+	}
+	return append(opts, extra...)
 }

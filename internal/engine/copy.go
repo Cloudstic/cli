@@ -217,7 +217,7 @@ func NewCopyManager(d Deps, src CopySide, dstRepoID string) *CopyManager {
 		srcCatalog:  newSnapshotCatalog(src.Store, d.LogSink),
 		dstCatalog:  newSnapshotCatalog(d.Store, d.LogSink),
 		srcTree:     hamt.NewTree(src.Store, hamt.WithLogger(d.LogSink)),
-		dstTree:     hamt.NewTree(d.Store, hamt.WithLogger(d.LogSink)),
+		dstTree:     hamt.NewTree(d.Store, d.treeOptions(hamt.WithLogger(d.LogSink))...),
 		chunkRefs:   map[string]string{},
 		contentRefs: map[string]string{},
 		metaRefs:    map[string]copiedMeta{},

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	lru "github.com/hashicorp/golang-lru/v2"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/cloudstic/cli/internal/core"
@@ -19,6 +18,24 @@ var defaultLog = logger.New("hamt", logger.ColorCyan)
 const (
 	nodeCacheSize       = 4096
 	defaultWriteWorkers = 20
+
+	// nodeCacheBytes is the byte budget for a v2 tree's node cache. v2 nodes
+	// are small JSON documents, so the entry count binds first in practice and
+	// this is a backstop against a pathological tree.
+	nodeCacheBytes = 64 * 1024 * 1024
+
+	// The v3 bounds. Leaves are sized in bytes, so the byte budget is the one
+	// that means anything and the entry cap is set high enough not to bind
+	// before it: at the observed ~50 KB average fill, 128 MB is ~2,600 leaves,
+	// and capping at 128 entries (as this first did) held ~6 MB of a ~60 MB
+	// leaf set and thrashed every per-entry lookup — measured as a 39x request
+	// blowup against v2 on the 5,000-file tree.
+	//
+	// 128 MB is chosen against what the alternative costs rather than as a
+	// memory target: a miss is a whole leaf re-fetched over the network, and
+	// the metadata working set of a mid-sized repository fits inside it.
+	nodeCacheSizeV3  = 8192
+	nodeCacheBytesV3 = 128 * 1024 * 1024
 )
 
 // NodeStore is the only part of this package that knows HAMT nodes are bytes.
@@ -30,16 +47,56 @@ const (
 // pointer: a loaded node is clean, and clean nodes are immutable (see child).
 type NodeStore struct {
 	store store.ObjectStore
-	cache *lru.Cache[string, *node]
+	cache *nodeCache
 	// log is this node store's debug sink. It always points at a logger; an
 	// unbound one falls back to the process-wide writer.
 	log *logger.Logger
+
+	// v3 selects the format-v3 binary node encoding for every node this store
+	// seals (RFC 0026). Reading is format-agnostic either way — load sniffs
+	// the bytes — so the flag governs writes, the leaf split rule, and the
+	// routing shape below.
+	v3 bool
+}
+
+// The routing shape of the tree this store belongs to. A tree's arity decides
+// how an overflowing leaf is partitioned, and therefore how full its leaves
+// end up; v3 uses a narrower split for that reason (see bitsPerLevelV3).
+//
+// They are methods rather than fields so a NodeStore built before the option
+// was applied cannot be left describing the wrong shape.
+func (ns *NodeStore) bits() int {
+	if ns.v3 {
+		return bitsPerLevelV3
+	}
+	return bitsPerLevel
+}
+
+func (ns *NodeStore) branching() int {
+	if ns.v3 {
+		return branchingV3
+	}
+	return branching
+}
+
+func (ns *NodeStore) maxDepth() int {
+	if ns.v3 {
+		return maxDepthV3
+	}
+	return maxDepth
+}
+
+// maxTreeDepth bounds every recursive descent: routing bits run out after
+// maxDepth internal levels, so anything deeper means the structure is not a
+// tree. Two levels of slack keep the guard from firing on a legitimate leaf
+// below the deepest internal node.
+func (ns *NodeStore) maxTreeDepth() int {
+	return ns.maxDepth() + 2
 }
 
 // NewNodeStore returns a NodeStore reading and writing through s.
 func NewNodeStore(s store.ObjectStore) *NodeStore {
-	c, _ := lru.New[string, *node](nodeCacheSize)
-	return &NodeStore{store: s, cache: c, log: defaultLog}
+	return &NodeStore{store: s, cache: newNodeCache(nodeCacheSize, nodeCacheBytes), log: defaultLog}
 }
 
 // load fetches and decodes the node identified by ref. The returned node is
@@ -58,11 +115,23 @@ func (ns *NodeStore) load(ctx context.Context, ref string) (*node, error) {
 	if err := verifyNodeRef(ref, data); err != nil {
 		return nil, err
 	}
-	var sn storedNode
-	if err := json.Unmarshal(data, &sn); err != nil {
-		return nil, fmt.Errorf("decode node %s: %w", ref, err)
+
+	// The two encodings are distinguished by their first bytes: a v2 node is a
+	// JSON object and starts with '{', a v3 node with its magic. Sniffing here
+	// rather than consulting ns.v3 keeps reading format-agnostic — the flag
+	// decides what this store writes, never what it can read.
+	var n *node
+	if isV3NodeData(data) {
+		if n, err = decodeNodeV3(data); err != nil {
+			return nil, fmt.Errorf("decode v3 node %s: %w", ref, err)
+		}
+	} else {
+		var sn storedNode
+		if err := json.Unmarshal(data, &sn); err != nil {
+			return nil, fmt.Errorf("decode node %s: %w", ref, err)
+		}
+		n = decodeNode(&sn)
 	}
-	n := decodeNode(&sn)
 	ns.cache.Add(ref, n)
 	return n, nil
 }
@@ -71,6 +140,10 @@ func (ns *NodeStore) load(ctx context.Context, ref string) (*node, error) {
 // to write. It performs no I/O, so callers can compute a root ref without
 // committing to it.
 func (ns *NodeStore) seal(sn *storedNode) (string, []byte, error) {
+	if ns.v3 {
+		data := encodeNodeV3(sn)
+		return nodePrefix + core.ComputeHash(data), data, nil
+	}
 	hash, data, err := core.ComputeJSONHash(sn)
 	if err != nil {
 		return "", nil, err
@@ -104,6 +177,30 @@ func (ns *NodeStore) putAll(ctx context.Context, batch map[string][]byte) error 
 		})
 	}
 	return g.Wait()
+}
+
+// leafOverfull reports whether a leaf holding entries is over its split
+// budget. It is the single split predicate: insertion, buildNode's partition
+// base case, and delete's collapse all consult it, which is what keeps a
+// tree's shape a pure function of its contents in both formats.
+//
+// v2 splits on entry count. v3 splits on encoded bytes, with an entry cap so
+// a leaf of tiny entries still bounds its in-leaf linear scans (RFC 0026 §2).
+func (ns *NodeStore) leafOverfull(entries []leafEntry) bool {
+	if !ns.v3 {
+		return len(entries) > maxLeafSize
+	}
+	if len(entries) > maxLeafEntriesV3 {
+		return true
+	}
+	var size int
+	for i := range entries {
+		size += entries[i].approxSize()
+		if size > leafSplitBytesV3 {
+			return true
+		}
+	}
+	return false
 }
 
 // verifyNodeRef checks that data is what ref names.

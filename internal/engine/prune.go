@@ -31,24 +31,48 @@ type PruneResult struct {
 
 var objectPrefixes = []string{"chunk/", "content/", "filemeta/", "node/", "snapshot/"}
 
+// objectPrefixesV3 are the namespaces a format-v3 repository actually stores
+// in. filemeta/ and content/ do not exist there — an entry's metadata and its
+// small content live in the leaf — so listing them would spend a request per
+// prune to enumerate nothing, on every backend, forever.
+//
+// Sweeping a prefix that cannot exist is not merely wasteful, it is a claim
+// about the format that stops being true if it is ever wrong: a listing that
+// failed would fail the prune (docs/compatibility.md requires it), so the
+// honest set is the one the format writes.
+var objectPrefixesV3 = []string{"chunk/", "node/", "snapshot/"}
+
+// prefixes returns the namespaces this repository's format stores objects in.
+func (pm *PruneManager) prefixes() []string {
+	if pm.v3 {
+		return objectPrefixesV3
+	}
+	return objectPrefixes
+}
+
 // PruneManager implements mark-and-sweep garbage collection over the object store.
 type PruneManager struct {
 	store    *storelayer.MeteredStore
 	tree     *hamt.Tree
 	reporter ui.Reporter
 	metas    *metaLoader
+	// v3 is the repository's recorded format (Deps.FormatV3): an entry's chunk
+	// refs are read from its leaf payload, and there are no filemeta/ or
+	// content/ objects to mark or sweep.
+	v3 bool
 }
 
 func NewPruneManager(d Deps) *PruneManager {
 	meteredStore := storelayer.NewMeteredStore(d.Store)
 	return &PruneManager{
 		store:    meteredStore,
-		tree:     hamt.NewTree(meteredStore),
+		tree:     hamt.NewTree(meteredStore, d.treeOptions()...),
 		reporter: d.Reporter,
 		// Uncached: markFileMeta guards every load behind the reachable set, so
 		// a ref is read at most once per run and a cache could never hit. Holding
 		// one would cost a core.FileMeta per object in the repository for nothing.
 		metas: newUncachedMetaLoader(meteredStore),
+		v3:    d.FormatV3,
 	}
 }
 
@@ -80,7 +104,10 @@ func (pm *PruneManager) Run(ctx context.Context, opts ...PruneOption) (*PruneRes
 		return nil, err
 	}
 
-	if !cfg.dryRun {
+	// Repacking is a packfile-layer operation; a v3 repository has no packs to
+	// fragment, and its garbage is ordinary unreferenced objects the sweep
+	// above already removed.
+	if !cfg.dryRun && !pm.v3 {
 		// Attempt to repack fragmented packfiles, if this repository packs at all.
 		packStore := findPackStore(pm.store)
 
@@ -175,7 +202,7 @@ func (pm *PruneManager) mark(ctx context.Context, phase ui.Phase) (*objkey.Set, 
 // repository holds none. Errors are propagated: an unreadable listing must not
 // be mistaken for an empty repository.
 func (pm *PruneManager) firstObject(ctx context.Context) (string, error) {
-	for _, prefix := range objectPrefixes {
+	for _, prefix := range pm.prefixes() {
 		keys, err := pm.store.List(ctx, prefix)
 		if err != nil {
 			return "", fmt.Errorf("list %s: %w", prefix, err)
@@ -201,8 +228,12 @@ func (pm *PruneManager) collectSnapshots(ctx context.Context, reachable *objkey.
 	if exists, _ := pm.store.Exists(ctx, "index/latest"); exists {
 		reachable.Add("index/latest")
 	}
-	if exists, _ := pm.store.Exists(ctx, "index/packs"); exists {
-		reachable.Add("index/packs")
+	// index/packs belongs to the packfile layer, which a v3 repository does
+	// not have: asking would cost a request to learn it is absent.
+	if !pm.v3 {
+		if exists, _ := pm.store.Exists(ctx, "index/packs"); exists {
+			reachable.Add("index/packs")
+		}
 	}
 
 	return snapRefs, nil
@@ -216,6 +247,35 @@ func (pm *PruneManager) markSnapshot(ctx context.Context, ref string, reachable 
 	snap, err := pm.loadSnapshot(ctx, ref)
 	if err != nil {
 		return err
+	}
+
+	// v3: an entry's whole chain lives in its leaf, so marking is one
+	// traversal that records node refs and reads each entry's chunk refs from
+	// the payload as it passes — no per-entry reads at all. Enumerating nodes
+	// and then walking entries separately would read every leaf twice, and a
+	// v3 leaf is the data (see hamt.WalkTree).
+	//
+	// A payload-less entry fails the prune rather than being skipped: its
+	// chunk refs are unknowable, and docs/compatibility.md forbids collecting
+	// garbage over data that could not be fully read.
+	if pm.v3 {
+		return pm.tree.WalkTree(ctx, snap.Root,
+			func(r string) error {
+				reachable.Add(r)
+				return nil
+			},
+			func(key, ref string, p *hamt.Payload) error {
+				if !reachable.Add(ref) {
+					return nil
+				}
+				if p == nil {
+					return fmt.Errorf("v3 leaf entry %s (%s) carries no payload; refusing to prune", key, ref)
+				}
+				for _, c := range p.Chunks {
+					reachable.Add(c)
+				}
+				return nil
+			})
 	}
 
 	if err := pm.tree.NodeRefs(ctx, snap.Root, func(r string) error {
@@ -319,9 +379,9 @@ func (pm *PruneManager) markContent(ctx context.Context, ref string, reachable *
 // while not being able to delete one object means one object survives — safe,
 // visible in the count, and reclaimed by the next run.
 func (pm *PruneManager) sweep(ctx context.Context, reachable *objkey.Set, cfg *pruneConfig) (*PruneResult, error) {
-	listing := make(map[string][]string, len(objectPrefixes))
+	listing := make(map[string][]string, len(pm.prefixes()))
 	var totalKeys int
-	for _, prefix := range objectPrefixes {
+	for _, prefix := range pm.prefixes() {
 		keys, err := pm.store.List(ctx, prefix)
 		if err != nil {
 			return nil, fmt.Errorf("list %s: %w", prefix, err)
@@ -340,7 +400,7 @@ func (pm *PruneManager) sweep(ctx context.Context, reachable *objkey.Set, cfg *p
 	// The listing taken above is the one swept, rather than being taken a second
 	// time. Two passes could disagree, and the progress total would then describe
 	// a different set of objects than the one being deleted.
-	for _, prefix := range objectPrefixes {
+	for _, prefix := range pm.prefixes() {
 		for _, key := range listing[prefix] {
 			result.ObjectsScanned++
 			if reachable.Has(key) {

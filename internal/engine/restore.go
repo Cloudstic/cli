@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -47,6 +48,13 @@ type restorePlan struct {
 	byID        map[string]core.FileMeta
 	snapshotRef string
 	root        string
+
+	// dirsOnly marks a plan that holds the snapshot's directories and nothing
+	// else — the shape a streaming v3 restore uses. byID is then the directory
+	// index a path is resolved through, and sorted their topological order;
+	// files never enter either, because the write walk meets each one once and
+	// releases it (see runWithWriterV3).
+	dirsOnly bool
 }
 
 // WithRestoreDryRun resolves the snapshot and reports what would be restored without writing output.
@@ -116,15 +124,20 @@ type RestoreManager struct {
 	metas     *metaLoader
 	reporter  ui.Reporter
 	memBudget *semaphore.Weighted
+	// v3 is the repository's recorded format (Deps.FormatV3): metadata and
+	// content locations are read from leaf payloads, never from filemeta/ or
+	// content/ objects.
+	v3 bool
 }
 
 func NewRestoreManager(d Deps) *RestoreManager {
 	return &RestoreManager{
 		store:     d.Store,
-		tree:      hamt.NewTree(d.Store),
+		tree:      hamt.NewTree(d.Store, d.treeOptions()...),
 		metas:     newUncachedMetaLoader(d.Store),
 		reporter:  d.Reporter,
 		memBudget: semaphore.NewWeighted(restoreMemoryBudget),
+		v3:        d.FormatV3,
 	}
 }
 
@@ -168,6 +181,13 @@ func (rm *RestoreManager) Run(ctx context.Context, writer RestoreWriter, snapsho
 // can take concurrent writes; the pool degenerates to sequential execution for
 // writers that cannot (zip).
 func (rm *RestoreManager) runWithWriter(ctx context.Context, plan restorePlan, writer RestoreWriter) (*RestoreResult, error) {
+	if rm.v3 {
+		return rm.runWithWriterV3(ctx, plan, writer)
+	}
+	return rm.runWithWriterV2(ctx, plan, writer)
+}
+
+func (rm *RestoreManager) runWithWriterV2(ctx context.Context, plan restorePlan, writer RestoreWriter) (*RestoreResult, error) {
 	result := &RestoreResult{SnapshotRef: plan.snapshotRef, Root: plan.root}
 	phase := rm.reporter.StartPhase("Restoring", int64(len(plan.sorted)), false)
 
@@ -295,6 +315,191 @@ func (rm *RestoreManager) runWithWriter(ctx context.Context, plan restorePlan, w
 	return result, nil
 }
 
+// runWithWriterV3 writes a format-v3 snapshot in **leaf order**, taking each
+// file's content from the payload the walk already holds.
+//
+// The v2 shape does not carry over. There, a file's content is its own object,
+// so the write phase can visit files in any order and pay one fetch each. In
+// v3 the content lives inside the leaf, and looking each file up separately —
+// which is what this did first — costs a leaf read per file whenever the leaf
+// set outgrows the node cache: measured at ~20,000 requests for a 22,000-file
+// snapshot, an order of magnitude worse than v2 on the same tree.
+//
+// Walking the leaves once and writing what each holds costs one read per leaf
+// instead, whatever the cache does, because nothing is ever revisited. The
+// price is that directories can no longer be created lazily on the way past:
+// leaf order is affinity-hash order, so a file may be written before its
+// parent directory is reached. So directories are created first, in
+// topological order, from metadata already collected — they are a small
+// minority of entries and carry no content, so the extra pass is cheap.
+//
+// Chunked files are dispatched to a bounded pool because their cost is
+// per-chunk round trips; inline files are written on this goroutine, where
+// the bytes are already in hand and a hand-off would only add scheduling.
+func (rm *RestoreManager) runWithWriterV3(ctx context.Context, plan restorePlan, writer RestoreWriter) (*RestoreResult, error) {
+	result := &RestoreResult{SnapshotRef: plan.snapshotRef, Root: plan.root}
+
+	// A streaming restore does not know how many entries it will write until
+	// it has written them — that is the point — so it reports a count rather
+	// than a percentage. plan.sorted holds only directories there, and using
+	// it as the total would show a bar that reaches 100% after the first few
+	// per cent of the work.
+	total := int64(len(plan.sorted))
+	if plan.dirsOnly {
+		total = 0
+	}
+	phase := rm.reporter.StartPhase("Restoring", total, false)
+
+	var mu sync.Mutex
+	bump := func(field *int) {
+		mu.Lock()
+		*field++
+		mu.Unlock()
+	}
+
+	if setter, ok := writer.(restoreWarningSetter); ok {
+		setter.SetWarningFunc(func(msg string) {
+			bump(&result.Warnings)
+			phase.Log("Warning: " + msg)
+		})
+	}
+
+	// Directories first, in the plan's topological order: leaf order does not
+	// guarantee a parent precedes its children.
+	for _, id := range plan.sorted {
+		meta := plan.byID[id]
+		if meta.Type != core.FileTypeFolder {
+			continue
+		}
+		rel := buildRestorePath(meta, plan.byID)
+		if !restoreNeedsDir(rel, plan.cfg.pathFilter) {
+			continue
+		}
+		if err := writer.MkdirAll(rel, meta); err != nil {
+			if !errors.Is(err, errRestoreSkipped) {
+				phase.Log(fmt.Sprintf("Failed: %s: %v", rel, err))
+				result.Errors++
+			}
+			phase.Increment(1)
+			continue
+		}
+		phase.Logf(ui.DetailVerbose, "Dir: %s", rel)
+		result.DirsWritten++
+		phase.Increment(1)
+	}
+
+	cw, ok := writer.(concurrentRestoreWriter)
+	concurrent := ok && cw.SupportsConcurrentWrites()
+
+	g, gCtx := errgroup.WithContext(ctx)
+	if concurrent {
+		g.SetLimit(restoreFileConcurrency(rm.store))
+	}
+
+	writeOne := func(meta core.FileMeta, rel string, p *hamt.Payload) error {
+		err := writer.WriteFile(rel, meta, func(out io.Writer) error {
+			return rm.writeContentFromPayload(gCtx, out, meta, p, !plan.cfg.noVerify)
+		})
+		defer phase.Increment(1)
+		switch {
+		case errors.Is(err, errRestoreSkipped):
+			return nil
+		case err != nil:
+			phase.Log(fmt.Sprintf("Failed: %s: %v", rel, err))
+			bump(&result.Errors)
+			return nil
+		}
+		phase.Logf(ui.DetailVerbose, "File: %s (%d bytes)", rel, meta.Size)
+		bump(&result.FilesWritten)
+		return nil
+	}
+
+	// Files stream past: each is decoded from the leaf that is already in
+	// hand, written, and released. Nothing accumulates, so what the phase
+	// holds is the directory index and the payloads currently in flight —
+	// not the snapshot.
+	//
+	// This is the streaming restore RFC 0025 §8 built for the packfile format
+	// and withdrew. There it cost 3x the wall time, because metadata and
+	// content lived in different objects and interleaving the two evicted
+	// each other's pack bodies. Here they are the same object: the leaf a
+	// file's metadata comes from is the leaf its content comes from, so
+	// reading it once serves both and the interleaving that was fatal is the
+	// access pattern the format already wants.
+	walkErr := rm.tree.WalkEntries(ctx, plan.root, func(fileID, ref string, p *hamt.Payload) error {
+		if err := gCtx.Err(); err != nil {
+			return err
+		}
+		if p == nil {
+			return fmt.Errorf("v3 leaf entry %s carries no payload", ref)
+		}
+		if _, isDir := plan.byID[fileID]; isDir && plan.dirsOnly {
+			return nil // written above, in topological order
+		}
+
+		var meta core.FileMeta
+		if plan.dirsOnly {
+			fm, err := decodePayloadMeta(ref, p)
+			if err != nil {
+				return err
+			}
+			meta = *fm
+		} else {
+			known, ok := plan.byID[fileID]
+			if !ok {
+				return nil // filtered out of this restore
+			}
+			meta = known
+		}
+
+		if meta.Type == core.FileTypeFolder {
+			return nil
+		}
+		if meta.ContentHash == "" {
+			phase.Increment(1)
+			return nil
+		}
+
+		rel := buildRestorePath(meta, plan.byID)
+		if !matchesRestorePath(rel, plan.cfg.pathFilter) {
+			return nil
+		}
+		if !concurrent {
+			return writeOne(meta, rel, p)
+		}
+
+		// Every file goes to the pool, inline ones included. Writing them on
+		// this goroutine instead — which this did first — serialises the
+		// majority of a snapshot behind one writer, since most files are
+		// small enough to inline, and that is what made a v3 restore slower
+		// in wall time than v2 while making fewer requests and moving a third
+		// of the bytes.
+		//
+		// Handing the payload over is safe without copying it: a decoded node
+		// is immutable and shared with the cache, so a worker reading it
+		// races with nothing. The pool is bounded, so at most
+		// restoreFileConcurrency payloads are held at once.
+		g.Go(func() error { return writeOne(meta, rel, p) })
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
+		phase.Error()
+		return nil, err
+	}
+	if walkErr != nil {
+		phase.Error()
+		return nil, walkErr
+	}
+
+	phase.Done()
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	result.BytesWritten = writer.BytesWritten()
+	return result, nil
+}
+
 // restoreFileConcurrency picks how many files to reconstruct at once.
 //
 // It is deliberately far below the store's own concurrency hint (128 for S3):
@@ -317,6 +522,24 @@ func (rm *RestoreManager) prepareRestore(ctx context.Context, snapshotRef string
 	snap, resolvedRef, err := rm.resolveSnapshot(ctx, snapshotRef)
 	if err != nil {
 		return restorePlan{}, err
+	}
+
+	// A v3 restore that is going to write needs only the directories up
+	// front; the files stream past in the write walk. A dry run still
+	// collects everything, because what it reports *is* the entry list.
+	if rm.v3 && !cfg.dryRun {
+		dirs, order, err := rm.collectDirectoriesFromLeaves(ctx, snap.Root)
+		if err != nil {
+			return restorePlan{}, err
+		}
+		return restorePlan{
+			cfg:         cfg,
+			sorted:      restoreOrder(dirs, order),
+			byID:        dirs,
+			snapshotRef: resolvedRef,
+			root:        snap.Root,
+			dirsOnly:    true,
+		}, nil
 	}
 
 	byID, walkOrder, err := rm.collectMetadata(ctx, snap.Root)
@@ -647,6 +870,8 @@ func (cw *countingWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// writeFileContent reconstructs a v2 file from its content object. The v3 path
+// is writeContentFromPayload, which takes the bytes from the leaf instead.
 func (rm *RestoreManager) writeFileContent(ctx context.Context, w io.Writer, meta core.FileMeta, verify bool) error {
 	contentKey := meta.ContentRef
 	if contentKey == "" {
@@ -660,10 +885,11 @@ func (rm *RestoreManager) writeFileContent(ctx context.Context, w io.Writer, met
 
 	// Hash the reconstructed stream as it is written. meta.ContentHash is a
 	// SHA-256 over the whole plaintext for both storage paths — the chunked
-	// path accumulates it in Chunker.ProcessStream, the inline path computes it
-	// directly — so one digest of the output is directly comparable. Nothing
-	// below this line authenticates the bytes otherwise: an object replaced in
-	// the backing store is returned by the store stack without complaint.
+	// path accumulates it in Chunker.ProcessStream, the inline path computes
+	// it directly — so one digest of the output is directly comparable.
+	// Nothing below this line authenticates the bytes otherwise: an object
+	// replaced in the backing store is returned by the store stack without
+	// complaint.
 	hasher := sha256.New()
 	out := w
 	if verify {
@@ -688,6 +914,46 @@ func (rm *RestoreManager) writeFileContent(ctx context.Context, w io.Writer, met
 	return nil
 }
 
+// writeContentFromPayload reconstructs a file from the payload its leaf
+// carries (format v3): inline bytes are written as they are, chunked files
+// stream through the same pipelined chunk fetcher as v2.
+//
+// The payload is passed in rather than looked up, which is what keeps the
+// write phase at one read per leaf: see runWithWriterV3.
+func (rm *RestoreManager) writeContentFromPayload(ctx context.Context, out io.Writer, meta core.FileMeta, p *hamt.Payload, verify bool) error {
+	if p == nil {
+		return fmt.Errorf("leaf entry for %s carries no content payload", meta.FileID)
+	}
+
+	hasher := sha256.New()
+	dst := out
+	if verify {
+		dst = io.MultiWriter(out, hasher)
+	}
+
+	switch {
+	case len(p.Chunks) > 0:
+		avg := int64(0)
+		if p.Size > 0 {
+			avg = p.Size / int64(len(p.Chunks))
+		}
+		if err := rm.writeChunks(ctx, dst, p.Chunks, avg); err != nil {
+			return err
+		}
+	case len(p.Inline) > 0:
+		if _, err := dst.Write(p.Inline); err != nil {
+			return err
+		}
+	}
+
+	if verify {
+		if got := hex.EncodeToString(hasher.Sum(nil)); got != meta.ContentHash {
+			return fmt.Errorf("content hash mismatch: expected %s, got %s", meta.ContentHash, got)
+		}
+	}
+	return nil
+}
+
 func buildRestorePath(meta core.FileMeta, byID map[string]core.FileMeta) string {
 	return fileMetaPath(meta, func(parentID string) (core.FileMeta, bool) {
 		parent, ok := byID[parentID]
@@ -699,6 +965,28 @@ func buildRestorePath(meta core.FileMeta, byID map[string]core.FileMeta) string 
 // If the filter ends with "/", it matches all entries under that subtree.
 // Otherwise it matches only the entry with the exact path.
 // Ancestor directories of matched entries are always included.
+// matchesRestorePath reports whether a restored path is inside the filter —
+// the same rule filterByPath applies, expressed for one path at a time so a
+// streaming restore can test entries as it meets them instead of building the
+// matched set in advance.
+func matchesRestorePath(rel, filter string) bool {
+	if filter == "" {
+		return true
+	}
+	prefix := strings.TrimSuffix(filter, "/")
+	return rel == prefix || strings.HasPrefix(rel, prefix+"/")
+}
+
+// restoreNeedsDir reports whether a directory has to be created for a filtered
+// restore: either it is inside the filter, or it is an ancestor of it and the
+// files below could not otherwise be written.
+func restoreNeedsDir(rel, filter string) bool {
+	if matchesRestorePath(rel, filter) {
+		return true
+	}
+	return strings.HasPrefix(strings.TrimSuffix(filter, "/"), rel+"/")
+}
+
 func filterByPath(sorted []string, byID map[string]core.FileMeta, pathFilter string) []string {
 	isSubtree := strings.HasSuffix(pathFilter, "/")
 	prefix := pathFilter
@@ -791,7 +1079,151 @@ func (rm *RestoreManager) resolveSnapshot(ctx context.Context, ref string) (*cor
 // order the store says is cheapest, which on a repository built by several
 // backups is not walk order at all: each backup's entries sit in its own packs,
 // so the walk interleaves them. See the grouping below.
+// collectMetadataFromLeaves is collectMetadata for a v3 repository: every
+// entry's metadata arrives in its leaf, so one walk yields the whole plan with
+// no per-entry reads, no grouping, and nothing to fetch concurrently. Payloads
+// are not retained — the metadata is decoded and the leaf released, which is
+// what keeps the plan's memory proportional to metadata rather than to the
+// snapshot's inline content.
+// collectDirectoriesFromLeaves indexes the snapshot's directories, and only
+// those, so a streaming restore can resolve a path without holding the tree.
+//
+// It exists because of what affinity routing puts where. A routing key is the
+// parent's hash prefix followed by the entry's own (see AffinityKey), so every
+// entry of one directory shares the leading routing bits and lands in the same
+// leaf: a leaf walk is a directory-at-a-time walk. What it does *not* give is
+// a parent before its children — a directory is filed under its own parent —
+// so paths still need an index, and this is the smallest one that works.
+//
+// Skipping the files is what makes it cheap, and it is done without decoding
+// them: a directory carries no content, so an entry whose payload has inline
+// bytes or chunk refs cannot be one. That test is a pointer comparison, so the
+// pass reads the leaves and decodes a few per cent of what they hold.
+func (rm *RestoreManager) collectDirectoriesFromLeaves(ctx context.Context, root string) (map[string]core.FileMeta, []string, error) {
+	phase := rm.reporter.StartPhase("Reading directories", 0, false)
+
+	dirs := make(map[string]core.FileMeta)
+	var order []string
+	err := rm.tree.WalkEntries(ctx, root, func(_, ref string, p *hamt.Payload) error {
+		if p == nil {
+			return fmt.Errorf("v3 leaf entry %s carries no metadata payload", ref)
+		}
+		if len(p.Inline) > 0 || len(p.Chunks) > 0 {
+			return nil // has content, so not a directory
+		}
+		fm, err := decodePayloadMeta(ref, p)
+		if err != nil {
+			return err
+		}
+		if fm.Type != core.FileTypeFolder {
+			return nil // an empty file, not a directory
+		}
+		dirs[fm.FileID] = *fm
+		order = append(order, fm.FileID)
+		phase.Increment(1)
+		return nil
+	})
+	if err != nil {
+		phase.Error()
+		return nil, nil, err
+	}
+	phase.Done()
+	return dirs, order, nil
+}
+
+// metaDecodeBatch is how many entries the v3 metadata pass buffers before
+// decoding them in parallel.
+//
+// The walk itself is sequential — it is one pass over the leaves, which is the
+// point — but decoding is per-entry CPU work with no ordering requirement, and
+// a snapshot has as many of them as it has files. Buffering references rather
+// than results is what keeps this bounded: an entry in the buffer is a pointer
+// into a leaf that is live anyway, so the batch costs a few slice headers each
+// and not a copy of the snapshot's inline content.
+const metaDecodeBatch = 2048
+
+func (rm *RestoreManager) collectMetadataFromLeaves(ctx context.Context, root string) (map[string]core.FileMeta, []string, error) {
+	phase := rm.reporter.StartPhase("Loading metadata", 0, false)
+
+	type pending struct {
+		ref     string
+		payload *hamt.Payload
+	}
+
+	byID := make(map[string]core.FileMeta)
+	var walkOrder []string
+	var mu sync.Mutex
+
+	batch := make([]pending, 0, metaDecodeBatch)
+	workers := min(runtime.GOMAXPROCS(0), 8)
+
+	// flush decodes one batch across workers and appends the results in the
+	// order the walk produced them, which is the order restore writes in.
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		decoded := make([]core.FileMeta, len(batch))
+		g, gCtx := errgroup.WithContext(ctx)
+		g.SetLimit(workers)
+		chunk := (len(batch) + workers - 1) / workers
+		for start := 0; start < len(batch); start += chunk {
+			end := min(start+chunk, len(batch))
+			g.Go(func() error {
+				for i := start; i < end; i++ {
+					if err := gCtx.Err(); err != nil {
+						return err
+					}
+					fm, err := decodePayloadMeta(batch[i].ref, batch[i].payload)
+					if err != nil {
+						return err
+					}
+					decoded[i] = *fm
+				}
+				return nil
+			})
+		}
+		if err := g.Wait(); err != nil {
+			return err
+		}
+
+		mu.Lock()
+		for i := range decoded {
+			byID[decoded[i].FileID] = decoded[i]
+			walkOrder = append(walkOrder, decoded[i].FileID)
+		}
+		mu.Unlock()
+		phase.Increment(int64(len(batch)))
+		batch = batch[:0]
+		return nil
+	}
+
+	err := rm.tree.WalkEntries(ctx, root, func(_, ref string, p *hamt.Payload) error {
+		if p == nil {
+			return fmt.Errorf("v3 leaf entry %s carries no metadata payload", ref)
+		}
+		batch = append(batch, pending{ref: ref, payload: p})
+		if len(batch) < metaDecodeBatch {
+			return nil
+		}
+		return flush()
+	})
+	if err == nil {
+		err = flush()
+	}
+	if err != nil {
+		phase.Error()
+		return nil, nil, err
+	}
+	phase.Done()
+	return byID, walkOrder, nil
+}
+
 func (rm *RestoreManager) collectMetadata(ctx context.Context, root string) (map[string]core.FileMeta, []string, error) {
+	if rm.v3 {
+		return rm.collectMetadataFromLeaves(ctx, root)
+	}
+
 	var refs []string
 	err := rm.tree.Walk(ctx, root, func(_, valueRef string) error {
 		refs = append(refs, valueRef)

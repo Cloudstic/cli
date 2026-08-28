@@ -97,15 +97,22 @@ type SnapshotSummary struct {
 // builds. Do not raise them for a change earlier builds can still read: a
 // needless bump locks users out of their own data for no benefit.
 const (
-	// RepoFormatVersion is stamped into every repository this build creates.
+	// RepoFormatVersion is stamped into every repository this build creates by
+	// default. The version is not only a claim about the bytes currently
+	// present — it is the signal that tells other machines sharing this
+	// repository to upgrade. A heterogeneous fleet is the dangerous state, so
+	// a repository touched by a build that can seal says so, and older builds
+	// are told to catch up rather than left writing alongside it.
 	//
-	// It tracks MaxSupportedRepoFormat deliberately. The version is not only a
-	// claim about the bytes currently present — it is the signal that tells
-	// other machines sharing this repository to upgrade. A heterogeneous fleet
-	// is the dangerous state, so a repository touched by a build that can seal
-	// says so, and older builds are told to catch up rather than left writing
-	// alongside it.
+	// It deliberately stays below MaxSupportedRepoFormat while format v3 is
+	// opt-in (RFC 0026): a repository becomes v3 only when init is asked for
+	// it, never as a side effect of this build touching it.
 	RepoFormatVersion = 2
+
+	// RepoFormatV3 is the fat-leaf, packless repository format (RFC 0026).
+	// Created only by an explicit init; a v3 repository contains only v3
+	// structures, and a v3 client builds its store chain without PackStore.
+	RepoFormatV3 = 3
 
 	// MaxSupportedRepoFormat is the highest version this build can read. A
 	// repository above it is refused rather than misread.
@@ -116,8 +123,9 @@ const (
 	// would also read the pre-shard monolithic catalog as complete when it is
 	// merely stale, which is the same failure by a different route.
 	//
-	// Both changes ship in the same release, so one version covers them.
-	MaxSupportedRepoFormat = 2
+	// 3 is RepoFormatV3. Builds before it refuse a v3 repository at open —
+	// the clean failure RFC 0026 relies on.
+	MaxSupportedRepoFormat = 3
 
 	// FramedCompressionFormat is the lowest recorded format at which the
 	// compression layer may write framed objects (see pkg/store/compressed.go).

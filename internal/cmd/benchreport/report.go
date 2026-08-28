@@ -54,6 +54,36 @@ type Row struct {
 	SentMB   float64
 	ByAPI    string // "GetObject=8;HeadObject=3;…", passed through untouched
 	HasS3    bool
+
+	// Aging columns, filled only by the aging stage (see bench.sh's
+	// AGE_CHECKPOINTS). Backups is the number of backups that had been taken
+	// when this measurement ran and is the axis the aging section plots
+	// against; Packs is how many packfiles the repository held at that point,
+	// which is zero for a format with no packfile layer. Policy names the
+	// variant when several were measured against one aged repository.
+	//
+	// Backups > 0 is what marks a row as aging: the pipeline never sets it,
+	// and a checkpoint is always at least the first backup.
+	Backups int
+	Packs   int
+	Policy  string
+}
+
+// IsAging reports whether this row came from the aging stage rather than from
+// the pipeline. The two answer different questions over different axes — one
+// varies tree size against a fresh repository, the other varies history
+// against a fixed tree — so they are never mixed into one table.
+func (r Row) IsAging() bool { return r.Backups > 0 }
+
+// AgingOp is the operation name with its checkpoint suffix removed, so the
+// curve for one operation can be assembled across checkpoints. "restore@40"
+// and "restore@40:probe" both reduce to "restore"; the policy travels in its
+// own column.
+func AgingOp(op string) string {
+	if i := strings.IndexByte(op, '@'); i >= 0 {
+		return op[:i]
+	}
+	return op
 }
 
 // Stat summarises repeated samples of one measurement.
@@ -177,6 +207,17 @@ func Parse(r io.Reader) (*Report, error) {
 				return nil, fmt.Errorf("row %d: seconds %q: %w", n+2, v, err)
 			}
 		}
+		row.Policy = get(rec, "policy")
+		if v := get(rec, "backups"); v != "" {
+			if row.Backups, err = strconv.Atoi(v); err != nil {
+				return nil, fmt.Errorf("row %d: backups %q: %w", n+2, v, err)
+			}
+		}
+		if v := get(rec, "packs"); v != "" {
+			if row.Packs, err = strconv.Atoi(v); err != nil {
+				return nil, fmt.Errorf("row %d: packs %q: %w", n+2, v, err)
+			}
+		}
 		if v := get(rec, "peak_mb"); v != "" {
 			if row.PeakMB, err = strconv.ParseFloat(v, 64); err != nil {
 				return nil, fmt.Errorf("row %d: peak_mb %q: %w", n+2, v, err)
@@ -223,11 +264,28 @@ func (r *Report) Kind() Kind {
 // summary rows are excluded — they have their own section, rendered by
 // renderRepoSummary.
 func (r *Report) Operations() []string {
+	aging := map[string]bool{}
+	for _, row := range r.Rows {
+		if row.IsAging() {
+			aging[row.Operation] = true
+		}
+	}
 	all := distinct(r.Rows, func(row Row) string { return row.Operation })
 	out := make([]string, 0, len(all))
 	for _, op := range all {
-		if !isSummaryOp(op) {
+		if !isSummaryOp(op) && !aging[op] {
 			out = append(out, op)
+		}
+	}
+	return out
+}
+
+// AgingRows returns the rows the aging stage produced, in the order read.
+func (r *Report) AgingRows() []Row {
+	var out []Row
+	for _, row := range r.Rows {
+		if row.IsAging() {
+			out = append(out, row)
 		}
 	}
 	return out

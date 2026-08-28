@@ -20,15 +20,16 @@ import (
 // holds it for one batch rather than for the whole snapshot.
 const entryBatch = 8192
 
-// treeEntry is one HAMT entry: the key it is routed under, and the ref of the
-// filemeta it names.
+// treeEntry is one HAMT entry: the key it is routed under, the ref of the
+// filemeta it names, and — in a v3 repository — the payload its leaf carries.
 //
 // The key travels with the ref because some callers need it — find matches
 // against it and records folders by it — and a batch that dropped it would
 // force those callers to walk separately.
 type treeEntry struct {
-	key string
-	ref string
+	key     string
+	ref     string
+	payload *hamt.Payload
 }
 
 // walkEntriesBatched walks a snapshot's entries and hands them to fn in
@@ -41,8 +42,8 @@ type treeEntry struct {
 func walkEntriesBatched(ctx context.Context, t *hamt.Tree, root string, fn func([]treeEntry) error) error {
 	buf := make([]treeEntry, 0, entryBatch)
 
-	if err := t.Walk(ctx, root, func(key, ref string) error {
-		buf = append(buf, treeEntry{key: key, ref: ref})
+	if err := t.WalkEntries(ctx, root, func(key, ref string, p *hamt.Payload) error {
+		buf = append(buf, treeEntry{key: key, ref: ref, payload: p})
 		if len(buf) < entryBatch {
 			return nil
 		}
@@ -58,6 +59,22 @@ func walkEntriesBatched(ctx context.Context, t *hamt.Tree, root string, fn func(
 		return nil
 	}
 	return fn(buf)
+}
+
+// splitByPayload partitions a batch into the entries whose meta rides in their
+// leaf (v3) and the refs that must be fetched (v2). Callers process the first
+// group directly and declare only the second to the store — a declaration
+// containing keys nothing will read would misinform grouping.
+func splitByPayload(entries []treeEntry) (carried []treeEntry, refs []string) {
+	refs = make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.payload != nil {
+			carried = append(carried, e)
+		} else {
+			refs = append(refs, e.ref)
+		}
+	}
+	return carried, refs
 }
 
 // readGrouped declares keys to the store and invokes fn for each one, in the

@@ -18,6 +18,7 @@ type initArgs struct {
 	recovery     bool
 	noEncryption bool
 	adoptSlots   bool
+	format       int
 }
 
 func declareInitArgs(g *globalFlags) (*initArgs, commandInput) {
@@ -27,6 +28,8 @@ func declareInitArgs(g *globalFlags) (*initArgs, commandInput) {
 			withShortUsage("Generate a 24-word recovery key")),
 		boolFlag(&a.noEncryption, "no-encryption", false, "Create an unencrypted repository (NOT recommended)"),
 		boolFlag(&a.adoptSlots, "adopt-slots", false, "Initialize by adopting existing key slots if found (prevents error if already has slots)"),
+		intFlag(&a.format, "format", 0, "Repository format version to create (default: the build's default format; 3 selects the packless fat-leaf format, RFC 0026)",
+			withShortUsage("Repository format version")),
 	}}
 }
 
@@ -89,6 +92,9 @@ func buildInitOpts(a *initArgs, kc keychain.Chain) []cloudstic.InitOption {
 	}
 	if a.adoptSlots {
 		initOpts = append(initOpts, cloudstic.WithInitAdoptSlots())
+	}
+	if a.format != 0 {
+		initOpts = append(initOpts, cloudstic.WithInitFormat(a.format))
 	}
 	return initOpts
 }

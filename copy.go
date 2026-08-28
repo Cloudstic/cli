@@ -66,6 +66,18 @@ func (c *Client) CopyFrom(ctx context.Context, src *Client, opts ...CopyOption) 
 		return nil, fmt.Errorf("copy: source and destination are the same client")
 	}
 
+	// Copy re-encodes filemeta and content objects between repositories, and a
+	// v3 repository has neither (its entries live in leaf payloads, RFC 0026).
+	// Crossing formats needs a payload-aware copy that has not been built;
+	// refusing beats a run that fails midway or writes a tree v3 readers
+	// cannot restore.
+	if src.formatV3() || c.formatV3() {
+		return nil, fmt.Errorf(
+			"copy: repository format v3 is not yet supported by copy (source v3: %v, destination v3: %v)",
+			src.formatV3(), c.formatV3(),
+		)
+	}
+
 	srcID, err := src.repoID(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("read source repository config: %w", err)

@@ -239,7 +239,7 @@ func (s *findScanner) applyAdditions(ctx context.Context, state *lineageState, a
 
 	for _, e := range added {
 		s.entriesScanned++
-		eval, err := s.eval(ctx, e.NewValue)
+		eval, err := s.eval(ctx, e.NewValue, e.NewPayload)
 		if err != nil {
 			return nil, false, err
 		}
@@ -316,9 +316,9 @@ func (s *findScanner) closeRun(lineage findLineage, state *lineageState, key str
 // whole tree.
 func (s *findScanner) walkSnapshot(ctx context.Context, root string, state *lineageState) ([]findCandidate, error) {
 	var candidates []findCandidate
-	err := s.tree.Walk(ctx, root, func(key, ref string) error {
+	err := s.tree.WalkEntries(ctx, root, func(key, ref string, p *hamt.Payload) error {
 		s.entriesScanned++
-		eval, err := s.eval(ctx, ref)
+		eval, err := s.eval(ctx, ref, p)
 		if err != nil {
 			return err
 		}
@@ -352,13 +352,13 @@ func (s *findScanner) observe(lineage findLineage, idx int, run *findRun) {
 	})
 }
 
-func (s *findScanner) eval(ctx context.Context, ref string) (findRefEval, error) {
+func (s *findScanner) eval(ctx context.Context, ref string, p *hamt.Payload) (findRefEval, error) {
 	key := findRefKey(ref)
 	if cached, ok := s.evaluated[key]; ok {
 		return cached, nil
 	}
 
-	meta, err := s.loadMeta(ctx, ref)
+	meta, err := s.loadMetaEntry(ctx, ref, p)
 	if err != nil {
 		return findRefEval{}, err
 	}
@@ -370,8 +370,8 @@ func (s *findScanner) eval(ctx context.Context, ref string) (findRefEval, error)
 	return eval, nil
 }
 
-func (s *findScanner) loadMeta(ctx context.Context, ref string) (*core.FileMeta, error) {
-	meta, err := s.metas.load(ctx, ref)
+func (s *findScanner) loadMetaEntry(ctx context.Context, ref string, p *hamt.Payload) (*core.FileMeta, error) {
+	meta, err := s.metas.loadMeta(ctx, ref, p)
 	if err != nil {
 		return nil, err
 	}

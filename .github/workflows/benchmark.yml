@@ -32,6 +32,16 @@ on:
         required: false
         default: "5000 20000 50000"
         type: string
+      repo_format:
+        description: "Repository format to init (empty = build default; 3 = packless fat-leaf, RFC 0026)"
+        required: false
+        default: ""
+        type: string
+      age_checkpoints:
+        description: "Backup counts to measure reads at, on the MinIO job (empty disables the aging stage)"
+        required: false
+        default: "1 10 25"
+        type: string
   pull_request:
     types: [labeled, synchronize]
 
@@ -68,6 +78,7 @@ jobs:
         env:
           SIZES: ${{ github.event.inputs.sizes || '5000 20000 50000' }}
           PROFILES: source
+          REPO_FORMAT: ${{ github.event.inputs.repo_format || '' }}
         run: |
           set -euo pipefail
           mkdir -p benchmark-results
@@ -132,6 +143,14 @@ jobs:
       # not sampling noise. One sample per cell is the only way to get a
       # number that means what it says; a wider size matrix would only spend
       # more CI minutes confirming the same thing.
+      #
+      # The aging stage runs here and only here. Its measurement is request
+      # count, which a local store does not report at all, and it answers the
+      # question the pipeline above structurally cannot: the pipeline measures
+      # a freshly created repository, which is the best case for any layout
+      # that bundles objects, while a real repository has a history. The
+      # checkpoints are kept modest because each one costs a full restore and
+      # check on top of the backups leading to it.
 
       - name: Measure
         shell: bash
@@ -140,6 +159,10 @@ jobs:
           PROFILES: source
           BACKENDS: minio
           SAMPLES: "1"
+          REPO_FORMAT: ${{ github.event.inputs.repo_format || '' }}
+          AGE_CHECKPOINTS: ${{ github.event.inputs.age_checkpoints || '1 10 25' }}
+          AGE_CHURN: "100"
+          AGE_OPS: "restore check"
         run: |
           set -euo pipefail
           mkdir -p benchmark-results

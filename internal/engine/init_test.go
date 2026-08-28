@@ -173,7 +173,7 @@ func TestInitManager_WriteRepoConfig_PropagatesReadError(t *testing.T) {
 	s := newErrorOnGetStore(NewMockStore(), backendErr, configKey)
 	mgr := NewInitManager(Deps{Store: s})
 
-	err := mgr.writeRepoConfig(context.Background(), false, nil)
+	err := mgr.writeRepoConfig(context.Background(), core.RepoFormatVersion, false, nil)
 	if err == nil {
 		t.Fatal("expected writeRepoConfig to fail when the existing config cannot be read")
 	}

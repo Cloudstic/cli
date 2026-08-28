@@ -317,11 +317,18 @@ measure() {
     repo_kb_after=$(get_repo_size_kb)
     repo_delta=$(format_size_kb $(( repo_kb_after - repo_kb_before )))
 
-    printf 'cloudstic,%s,%s,%d,%d,%s,%s,%.1f,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+    # repo_delta is what this operation added; stored_kb is what the repository
+    # holds in total once it has run. The pipeline's rows make the second
+    # redundant — it starts empty and only grows — but the aging stage's do not:
+    # what a *retained snapshot* costs is the difference between two checkpoints'
+    # totals, and a delta measured around a read operation is zero by
+    # construction (issue #525).
+    printf 'cloudstic,%s,%s,%d,%d,%s,%s,%.1f,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
         "$backend" "$profile" "$size" "$sample" "$op" \
         "$seconds" "$(echo "scale=1; $peak_kb / 1024" | bc)" \
         "$alloc_mb" "$requests" "$sent_mb" "$by_api" "$repo_delta" \
-        "$ROW_PACKS" "$ROW_BACKUPS" "$ROW_POLICY" >>"$(backend_csv "$backend")"
+        "$ROW_PACKS" "$ROW_BACKUPS" "$ROW_POLICY" "$repo_kb_after" \
+        >>"$(backend_csv "$backend")"
 
     printf '    %-20s %7ss %8.1f MB peak' "$op" "$seconds" "$(echo "scale=1; $peak_kb / 1024" | bc)"
     [ -n "$alloc_mb" ] && printf ' %9s MB alloc' "$alloc_mb"
@@ -374,16 +381,17 @@ measure_summary() {
     stored_fmt=$(format_size_kb "$stored_kb")
     logical_fmt=$(format_size_kb "$logical_kb")
 
-    printf 'cloudstic,%s,%s,%d,%d,Final Repo Size,0,0,,,,,%s,,,\n' \
-        "$backend" "$profile" "$size" "$sample" "$stored_fmt" >>"$(backend_csv "$backend")"
+    printf 'cloudstic,%s,%s,%d,%d,Final Repo Size,0,0,,,,,%s,,,,%s\n' \
+        "$backend" "$profile" "$size" "$sample" "$stored_fmt" "$stored_kb" \
+        >>"$(backend_csv "$backend")"
     printf '    %-20s %s\n' "Final Repo Size" "$stored_fmt"
 
     if [ "$stored_kb" -gt 0 ]; then
         local ratio
         ratio=$(echo "scale=2; $logical_kb / $stored_kb" | bc)
-        printf 'cloudstic,%s,%s,%d,%d,Logical / Stored,0,0,,,,,%s / %s (%sx),,,\n' \
+        printf 'cloudstic,%s,%s,%d,%d,Logical / Stored,0,0,,,,,%s / %s (%sx),,,,%s\n' \
             "$backend" "$profile" "$size" "$sample" "$logical_fmt" "$stored_fmt" "$ratio" \
-            >>"$(backend_csv "$backend")"
+            "$stored_kb" >>"$(backend_csv "$backend")"
         printf '    %-20s %s / %s (%sx)\n' "Logical / Stored" "$logical_fmt" "$stored_fmt" "$ratio"
     fi
 }
@@ -492,7 +500,12 @@ pack_count() {
             s3 ls "s3://$MINIO_BUCKET/bench/packs/" --recursive 2>/dev/null \
             | grep -c "packs/" || true
     else
-        find "$WORK/repo/packs" -type f 2>/dev/null | wc -l | tr -d ' '
+        # A format-v3 repository has no packs directory at all, and find
+        # exits 1 when its root does not exist. Under `set -euo pipefail` that
+        # aborted the whole run at the first checkpoint, which is why the aging
+        # stage had never been run against v3 on a local backend. The minio
+        # branch above already swallows its equivalent.
+        { find "$WORK/repo/packs" -type f 2>/dev/null || true; } | wc -l | tr -d ' '
     fi
 }
 
@@ -680,7 +693,7 @@ run_aging() {
 
         for cp in $AGE_CHECKPOINTS; do
             [ "$cp" = "$backups" ] || continue
-            echo "    aged to $backups backup(s):"
+            echo "    aged to $backups backup(s), $(format_size_kb "$(get_repo_size_kb)") stored:"
             age_checkpoint_reads "$backups"
         done
     done
@@ -731,7 +744,7 @@ if [ "$ATTACH" = "1" ]; then
     export CLOUDSTIC_PASSWORD="$PASSWORD"
 
     mkdir -p "$(dirname "$OUT")"
-    echo "tool,backend,profile,scale,sample,operation,seconds,peak_mb,alloc_mb,requests,sent_mb,by_api,repo_delta,packs,backups,policy" >"$OUT"
+    echo "tool,backend,profile,scale,sample,operation,seconds,peak_mb,alloc_mb,requests,sent_mb,by_api,repo_delta,packs,backups,policy,stored_kb" >"$OUT"
 
     echo "Attached to the repository already in $(minio_endpoint)"
     echo ""
@@ -760,7 +773,7 @@ mkdir -p "$(dirname "$OUT")"
 # columns ride along without the renderer needing to know about them. "tool" is
 # constant here and present only because the renderer labels rows with it.
 for backend in $BACKENDS; do
-    echo "tool,backend,profile,scale,sample,operation,seconds,peak_mb,alloc_mb,requests,sent_mb,by_api,repo_delta,packs,backups,policy" >"$(backend_csv "$backend")"
+    echo "tool,backend,profile,scale,sample,operation,seconds,peak_mb,alloc_mb,requests,sent_mb,by_api,repo_delta,packs,backups,policy,stored_kb" >"$(backend_csv "$backend")"
 done
 
 export CLOUDSTIC_PASSWORD="$PASSWORD"

@@ -545,6 +545,8 @@ func renderAging(b *strings.Builder, rep *Report) {
 		"column means reading a snapshot costs what its data costs. A rising one means\n" +
 		"it costs what the repository's history costs.\n\n")
 
+	renderRetention(b, rows)
+
 	for _, k := range order {
 		curve := curves[k]
 		sort.Slice(curve, func(i, j int) bool { return curve[i].Backups < curve[j].Backups })
@@ -600,6 +602,150 @@ func renderAging(b *strings.Builder, rep *Report) {
 			}
 		}
 	}
+}
+
+// renderRetention renders what retaining a snapshot costs, which is the one
+// thing the aging stage measures that no per-operation table can show. The
+// aging backups are setup rather than measurements, so their writes appear in
+// no row's repo_delta, and a delta taken around a read is zero however much
+// history the repository is carrying.
+//
+// The number that matters is the slope, not the total: a format that rewrites
+// a whole leaf for one changed entry keeps a superseded copy of every leaf a
+// backup touched, so each retained snapshot costs about the directories it
+// touched times the leaf size — a figure independent of repository size, and
+// invisible on a repository with one backup in it (RFC 0026, issue #525).
+//
+// Only the first row at each checkpoint is used. AGE_FINAL_OPS runs `backup`
+// and `prune` after the last checkpoint under the same backup count, and a
+// prune's total would otherwise read as that checkpoint's retained size.
+func renderRetention(b *strings.Builder, rows []Row) {
+	// Each policy keeps its own series, keyed by backup count. Indexing by
+	// position instead would line the columns up only while every policy has
+	// every checkpoint: one failed measurement, and a policy's later values
+	// would be rendered against a backup count they were not taken at — a
+	// wrong number presented as a measured one, which is the failure mode this
+	// harness exists to avoid.
+	stored := map[string]map[int]float64{}
+	counts := map[string][]int{}
+	var order []string
+	for _, row := range rows {
+		if row.StoredMB == 0 {
+			continue
+		}
+		if _, ok := stored[row.Policy]; !ok {
+			stored[row.Policy] = map[int]float64{}
+			order = append(order, row.Policy)
+		}
+		// The first row at each checkpoint is the one that counts.
+		// AGE_FINAL_OPS runs `backup` and `prune` after the last checkpoint
+		// under that checkpoint's backup count, and a prune's total is the
+		// repository with its history collected — the opposite of what this
+		// table reports.
+		if _, seen := stored[row.Policy][row.Backups]; seen {
+			continue
+		}
+		stored[row.Policy][row.Backups] = row.StoredMB
+		counts[row.Policy] = append(counts[row.Policy], row.Backups)
+	}
+	if len(order) == 0 {
+		return
+	}
+	for _, p := range order {
+		sort.Ints(counts[p])
+	}
+
+	// Rows are the union of every policy's checkpoints, so a policy missing one
+	// leaves a gap rather than pulling the rest of its column up a row.
+	var all []int
+	seenCount := map[int]bool{}
+	for _, p := range order {
+		for _, n := range counts[p] {
+			if !seenCount[n] {
+				seenCount[n] = true
+				all = append(all, n)
+			}
+		}
+	}
+	sort.Ints(all)
+
+	b.WriteString("**Retained size**\n\n")
+	b.WriteString("| Backups |")
+	for _, p := range order {
+		// A policy name identifies a column only when there is something to
+		// tell it apart from. A lone "baseline (MB)" names the default and
+		// says nothing.
+		name := "Stored"
+		if len(order) > 1 {
+			name = p
+		}
+		fmt.Fprintf(b, " %s (MB) | per backup |", name)
+	}
+	b.WriteString("\n|---:|")
+	for range order {
+		b.WriteString("---:|---:|")
+	}
+	b.WriteString("\n")
+
+	for _, n := range all {
+		fmt.Fprintf(b, "| %d |", n)
+		for _, p := range order {
+			mb, ok := stored[p][n]
+			if !ok {
+				b.WriteString(" — | — |")
+				continue
+			}
+			fmt.Fprintf(b, " %.1f |", mb)
+			// The marginal is measured against this policy's own previous
+			// checkpoint, over however many backups separate them: the
+			// retained cost of one snapshot, averaged across the interval.
+			// The first checkpoint has no interval to average over.
+			prev, gap, have := previousCheckpoint(counts[p], n)
+			if !have || gap <= 0 {
+				b.WriteString(" — |")
+				continue
+			}
+			fmt.Fprintf(b, " %.1f |", (mb-stored[p][prev])/float64(gap))
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+
+	for _, p := range order {
+		c := counts[p]
+		if len(c) < 2 {
+			continue
+		}
+		first, last := c[0], c[len(c)-1]
+		if stored[p][first] == 0 {
+			continue
+		}
+		label := ""
+		if len(order) > 1 {
+			label = " (" + p + ")"
+		}
+		fmt.Fprintf(b, "%d → %d backups%s: **%.1f MB per retained snapshot**, %.2fx total.\n",
+			first, last, label,
+			(stored[p][last]-stored[p][first])/float64(last-first),
+			stored[p][last]/stored[p][first])
+	}
+	b.WriteString("\n")
+}
+
+// previousCheckpoint returns the checkpoint before n in an ascending series,
+// and how many backups separate the two. A policy that skipped a checkpoint
+// measures its marginal across the wider interval rather than reporting a
+// step it did not take.
+func previousCheckpoint(series []int, n int) (prev, gap int, ok bool) {
+	for i, c := range series {
+		if c == n {
+			if i == 0 {
+				return 0, 0, false
+			}
+			return series[i-1], n - series[i-1], true
+		}
+	}
+	return 0, 0, false
 }
 
 func ratioOrZero(a, b float64) float64 {

@@ -104,13 +104,21 @@ Three layers, in cost order:
   (`backup`, `prune`) run once after the last checkpoint, never at one: a
   mutation at a checkpoint silently redefines every checkpoint after it. Rows
   land in the same CSV with the `packs`/`backups`/`policy` columns filled and
-  operations named `restore@40`. `benchreport` renders them as an **Aging**
+  operations named `restore@40`. Every row also carries `stored_kb`, the
+  repository's total size when it was measured: the aging backups are setup
+  rather than measurements, so what they write appears in no `repo_delta`, and
+  a delta taken around a read is zero however much history is being carried.
+  Differencing it between checkpoints is what a *retained snapshot* costs
+  (RFC 0026, issue #525), rendered as the Aging section's **Retained size**
+  table. `benchreport` renders them as an **Aging**
   section — one table per (operation, policy), rows ordered by backup count,
   with the growth factor computed across the endpoints — and keeps them out of
   the per-operation tables, where a `restore@25` row would read as another
   operation measured at the sweep's tree sizes. Request counts need
-  `BACKENDS=minio`; a local backend still yields the wall-time and peak-RSS
-  half of the curve.
+  `BACKENDS=minio`; a local backend still yields the wall-time, peak-RSS and
+  retained-size half of the curve — and retained size is the one aging number a
+  local store measures as well as MinIO does, which makes it the cheap way to
+  compare two formats' write amplification.
 
   The `Benchmark` workflow's MinIO job runs the aging stage by default
   (`1 10 25`, overridable via the `age_checkpoints` dispatch input, empty to

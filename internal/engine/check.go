@@ -178,6 +178,25 @@ func (cm *CheckManager) checkSnapshot(ctx context.Context, ref string, result *C
 		return nil
 	}
 
+	// 2 and 3 together in v3: verify each node as it is reached and check the
+	// entries its leaves hold, in one traversal. Doing the node pass and the
+	// entry pass separately reads every leaf twice, and a v3 leaf is the data
+	// — see hamt.WalkTree.
+	if cm.v3 {
+		if err := cm.tree.WalkTree(ctx, snap.Root,
+			func(nodeRef string) error {
+				return cm.verifyObject(ctx, nodeRef, result, cfg, phase)
+			},
+			func(_, ref string, p *hamt.Payload) error {
+				return cm.checkLeafEntry(ctx, ref, p, result, cfg, phase)
+			}); err != nil {
+			result.Errors = append(result.Errors, CheckError{
+				Key: snap.Root, Type: "read_error", Message: fmt.Sprintf("cannot walk HAMT tree: %v", err),
+			})
+		}
+		return nil
+	}
+
 	// 2. Walk HAMT nodes — verify each node is readable.
 	if err := cm.tree.NodeRefs(ctx, snap.Root, func(nodeRef string) error {
 		return cm.verifyObject(ctx, nodeRef, result, cfg, phase)
@@ -188,19 +207,7 @@ func (cm *CheckManager) checkSnapshot(ctx context.Context, ref string, result *C
 		return nil
 	}
 
-	// 3. Walk leaf entries — verify filemeta → content → chunks. In v3 the
-	// first two links live in the leaf itself, so the walk is the read and
-	// only chunks remain to fetch.
-	if cm.v3 {
-		if err := cm.tree.WalkEntries(ctx, snap.Root, func(_, ref string, p *hamt.Payload) error {
-			return cm.checkLeafEntry(ctx, ref, p, result, cfg, phase)
-		}); err != nil {
-			result.Errors = append(result.Errors, CheckError{
-				Key: snap.Root, Type: "read_error", Message: fmt.Sprintf("cannot walk HAMT entries: %v", err),
-			})
-		}
-		return nil
-	}
+	// 3. Walk leaf entries — verify filemeta → content → chunks.
 
 	if err := walkEntriesBatched(ctx, cm.tree, snap.Root, func(entries []treeEntry) error {
 		refs := make([]string, len(entries))

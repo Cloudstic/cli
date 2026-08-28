@@ -242,9 +242,16 @@ func TestV3DiffCarriesPayloads(t *testing.T) {
 	}
 }
 
-func TestV3TreeReadsV2Nodes(t *testing.T) {
-	// A v3-mode tree pointed at v2-written nodes must read them: the mode
-	// governs writes, and load sniffs the encoding per node.
+func TestV3TreeDecodesV2Nodes(t *testing.T) {
+	// Node *decoding* is format-agnostic — load sniffs each node's encoding —
+	// so a v3-mode tree can traverse v2-written nodes and sees their entries
+	// with nil payloads.
+	//
+	// Routing is not: the arity a tree was built with decides where an entry
+	// lives, so a routed Lookup only works at the shape that built the tree.
+	// That costs nothing in practice because a repository is entirely one
+	// format and the client takes the shape from its recorded version — but
+	// it is why this asserts a walk rather than a lookup.
 	s := newInMemoryStore()
 	v2 := NewTree(s)
 	tx := v2.Edit("")
@@ -259,12 +266,22 @@ func TestV3TreeReadsV2Nodes(t *testing.T) {
 	}
 
 	v3 := NewTree(s, WithFormatV3())
-	value, p, err := v3.LookupEntry(ctx, root, routingKeyFor(7), "file-7")
-	if err != nil || value != "val-7" {
-		t.Fatalf("v3 tree reading v2 nodes: value=%q err=%v", value, err)
+	seen := 0
+	err = v3.WalkEntries(ctx, root, func(key, value string, p *Payload) error {
+		seen++
+		if p != nil {
+			return fmt.Errorf("v2 entry %s came back with a payload", key)
+		}
+		if !strings.HasPrefix(value, "val-") {
+			return fmt.Errorf("entry %s has value %q", key, value)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("v3 tree walking v2 nodes: %v", err)
 	}
-	if p != nil {
-		t.Fatalf("v2 entry came back with a payload")
+	if seen != 50 {
+		t.Fatalf("v3 tree walking v2 nodes saw %d entries, want 50", seen)
 	}
 }
 

@@ -223,34 +223,40 @@ func (pm *PruneManager) markSnapshot(ctx context.Context, ref string, reachable 
 		return err
 	}
 
-	if err := pm.tree.NodeRefs(ctx, snap.Root, func(r string) error {
-		reachable.Add(r)
-		return nil
-	}); err != nil {
-		return err
-	}
-
-	// v3: an entry's whole chain lives in its leaf, already read by the node
-	// walk above. Marking is one pass over the entries, no reads at all — the
-	// filemeta identity is marked for form (no object bears it), and the chunk
-	// refs are the only physical objects an entry contributes.
+	// v3: an entry's whole chain lives in its leaf, so marking is one
+	// traversal that records node refs and reads each entry's chunk refs from
+	// the payload as it passes — no per-entry reads at all. Enumerating nodes
+	// and then walking entries separately would read every leaf twice, and a
+	// v3 leaf is the data (see hamt.WalkTree).
 	//
 	// A payload-less entry fails the prune rather than being skipped: its
 	// chunk refs are unknowable, and docs/compatibility.md forbids collecting
 	// garbage over data that could not be fully read.
 	if pm.v3 {
-		return pm.tree.WalkEntries(ctx, snap.Root, func(key, ref string, p *hamt.Payload) error {
-			if !reachable.Add(ref) {
+		return pm.tree.WalkTree(ctx, snap.Root,
+			func(r string) error {
+				reachable.Add(r)
 				return nil
-			}
-			if p == nil {
-				return fmt.Errorf("v3 leaf entry %s (%s) carries no payload; refusing to prune", key, ref)
-			}
-			for _, c := range p.Chunks {
-				reachable.Add(c)
-			}
-			return nil
-		})
+			},
+			func(key, ref string, p *hamt.Payload) error {
+				if !reachable.Add(ref) {
+					return nil
+				}
+				if p == nil {
+					return fmt.Errorf("v3 leaf entry %s (%s) carries no payload; refusing to prune", key, ref)
+				}
+				for _, c := range p.Chunks {
+					reachable.Add(c)
+				}
+				return nil
+			})
+	}
+
+	if err := pm.tree.NodeRefs(ctx, snap.Root, func(r string) error {
+		reachable.Add(r)
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	// Two grouped passes per batch rather than one interleaved pass. Marking an

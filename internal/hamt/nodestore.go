@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	lru "github.com/hashicorp/golang-lru/v2"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/cloudstic/cli/internal/core"
@@ -20,13 +19,23 @@ const (
 	nodeCacheSize       = 4096
 	defaultWriteWorkers = 20
 
-	// nodeCacheSizeV3 is the node cache's entry cap for a format-v3 tree. v3
-	// leaves are sized by a byte budget (leafSplitBytesV3) rather than an entry
-	// count, so 4096 of them could pin gigabytes; 128 caps the cache near
-	// 128 × 512 KB = 64 MB worst case while still holding the working set of a
-	// directory-clustered traversal, which revisits a handful of leaves at a
-	// time (RFC 0026 §4).
-	nodeCacheSizeV3 = 128
+	// nodeCacheBytes is the byte budget for a v2 tree's node cache. v2 nodes
+	// are small JSON documents, so the entry count binds first in practice and
+	// this is a backstop against a pathological tree.
+	nodeCacheBytes = 64 * 1024 * 1024
+
+	// The v3 bounds. Leaves are sized in bytes, so the byte budget is the one
+	// that means anything and the entry cap is set high enough not to bind
+	// before it: at the observed ~50 KB average fill, 128 MB is ~2,600 leaves,
+	// and capping at 128 entries (as this first did) held ~6 MB of a ~60 MB
+	// leaf set and thrashed every per-entry lookup — measured as a 39x request
+	// blowup against v2 on the 5,000-file tree.
+	//
+	// 128 MB is chosen against what the alternative costs rather than as a
+	// memory target: a miss is a whole leaf re-fetched over the network, and
+	// the metadata working set of a mid-sized repository fits inside it.
+	nodeCacheSizeV3  = 8192
+	nodeCacheBytesV3 = 128 * 1024 * 1024
 )
 
 // NodeStore is the only part of this package that knows HAMT nodes are bytes.
@@ -38,21 +47,56 @@ const (
 // pointer: a loaded node is clean, and clean nodes are immutable (see child).
 type NodeStore struct {
 	store store.ObjectStore
-	cache *lru.Cache[string, *node]
+	cache *nodeCache
 	// log is this node store's debug sink. It always points at a logger; an
 	// unbound one falls back to the process-wide writer.
 	log *logger.Logger
 
 	// v3 selects the format-v3 binary node encoding for every node this store
 	// seals (RFC 0026). Reading is format-agnostic either way — load sniffs
-	// the bytes — so the flag governs writes and the leaf split rule only.
+	// the bytes — so the flag governs writes, the leaf split rule, and the
+	// routing shape below.
 	v3 bool
+}
+
+// The routing shape of the tree this store belongs to. A tree's arity decides
+// how an overflowing leaf is partitioned, and therefore how full its leaves
+// end up; v3 uses a narrower split for that reason (see bitsPerLevelV3).
+//
+// They are methods rather than fields so a NodeStore built before the option
+// was applied cannot be left describing the wrong shape.
+func (ns *NodeStore) bits() int {
+	if ns.v3 {
+		return bitsPerLevelV3
+	}
+	return bitsPerLevel
+}
+
+func (ns *NodeStore) branching() int {
+	if ns.v3 {
+		return branchingV3
+	}
+	return branching
+}
+
+func (ns *NodeStore) maxDepth() int {
+	if ns.v3 {
+		return maxDepthV3
+	}
+	return maxDepth
+}
+
+// maxTreeDepth bounds every recursive descent: routing bits run out after
+// maxDepth internal levels, so anything deeper means the structure is not a
+// tree. Two levels of slack keep the guard from firing on a legitimate leaf
+// below the deepest internal node.
+func (ns *NodeStore) maxTreeDepth() int {
+	return ns.maxDepth() + 2
 }
 
 // NewNodeStore returns a NodeStore reading and writing through s.
 func NewNodeStore(s store.ObjectStore) *NodeStore {
-	c, _ := lru.New[string, *node](nodeCacheSize)
-	return &NodeStore{store: s, cache: c, log: defaultLog}
+	return &NodeStore{store: s, cache: newNodeCache(nodeCacheSize, nodeCacheBytes), log: defaultLog}
 }
 
 // load fetches and decodes the node identified by ref. The returned node is

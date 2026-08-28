@@ -173,6 +173,13 @@ func (rm *RestoreManager) Run(ctx context.Context, writer RestoreWriter, snapsho
 // can take concurrent writes; the pool degenerates to sequential execution for
 // writers that cannot (zip).
 func (rm *RestoreManager) runWithWriter(ctx context.Context, plan restorePlan, writer RestoreWriter) (*RestoreResult, error) {
+	if rm.v3 {
+		return rm.runWithWriterV3(ctx, plan, writer)
+	}
+	return rm.runWithWriterV2(ctx, plan, writer)
+}
+
+func (rm *RestoreManager) runWithWriterV2(ctx context.Context, plan restorePlan, writer RestoreWriter) (*RestoreResult, error) {
 	result := &RestoreResult{SnapshotRef: plan.snapshotRef, Root: plan.root}
 	phase := rm.reporter.StartPhase("Restoring", int64(len(plan.sorted)), false)
 
@@ -206,7 +213,7 @@ func (rm *RestoreManager) runWithWriter(ctx context.Context, plan restorePlan, w
 	restoreFile := func(meta core.FileMeta, rel string) func() error {
 		return func() error {
 			err := writer.WriteFile(rel, meta, func(out io.Writer) error {
-				return rm.writeFileContent(gCtx, out, meta, plan.root, !plan.cfg.noVerify)
+				return rm.writeFileContent(gCtx, out, meta, !plan.cfg.noVerify)
 			})
 			defer phase.Increment(1)
 			switch {
@@ -290,6 +297,148 @@ func (rm *RestoreManager) runWithWriter(ctx context.Context, plan restorePlan, w
 	if err := g.Wait(); err != nil {
 		phase.Error()
 		return nil, err
+	}
+
+	phase.Done()
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	result.BytesWritten = writer.BytesWritten()
+	return result, nil
+}
+
+// runWithWriterV3 writes a format-v3 snapshot in **leaf order**, taking each
+// file's content from the payload the walk already holds.
+//
+// The v2 shape does not carry over. There, a file's content is its own object,
+// so the write phase can visit files in any order and pay one fetch each. In
+// v3 the content lives inside the leaf, and looking each file up separately —
+// which is what this did first — costs a leaf read per file whenever the leaf
+// set outgrows the node cache: measured at ~20,000 requests for a 22,000-file
+// snapshot, an order of magnitude worse than v2 on the same tree.
+//
+// Walking the leaves once and writing what each holds costs one read per leaf
+// instead, whatever the cache does, because nothing is ever revisited. The
+// price is that directories can no longer be created lazily on the way past:
+// leaf order is affinity-hash order, so a file may be written before its
+// parent directory is reached. So directories are created first, in
+// topological order, from metadata already collected — they are a small
+// minority of entries and carry no content, so the extra pass is cheap.
+//
+// Chunked files are dispatched to a bounded pool because their cost is
+// per-chunk round trips; inline files are written on this goroutine, where
+// the bytes are already in hand and a hand-off would only add scheduling.
+func (rm *RestoreManager) runWithWriterV3(ctx context.Context, plan restorePlan, writer RestoreWriter) (*RestoreResult, error) {
+	result := &RestoreResult{SnapshotRef: plan.snapshotRef, Root: plan.root}
+	phase := rm.reporter.StartPhase("Restoring", int64(len(plan.sorted)), false)
+
+	var mu sync.Mutex
+	bump := func(field *int) {
+		mu.Lock()
+		*field++
+		mu.Unlock()
+	}
+
+	if setter, ok := writer.(restoreWarningSetter); ok {
+		setter.SetWarningFunc(func(msg string) {
+			bump(&result.Warnings)
+			phase.Log("Warning: " + msg)
+		})
+	}
+
+	// Only the entries this restore is meant to write, so a path filter still
+	// filters and the leaf walk can skip everything else.
+	wanted := make(map[string]struct{}, len(plan.sorted))
+	for _, id := range plan.sorted {
+		wanted[id] = struct{}{}
+	}
+
+	// Directories first, in the plan's topological order: leaf order does not
+	// guarantee a parent precedes its children.
+	for _, id := range plan.sorted {
+		meta := plan.byID[id]
+		if meta.Type != core.FileTypeFolder {
+			continue
+		}
+		rel := buildRestorePath(meta, plan.byID)
+		if err := writer.MkdirAll(rel, meta); err != nil {
+			if !errors.Is(err, errRestoreSkipped) {
+				phase.Log(fmt.Sprintf("Failed: %s: %v", rel, err))
+				result.Errors++
+			}
+			phase.Increment(1)
+			continue
+		}
+		phase.Logf(ui.DetailVerbose, "Dir: %s", rel)
+		result.DirsWritten++
+		phase.Increment(1)
+	}
+
+	cw, ok := writer.(concurrentRestoreWriter)
+	concurrent := ok && cw.SupportsConcurrentWrites()
+
+	g, gCtx := errgroup.WithContext(ctx)
+	if concurrent {
+		g.SetLimit(restoreFileConcurrency(rm.store))
+	}
+
+	writeOne := func(meta core.FileMeta, rel string, p *hamt.Payload) error {
+		err := writer.WriteFile(rel, meta, func(out io.Writer) error {
+			return rm.writeContentFromPayload(gCtx, out, meta, p, !plan.cfg.noVerify)
+		})
+		defer phase.Increment(1)
+		switch {
+		case errors.Is(err, errRestoreSkipped):
+			return nil
+		case err != nil:
+			phase.Log(fmt.Sprintf("Failed: %s: %v", rel, err))
+			bump(&result.Errors)
+			return nil
+		}
+		phase.Logf(ui.DetailVerbose, "File: %s (%d bytes)", rel, meta.Size)
+		bump(&result.FilesWritten)
+		return nil
+	}
+
+	walkErr := rm.tree.WalkEntries(ctx, plan.root, func(_, ref string, p *hamt.Payload) error {
+		if err := gCtx.Err(); err != nil {
+			return err
+		}
+		if p == nil {
+			return fmt.Errorf("v3 leaf entry %s carries no payload", ref)
+		}
+		meta, err := decodePayloadMeta(ref, p)
+		if err != nil {
+			return err
+		}
+		if _, ok := wanted[meta.FileID]; !ok {
+			return nil
+		}
+		if meta.Type == core.FileTypeFolder || meta.ContentHash == "" {
+			return nil // folders were written above; nothing to do for empty entries
+		}
+
+		rel := buildRestorePath(*meta, plan.byID)
+		if len(p.Chunks) > 0 && concurrent {
+			// The payload outlives this callback, so the pool must not share
+			// it with the walk. Only the chunk refs are needed — the inline
+			// buffer is nil on this path — so a shallow copy is enough and
+			// costs nothing per file.
+			chunked := &hamt.Payload{Size: p.Size, Chunks: p.Chunks}
+			m := *meta
+			g.Go(func() error { return writeOne(m, rel, chunked) })
+			return nil
+		}
+		return writeOne(*meta, rel, p)
+	})
+
+	if err := g.Wait(); err != nil {
+		phase.Error()
+		return nil, err
+	}
+	if walkErr != nil {
+		phase.Error()
+		return nil, walkErr
 	}
 
 	phase.Done()
@@ -652,10 +801,22 @@ func (cw *countingWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func (rm *RestoreManager) writeFileContent(ctx context.Context, w io.Writer, meta core.FileMeta, root string, verify bool) error {
+// writeFileContent reconstructs a v2 file from its content object. The v3 path
+// is writeContentFromPayload, which takes the bytes from the leaf instead.
+func (rm *RestoreManager) writeFileContent(ctx context.Context, w io.Writer, meta core.FileMeta, verify bool) error {
+	contentKey := meta.ContentRef
+	if contentKey == "" {
+		contentKey = meta.ContentHash
+	}
+
+	content, err := rm.loadContent(ctx, contentKey)
+	if err != nil {
+		return err
+	}
+
 	// Hash the reconstructed stream as it is written. meta.ContentHash is a
-	// SHA-256 over the whole plaintext for every storage path — the chunked
-	// path accumulates it in Chunker.ProcessStream, the inline paths compute
+	// SHA-256 over the whole plaintext for both storage paths — the chunked
+	// path accumulates it in Chunker.ProcessStream, the inline path computes
 	// it directly — so one digest of the output is directly comparable.
 	// Nothing below this line authenticates the bytes otherwise: an object
 	// replaced in the backing store is returned by the store stack without
@@ -666,28 +827,12 @@ func (rm *RestoreManager) writeFileContent(ctx context.Context, w io.Writer, met
 		out = io.MultiWriter(w, hasher)
 	}
 
-	if rm.v3 {
-		if err := rm.writeContentFromLeaf(ctx, out, meta, root); err != nil {
+	if err := rm.writeChunks(ctx, out, content.Chunks, avgChunkSize(content)); err != nil {
+		return err
+	}
+	if len(content.DataInlineB64) > 0 {
+		if _, err := out.Write(content.DataInlineB64); err != nil {
 			return err
-		}
-	} else {
-		contentKey := meta.ContentRef
-		if contentKey == "" {
-			contentKey = meta.ContentHash
-		}
-
-		content, err := rm.loadContent(ctx, contentKey)
-		if err != nil {
-			return err
-		}
-
-		if err := rm.writeChunks(ctx, out, content.Chunks, avgChunkSize(content)); err != nil {
-			return err
-		}
-		if len(content.DataInlineB64) > 0 {
-			if _, err := out.Write(content.DataInlineB64); err != nil {
-				return err
-			}
 		}
 	}
 
@@ -700,34 +845,42 @@ func (rm *RestoreManager) writeFileContent(ctx context.Context, w io.Writer, met
 	return nil
 }
 
-// writeContentFromLeaf reconstructs a file whose content location lives in its
-// leaf entry (format v3): inline bytes are written as they are, chunked files
+// writeContentFromPayload reconstructs a file from the payload its leaf
+// carries (format v3): inline bytes are written as they are, chunked files
 // stream through the same pipelined chunk fetcher as v2.
 //
-// The leaf is re-read here rather than carried from the metadata pass, and
-// that is what bounds restore's memory: holding every payload through the
-// write phase would keep the snapshot's whole small-file content resident.
-// The write order is walk order, which affinity routing keeps directory-
-// clustered, so consecutive files overwhelmingly hit the same leaf in the
-// node cache and the re-read costs no request (RFC 0026 §4).
-func (rm *RestoreManager) writeContentFromLeaf(ctx context.Context, out io.Writer, meta core.FileMeta, root string) error {
-	_, p, err := rm.tree.LookupEntry(ctx, root, AffinityKey(primaryParentID(&meta), meta.FileID), meta.FileID)
-	if err != nil {
-		return fmt.Errorf("look up leaf entry for %s: %w", meta.FileID, err)
-	}
+// The payload is passed in rather than looked up, which is what keeps the
+// write phase at one read per leaf: see runWithWriterV3.
+func (rm *RestoreManager) writeContentFromPayload(ctx context.Context, out io.Writer, meta core.FileMeta, p *hamt.Payload, verify bool) error {
 	if p == nil {
 		return fmt.Errorf("leaf entry for %s carries no content payload", meta.FileID)
 	}
-	if len(p.Chunks) > 0 {
+
+	hasher := sha256.New()
+	dst := out
+	if verify {
+		dst = io.MultiWriter(out, hasher)
+	}
+
+	switch {
+	case len(p.Chunks) > 0:
 		avg := int64(0)
 		if p.Size > 0 {
 			avg = p.Size / int64(len(p.Chunks))
 		}
-		return rm.writeChunks(ctx, out, p.Chunks, avg)
+		if err := rm.writeChunks(ctx, dst, p.Chunks, avg); err != nil {
+			return err
+		}
+	case len(p.Inline) > 0:
+		if _, err := dst.Write(p.Inline); err != nil {
+			return err
+		}
 	}
-	if len(p.Inline) > 0 {
-		_, err := out.Write(p.Inline)
-		return err
+
+	if verify {
+		if got := hex.EncodeToString(hasher.Sum(nil)); got != meta.ContentHash {
+			return fmt.Errorf("content hash mismatch: expected %s, got %s", meta.ContentHash, got)
+		}
 	}
 	return nil
 }

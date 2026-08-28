@@ -20,6 +20,28 @@ const (
 	maxDepth     = 6
 	maxLeafSize  = 32
 
+	// Format v3 routes 2 bits per level instead of 5, and this is the
+	// difference between the format working and not.
+	//
+	// Splitting is what sets leaf fill, because a leaf that overflows is
+	// partitioned by the next routing bits and its children never merge back.
+	// At 5 bits each child receives about a thirty-second of the entries, so
+	// leaves settle a factor of ~32 below the budget that triggered the split:
+	// measured at 13 KB average against a 512 KB budget, which put ~25x more
+	// objects in a repository than the format intends and left v3 needing
+	// thousands of requests where v2 needed dozens.
+	//
+	// At 2 bits a split halves-and-halves-again instead, so a leaf holds
+	// between a quarter of the budget and all of it. The tree is deeper in
+	// levels but its interior nodes are tiny and hot in cache, while the
+	// objects that cost a request — the leaves — land near their intended
+	// size. Raising the budget instead would not do this: the overshoot is a
+	// ratio, and a budget 32x larger would rewrite 32x more bytes when one
+	// file in a leaf changes.
+	bitsPerLevelV3 = 2
+	branchingV3    = 4  // 2^bitsPerLevelV3
+	maxDepthV3     = 15 // 30 of the 32 routing bits, as in v2
+
 	// The format-v3 leaf split rule (RFC 0026 §2): a leaf splits when its
 	// encoded size passes a byte budget, not when it holds a fixed number of
 	// entries. Every stored object being large is the property the whole
@@ -28,7 +50,7 @@ const (
 	//
 	// Both are write-path tuning knobs, not compatibility surface: a reader
 	// accepts any leaf size, so revising them changes new nodes only.
-	leafSplitBytesV3 = 512 * 1024
+	leafSplitBytesV3 = 2 * 1024 * 1024
 	maxLeafEntriesV3 = 2048
 
 	nodePrefix = "node/"
@@ -44,8 +66,8 @@ const (
 )
 
 // errTooDeep reports a descent past maxTreeDepth.
-func errTooDeep(depth int) error {
-	return fmt.Errorf("hamt node nesting exceeds %d levels at depth %d: tree is cyclic or corrupt", maxTreeDepth, depth)
+func errTooDeep(limit, depth int) error {
+	return fmt.Errorf("hamt node nesting exceeds %d levels at depth %d: tree is cyclic or corrupt", limit, depth)
 }
 
 // DiffEntry represents a single change between two trees.
@@ -100,14 +122,19 @@ func WithLogger(w io.Writer) TreeOption {
 }
 
 // WithFormatV3 puts the tree in repository-format-v3 mode (RFC 0026): nodes
-// seal in the binary encoding, leaves split on the byte budget, and entries
-// may carry payloads. Reading is unaffected — either format's nodes decode
-// regardless — so the option belongs to the repository's recorded format, not
-// to any one operation.
+// seal in the binary encoding, leaves split on the byte budget, entries may
+// carry payloads, and routing consumes bitsPerLevelV3 bits per level.
+//
+// Decoding is unaffected — load sniffs each node, so either format's nodes
+// are readable and a walk crosses formats freely. Routing is not: an entry's
+// position depends on the arity the tree was built with, so a routed lookup
+// must use the shape that wrote the tree. Both follow from the repository's
+// recorded format, which is why this is a property of the tree rather than of
+// any one operation.
 func WithFormatV3() TreeOption {
 	return func(ns *NodeStore) {
 		ns.v3 = true
-		ns.cache.Resize(nodeCacheSizeV3)
+		ns.cache.Configure(nodeCacheSizeV3, nodeCacheBytesV3)
 	}
 }
 
@@ -193,6 +220,59 @@ func (t *Tree) NodeRefs(ctx context.Context, root string, fn func(ref string) er
 		return nil
 	}
 	return nodeRefs(ctx, t.nodes, root, 0, fn)
+}
+
+// WalkTree visits every node and every entry in one traversal: onNode for each
+// node ref as it is reached, then onEntry for each entry a leaf holds.
+//
+// It exists because check and prune want both, and asking for them separately
+// — NodeRefs followed by WalkEntries — reads the whole tree twice. In format
+// v2 the second pass was nearly free, since packfiles bundle the nodes and the
+// pack body cache still held them. In v3 the leaves *are* the data: a snapshot
+// whose leaves exceed the node cache pays a second full round of reads, which
+// measured as roughly double the requests for both operations. One traversal
+// makes that structural rather than dependent on what the cache happened to
+// keep.
+//
+// A node is loaded once and reported before its children, so a caller can
+// treat onNode as the point where a node's bytes were read and verified.
+func (t *Tree) WalkTree(ctx context.Context, root string, onNode func(ref string) error, onEntry func(key, value string, p *Payload) error) error {
+	if root == "" {
+		return nil
+	}
+	return walkTree(ctx, t.nodes, root, 0, onNode, onEntry)
+}
+
+func walkTree(ctx context.Context, ns *NodeStore, ref string, depth int, onNode func(string) error, onEntry func(string, string, *Payload) error) error {
+	if depth > ns.maxTreeDepth() {
+		return errTooDeep(ns.maxTreeDepth(), depth)
+	}
+	if onNode != nil {
+		if err := onNode(ref); err != nil {
+			return err
+		}
+	}
+	n, err := ns.load(ctx, ref)
+	if err != nil {
+		return err
+	}
+	if n.leaf {
+		if onEntry == nil {
+			return nil
+		}
+		for _, e := range n.entries {
+			if err := onEntry(e.Key, e.Value, e.payload); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, cc := range n.children {
+		if err := walkTree(ctx, ns, cc.ref, depth+1, onNode, onEntry); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -324,24 +404,69 @@ func (tx *Txn) DiffFrom(ctx context.Context, oldRoot string, fn func(DiffEntry) 
 // anything. Callers that only need to know whether a transaction changed
 // anything — or that are reporting a dry run — use this instead of Commit.
 func (tx *Txn) Root(ctx context.Context) (string, error) {
-	ref, _, err := tx.seal()
-	return ref, err
+	return tx.seal()
 }
+
+// sealFlushBytes is how many bytes of sealed-but-unwritten nodes a commit
+// holds before flushing them.
+//
+// The seal used to build the whole batch first and write it at the end, which
+// on a v2 tree was a map of small JSON documents and on a v3 tree is every
+// dirty leaf's encoded bytes — inline file content included — held alongside
+// the payloads the tree still points at. That is what took an initial v3
+// backup's peak RSS to 561 MB against v2's 183 MB, and 1.2 GB on a 200 MB
+// addition. Flushing as the seal goes bounds it by this budget instead of by
+// how much the backup changed.
+//
+// The value trades that residency against write parallelism: a flush is where
+// concurrency happens (putAll fans out across the batch), so too small a
+// budget serialises the uploads. 32 MB keeps several hundred small nodes, or
+// a few dozen full leaves, in flight per flush.
+const sealFlushBytes = 32 * 1024 * 1024
 
 // Commit writes every node that is actually part of the final tree and returns
 // the new root ref. Superseded intermediate nodes were never serialized, so
 // "dirty" and "reachable" are the same set and no reachability pass is needed.
 //
+// Nodes are written as the seal produces them rather than all at the end, so
+// what the commit holds is bounded by sealFlushBytes and not by the size of
+// the change. Children are sealed before their parents, so a partial write
+// interrupted midway leaves unreferenced nodes — garbage the next prune
+// collects — never a node naming a child that was never written.
+//
 // After Commit the transaction is clean and can be committed again cheaply; a
 // second Commit writes nothing and returns the same ref.
 func (tx *Txn) Commit(ctx context.Context) (string, error) {
-	ref, batch, err := tx.seal()
+	pending := make(map[string][]byte)
+	pendingBytes := 0
+
+	flush := func() error {
+		if len(pending) == 0 {
+			return nil
+		}
+		if err := tx.nodes.putAll(ctx, pending); err != nil {
+			return err
+		}
+		pending = make(map[string][]byte)
+		pendingBytes = 0
+		return nil
+	}
+
+	ref, err := tx.sealChild(tx.root, func(ref string, data []byte) error {
+		pending[ref] = data
+		pendingBytes += len(data)
+		if pendingBytes >= sealFlushBytes {
+			return flush()
+		}
+		return nil
+	})
 	if err != nil {
 		return "", err
 	}
-	if err := tx.nodes.putAll(ctx, batch); err != nil {
+	if err := flush(); err != nil {
 		return "", err
 	}
+
 	// Every node is persisted now, so the whole tree is clean again.
 	if ref == "" {
 		tx.root = child{}
@@ -351,19 +476,16 @@ func (tx *Txn) Commit(ctx context.Context) (string, error) {
 	return ref, nil
 }
 
-// seal serializes the dirty spine bottom-up, returning the root ref and the
-// nodes that would have to be written for that ref to resolve. It performs no
-// I/O: Root discards the batch, Commit writes it.
-func (tx *Txn) seal() (string, map[string][]byte, error) {
-	batch := make(map[string][]byte)
-	ref, err := tx.sealChild(tx.root, batch)
-	if err != nil {
-		return "", nil, err
-	}
-	return ref, batch, nil
+// seal computes the root ref without writing or retaining anything: each
+// node's bytes are hashed and dropped. Root uses it, which is what makes a
+// dry run both read-only and bounded.
+func (tx *Txn) seal() (string, error) {
+	return tx.sealChild(tx.root, func(string, []byte) error { return nil })
 }
 
-func (tx *Txn) sealChild(c child, batch map[string][]byte) (string, error) {
+// sealChild serializes the dirty spine bottom-up, handing every node it seals
+// to sink. Children are sealed — and so handed over — before their parents.
+func (tx *Txn) sealChild(c child, sink func(ref string, data []byte) error) (string, error) {
 	if c.node == nil {
 		return c.ref, nil // clean (or absent): already persisted
 	}
@@ -372,7 +494,7 @@ func (tx *Txn) sealChild(c child, batch map[string][]byte) (string, error) {
 	if !c.node.leaf {
 		childRefs = make([]string, len(c.node.children))
 		for i, cc := range c.node.children {
-			ref, err := tx.sealChild(cc, batch)
+			ref, err := tx.sealChild(cc, sink)
 			if err != nil {
 				return "", err
 			}
@@ -384,7 +506,9 @@ func (tx *Txn) sealChild(c child, batch map[string][]byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	batch[ref] = data
+	if err := sink(ref, data); err != nil {
+		return "", err
+	}
 	return ref, nil
 }
 
@@ -422,7 +546,7 @@ func (tx *Txn) insert(ctx context.Context, c child, r routing, entry leafEntry, 
 		return tx.insertIntoLeaf(n, entry, level)
 	}
 
-	idx, err := r.indexAt(level)
+	idx, err := r.indexAt(level, tx.nodes.bits())
 	if err != nil {
 		return child{}, err
 	}
@@ -458,7 +582,7 @@ func (tx *Txn) insertIntoLeaf(n *node, entry leafEntry, level int) (child, error
 	// Split once the leaf is over its budget — entry count in v2, bytes in v3
 	// (see leafOverfull) — unless routing bits have run out, in which case the
 	// leaf may grow past it.
-	if level < maxDepth && tx.nodes.leafOverfull(n.entries) {
+	if level < tx.nodes.maxDepth() && tx.nodes.leafOverfull(n.entries) {
 		return tx.buildNode(n.entries, level)
 	}
 	return child{node: n}, nil
@@ -466,7 +590,7 @@ func (tx *Txn) insertIntoLeaf(n *node, entry leafEntry, level int) (child, error
 
 // buildNode recursively partitions entries into a subtree starting at level.
 func (tx *Txn) buildNode(entries []leafEntry, level int) (child, error) {
-	if !tx.nodes.leafOverfull(entries) || level >= maxDepth {
+	if !tx.nodes.leafOverfull(entries) || level >= tx.nodes.maxDepth() {
 		sortEntries(entries)
 		return child{node: &node{leaf: true, entries: entries}}, nil
 	}
@@ -477,7 +601,7 @@ func (tx *Txn) buildNode(entries []leafEntry, level int) (child, error) {
 		if err != nil {
 			return child{}, err
 		}
-		idx, err := r.indexAt(level)
+		idx, err := r.indexAt(level, tx.nodes.bits())
 		if err != nil {
 			return child{}, err
 		}
@@ -485,7 +609,7 @@ func (tx *Txn) buildNode(entries []leafEntry, level int) (child, error) {
 	}
 
 	n := &node{}
-	for i := range branching {
+	for i := range tx.nodes.branching() {
 		bucket, ok := buckets[i]
 		if !ok {
 			continue
@@ -530,7 +654,7 @@ func (tx *Txn) delete(ctx context.Context, c child, r routing, key string, level
 		return child{node: owned}, true, nil
 	}
 
-	idx, err := r.indexAt(level)
+	idx, err := r.indexAt(level, tx.nodes.bits())
 	if err != nil {
 		return c, false, err
 	}
@@ -616,8 +740,8 @@ func (tx *Txn) collapse(ctx context.Context, n *node, level int) (child, bool, e
 // budget, which for a wide tree means reading a couple of nodes rather than
 // all of them.
 func (tx *Txn) subtreeEntries(ctx context.Context, c child, depth int) ([]leafEntry, bool, error) {
-	if depth > maxTreeDepth {
-		return nil, false, errTooDeep(depth)
+	if depth > tx.nodes.maxTreeDepth() {
+		return nil, false, errTooDeep(tx.nodes.maxTreeDepth(), depth)
 	}
 	n, err := tx.resolve(ctx, c)
 	if err != nil {
@@ -672,7 +796,7 @@ func lookupEntry(ctx context.Context, ns *NodeStore, c child, routingKey, key st
 	if err != nil {
 		return leafEntry{}, false, err
 	}
-	for level := 0; level <= maxTreeDepth; level++ {
+	for level := 0; level <= ns.maxTreeDepth(); level++ {
 		n, err := resolve(ctx, ns, c)
 		if err != nil {
 			return leafEntry{}, false, err
@@ -684,7 +808,7 @@ func lookupEntry(ctx context.Context, ns *NodeStore, c child, routingKey, key st
 			return leafEntry{}, false, nil
 		}
 
-		idx, err := r.indexAt(level)
+		idx, err := r.indexAt(level, ns.bits())
 		if err != nil {
 			return leafEntry{}, false, err
 		}
@@ -697,7 +821,7 @@ func lookupEntry(ctx context.Context, ns *NodeStore, c child, routingKey, key st
 		}
 		c = n.children[pos]
 	}
-	return leafEntry{}, false, errTooDeep(maxTreeDepth)
+	return leafEntry{}, false, errTooDeep(ns.maxTreeDepth(), ns.maxTreeDepth())
 }
 
 func lookupEntryByKey(ctx context.Context, ns *NodeStore, root child, key string) (leafEntry, bool, error) {
@@ -716,8 +840,8 @@ func lookupEntryByKey(ctx context.Context, ns *NodeStore, root child, key string
 }
 
 func walk(ctx context.Context, ns *NodeStore, c child, depth int, fn func(e leafEntry) error) error {
-	if depth > maxTreeDepth {
-		return errTooDeep(depth)
+	if depth > ns.maxTreeDepth() {
+		return errTooDeep(ns.maxTreeDepth(), depth)
 	}
 	n, err := resolve(ctx, ns, c)
 	if err != nil {
@@ -740,8 +864,8 @@ func walk(ctx context.Context, ns *NodeStore, c child, depth int, fn func(e leaf
 }
 
 func nodeRefs(ctx context.Context, ns *NodeStore, ref string, depth int, fn func(string) error) error {
-	if depth > maxTreeDepth {
-		return errTooDeep(depth)
+	if depth > ns.maxTreeDepth() {
+		return errTooDeep(ns.maxTreeDepth(), depth)
 	}
 	if err := fn(ref); err != nil {
 		return err
@@ -783,14 +907,14 @@ func diff(ctx context.Context, ns *NodeStore, c1, c2 child, fn func(DiffEntry) e
 }
 
 func diffNodes(ctx context.Context, ns *NodeStore, n1, n2 *node, level int, fn func(DiffEntry) error) error {
-	if level > maxTreeDepth {
-		return errTooDeep(level)
+	if level > ns.maxTreeDepth() {
+		return errTooDeep(ns.maxTreeDepth(), level)
 	}
 	if n1.leaf && n2.leaf {
 		return diffLeaves(n1, n2, fn)
 	}
 
-	for i := 0; i < branching; i++ {
+	for i := 0; i < ns.branching(); i++ {
 		c1, err := childForBucket(ctx, ns, n1, i, level)
 		if err != nil {
 			return err
@@ -842,7 +966,7 @@ func childForBucket(ctx context.Context, ns *NodeStore, n *node, idx, level int)
 		if err != nil {
 			continue
 		}
-		i, err := r.indexAt(level)
+		i, err := r.indexAt(level, ns.bits())
 		if err != nil {
 			continue
 		}
@@ -891,8 +1015,8 @@ func diffLeaves(n1, n2 *node, fn func(DiffEntry) error) error {
 }
 
 func collectAll(ctx context.Context, ns *NodeStore, n *node, depth int, fn func(e leafEntry) error) error {
-	if depth > maxTreeDepth {
-		return errTooDeep(depth)
+	if depth > ns.maxTreeDepth() {
+		return errTooDeep(ns.maxTreeDepth(), depth)
 	}
 	if n.leaf {
 		for _, e := range n.entries {
@@ -948,12 +1072,12 @@ func routingForEntry(e leafEntry) (routing, error) {
 	return newRouting(pk)
 }
 
-func (r routing) indexAt(level int) (int, error) {
-	shift := 32 - (level+1)*bitsPerLevel
+func (r routing) indexAt(level, bits int) (int, error) {
+	shift := 32 - (level+1)*bits
 	if shift < 0 {
 		return 0, fmt.Errorf("level too deep for 32-bit key prefix")
 	}
-	return int((r.prefix >> shift) & ((1 << bitsPerLevel) - 1)), nil
+	return int((r.prefix >> shift) & ((1 << bits) - 1)), nil
 }
 
 func sortEntries(entries []leafEntry) {

@@ -316,3 +316,48 @@ func TestFitToBudgetBoundsTheTree(t *testing.T) {
 		t.Errorf("generated %d bytes against a %d budget", st.TotalBytes, budget)
 	}
 }
+
+// Breadth is a separate variable from volume, and format v3's retention cost
+// is a function of the first: a snapshot keeps a superseded copy of every leaf
+// a backup touched (RFC 0027 §6). The profile's own concentration cannot
+// express it — it chooses which directories are hot, not how many are reached
+// — so the cap has to.
+func TestChurnDirCapLimitsBreadth(t *testing.T) {
+	root := t.TempDir()
+	p := fitToBudget(profiles["source"], 2000, 64<<20)
+	if _, err := generate(root, p, 2000, 9); err != nil {
+		t.Fatal(err)
+	}
+
+	const maxDirs = 6
+	st, err := applyChurn(root, p, 9, 0.05, 200, maxDirs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.TouchedDirs > maxDirs {
+		t.Errorf("churn touched %d directories against a cap of %d", st.TouchedDirs, maxDirs)
+	}
+	if st.Modified+st.Created+st.Deleted == 0 {
+		t.Error("capped churn changed nothing; the cap starved it entirely")
+	}
+
+	// Uncapped, the same budget must spread further, or the cap is measuring
+	// nothing. Volume and breadth stay coupled by fan-out, so the capped run
+	// legitimately changes fewer files — the cap bounds directories, and the
+	// files reachable within them come with it.
+	wide := t.TempDir()
+	if _, err := generate(wide, p, 2000, 9); err != nil {
+		t.Fatal(err)
+	}
+	uncapped, err := applyChurn(wide, p, 9, 0.05, 200, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uncapped.TouchedDirs <= st.TouchedDirs {
+		t.Errorf("uncapped churn touched %d directories, capped touched %d; the cap is not the binding constraint",
+			uncapped.TouchedDirs, st.TouchedDirs)
+	}
+	t.Logf("capped: %d changes across %d dirs; uncapped: %d changes across %d dirs",
+		st.Modified+st.Created+st.Deleted, st.TouchedDirs,
+		uncapped.Modified+uncapped.Created+uncapped.Deleted, uncapped.TouchedDirs)
+}

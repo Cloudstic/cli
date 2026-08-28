@@ -1,13 +1,13 @@
 # RFC 0025: Traversal Order and Pack-Contiguous Reads
 
 - **Status:** Closed — superseded in part by
-  [RFC 0026](0026-repository-format-v2.md). What survives: §1's derived
-  traversal order, which v2 keeps as its only read order, and the measurement
+  [RFC 0026](0026-repository-format-v3.md). What survives: §1's derived
+  traversal order, which format v3 keeps as its only read order, and the measurement
   record — in particular the aging series, the §8 streaming-restore result,
   and the finding that the estimator is load-bearing — which is the evidence
   RFC 0026 cites for removing packs rather than continuing to inform them.
   What is superseded: everything that manages pack residency (§2 grouping,
-  admission from declared demand, `ReadPlanner`), which v2 deletes together
+  admission from declared demand, `ReadPlanner`), which format v3 deletes together
   with the layer it compensated for. The shipped pieces remain in place for
   v1 repositories until the v1 read paths are removed per RFC 0026's
   sequencing. `aging.sh`, introduced for this RFC's measurements, is now the

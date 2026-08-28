@@ -1,11 +1,12 @@
 # RFC 0024: Metadata in the Tree
 
-- **Status:** Absorbed into [RFC 0026](0026-repository-format-v2.md). This
+- **Status:** Absorbed into [RFC 0026](0026-repository-format-v3.md). This
   RFC's design — metadata in binary HAMT leaves, inline small-file content —
-  is carried forward unchanged, but as repository format v2 rather than an
-  opportunistic in-place layout change. The v2 decision removes the
+  is carried forward unchanged, but as repository format v3 (the next free
+  `config.version` — today's builds already stamp 2) rather than an
+  opportunistic in-place layout change. The v3 decision removes the
   constraints this document worked under (dual JSON/binary decoders held
-  forever, mixed-era repositories, packs retained "to be measured"): v2 has
+  forever, mixed-era repositories, packs retained "to be measured"): v3 has
   one leaf form and no pack layer. The identity-model constraint section and
   the incremental-cost analysis remain binding and are referenced from RFC
   0026 rather than restated.

@@ -1,4 +1,4 @@
-# RFC 0026: Repository Format v2 (Fat Leaves, No Packfiles)
+# RFC 0026: Repository Format v3 (Fat Leaves, No Packfiles)
 
 - **Status:** Proposed
 - **Date:** 2026-08-28
@@ -9,11 +9,11 @@
   [RFC 0024](0024-metadata-in-the-tree.md) (absorbed),
   [RFC 0025](0025-traversal-order-and-pack-contiguous-reads.md) (partially —
   §1's derived traversal order survives; everything pack-specific does not).
-  [RFC 0018](0018-self-describing-packfiles.md) becomes a v1-only document.
+  [RFC 0018](0018-self-describing-packfiles.md) becomes a v2-only document.
 
 ## Abstract
 
-Format v1 mints roughly 2.2 objects per file — a `filemeta/`, a `content/`,
+Format v2 mints roughly 2.2 objects per file — a `filemeta/`, a `content/`,
 and an amortised share of `node/` — and then bolts a transparent aggregation
 layer (`PackStore`) underneath to make that affordable against object storage.
 Three RFCs of read-side machinery have been compensating for the consequences:
@@ -22,16 +22,22 @@ and rebuildable; a probe-and-promote heuristic cluster guessing an execution
 order the store is never told; and a read cost that grows with the number of
 backups a repository has taken rather than with the data being read.
 
-This RFC proposes **format v2**, a breaking change:
+This RFC proposes **format v3**, a breaking change. The number is the
+`config.version` integer, and 3 is the next free one: today's builds already
+stamp **2** (`core.RepoFormatVersion`, raised when the pack index was sealed
+and sharded) and read every version up to 2 as one continuously-compatible
+family. Throughout this document "v2" means that current packfile-era family
+as a whole — everything a released build reads today — and "v3" means the
+format proposed here:
 
 - File metadata and small-file content move **into the HAMT leaves**, in a
   binary encoding, with leaves sized by a byte budget so that every stored
   object is large. Chunk manifests inline into the leaf entry, with a spill
   object only for very large files.
-- The packfile layer is **removed entirely**. Nothing in v2 is small enough to
+- The packfile layer is **removed entirely**. Nothing in v3 is small enough to
   need it, so the catalog, shards, footers, admission heuristics, group plans,
   heal and repack machinery are deleted rather than improved.
-- The version gate is raised: v2 binaries refuse v1 repositories with an error
+- The version gate is raised: v3 binaries refuse v2 repositories with an error
   naming the migration tool. Migration is a separate deliverable (see
   "Migration" below).
 
@@ -39,7 +45,7 @@ The claim to hold this RFC to: read cost proportional to bytes read and
 independent of backup count, peak memory independent of repository size, and a
 net deletion of several thousand lines. The unified benchmark harness (aging
 folded into `bench.sh`, part of this RFC) is what verifies each claim against
-the recorded v1 baselines.
+the recorded v2 baselines.
 
 ## Context
 
@@ -86,10 +92,10 @@ all.**
 
 ### Prior art
 
-The design space is well trodden, and v2 deliberately sits between two proven
+The design space is well trodden, and v3 deliberately sits between two proven
 points rather than inventing a third:
 
-- **Kopia** is the v1 architecture done with more machinery: small contents
+- **Kopia** is the v2 architecture done with more machinery: small contents
   packed into blobs (≤20 MB), index blobs mapping content ID → (blob, offset,
   length), a local index at the end of each pack for recovery — RFC 0018's
   footer, independently arrived at — and a persistent local cache of
@@ -97,7 +103,7 @@ points rather than inventing a third:
   the road not taken here: it keeps the second address space and pays for it
   with an index-and-cache subsystem. RFC 0024 already rejected the sorted
   on-disk index for this codebase (hash-ordered lookups thrash a block
-  cache), and v2 removes the mapping instead of engineering it.
+  cache), and v3 removes the mapping instead of engineering it.
 - **Duplicacy** is the other endpoint: no packs, no central index at all.
   Everything is a CDC chunk — including the snapshot's file list, whose
   `files`, `chunks` and `lengths` sequences are chunked by the same
@@ -106,11 +112,11 @@ points rather than inventing a third:
   rationale for dropping the index matches this RFC's: the index database is
   the complexity and the failure surface.
 
-v2 takes duplicacy's conclusion (make every stored object a large,
+v3 takes duplicacy's conclusion (make every stored object a large,
 self-sufficient, content-addressed unit; keep no location map) while keeping
 the HAMT so that `FileID` identity, multi-parent files, and O(log n) sparse
 updates from cloud change feeds survive — the properties a flat chunked
-manifest gives up, and the reason v2 is "fat leaves" rather than "chunk the
+manifest gives up, and the reason v3 is "fat leaves" rather than "chunk the
 file list".
 
 ### Why batch APIs cannot substitute for layout
@@ -125,36 +131,36 @@ latency, per-job pricing — built for storage administration, not for a read
 path. Concurrency hides latency but every small object still bills and
 round-trips as its own request. So the amplification of many small objects is
 not fixable at the API layer, on any backend this tool targets: aggregation
-has to happen in the data layout. v1 accepted that and packed below the store
-interface; v2 accepts it and makes the objects themselves large.
+has to happen in the data layout. v2 accepted that and packed below the store
+interface; v3 accepts it and makes the objects themselves large.
 
 The one direction batch APIs do exist is **delete**: S3 `DeleteObjects` takes
 up to 1,000 keys per request (MinIO and B2's S3-compatible endpoint included),
 Azure Blob Batch takes 256, GCS batches metadata and delete calls at 100. That
-is exactly the shape of `prune`'s sweep, and v2 should use it — see §5.
+is exactly the shape of `prune`'s sweep, and v3 should use it — see §5.
 
 ## The decision this RFC records
 
-v1's compatibility contract (`docs/compatibility.md`) makes backward
+v2's compatibility contract (`docs/compatibility.md`) makes backward
 compatibility permanent and migration optional. RFC 0024 was written under
 that constraint, which is why it proposed an opportunistic in-place layout
 change and dual decoders held forever.
 
-This RFC records the decision to break it once: **v2 is a new baseline, not a
-new era in a mixed repository.** A v2 repository contains only v2 structures;
-a v2 binary refuses a v1 repository outright rather than reading it; the
-permanence rule re-applies from v2 onward. That decision is what turns RFC
+This RFC records the decision to break it once: **v3 is a new baseline, not a
+new era in a mixed repository.** A v3 repository contains only v3 structures;
+a v3 binary refuses a v2 repository outright rather than reading it; the
+permanence rule re-applies from v3 onward. That decision is what turns RFC
 0024's additive design into a subtractive one — no dual decoders, no
 mixed-era leaves, no legacy catalog reader, and the pack layer deleted rather
 than bypassed.
 
-The costs are real and named: users must run a migration before a v2 binary
+The costs are real and named: users must run a migration before a v3 binary
 can read their data, and `docs/compatibility.md` must be amended to record the
 one-time re-baselining. Both are accepted.
 
 ## Goals
 
-- One design document for the v2 format, replacing the partial and partly
+- One design document for the v3 format, replacing the partial and partly
   withdrawn proposals in RFCs 0023–0025.
 - Requests proportional to bytes: reading a snapshot costs one request per
   (large) object it references, independent of how many backups produced them.
@@ -169,7 +175,7 @@ one-time re-baselining. Both are accepted.
 - **The migration tool.** Its requirements are stated below; its design is its
   own RFC.
 - **Streaming `ObjectStore.List`.** `prune`'s sweep still materialises every
-  key; v2 shrinks that list ~12x but it stays O(objects). Public-interface
+  key; v3 shrinks that list ~12x but it stays O(objects). Public-interface
   change, separate RFC (carried over from RFC 0023's non-goals).
 - **Changing the identity model.** `FileID` identity, multi-parent files,
   `AffinityKey` routing, and content-addressing by `ComputeJSONHash` /
@@ -180,18 +186,18 @@ one-time re-baselining. Both are accepted.
 
 ## Proposal
 
-### 1. The v2 object model
+### 1. The v3 object model
 
 | key | content | notes |
 |---|---|---|
 | `chunk/<hash>` | raw chunk data | unchanged |
 | `node/<hash>` | HAMT spine node or fat leaf, binary | leaves carry metadata + small content |
 | `content/<hash>` | chunk-ref spill list | rare; only for very large files |
-| `snapshot/<hash>` | snapshot | unchanged shape, v2-stamped |
+| `snapshot/<hash>` | snapshot | unchanged shape, v3-stamped |
 | `index/latest`, `index/snapshots` | mutable pointers/catalog | unchanged |
 | `keys/<slot>`, `config` | key slots, repo marker | unchanged |
 
-Gone relative to v1: `filemeta/*` (absorbed into leaves), `packs/*`,
+Gone relative to v2: `filemeta/*` (absorbed into leaves), `packs/*`,
 `index/packs`, `index/packmap/*`, and `content/*` in its role as a per-file
 manifest (it survives only as the spill form).
 
@@ -232,7 +238,7 @@ gates (see "Performance targets").
 CompressedStore → EncryptedStore → MeteredStore → <backend>
 ```
 
-`PackStore` is not in the v2 chain and is deleted along with:
+`PackStore` is not in the v3 chain and is deleted along with:
 
 - `packcatalog.go`, `packshard.go`, `packfooter.go`, `packadmission.go`,
   `packbodycache.go`, `packgroup.go`, `pack.go` and their tests;
@@ -281,7 +287,7 @@ the existing mark-and-sweep — not fragmentation inside a shared container, so
 ### 5. Batched deletes
 
 With packing gone, `prune` deletes standalone objects again, one request
-each — the only per-object request pattern v2 leaves in place. Object stores
+each — the only per-object request pattern v3 leaves in place. Object stores
 batch exactly this direction (see "Why batch APIs cannot substitute for
 layout"): a new optional capability interface in `pkg/store`,
 
@@ -304,28 +310,28 @@ contract, so a custom backend without it keeps working unchanged.
 ## Performance targets
 
 The point of this RFC is a breakthrough, not an improvement, so the targets
-are stated against recorded v1 numbers and verified by the unified harness
+are stated against recorded v2 numbers and verified by the unified harness
 (next section). All at the `source` profile, 5,000 files, 200-file churn,
 MinIO, matching the RFC 0025 aging series:
 
 1. **Aging flatness.** `restore` and `check` of the latest snapshot after 80
    backups cost ≤ 1.2x their cost after 1 backup, in requests and in bytes
-   transferred. v1 measured 139 → 2,118 restore requests over that range.
+   transferred. v2 measured 139 → 2,118 restore requests over that range.
 1. **Requests proportional to objects.** `check` at 80 backups within 2x of
-   the object count a fresh v2 repository of the same tree holds. v1: 1,867
+   the object count a fresh v3 repository of the same tree holds. v2: 1,867
    requests against a ~130 floor.
 1. **Memory off the repository axis.** Peak RSS for `backup`, `check`,
    `restore`, `prune` flat from 5,000 to 50,000 files within the measured
-   noise band, `prune`'s `List` term excepted and reported. v1 grows on every
+   noise band, `prune`'s `List` term excepted and reported. v2 grows on every
    operation (RFC 0023's context table).
 1. **The accepted cost, bounded.** `backup-incremental-1` upload volume ≤ 2x
-   v1's, and `backup-incremental-1000` ≤ 1.5x — the per-leaf dedup loss RFC
+   v2's, and `backup-incremental-1000` ≤ 1.5x — the per-leaf dedup loss RFC
    0024 worked through, now gated rather than estimated. If tuning
    `leafTargetSize` cannot hold both this and target 1, that tension goes back
    to this RFC before the default is chosen.
 1. **Fewer round trips before the first byte.** `backup-incremental-noop`
-   request count strictly below v1's, which pays 1 + shard-count reads to load
-   a catalog v2 does not have.
+   request count strictly below v2's, which pays 1 + shard-count reads to load
+   a catalog v3 does not have.
 
 A target missed is a design input, not a rounding error to explain away: the
 harness rows go in the PR that misses them.
@@ -351,39 +357,39 @@ work): `aging.sh` is deleted and `bench.sh` gains an optional aging stage.
   never silently replaced by the working tree.
 
 Unset, `AGE_CHECKPOINTS` leaves `bench.sh` exactly as CI runs it today.
-Baseline v1 sweeps — the full matrix plus aging to 80 — are captured and
-committed to `benchmark-results/` **before the first v2 PR merges**; they are
+Baseline v2 sweeps — the full matrix plus aging to 80 — are captured and
+committed to `benchmark-results/` **before the first v3 PR merges**; they are
 the numbers the targets above are scored against.
 
 ## Compatibility and migration
 
 This section deliberately inverts the usual one.
 
-- **Version gate.** `core.RepoFormatVersion = 2` and
-  `core.MaxSupportedRepoFormat = 2`. `LoadRepoConfig` in a v2 binary meeting
-  `config.version: 1` fails with an actionable error naming the migration
-  path. It must never fall through to a partial read: v1 structures are not
-  merely unsupported, they are absent from the binary.
-- **Old binaries meet v2 safely today.** Every released build enforces
-  `MaxSupportedRepoFormat = 1` at open, so a v1 binary refuses a v2 repository
+- **Version gate.** `core.RepoFormatVersion = 3` and
+  `core.MaxSupportedRepoFormat = 3`. `LoadRepoConfig` in a v3 binary meeting
+  `config.version: 2` or lower fails with an actionable error naming the
+  migration path. It must never fall through to a partial read: v2 structures
+  are not merely unsupported, they are absent from the binary.
+- **Old binaries meet v3 safely today.** Every released build enforces
+  `MaxSupportedRepoFormat = 2` at open, so a v2 binary refuses a v3 repository
   cleanly. Verified by running an old binary, per `docs/compatibility.md`,
   not by reasoning about it.
 - **`docs/compatibility.md` is amended, not silently violated.** It gains a
-  section recording the v2 re-baselining: the permanence rule holds within a
-  major format, v1→v2 is the one crossing that requires migration, and the
-  rule re-applies from v2 onward. The v1 fixture table moves with the v1 read
+  section recording the v3 re-baselining: the permanence rule holds within a
+  major format, v2→v3 is the one crossing that requires migration, and the
+  rule re-applies from v3 onward. The v2 fixture table moves with the v2 read
   paths (below).
 - **Migration is a separate deliverable.** Requirements it must meet:
   streamed (never the whole repository in memory), resumable, verifying — a
-  post-migration `check` over the v2 output before the v1 objects are
+  post-migration `check` over the v3 output before the v2 objects are
   touched — and shipped in a transition release that carries both stacks.
-  Until it ships, v1 users stay on v1 releases; main drops the v1 read paths
-  once the transition release is cut, and the v1 e2e fixtures move to
+  Until it ships, v2 users stay on v2 releases; main drops the v2 read paths
+  once the transition release is cut, and the v2 e2e fixtures move to
   asserting *refusal with the migration message* rather than readability.
 
 ## Testing strategy
 
-- Golden fixtures for the v2 leaf and snapshot encodings from the first PR
+- Golden fixtures for the v3 leaf and snapshot encodings from the first PR
   that writes them; `TestRootHashGolden`'s role transfers to the binary
   encoding.
 - `e2e/feature_legacy_repo_test.go` keeps every committed baseline, with the
@@ -400,21 +406,21 @@ This section deliberately inverts the usual one.
 Each stage is a PR or small series; the format flips only once.
 
 1. **Harness first.** Merge aging into `bench.sh`, delete `aging.sh`, capture
-   and commit the v1 baselines. (Lands with this RFC.)
-1. **v2 leaf encoding behind the gate.** Binary fat leaves, inline content,
+   and commit the v2 baselines. (Lands with this RFC.)
+1. **v3 leaf encoding behind the gate.** Binary fat leaves, inline content,
    inline chunk refs + spill, byte-budget splitting — writable only when
-   `init` is asked for format 2, which is not yet the default. The v2 chain
+   `init` is asked for format 3, which is not yet the default. The v3 chain
    is built without `PackStore` from the start.
 1. **Engine on entries, not refs.** Change detection, `check`, `diff`, `find`
    read decoded entries; the derived traversal order (RFC 0025 §1) becomes
    the only read order.
-1. **Tune and gate.** Run the harness matrix plus aging on v2; choose
+1. **Tune and gate.** Run the harness matrix plus aging on v3; choose
    `leafTargetSize` and `inlineContentMax` against targets 1 and 4; record
    the sweep in this RFC's outcome section.
-1. **Flip the default.** `init` writes v2; v1 write paths freeze.
+1. **Flip the default.** `init` writes v3; v2 write paths freeze.
 1. **Cut the transition release, then delete.** With the migration tool
    shipped in the transition release, main removes `internal/storelayer`'s
-   pack files, the v1 leaf/filemeta decoders, and the public `ReadPlanner`
+   pack files, the v2 leaf/filemeta decoders, and the public `ReadPlanner`
    surface (docs PR paired, per RFC 0022).
 
 ## Open questions
@@ -432,11 +438,11 @@ Each stage is a PR or small series; the format flips only once.
 1. **Xattrs/ACLs.** Side table keyed by entry index, present when flagged
    (carried from RFC 0024).
 1. **Cross-directory metadata dedup.** Two identical files in different
-   directories shared a `filemeta/` object in v1 and do not share leaf bytes
-   in v2. Quantify on the `mixed` profile; expected small against the object
+   directories shared a `filemeta/` object in v2 and do not share leaf bytes
+   in v3. Quantify on the `mixed` profile; expected small against the object
    count win, but it should be a number.
 1. **Does `index/snapshots` want the same treatment later?** It is already a
-   reconciling cache; nothing here changes it, but a v2 follow-up could fold
+   reconciling cache; nothing here changes it, but a v3 follow-up could fold
    snapshot summaries into a leaf-like object. Out of scope now.
 
 ## References

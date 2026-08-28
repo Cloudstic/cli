@@ -752,3 +752,78 @@ func lineContaining(t *testing.T, s, want string) string {
 	t.Fatalf("no line containing %q in:\n%s", want, s)
 	return ""
 }
+
+// Aging rows describe a different axis than the pipeline rows they share a CSV
+// with, so they must not appear in the per-operation tables — a "restore@25"
+// row there would be read as another operation measured at the sweep's tree
+// sizes, which is not what it is.
+func TestAgingRowsAreSeparatedFromPipelineRows(t *testing.T) {
+	csv := `tool,backend,profile,scale,sample,operation,seconds,peak_mb,alloc_mb,requests,sent_mb,by_api,repo_delta,packs,backups,policy
+cloudstic,minio,source,5000,1,backup,1.10,150.0,200.0,25,0.0,,1 MB,,,
+cloudstic,minio,source,5000,1,restore,4.00,300.0,900.0,900,300.0,,0 KB,,,
+cloudstic,minio,source,5000,1,restore@1,0.40,150.0,60.0,23,8.1,,0 KB,1,1,baseline
+cloudstic,minio,source,5000,1,restore@25,0.55,158.0,70.0,199,20.4,,0 KB,25,25,baseline
+cloudstic,minio,source,5000,1,check@1,0.20,150.0,60.0,16,8.1,,0 KB,1,1,baseline
+cloudstic,minio,source,5000,1,check@25,0.30,157.0,70.0,210,20.5,,0 KB,25,25,baseline
+`
+	rep, err := Parse(strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	for _, op := range rep.Operations() {
+		if strings.Contains(op, "@") {
+			t.Errorf("aging operation %q leaked into the pipeline operations", op)
+		}
+	}
+	if got := len(rep.Operations()); got != 2 {
+		t.Errorf("pipeline operations = %d, want 2 (backup, restore)", got)
+	}
+	if got := len(rep.AgingRows()); got != 4 {
+		t.Errorf("aging rows = %d, want 4", got)
+	}
+
+	var b strings.Builder
+	if err := Render(&b, rep, "test"); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	out := b.String()
+
+	for _, want := range []string{
+		"### Aging",
+		"**restore**",
+		"**check**",
+		"| Backups | Packs |",                // packs column, since these rows report packs
+		"1 → 25 backups: **8.65x requests**", // 199/23, the growth the table exists to show
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rendered report is missing %q", want)
+		}
+	}
+
+	// The aging curve must be ordered by backup count, not by CSV order.
+	first := strings.Index(out, "| 1 | 1 | 23 |")
+	second := strings.Index(out, "| 25 | 25 | 199 |")
+	if first < 0 || second < 0 || first > second {
+		t.Errorf("aging rows are not ordered by backup count (positions %d, %d)", first, second)
+	}
+}
+
+// A report with no aging rows must not grow an empty section.
+func TestNoAgingSectionWithoutAgingRows(t *testing.T) {
+	csv := `tool,operation,scale,seconds,peak_mb
+cloudstic,backup,5000,1.10,150.0
+cloudstic,restore,5000,4.00,300.0
+`
+	rep, err := Parse(strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var b strings.Builder
+	if err := Render(&b, rep, "test"); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.Contains(b.String(), "### Aging") {
+		t.Error("report without aging rows still rendered an Aging section")
+	}
+}

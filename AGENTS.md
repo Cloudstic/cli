@@ -97,11 +97,22 @@ Three layers, in cost order:
   (`backup`, `prune`) run once after the last checkpoint, never at one: a
   mutation at a checkpoint silently redefines every checkpoint after it. Rows
   land in the same CSV with the `packs`/`backups`/`policy` columns filled and
-  operations named `restore@40`, so each checkpoint renders as its own row.
-  Request counts need `BACKENDS=minio`; a local backend still yields the
-  wall-time and peak-RSS half of the curve. Aging is manual, like
-  `compare.sh`: a run is dozens of backups, far too slow for per-PR CI, and
-  it answers a design question rather than guarding a regression.
+  operations named `restore@40`. `benchreport` renders them as an **Aging**
+  section — one table per (operation, policy), rows ordered by backup count,
+  with the growth factor computed across the endpoints — and keeps them out of
+  the per-operation tables, where a `restore@25` row would read as another
+  operation measured at the sweep's tree sizes. Request counts need
+  `BACKENDS=minio`; a local backend still yields the wall-time and peak-RSS
+  half of the curve.
+
+  The `Benchmark` workflow's MinIO job runs the aging stage by default
+  (`1 10 25`, overridable via the `age_checkpoints` dispatch input, empty to
+  disable) because it answers what the pipeline structurally cannot: the
+  pipeline measures a *freshly created* repository, which is the best case for
+  any layout that bundles objects and the least representative one. The local
+  job does not — request count is the measurement and a local store reports
+  none. `REPO_FORMAT=3` selects the packless fat-leaf format, so the same
+  build can be measured at both formats (RFC 0026).
 
   Two mechanisms compare variants against **one** aged repository, because
   aging twice ages into two *different* repositories (pack composition is not

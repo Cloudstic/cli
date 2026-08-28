@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -82,6 +83,7 @@ func Render(w io.Writer, rep *Report, title string) error {
 	}
 
 	renderRepoSummary(b, rep)
+	renderAging(b, rep)
 	renderByAPI(b, rep)
 
 	// A comparison of one tool has nothing to chart — a single bar compares
@@ -497,4 +499,112 @@ func humanInt(n int) string {
 		b.WriteString(s[i : i+3])
 	}
 	return b.String()
+}
+
+// renderAging renders the aging stage: how an operation's cost grows with the
+// number of backups that contributed to the snapshot it reads.
+//
+// It gets its own section because it is a different measurement over a
+// different axis. The tables above vary tree size against a freshly created
+// repository, which is the best case for any layout that amortises reads and
+// says nothing about how a repository behaves once it has a history. This
+// varies history with the tree held fixed, and it is the axis a linear
+// per-backup term shows up on — the term that decides whether a year-old
+// repository is still usable (RFC 0025 §4, RFC 0026).
+//
+// The rows are checkpoints and the columns are the metrics that carry that
+// term: requests and bytes, because a per-backup cost is paid in round trips
+// rather than in wall time on a loopback backend, plus peak RSS to show
+// whether history is also costing memory. Packs is included where a format
+// has them, since it is the mechanism behind the growth rather than a
+// separate finding.
+func renderAging(b *strings.Builder, rep *Report) {
+	rows := rep.AgingRows()
+	if len(rows) == 0 {
+		return
+	}
+
+	// Group by (operation, policy) so each curve is one table, and collect the
+	// checkpoints in ascending order.
+	type curveKey struct{ op, policy string }
+	curves := map[curveKey][]Row{}
+	var order []curveKey
+	for _, row := range rows {
+		k := curveKey{op: AgingOp(row.Operation), policy: row.Policy}
+		if _, seen := curves[k]; !seen {
+			order = append(order, k)
+		}
+		curves[k] = append(curves[k], row)
+	}
+
+	b.WriteString("\n### Aging\n\n")
+	b.WriteString("Cost against the number of backups the repository has taken, with the tree\n" +
+		"held fixed. The tables above measure a freshly created repository, which is\n" +
+		"the most favourable case for any layout that bundles objects and the least\n" +
+		"representative one; this is the axis a per-backup cost appears on. A flat\n" +
+		"column means reading a snapshot costs what its data costs. A rising one means\n" +
+		"it costs what the repository's history costs.\n\n")
+
+	for _, k := range order {
+		curve := curves[k]
+		sort.Slice(curve, func(i, j int) bool { return curve[i].Backups < curve[j].Backups })
+
+		heading := k.op
+		if k.policy != "" && k.policy != "baseline" {
+			heading = fmt.Sprintf("%s (%s)", k.op, k.policy)
+		}
+		fmt.Fprintf(b, "**%s**\n\n", heading)
+
+		withPacks := false
+		for _, row := range curve {
+			if row.Packs > 0 {
+				withPacks = true
+				break
+			}
+		}
+
+		b.WriteString("| Backups |")
+		if withPacks {
+			b.WriteString(" Packs |")
+		}
+		b.WriteString(" Requests | Sent (MB) | Peak RSS (MB) | Wall (s) |\n|---:|")
+		if withPacks {
+			b.WriteString("---:|")
+		}
+		b.WriteString("---:|---:|---:|---:|\n")
+
+		for _, row := range curve {
+			fmt.Fprintf(b, "| %d |", row.Backups)
+			if withPacks {
+				fmt.Fprintf(b, " %d |", row.Packs)
+			}
+			if row.HasS3 {
+				fmt.Fprintf(b, " %d | %.1f |", row.Requests, row.SentMB)
+			} else {
+				b.WriteString(" — | — |")
+			}
+			fmt.Fprintf(b, " %.1f | %.2f |\n", row.PeakMB, row.Seconds)
+		}
+
+		// The growth factor is the point of the table, and reading it off two
+		// rows is exactly the arithmetic a reader would otherwise do by hand.
+		if len(curve) >= 2 {
+			first, last := curve[0], curve[len(curve)-1]
+			if first.HasS3 && first.Requests > 0 {
+				fmt.Fprintf(b, "\n%d → %d backups: **%.2fx requests**, %.2fx bytes.\n\n",
+					first.Backups, last.Backups,
+					float64(last.Requests)/float64(first.Requests),
+					ratioOrZero(last.SentMB, first.SentMB))
+			} else {
+				b.WriteString("\n")
+			}
+		}
+	}
+}
+
+func ratioOrZero(a, b float64) float64 {
+	if b == 0 {
+		return 0
+	}
+	return a / b
 }

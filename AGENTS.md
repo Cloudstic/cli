@@ -82,23 +82,42 @@ Three layers, in cost order:
   `minio.sh` holds the container lifecycle and metric scraping; docker, `aws`
   and `curl` are needed only for `BACKENDS=minio`. What the `Benchmark`
   workflow runs.
-- **`scripts/benchmark/aging.sh`** — how read cost grows with the number of
-  backups a repository has taken, rather than with how much data it holds. The
-  axis is backup count with the tree held fixed, which is the one effect
-  `bench.sh` structurally cannot see: its unit of repetition is a whole pipeline
-  against a fresh store, and this cost only appears once many backups have each
-  sealed their own packs and a snapshot's tree spans all of them. Requires
-  MinIO — request count is the measurement, and a local store reports none.
-  Manual, like `compare.sh`, and for the same reason: a run is dozens of
-  backups, far too slow for per-PR CI, and it answers a design question rather
-  than guarding a regression. `POLICIES` reads one repository several ways at
-  each checkpoint — `POLICIES='baseline=; probe=CLOUDSTIC_TEST_X=1'` — because
-  running the script twice to compare two builds ages into two *different*
-  repositories, and the difference between them is not the change under test
-  (RFC 0025 §7). Note also that the backup-count axis does not vary what
-  `packBodyCache` bounds, which is bytes: forty backups of small churn keep
-  every pack body resident, so a policy that only matters under eviction shows
-  nothing along it.
+
+  Setting `AGE_CHECKPOINTS="1 10 40 80"` adds an **aging stage** per
+  (profile, size, backend) cell (absorbing the former `aging.sh`, RFC 0026):
+  one repository is aged with `AGE_CHURN` files of churn per backup and
+  `AGE_OPS` (default `restore check`; also `ls`, `find`, `diff`, which
+  traverse the same tree by different routes and are counted separately for
+  that reason — `find` uses a never-matching pattern so it is the same walk
+  every time, `diff` compares oldest against latest so it measures the tree
+  rather than one churn step) are measured at each checkpoint, always reading
+  the latest snapshot. This is the one axis the pipeline matrix structurally
+  cannot see — how read cost grows with the number of backups that
+  contributed to a snapshot, with the tree held fixed. `AGE_FINAL_OPS`
+  (`backup`, `prune`) run once after the last checkpoint, never at one: a
+  mutation at a checkpoint silently redefines every checkpoint after it. Rows
+  land in the same CSV with the `packs`/`backups`/`policy` columns filled and
+  operations named `restore@40`, so each checkpoint renders as its own row.
+  Request counts need `BACKENDS=minio`; a local backend still yields the
+  wall-time and peak-RSS half of the curve. Aging is manual, like
+  `compare.sh`: a run is dozens of backups, far too slow for per-PR CI, and
+  it answers a design question rather than guarding a regression.
+
+  Two mechanisms compare variants against **one** aged repository, because
+  aging twice ages into two *different* repositories (pack composition is not
+  deterministic) and the difference between runs is then not the change under
+  test (RFC 0025 §7). `POLICIES` compares env-variable knobs on one binary,
+  interleaved at every checkpoint —
+  `POLICIES='baseline=; probe=CLOUDSTIC_TEST_X=1'`. Two *builds* cannot
+  interleave, so they go through `KEEP_STORE=1` (age once, leave MinIO and
+  the working tree up) followed by `ATTACH=1` per build (skip the pipeline
+  and the aging, measure the checkpoint reads against the repository already
+  there; the closing message of a `KEEP_STORE` run prints the exact command).
+  An explicit `BENCH_CLOUDSTIC_BIN` is never rebuilt, so a probe build is not
+  silently replaced by the working tree. Note also that the backup-count axis
+  does not vary what `packBodyCache` bounds, which is bytes: forty backups of
+  small churn keep every pack body resident, so a policy that only matters
+  under eviction shows nothing along it.
 
 ## Architecture
 

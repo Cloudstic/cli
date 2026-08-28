@@ -1,8 +1,13 @@
 # RFC 0023: Bounding the Pack Catalog
 
-- **Status:** §5–§6 implemented. §1–§2 withdrawn on measurement — see Outcome.
-  The cache-sizing conclusion was revised in #474; read the Outcome before
-  changing `packBodyCacheBudget`.
+- **Status:** Closed — superseded by
+  [RFC 0026](0026-repository-format-v3.md), which removes the catalog this
+  RFC tried to bound. §5–§6 were implemented; §1–§2 were withdrawn on
+  measurement — see Outcome. The measurement record remains authoritative for
+  v1 repositories (the cache-sizing conclusion was revised in #474; read the
+  Outcome before changing `packBodyCacheBudget`), and its central finding —
+  that the bounded-cache trade fails because the cause is object count, not
+  the index — is the premise RFC 0026 builds on.
 - **Date:** 2026-08-04
 - **Affects:** `internal/storelayer`, `internal/engine`, `pkg/store`, docs
 

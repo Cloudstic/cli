@@ -374,10 +374,19 @@ func (pm *PruneManager) markContent(ctx context.Context, ref string, reachable *
 // covering a repository it only partly looked at, and the next run has no idea
 // a prefix was missed.
 //
-// Failing to delete one object is deliberately not fatal, and the distinction
-// is the point: not being able to *enumerate* means not knowing what is there,
-// while not being able to delete one object means one object survives — safe,
-// visible in the count, and reclaimed by the next run.
+// A delete that fails is fatal too, at the end rather than on the spot. The
+// sweep goes on to attempt every other object — one unreachable object it could
+// not remove is not a reason to leave the rest — but it must not then hand back
+// a success. `prune` reports objects deleted and space reclaimed, and a report
+// saying it collected garbage that is still sitting in the repository is the
+// misreport docs/compatibility.md's rule exists to prevent. The next run
+// re-marks and re-sweeps, so failing is safe as well as honest.
+//
+// Deletions are issued in batches through the store's BatchDeleter capability
+// (store.DeleteAll), which is one DeleteObjects request per 1,000 keys on an
+// S3-family backend and a loop everywhere else. The batching is why the failure
+// rule has to be stated in terms of individual keys: one response carries a
+// verdict per key, and only the keys it confirms gone may be counted.
 func (pm *PruneManager) sweep(ctx context.Context, reachable *objkey.Set, cfg *pruneConfig) (*PruneResult, error) {
 	listing := make(map[string][]string, len(pm.prefixes()))
 	var totalKeys int
@@ -397,6 +406,9 @@ func (pm *PruneManager) sweep(ctx context.Context, reachable *objkey.Set, cfg *p
 	phase := pm.reporter.StartPhase(label, int64(totalKeys), true)
 	result := &PruneResult{DryRun: cfg.dryRun}
 
+	var batch []string
+	var failed sweepFailures
+
 	// The listing taken above is the one swept, rather than being taken a second
 	// time. Two passes could disagree, and the progress total would then describe
 	// a different set of objects than the one being deleted.
@@ -413,21 +425,72 @@ func (pm *PruneManager) sweep(ctx context.Context, reachable *objkey.Set, cfg *p
 				phase.Increment(0)
 				continue
 			}
-			size, err := pm.store.DeleteReturnSize(ctx, key)
-			if err != nil {
-				continue
+			batch = append(batch, key)
+			if len(batch) == sweepDeleteBatch {
+				pm.deleteBatch(ctx, batch, result, phase, &failed)
+				batch = batch[:0]
 			}
-			phase.Logf(ui.DetailVerbose, "Deleted: %s", key)
-			result.ObjectsDeleted++
-			phase.Increment(size)
 		}
 	}
+	if len(batch) > 0 {
+		pm.deleteBatch(ctx, batch, result, phase, &failed)
+	}
+
 	if !cfg.dryRun {
 		result.BytesReclaimed = -pm.store.BytesWritten()
 		pm.store.Reset()
 	}
+	if failed.count > 0 {
+		phase.Error()
+		return nil, fmt.Errorf("sweep: %d of %d unreachable objects could not be deleted: %w",
+			failed.count, failed.count+result.ObjectsDeleted, failed.first)
+	}
 	phase.Done()
 	return result, nil
+}
+
+// sweepDeleteBatch is how many unreachable keys the sweep hands to the store at
+// once. It matches the 1,000-key ceiling of S3's DeleteObjects, which is the
+// largest batch any backend this tool targets accepts; a store free to split
+// further does, and one that cannot batch at all loops. Batching at the sweep
+// rather than handing over the whole listing keeps progress reporting and the
+// memory held for one batch's sizes bounded by this number instead of by the
+// repository.
+const sweepDeleteBatch = 1000
+
+// sweepFailures records that deletions failed, without holding one error per
+// object: a sweep over a repository that has lost its credentials would
+// otherwise accumulate an error for every key it lists.
+type sweepFailures struct {
+	count int
+	first error
+}
+
+// deleteBatch deletes one batch of unreachable keys and folds the outcome into
+// result, the progress phase, and failed.
+//
+// Only the keys the store confirms gone are counted and logged. That is the
+// whole reason DeleteAllReturnSizes reports sizes per key rather than a total:
+// a batch is not all-or-nothing, and neither the object count nor the reclaimed
+// bytes may include a key the store did not say it deleted.
+func (pm *PruneManager) deleteBatch(ctx context.Context, keys []string, result *PruneResult, phase ui.Phase, failed *sweepFailures) {
+	sizes, err := pm.store.DeleteAllReturnSizes(ctx, keys)
+	for _, key := range keys {
+		size, deleted := sizes[key]
+		if !deleted {
+			continue
+		}
+		phase.Logf(ui.DetailVerbose, "Deleted: %s", key)
+		result.ObjectsDeleted++
+		phase.Increment(size)
+	}
+	if err == nil {
+		return
+	}
+	failed.count += len(keys) - len(sizes)
+	if failed.first == nil {
+		failed.first = err
+	}
 }
 
 func (pm *PruneManager) loadSnapshot(ctx context.Context, ref string) (*core.Snapshot, error) {

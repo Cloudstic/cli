@@ -145,7 +145,7 @@ Three layers, in cost order:
 - `internal/core/` — Repository-format types: `Snapshot`, `Content`, `RepoConfig`, plus `ComputeJSONHash`, the canonical content-addressing function, and `FileMetaRef`. `FileMeta`, `SourceInfo` and `FileType` are *defined in `pkg/source`* and aliased here, so the public Source contract does not depend on an internal package while the engine keeps spelling them `core.FileMeta` (RFC 0022). It holds the types more than one package shares; a format type read and written by exactly one package belongs to that package instead (see `internal/hamt`).
 - `internal/objkey/` — The compact in-memory form of an object key (`Key`, `Encode`, `DecodeDigest`) and the `Set` built on it. A key is `<namespace>/<64 hex>`: 73 bytes of text plus, as a map key, an interior pointer the garbage collector traces, all to carry 32 bytes of hash. Reducing the namespace to a byte and decoding the hash puts the key inline in the map — 67 B/entry against 132 for `map[string]bool`. Used by the structures sized by the repository rather than by the work in front of them: prune's reachable set, check's verified set, and `storelayer`'s pack catalog. It is *not* repository format — a `Key` never reaches a store — which is why it is not in `internal/core`. The encoding is **total**: a key it cannot encode is kept verbatim in a string-keyed fallback, never dropped, because `docs/compatibility.md` forbids a garbage collector from reading "cannot represent" as "not referenced". Only canonical lowercase hex decodes, so encoding is injective and two byte-distinct keys can never share a `Key`.
 - `internal/hamt/` — Persistent Merkle Hash Array Mapped Trie. Backed by the object store. Used to track file→filemeta mappings across snapshots. A `Txn` (`hamt.go`) rewrites nodes in memory and writes nothing until `Commit`, which serializes only the dirty spine — so nodes superseded mid-transaction are never uploaded. It also **owns the encoding of the `node/<sha256>` objects** (`node.go`): the stored form (`storedNode`, `leafEntry`) sits next to the in-memory form and the conversion between them, unexported because no other package reads or writes a node. That encoding is still repository format — `core.ComputeJSONHash` marshals fields in declaration order, so a field, tag or `omitempty` change rewrites every root hash, which `TestRootHashGolden` pins. The package depends on `internal/core` for content-addressing (`ComputeJSONHash`, `ComputeHash`, `VerifyRef`) and nothing else: the hash function is a shared invariant across snapshot, filemeta and node objects, so injecting a different one would silently produce a differently-addressed repository.
-- `pkg/store/` — The `ObjectStore` contract and its optional capability interfaces (`RangeGetter`, `ConcurrencyHinter`, `Unwrapper`), plus the order-independent wrappers `QuotaStore` and `DebugStore`. Depends on nothing outside the standard library, so implementing a custom backend pulls in no vendor SDK (RFC 0022). Backends live in their own subpackages: `pkg/store/{local,s3,b2,sftp}`, constructed as `local.New`, `s3.New`, … `pkg/store/storetest` holds shared test doubles (`MemStore`, `FaultStore`, `AssertRangeGetterConformance`); it deliberately redeclares the interfaces it needs rather than importing `pkg/store`, because `pkg/store`'s own internal tests import it.
+- `pkg/store/` — The `ObjectStore` contract and its optional capability interfaces (`RangeGetter`, `BatchDeleter`, `ConcurrencyHinter`, `Unwrapper`), plus the order-independent wrappers `QuotaStore` and `DebugStore`. Depends on nothing outside the standard library, so implementing a custom backend pulls in no vendor SDK (RFC 0022). Backends live in their own subpackages: `pkg/store/{local,s3,b2,sftp}`, constructed as `local.New`, `s3.New`, … `pkg/store/storetest` holds shared test doubles (`MemStore`, `FaultStore`, `AssertRangeGetterConformance`, `AssertBatchDeleterConformance`); it deliberately redeclares the interfaces it needs rather than importing `pkg/store`, because `pkg/store`'s own internal tests import it.
 - `internal/storelayer/` — The repository-format decorator chain: `CompressedStore`, `EncryptedStore`, `MeteredStore`, `PackStore` — plus `KeyCacheStore`, which is not part of that chain but wraps it (see Store Layering below). Internal on purpose: their **composition order is a correctness and security invariant** (see Store Layering below), and nothing outside the module should assemble the chain. A caller who wants to wrap a store implements `store.ObjectStore` and passes it to `NewClient`, which layers this chain on top — exactly what `cmd/cloudstic` does with `DebugStore`.
 - `pkg/crypto/` — AES-256-GCM encryption/decryption, HKDF key derivation, BIP39 mnemonic recovery keys, and the `KMSClient` interface. Depends on no cloud SDK; `pkg/crypto/kms` holds the AWS implementation of that interface.
 - `internal/app/` — Orchestration layer shared by the CLI and TUI. `TUIService` sits on top of a `TUIBackend` interface (satisfied by the real client, stubbable in tests) and owns profile listing, health checks, and backup actions.
@@ -209,6 +209,42 @@ All objects are addressed by `<type>/<sha256>`:
 4. The HAMT tree is updated with new filemeta refs through a `hamt.Txn`, which holds every intermediate node in memory and serializes only the dirty spine reachable from the final root.
 5. A new `Snapshot` object is written, and `index/latest` is updated.
 6. After the shared lock is released, the pack index is consolidated if it has grown past its threshold (see `PackStore` above).
+
+### Batched Deletion
+
+`prune`'s sweep is the only place `BatchDeleter` (`pkg/store/interface.go`) is
+used, and deletion is the only direction object stores batch: S3's
+`DeleteObjects` takes up to 1,000 keys per request (MinIO and B2's
+S3-compatible endpoint included), Azure Blob Batch 256, GCS 100, while none of
+them offers a multi-object GET or PUT — which is why read aggregation had to
+move into the data layout instead (RFC 0026, issue #518). `s3.Store` implements
+it over `DeleteObjects`; `local`, `sftp` and `b2` implement it as a loop via
+`store.DeleteEach`, so a caller needs no fallback branch, and a custom backend
+that implements neither keeps working through `store.DeleteAll`.
+
+Two things are load-bearing:
+
+- **The capability is looked up on the store itself, never by unwrapping.**
+  `Delete` is not a passthrough at every layer — `PackStore`'s rewrites a
+  catalog rather than touching the backend — so reaching past a wrapper to the
+  batch-capable backend beneath it would delete nothing and report everything.
+  `CompressedStore`, `EncryptedStore`, `KeyCacheStore`, `MeteredStore`,
+  `QuotaStore` and `DebugStore` each declare `DeleteAll` because forwarding is
+  safe for them; `PackStore` deliberately does not, which sends
+  `store.DeleteAll` down its per-key loop, and `TestPackStoreDoesNotClaimBatchDelete`
+  pins that.
+- **Per-key failures are never collapsed.** A `DeleteObjects` response carries
+  a verdict per key, so implementations return `store.DeleteErrors` naming
+  every key they could not confirm gone — a key the backend refused, and a key
+  its response did not mention at all. `store.FailedDeletes` distinguishes that
+  from an error with no per-key detail, where nothing may be assumed and a
+  caller doing accounting must credit none of the batch.
+  `MeteredStore.DeleteAllReturnSizes` is where that accounting lives: it
+  reports the size of each key it confirmed deleted, and prune counts objects
+  and reclaimed bytes from that map alone. A sweep that could not delete
+  everything it classified as garbage deletes what it can and then fails, since
+  `docs/compatibility.md` forbids a garbage collector reporting a success over
+  data it could not fully act on.
 
 ### Encryption Model
 

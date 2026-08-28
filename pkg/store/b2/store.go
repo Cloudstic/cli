@@ -287,3 +287,21 @@ func (s *Store) List(ctx context.Context, prefix string) ([]string, error) {
 
 	return keys, nil
 }
+
+// DeleteAll implements store.BatchDeleter as a loop. Backblaze's native B2 API
+// deletes one file version per call; the bulk DeleteObjects form is only
+// available through B2's S3-compatible endpoint, which is reached through the
+// s3 backend rather than this one.
+//
+// It is implemented regardless so callers need no fallback branch and per-key
+// failures are reported the same way everywhere. blazer has no typed not-found
+// error that store.DeleteEach could recognise, so b2.IsNotExist translates it
+// here.
+func (s *Store) DeleteAll(ctx context.Context, keys []string) error {
+	return store.DeleteEach(ctx, keys, func(ctx context.Context, key string) error {
+		if err := s.Delete(ctx, key); err != nil && !b2.IsNotExist(err) {
+			return err
+		}
+		return nil
+	})
+}

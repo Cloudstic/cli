@@ -218,4 +218,11 @@ func TestStore(t *testing.T) {
 	t.Run("RangeGetter", func(t *testing.T) {
 		storetest.AssertRangeGetterConformance(t, st)
 	})
+
+	// SFTP has no bulk delete, so its DeleteAll is a loop — held to the same
+	// contract regardless, since that is what lets a caller batch without a
+	// fallback branch.
+	t.Run("BatchDeleter", func(t *testing.T) {
+		storetest.AssertBatchDeleterConformance(t, st)
+	})
 }

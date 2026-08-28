@@ -86,6 +86,18 @@ func (s *DebugStore) Delete(ctx context.Context, key string) error {
 	return err
 }
 
+// DeleteAll implements BatchDeleter. DebugStore only logs, so it forwards to
+// the inner store's batch capability when there is one and loops otherwise —
+// and it has to declare the method, or wrapping a backend in --debug would
+// silently turn a prune's batched sweep back into one request per object, the
+// same trap GetRange has.
+func (s *DebugStore) DeleteAll(ctx context.Context, keys []string) error {
+	start := time.Now()
+	err := DeleteAll(ctx, s.inner, keys)
+	s.log("DELETE_ALL", "", 0, len(keys), time.Since(start), err)
+	return err
+}
+
 func (s *DebugStore) List(ctx context.Context, prefix string) ([]string, error) {
 	start := time.Now()
 	keys, err := s.inner.List(ctx, prefix)
@@ -122,6 +134,7 @@ var opColor = map[string]string{
 	"PUT":        logger.ColorYellow,
 	"LIST":       logger.ColorCyan,
 	"DELETE":     logger.ColorRed,
+	"DELETE_ALL": logger.ColorRed,
 	"EXISTS":     logger.ColorDim,
 	"SIZE":       logger.ColorDim,
 	"TOTAL_SIZE": logger.ColorDim,

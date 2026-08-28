@@ -190,6 +190,21 @@ func (s *KeyCacheStore) Delete(ctx context.Context, key string) error {
 	return s.inner.Delete(ctx, key)
 }
 
+// DeleteAll implements store.BatchDeleter. Every key leaves the cache first,
+// then the batch goes down: forgetting before the delete is the same ordering
+// Delete uses, so a concurrent reader can never be told an object exists on the
+// strength of a cache entry the store has already removed.
+func (s *KeyCacheStore) DeleteAll(ctx context.Context, keys []string) error {
+	s.mu.Lock()
+	for _, key := range keys {
+		if prefix, ok := s.contentAddressedPrefix(key); ok {
+			s.forgetLocked(prefix, key)
+		}
+	}
+	s.mu.Unlock()
+	return store.DeleteAll(ctx, s.inner, keys)
+}
+
 func (s *KeyCacheStore) List(ctx context.Context, prefix string) ([]string, error) {
 	return s.inner.List(ctx, prefix)
 }

@@ -323,3 +323,13 @@ func relPath(base, p string) (string, error) {
 	}
 	return strings.TrimPrefix(p, base), nil
 }
+
+// DeleteAll implements store.BatchDeleter as a loop: SFTP removes one path per
+// request and has no bulk form.
+//
+// It exists so callers need no fallback branch and so a failed remove is
+// reported per key, exactly as it is on a backend that really does batch. A
+// path that is already gone counts as deleted, which store.DeleteEach supplies.
+func (s *Store) DeleteAll(ctx context.Context, keys []string) error {
+	return store.DeleteEach(ctx, keys, s.Delete)
+}

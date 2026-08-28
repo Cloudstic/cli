@@ -13,6 +13,15 @@ echo "==> Checking go.mod is tidy..."
 go mod tidy
 git diff --exit-code -- go.mod go.sum
 
+# The apicheck fixture is a second module, and its requirements are derived
+# from this one by minimal version selection through its replace directive —
+# so a bump here leaves it stale until something regenerates it. That
+# something used to be whoever next ran the test, which rewrote the fixture's
+# go.mod under -mod=mod and left the change in their working tree.
+echo "==> Checking the apicheck fixture module is tidy..."
+(cd internal/apicheck/testdata/externalmod && go mod tidy)
+git diff --exit-code -- internal/apicheck/testdata/externalmod
+
 # Formatting is checked, not applied: .golangci.yml enables the gofmt formatter,
 # so `golangci-lint run` reports a misformatted file the same way CI does.
 # Run `golangci-lint fmt ./...` to fix what it reports.

@@ -47,6 +47,17 @@ jobs:
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum
+      # The apicheck fixture is a second module whose requirements are derived
+      # from the root one by minimal version selection, through its replace
+      # directive. Nothing bumps it when the root is bumped, and the test that
+      # builds it runs under -mod=mod — so a stale fixture used to surface as
+      # an unexplained working-tree change for whoever next ran the tests,
+      # rather than as a failure on the pull request that caused it.
+      - name: Check the apicheck fixture module is tidy
+        if: matrix.goos == 'linux'
+        run: |
+          (cd internal/apicheck/testdata/externalmod && go mod tidy)
+          git diff --exit-code -- internal/apicheck/testdata/externalmod
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:

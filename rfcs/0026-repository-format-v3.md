@@ -447,24 +447,52 @@ this format has fought throughout — but now it applies to content bytes at a
 tunable rate, rather than being forced on every touched leaf at a rate the leaf
 budget fixes.
 
-**What is not yet known** is how fragmented blobs actually become. Bodies
-written by one backup have correlated lifetimes: they are the files that
-changed together, and the churn model says most of them are hot files that will
-change again, so a blob should mostly die wholesale. If that holds,
-consolidation rarely triggers and the cost is near zero. If it does not — if
-each blob retains a long tail of bodies from files touched once and never
-again — consolidation runs constantly and the design is worse than the fat
-leaf. That is measurable on an aged repository before any encoding exists, and
-it is the next thing to do.
+**Measured, on a repository that exists.** `internal/cmd/leafstat -entries`
+emits each snapshot's bodies, so blob packing can be simulated over real churn
+without writing an encoding. On a 20,000-file `source` tree aged with 14
+backups of 300 churned files each, packing each backup's new bodies into 4 MB
+blobs in walk order, then forgetting all but the newest snapshot:
+
+| policy | blobs | fully dead | waste | extra bytes written |
+|---|---:|---:|---:|---:|
+| none | 62 | **0** | 35.4 MB (15%) | — |
+| consolidate below 50% live | 69 | 11 | 16.8 MB (8%) | +13.4 MB (**+5.7%**) |
+| consolidate below 80% live | 82 | 28 | 10.4 MB (5%) | +63.9 MB (+27%) |
+
+So the pessimistic guess was half right. Blobs do **not** die wholesale — with
+no consolidation not one of 62 blobs is collectable, because each retains a few
+bodies of files that were touched once and never again. But the waste that
+causes is 15%, not a multiple, and consolidation is cheap exactly where it is
+worthwhile: a sparse blob is cheap to migrate out of precisely because little
+of it is live. Halving the waste costs under 6% in extra bytes written.
+
+**And the comparison that matters is not close.** The same 14 snapshots, in
+encoded bytes:
+
+| | stored for 14 snapshots |
+|---|---:|
+| v3 today | **1,695.7 MB** (1,666 distinct nodes) |
+| bodies in blobs, written once | 233.8 MB |
+| metadata, rewritten per snapshot | ~126 MB (~9 MB x 14) |
+| **blob design** | **~360 MB** |
+
+A leaf carries content, so every snapshot that touches a leaf stores another
+copy of its neighbours' bodies; 14 snapshots of a tree whose latest is 311.5 MB
+cost 1,695.7 MB. Bodies in blobs are written once and shared by every snapshot
+that references them, and only the 9 MB of metadata is rewritten. That is
+**4.7x less stored** for the same history, on top of the 34x on every
+metadata-only read.
+
+These are simulations over a real repository's bodies, churn and snapshot
+sequence — not a running implementation — and they are the numbers to re-check
+against one.
 
 ### Open questions and sequencing
 
-1. **How fragmented do blobs actually get?** The bound above is sound —
-   consolidate forward at backup, never repack — but its *cost* depends on
-   whether a blob dies wholesale or retains a long tail. Measurable on an aged
-   repository before any encoding exists, by simulating blob packing over the
-   snapshots already there. This is the next thing to do, and it can still say
-   the fat leaf should stay.
+1. ~~**How fragmented do blobs actually get?**~~ Answered above: 15% waste,
+   uncollectable without consolidation, halved for under 6% extra bytes
+   written with it. What is left is choosing a threshold, which is tuning
+   rather than soundness.
 1. **Does the inline threshold survive?** With bodies in blobs, "inline" and
    "chunked" are two kinds of blob reference and may collapse into one — a
    chunk is a blob holding a single body. That removes a concept rather than
@@ -478,11 +506,12 @@ it is the next thing to do.
    what the streaming merge join in #538 needs — at the cost of the balance
    hash routing provides.
 
-Question 1 is a measurement rather than a design question now, and it comes
-first. Alongside it, confirm the 34x without writing a format: have
-`internal/cmd/leafstat` emit the metadata-only tree for an existing v3
-repository and count what traversing it would cost. Only then an encoding, with
-question 2 settled.
+Question 1 is answered, so the soundness objection is cleared and what remains
+is an encoding. Question 2 decides its shape and should be settled first, since
+it determines whether v3 has two content concepts or one. The threshold in the
+consolidation table is a default to pick, not a question to answer — 50% is the
+obvious starting point and the harness can sweep it once there is something to
+sweep.
 
 ## Context
 

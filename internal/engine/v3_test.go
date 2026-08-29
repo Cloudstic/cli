@@ -459,3 +459,76 @@ func TestV3CheckReportsEveryDamagedNode(t *testing.T) {
 		}
 	}
 }
+
+// The point of the override is that it moves bodies out of leaves. Asserting
+// on inlineLimit() alone would pass while the threshold branch still read the
+// constant, which is the whole mechanism.
+func TestInlineLimitOverrideChunksSmallBodies(t *testing.T) {
+	ctx := context.Background()
+
+	// A body far below the built-in threshold: inlined by default.
+	inlined := NewMockStore()
+	src := NewMockSource()
+	src.AddFile("small.txt", "id-small", []byte("a small body, well under 512 KiB"))
+	if _, err := NewBackupManager(v3Deps(inlined), src).Run(ctx); err != nil {
+		t.Fatalf("default backup: %v", err)
+	}
+
+	// The same body with the threshold at 1 must be chunked instead.
+	t.Setenv(envInlineThreshold, "1")
+	chunked := NewMockStore()
+	src2 := NewMockSource()
+	src2.AddFile("small.txt", "id-small", []byte("a small body, well under 512 KiB"))
+	if _, err := NewBackupManager(v3Deps(chunked), src2).Run(ctx); err != nil {
+		t.Fatalf("override backup: %v", err)
+	}
+
+	countChunks := func(s *MockStore) int {
+		n := 0
+		for k := range s.Data {
+			if strings.HasPrefix(k, "chunk/") {
+				n++
+			}
+		}
+		return n
+	}
+	if got := countChunks(inlined); got != 0 {
+		t.Errorf("default: %d chunk objects, want the body inlined into its leaf", got)
+	}
+	if got := countChunks(chunked); got == 0 {
+		t.Error("override: no chunk objects, so the threshold branch ignored it")
+	}
+}
+
+// The inline threshold decides whether a body lives in its leaf or in chunk
+// objects, which is the variable a leaf's composition turns on. The override
+// exists so that can be varied without a rebuild — measuring what a
+// metadata-only tree costs needs a real one, not an extrapolation from the
+// byte budget (RFC 0026).
+func TestInlineLimitOverride(t *testing.T) {
+	if got := inlineLimit(); got != inlineThreshold {
+		t.Errorf("unset: inlineLimit() = %d, want the built-in %d", got, inlineThreshold)
+	}
+
+	t.Setenv(envInlineThreshold, "1")
+	if got := inlineLimit(); got != 1 {
+		t.Errorf("override: inlineLimit() = %d, want 1", got)
+	}
+
+	// Zero is a legitimate setting — it chunks every body, including empty
+	// ones — so it must not be confused with "unset".
+	t.Setenv(envInlineThreshold, "0")
+	if got := inlineLimit(); got != 0 {
+		t.Errorf("zero: inlineLimit() = %d, want 0", got)
+	}
+
+	// A malformed or negative value falls back rather than failing a backup:
+	// these are diagnostic knobs and a typo in one must not change what is
+	// written, let alone stop it.
+	for _, bad := range []string{"", "nonsense", "-1", "12.5"} {
+		t.Setenv(envInlineThreshold, bad)
+		if got := inlineLimit(); got != inlineThreshold {
+			t.Errorf("%q: inlineLimit() = %d, want the built-in %d", bad, got, inlineThreshold)
+		}
+	}
+}

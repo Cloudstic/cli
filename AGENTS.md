@@ -338,7 +338,13 @@ the "Environment Variables" table in `docs/user-guide.md`, kept complete by
 `TestUserGuideDocumentsEveryEnvVar` (`cmd/cloudstic/flagspec_test.go`), which
 fails if a flag's `env` binding has no matching row.
 
-`CLOUDSTIC_TEST_*` are test-only knobs, not user-facing.
+`CLOUDSTIC_TEST_*` are test-only knobs, not user-facing:
+`CLOUDSTIC_TEST_LEAF_BYTES` and `CLOUDSTIC_TEST_NODE_CACHE_BYTES`
+(`internal/hamt/tuning.go`) size a v3 leaf and the node cache;
+`CLOUDSTIC_TEST_INLINE_BYTES` (`internal/engine/backup_upload.go`) sets the
+inline threshold, so setting it to 1 chunks every body and produces a tree
+whose leaves carry metadata and refs only — which is how RFC 0026's
+metadata-only figures were measured rather than extrapolated.
 
 ### Documentation Drift
 

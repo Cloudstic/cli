@@ -5,7 +5,9 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"os"
 	"sort"
+	"strconv"
 	"sync"
 
 	"golang.org/x/sync/semaphore"
@@ -22,6 +24,23 @@ const defaultUploadConcurrency = 10
 // inlineThreshold is the maximum file size for which content is stored inline
 // in the Content object rather than as separate chunk objects.
 const inlineThreshold = 512 * 1024 // 512 KiB (matches CDC min chunk size)
+
+// envInlineThreshold is a test-only override, in the spirit of the
+// CLOUDSTIC_TEST_* knobs in internal/hamt/tuning.go: it exists so a leaf's
+// composition can be varied without a rebuild. Setting it to 1 chunks every
+// file, which produces a tree whose leaves carry metadata and chunk refs and
+// no bodies — the closest thing to a metadata-only tree that the current
+// format can express, and the way to measure one rather than estimate it.
+const envInlineThreshold = "CLOUDSTIC_TEST_INLINE_BYTES"
+
+func inlineLimit() int64 {
+	if v, ok := os.LookupEnv(envInlineThreshold); ok {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+			return n
+		}
+	}
+	return inlineThreshold
+}
 
 var inlineBufferPool = sync.Pool{
 	New: func() interface{} {
@@ -314,7 +333,7 @@ func (bm *BackupManager) uploadContent(ctx context.Context, meta core.FileMeta, 
 	}
 	defer func() { _ = rc.Close() }()
 
-	if meta.Size > 0 && meta.Size <= inlineThreshold {
+	if meta.Size > 0 && meta.Size <= inlineLimit() {
 		return bm.uploadInline(ctx, rc, meta, phase)
 	}
 

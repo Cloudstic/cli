@@ -459,3 +459,36 @@ func TestV3CheckReportsEveryDamagedNode(t *testing.T) {
 		}
 	}
 }
+
+// The inline threshold decides whether a body lives in its leaf or in chunk
+// objects, which is the variable a leaf's composition turns on. The override
+// exists so that can be varied without a rebuild — measuring what a
+// metadata-only tree costs needs a real one, not an extrapolation from the
+// byte budget (RFC 0026).
+func TestInlineLimitOverride(t *testing.T) {
+	if got := inlineLimit(); got != inlineThreshold {
+		t.Errorf("unset: inlineLimit() = %d, want the built-in %d", got, inlineThreshold)
+	}
+
+	t.Setenv(envInlineThreshold, "1")
+	if got := inlineLimit(); got != 1 {
+		t.Errorf("override: inlineLimit() = %d, want 1", got)
+	}
+
+	// Zero is a legitimate setting — it chunks every body, including empty
+	// ones — so it must not be confused with "unset".
+	t.Setenv(envInlineThreshold, "0")
+	if got := inlineLimit(); got != 0 {
+		t.Errorf("zero: inlineLimit() = %d, want 0", got)
+	}
+
+	// A malformed or negative value falls back rather than failing a backup:
+	// these are diagnostic knobs and a typo in one must not change what is
+	// written, let alone stop it.
+	for _, bad := range []string{"", "nonsense", "-1", "12.5"} {
+		t.Setenv(envInlineThreshold, bad)
+		if got := inlineLimit(); got != inlineThreshold {
+			t.Errorf("%q: inlineLimit() = %d, want the built-in %d", bad, got, inlineThreshold)
+		}
+	}
+}

@@ -314,6 +314,46 @@ geometry imposes on a leaf (see `bitsPerLevelV3`): 297.5 MB packs into ~74
 blobs at 4 MB where it occupies 219 leaves today — 3x fewer objects for the
 same bytes before anything else changes.
 
+### Why "inline" and "chunked" do not collapse
+
+The tempting simplification is that a chunk is just a blob holding one body, so
+the inline threshold disappears and v3 has one content concept instead of two.
+It does not, and the reason is worth stating because it explains the threshold
+rather than merely preserving it.
+
+**Chunks exist to be deduplicated, and the dedup is temporal.** Measured across
+snapshot sequences with `leafstat -entries`:
+
+| | chunk references | distinct chunks | dedup | in >1 snapshot | reused within one snapshot |
+|---|---:|---:|---:|---:|---:|
+| `media`, 6 snapshots | 11,629 | 2,578 | **4.51x** | 85% | 21 |
+| `source`, 14 snapshots | 919 | 68 | **13.51x** | 93% | 5 |
+
+Almost all of that saving is the same file's chunks surviving from one snapshot
+to the next. Sharing *between different files* is 21 of 2,578 and 5 of 68 —
+under 1%. So content addressing is earning its keep on the temporal axis, which
+is exactly what `Exists("chunk/<hash>")` buys with no index.
+
+**But that is not what settles it.** A chunk is already at least
+`inlineThreshold` bytes, because that is the CDC minimum chunk size — the two
+constants are the same number for that reason. Chunks are therefore *already*
+objects of the size blobs exist to create. Packing them into blobs would buy a
+smaller factor than it costs, and it would require either a hash-to-location
+index — the catalog this format removed — or dropping content addressing for
+chunk bodies and comparing against the previous version's chunk list instead,
+which recovers the temporal dedup but loses the spatial and adds a hash per
+reference to every entry.
+
+So the threshold survives, and its meaning is now precise: **it is the size at
+which a body is already large enough to be its own object.** Below it, bodies
+are too small to be objects and are packed into blobs, addressed by position,
+never deduplicated (which issue #514 measured and accepted). Above it, chunking
+already produces blob-sized objects, addressed by content, deduplicated for
+free.
+
+Blobs and chunks are the same idea — aggregate until an object is worth a
+request — applied at the two sizes where the answer differs.
+
 ### What this rules out, and why
 
 - **Ranged reads inside an object are unavailable.** The chain is
@@ -365,39 +405,6 @@ than the packfile format at S3 Standard, and the ratio that looks alarming on a
 357 MB repository is three per cent on a 1 TB one. **The case for this revision
 is not the storage.** It is the 34x on every metadata-only read, and the fact
 that write amplification then acts on 8.9 MB instead of 306 MB.
-
-### Constraints any implementation must respect
-
-Verified against the code while working through this:
-
-1. A node's ref is the SHA-256 of its plaintext bytes, checked in
-   `NodeStore.load` for every consumer. Any split encoding must keep every
-   fetched object independently verifiable, or the Merkle chain breaks on
-   exactly the reads it was added for.
-1. `diff` skips identical subtrees by ref (`internal/hamt/hamt.go`). A design
-   where a subtree's identity stops being a content address of its contents
-   loses that.
-1. Reads must never require a write. `LoadRepoConfig` deliberately does not
-   stamp a version on read paths, because restore runs under read-only
-   credentials. Repacking can never be a precondition for reading.
-1. "Cannot decode" is never "empty" (`docs/compatibility.md`). An unreadable
-   blob must fail its operation, and `prune` must abort rather than treat an
-   entry whose bodies it could not read as reaching nothing.
-1. Anything bounded only by maintenance is unbounded.
-   `packIndexCompactThreshold` exists because shard count "grows with the
-   number of backups a repository has ever taken, and only `prune` ever bounded
-   it"; Kopia #5057 is that failure left to run for a week.
-1. Compaction must not delete what a concurrent reader listed — remove only
-   what the store has itself absorbed.
-1. WORM mode (RFC 0020, draft) cannot delete a superseded blob, so repacking
-   there is pure growth and probably should not run.
-1. `copy` between repositories (RFC 0017) must transfer a whole chain or
-   repack in flight.
-1. Whole-leaf compression is a measured win; splitting an object into
-   independently compressed pieces spends stored size to buy read locality.
-1. Decoded payloads must be copied out of the transport buffer, not aliased.
-   Aliasing was measured and is worse on every axis, because a small retained
-   slice pins the whole object's buffer (see `v3Decoder.bytes`).
 
 ### The risk, and why it is answerable
 
@@ -487,45 +494,38 @@ These are simulations over a real repository's bodies, churn and snapshot
 sequence — not a running implementation — and they are the numbers to re-check
 against one.
 
-### Why "inline" and "chunked" do not collapse
+### Constraints any implementation must respect
 
-The tempting simplification is that a chunk is just a blob holding one body, so
-the inline threshold disappears and v3 has one content concept instead of two.
-It does not, and the reason is worth stating because it explains the threshold
-rather than merely preserving it.
+Verified against the code while working through this:
 
-**Chunks exist to be deduplicated, and the dedup is temporal.** Measured across
-snapshot sequences with `leafstat -entries`:
-
-| | chunk references | distinct chunks | dedup | in >1 snapshot | reused within one snapshot |
-|---|---:|---:|---:|---:|---:|
-| `media`, 6 snapshots | 11,629 | 2,578 | **4.51x** | 85% | 21 |
-| `source`, 14 snapshots | 919 | 68 | **13.51x** | 93% | 5 |
-
-Almost all of that saving is the same file's chunks surviving from one snapshot
-to the next. Sharing *between different files* is 21 of 2,578 and 5 of 68 —
-under 1%. So content addressing is earning its keep on the temporal axis, which
-is exactly what `Exists("chunk/<hash>")` buys with no index.
-
-**But that is not what settles it.** A chunk is already at least
-`inlineThreshold` bytes, because that is the CDC minimum chunk size — the two
-constants are the same number for that reason. Chunks are therefore *already*
-objects of the size blobs exist to create. Packing them into blobs would buy a
-smaller factor than it costs, and it would require either a hash-to-location
-index — the catalog this format removed — or dropping content addressing for
-chunk bodies and comparing against the previous version's chunk list instead,
-which recovers the temporal dedup but loses the spatial and adds a hash per
-reference to every entry.
-
-So the threshold survives, and its meaning is now precise: **it is the size at
-which a body is already large enough to be its own object.** Below it, bodies
-are too small to be objects and are packed into blobs, addressed by position,
-never deduplicated (which issue #514 measured and accepted). Above it, chunking
-already produces blob-sized objects, addressed by content, deduplicated for
-free.
-
-Blobs and chunks are the same idea — aggregate until an object is worth a
-request — applied at the two sizes where the answer differs.
+1. A node's ref is the SHA-256 of its plaintext bytes, checked in
+   `NodeStore.load` for every consumer. Any split encoding must keep every
+   fetched object independently verifiable, or the Merkle chain breaks on
+   exactly the reads it was added for.
+1. `diff` skips identical subtrees by ref (`internal/hamt/hamt.go`). A design
+   where a subtree's identity stops being a content address of its contents
+   loses that.
+1. Reads must never require a write. `LoadRepoConfig` deliberately does not
+   stamp a version on read paths, because restore runs under read-only
+   credentials. Repacking can never be a precondition for reading.
+1. "Cannot decode" is never "empty" (`docs/compatibility.md`). An unreadable
+   blob must fail its operation, and `prune` must abort rather than treat an
+   entry whose bodies it could not read as reaching nothing.
+1. Anything bounded only by maintenance is unbounded.
+   `packIndexCompactThreshold` exists because shard count "grows with the
+   number of backups a repository has ever taken, and only `prune` ever bounded
+   it"; Kopia #5057 is that failure left to run for a week.
+1. Compaction must not delete what a concurrent reader listed — remove only
+   what the store has itself absorbed.
+1. WORM mode (RFC 0020, draft) cannot delete a superseded blob, so repacking
+   there is pure growth and probably should not run.
+1. `copy` between repositories (RFC 0017) must transfer a whole chain or
+   repack in flight.
+1. Whole-leaf compression is a measured win; splitting an object into
+   independently compressed pieces spends stored size to buy read locality.
+1. Decoded payloads must be copied out of the transport buffer, not aliased.
+   Aliasing was measured and is worse on every axis, because a small retained
+   slice pins the whole object's buffer (see `v3Decoder.bytes`).
 
 ### Open questions and sequencing
 

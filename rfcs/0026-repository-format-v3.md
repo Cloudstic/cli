@@ -372,16 +372,81 @@ free.
 Blobs and chunks are the same idea — aggregate until an object is worth a
 request — applied at the two sizes where the answer differs.
 
+### The aggregate is a container, not a cryptographic unit
+
+This is the finding that most changes the design, and it contradicts something
+an earlier draft treated as a constraint.
+
+Cloudstic seals each stored object as one AES-256-GCM box with a random nonce
+(`crypto.Encrypt`). A ranged read is therefore useless, and the RFC recorded
+that as a property of encrypted backup. It is a property of *this* repository.
+Of eight comparable tools surveyed, seven apply the AEAD to the individual
+deduplicated unit and not to the aggregate:
+
+| tool | aggregates? | AEAD applied to | can range-read one member? |
+|---|---|---|---|
+| restic, rustic | packs | each blob | **yes** |
+| Kopia | packs, 20–40 MB | each content | **yes** |
+| Borg | ~500 MB segment logs | each chunk | **yes** |
+| Duplicacy, bupstash, Tarsnap | one object per unit | each chunk/block | n/a |
+| **Duplicati** | 50 MB zip volumes | **the whole volume** | **no** |
+
+Duplicati is the only tool that shares our constraint, and it is not the one
+anyone holds up as the reference design.
+
+For the aggregating tools this is deliberate, not incidental. restic's design
+document gives the reason in its own words: blobs are "authenticated and
+encrypted independently", which "enables repository reorganisation without
+having to touch the encrypted Blobs" and lets a reader authenticate a pack's
+header without reading the pack. Kopia's read path issues a ranged fetch of
+exactly `(PackOffset, PackedLength)` and decrypts only that slice. All of them
+compress the *member* rather than the aggregate, for the same reason.
+
+**What this changes here.** The revision above justified keeping blobs near
+today's leaf budget because "blob size bounds the waste on a targeted read".
+With per-member encryption that justification disappears: a targeted read
+fetches and decrypts exactly its member. Blobs can then be sized for whatever
+restore and reclamation want — larger, and fewer — without penalising `cat` or
+a path-scoped restore. It removes one of the two dials' worst constraint.
+
+**A second, free win.** Our per-object key is fixed and the nonce is random, so
+the same plaintext encrypts differently every time. Deriving the key or nonce
+from the object's own plaintext hash — Duplicacy does exactly this, and
+Kopia derives its IV from the content hash — makes encryption *deterministic*.
+For a content-addressed store that makes a re-upload byte-identical, so writes
+become idempotent and retries free. Nonce reuse across different plaintexts
+would require a hash collision, because two objects with the same key are the
+same object.
+
+**What stays true, and belongs in `docs/compatibility.md`:** a ranged read can
+never authenticate more than it fetches. Whole-object AEAD gives whole-object
+authenticity by making the reader pay for the whole object; anything cheaper
+gives correspondingly less. Segment-level schemes (the STREAM construction,
+Tink's `AES-GCM-HKDF-STREAMING`) recover *positional* and *object* binding by
+putting the segment index and a final-segment flag in the nonce and the object's
+name in the AAD — but a reader of one segment still learns nothing about the
+segments it did not fetch. `check` and `restore` read wholes and keep the strong
+guarantee; targeted readers get the weaker one knowingly.
+
+**One caveat worth carrying.** Kopia packs partly "to obscure individual content
+sizes", and per-member framing partially undoes that by making boundaries
+visible in the object's layout. Fixed-size segments leak nothing beyond total
+length, which whole-object AEAD leaks anyway. This is not hypothetical: the 2025
+result on chunking attacks against content-defined chunking (Alexeev, Percival
+and Zhang) recovers chunker parameters and then fingerprints files by their
+compressed chunk sizes, on Tarsnap among others. Whatever framing is chosen
+should be decided with that paper in hand.
+
 ### What this rules out, and why
 
-- **Ranged reads inside an object are unavailable.** The chain is
+- **Ranged reads inside an object are unavailable *as this repository is
+  built*, and that is a choice rather than a law.** The chain is
   `CompressedStore → EncryptedStore → MeteredStore → <backend>`: a node is one
-  zstd stream inside one AES-256-GCM box, so byte *k* of the stored object is
-  unrelated to byte *k* of the node and the tag authenticates all or nothing.
-  Neither layer implements `store.RangeGetter` and neither structurally can;
-  `PackStore` ranges only because it sits *below* encryption with its own
-  derived key. This is why blob size bounds the waste on a targeted read rather
-  than being hidden by a range request.
+  zstd stream inside one AES-256-GCM box with a random nonce, so byte *k* of the
+  stored object is unrelated to byte *k* of the node and the tag authenticates
+  all or nothing. An earlier draft recorded that as inherent to encrypted
+  backup. It is not — see "The aggregate is a container, not a cryptographic
+  unit" below, which is the one finding that most changes this design.
 - **Buffering updates in the tree is the same design Kopia ships, and its
   failures are public.** Kopia's epoch manager advances on >20 index blobs and
   >24 hours; issue #5057 is a repository at 28,467 index blobs where ten full

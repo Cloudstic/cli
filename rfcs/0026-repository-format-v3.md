@@ -1111,6 +1111,134 @@ packed object holding that directory's entries. Whoever built that started from
 a global index and found they needed directory-granular objects for read
 locality anyway — which is the same conclusion the affinity key gropes towards.
 
+### The encoding
+
+Concrete enough to implement against and to argue with. Nothing here is built.
+
+#### Object kinds
+
+`node/`, `chunk/`, `snapshot/`, `config`, `keys/` are unchanged. One kind is
+added:
+
+- **`blob/<hash>`** — a packed run of file bodies, addressed by the hash of its
+  plaintext, written in walk order, never appended to after it is sealed.
+
+#### The leaf entry
+
+The record gains a body reference and loses inline bytes. Flags stay a byte;
+`entryFlagInline` (2) is replaced by `entryFlagBody` (8) rather than reused, so
+a decoder meeting an old bit knows it is old rather than misreading it.
+
+```text
+key      uvarint len + bytes
+pathKey  uvarint len + bytes
+value    uvarint len + bytes
+flags    1 byte      1 = payload, 4 = chunks, 8 = body-in-blob
+payload (flag 1):
+  size      uvarint
+  meta      uvarint len + bytes
+  body      (flag 8):  blobRef, uvarint offset, uvarint length, uvarint blobTotal
+  chunks    (flag 4):  uvarint count, count x (uvarint len + bytes)
+```
+
+`blobTotal` is the blob's whole plaintext size, repeated in every entry that
+references it. It is three or four bytes and it closes the gap the review of
+this RFC found: deciding "this blob is below the threshold" needs the blob's
+total size, and an entry otherwise knows only its own slice. With it, a backup
+accumulates live bytes per blob as it walks and already holds the denominator —
+no lookup, no second index, no read of the blob itself.
+
+**Nothing carries a body hash.** The body's content address is already in
+`meta.ContentHash`, and any reader holding the metadata can verify a ranged
+read against it. Adding a second copy would cost 32 bytes an entry — 5% of the
+metadata — to duplicate a fact the leaf already contains.
+
+#### The blob
+
+```text
+member_1 || member_2 || ... || member_n || index || uint32 index_length
+```
+
+Each member is compressed and sealed **independently** — the aggregate is a
+container, not a cryptographic unit — so one member can be fetched by range and
+decrypted alone. The trailing index lists each member's offset, length and
+plaintext hash, is itself sealed, and makes the blob self-describing: an index
+can be rebuilt from the store without any catalog, exactly as `PackStore`'s
+footers already allow (RFC 0018). Index at the end rather than the start so a
+backup can stream members out as it packs them, which is restic's reason too.
+
+**Sizing is derived rather than swept.** A blob should be about the
+bandwidth-delay product, `time-to-first-byte x bandwidth` — 4.5–9 MB on a fast
+link, ~1 MB on a domestic uplink — because below that a second request costs
+more than fetching and discarding the gap. The 4 MB reached by sweeping sits
+inside that band, which is reassuring but was luck.
+
+#### Encryption
+
+Per member, with the key derived from the member's own plaintext hash and a
+repository secret, and the containing blob's ref bound into the AAD. Three
+consequences, all wanted:
+
+- A ranged read decrypts exactly its member.
+- Encryption becomes **deterministic**, so re-uploading a member is
+  byte-identical and a retry is free — which a random nonce cannot offer a
+  content-addressed store.
+- Nonce reuse across distinct plaintexts would require a hash collision, since
+  two members with the same key are the same member.
+
+A ranged read authenticates only what it fetches; `check` and `restore` read
+wholes and keep the strong guarantee. Members are fixed-framed so boundaries
+leak nothing beyond the blob's length.
+
+#### What each operation does
+
+- **backup** — packs new bodies into blobs in walk order; writes the metadata
+  leaf with `(blobRef, offset, length, blobTotal)`; accumulates live bytes per
+  referenced blob and consolidates forward past the threshold, under a bounded
+  per-backup rewrite budget.
+- **restore** — reads metadata leaves, then fetches each referenced blob whole
+  (it wants all of it), or ranges into it for a path-scoped restore.
+- **check** — verifies each blob's index against its ref, and under
+  `-read-data` each member against `meta.ContentHash`.
+- **prune** — marks `blob/` refs alongside `chunk/`, and deletes blobs no
+  retained snapshot references. **It never repacks.**
+
+#### The four things that would break silently
+
+Each needs handling in the same commit that introduces the body reference, not
+after:
+
+1. **`prune` would delete every blob.** `WalkChunkRefs` has no slot for a body
+   reference and `payloadChunksOnly` skips the region one would occupy, so an
+   entry reports reaching nothing while `hasPayload` stays true and the safety
+   valve does not fire. The reduced decoder and the callback signature must
+   learn about bodies in the same change that adds `blob/` to
+   `objectPrefixesV3` — adding the prefix alone *activates* the deletion.
+2. **`check` would stop verifying bodies exist.** The per-entry chunk loop is
+   the only existence check a default run makes, and a body-referencing entry
+   has no chunks. It needs an equivalent for `blob/`.
+3. **`restore`'s directory heuristic** tests `Inline` and `Chunks`; it must test
+   the body reference too, or it decodes `Meta` for every entry instead of a few
+   per cent.
+4. **`restore`'s worker pool** is capped on the premise that writing an inline
+   body is a memory copy. It becomes a fetch and needs resizing against the
+   bandwidth-delay product above.
+
+And two that are visible but easy to get wrong: `copy`'s payload elision should
+be **deleted**, not translated — a body reference is small enough to cache,
+and rewriting the condition would re-read the body on every repeated visit; and
+`objkey` needs `blob/` appended to its namespaces, or the reachable set falls
+back to a string map for the repository's largest namespace.
+
+#### What this does not change
+
+Routing, `AffinityKey`, the split rule's *shape*, `diff`'s ref short-circuit,
+chunking above the inline threshold, and the no-index bet. `leafSplitBytesV3`
+stops binding — a leaf of metadata cannot reach 4 MB — so `maxLeafEntriesV3`
+becomes the split rule in fact and should be chosen deliberately rather than
+inherited, along with the node cache and `sealFlushBytes`, which are both
+expressed in terms of a leaf that will no longer exist.
+
 ### Open questions and sequencing
 
 1. ~~**How fragmented do blobs actually get?**~~ Answered above: 15% waste,
@@ -1128,12 +1256,23 @@ locality anyway — which is the same conclusion the affinity key gropes towards
    trie is what makes the metadata objects large enough to be worth a request
    *without* an index.
 
-Questions 1 and 2 are answered: the soundness objection is cleared, and the
-encoding keeps two content concepts whose boundary is the inline threshold.
-What remains before an encoding is question 3, which is a measurement the
-harness can already make, and question 4, which is a larger change that this
-revision does not depend on — a metadata tree can be hash-routed exactly as it
-is today.
+All four questions are answered and the encoding is written above, so what
+remains is building it. The order that follows from the blast-radius survey is:
+
+1. **The leaf encoding and the blob writer**, together, since a blob reference
+   is meaningless without something to point at.
+1. **`prune` and `check` in the same change** — not after. Adding `blob/` to
+   `objectPrefixesV3` without teaching the reduced decoder about body
+   references activates a deletion bug that today's two halves happen to
+   cancel, and `check` would report a repository healthy after it.
+1. **`restore`**, including resizing its worker pool, which is currently
+   bounded on the premise that writing a body is a memory copy.
+1. **`copy`**, deleting the payload-elision mechanism rather than translating
+   it.
+1. **Consolidation last**, because a repository can be correct without it and
+   cannot be correct without the four above. Trigger on how many distinct blobs
+   the newest snapshot must read, with utilization as a secondary filter, under
+   a bounded per-backup rewrite budget.
 
 The consolidation threshold is a default to pick rather than a question to
 answer: 50% is the obvious start, and the harness can sweep it once there is

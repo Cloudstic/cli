@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/cloudstic/cli/internal/core"
@@ -501,5 +502,69 @@ func TestBytesEqual(t *testing.T) {
 				t.Errorf("bytesEqual(%v, %v) = %v, want %v", tt.a, tt.b, got, tt.want)
 			}
 		})
+	}
+}
+
+// The scan batch is what decides how many times a full scan sweeps the previous
+// tree: lookups are sorted within a batch, so one batch is one pass over the
+// whole key space and N batches are N passes, each re-reading whatever the node
+// cache could not keep (issue #535). Bounding it by entry count made that a
+// function of how many files a repository has, which is the wrong variable.
+func TestScanBatchIsBoundedByBytesNotEntryCount(t *testing.T) {
+	typical := core.FileMeta{
+		FileID:      "/home/user/projects/service/internal/handler/user_handler.go",
+		Name:        "user_handler.go",
+		Type:        core.FileTypeFile,
+		Parents:     []string{"/home/user/projects/service/internal/handler"},
+		ContentHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		Owner:       "user",
+	}
+
+	// An entry count several times the old bound must not fill the batch, or a
+	// repository merely large in file count sweeps the tree repeatedly again.
+	var b scanBatch
+	for i := 0; i < entryBatch*4; i++ {
+		if b.add(typical) {
+			t.Fatalf("batch filled after %d typical entries (%d bytes); entry count is not the bound",
+				len(b.metas), b.bytes)
+		}
+	}
+
+	// It must still fill on bytes, or the bound is not a bound.
+	huge := typical
+	huge.FileID = strings.Repeat("d/", 40000)
+	b.reset()
+	filled := false
+	for i := 0; i < 4096 && !filled; i++ {
+		filled = b.add(huge)
+	}
+	if !filled {
+		t.Errorf("batch never filled on %d large entries holding %d bytes, budget %d",
+			len(b.metas), b.bytes, scanBatchBytes)
+	}
+
+	// reset must clear both halves; keeping the byte count would fill the next
+	// batch immediately and silently restore the per-batch sweep.
+	b.reset()
+	if len(b.metas) != 0 || b.bytes != 0 {
+		t.Errorf("reset left %d entries and %d bytes", len(b.metas), b.bytes)
+	}
+}
+
+// The estimate has to move with the fields that actually vary, since paths are
+// most of what a FileMeta holds and they are what differ between a flat tree
+// and a deep one.
+func TestApproxMetaSizeTracksVariableFields(t *testing.T) {
+	base := core.FileMeta{FileID: "a", Name: "a"}
+	deep := base
+	deep.FileID = strings.Repeat("dir/", 64) + "a"
+	deep.Parents = []string{strings.Repeat("dir/", 64)}
+
+	if approxMetaSize(&deep) <= approxMetaSize(&base) {
+		t.Errorf("a deeply nested entry estimated no larger than a shallow one: %d vs %d",
+			approxMetaSize(&deep), approxMetaSize(&base))
+	}
+	if got := approxMetaSize(&base); got <= 0 {
+		t.Errorf("approxMetaSize(minimal) = %d, want a positive fixed allowance", got)
 	}
 }

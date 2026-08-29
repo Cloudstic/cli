@@ -468,13 +468,17 @@ budget fixes.
 emits each snapshot's bodies, so blob packing can be simulated over real churn
 without writing an encoding. On a 20,000-file `source` tree aged with 14
 backups of 300 churned files each, packing each backup's new bodies into 4 MB
-blobs in walk order, then forgetting all but the newest snapshot:
+blobs in routing-key order, then forgetting all but the newest snapshot:
 
 | policy | blobs | fully dead | waste | extra bytes written |
 |---|---:|---:|---:|---:|
 | none | 62 | **0** | 35.4 MB (15%) | — |
 | consolidate below 50% live | 69 | 11 | 16.8 MB (8%) | +13.4 MB (**+5.7%**) |
 | consolidate below 80% live | 82 | 28 | 10.4 MB (5%) | +63.9 MB (+27%) |
+
+(Packing order turns out not to matter here — see below. In walk order the same
+three rows are 62 / 70 / — blobs and 15.1% / 6.0% waste for +7.3%: the same
+curve, reached at a slightly different point.)
 
 So the pessimistic guess was half right. Blobs do **not** die wholesale — with
 no consolidation not one of 62 blobs is collectable, because each retains a few
@@ -536,6 +540,59 @@ Verified against the code while working through this:
 1. Decoded payloads must be copied out of the transport buffer, not aliased.
    Aliasing was measured and is worse on every axis, because a small retained
    slice pins the whole object's buffer (see `v3Decoder.bytes`).
+
+### What packs a blob: walk order
+
+Bodies should be packed in **walk order** — the order the source produced them,
+which is also the status quo that preserves RFC 0025's upload locality. The
+reasoning that led to the question was wrong, though, and the correction is
+worth keeping.
+
+**Routing-key order does not do what it was supposed to.** The hypothesis was
+that it groups a directory's bodies for a path-scoped restore. It groups a
+directory's *own* entries — that is what the `parentHash[:4]` prefix buys — but
+it places the directories themselves in hash order, so a subtree's child
+directories scatter. Walk order makes the whole subtree contiguous, which is
+what restoring a path actually needs.
+
+Blobs fetched for a path-scoped restore at a 4 MB budget, summed over all 1,594
+distinct subtrees, against an oracle that packs each subtree perfectly:
+
+| | oracle | routing | walk | random |
+|---|---:|---:|---:|---:|
+| recursive subtree | 1,659 | 5,827 | **5,430** | 13,340 |
+| with shared-body ownership removed | 1,659 | 2,241 | **2,026** | 9,650 |
+
+Walk wins by about 7%, and for the 96% of subtrees holding fewer than 50 files
+the two are *identical*. They diverge only on the handful of top-level
+directories, where walk is near-oracle. Both beat a random order by 2.3x — so
+**a** locality-preserving order matters a great deal and **which** one barely
+does. The decision is therefore to keep the order backup already produces.
+
+**Fragmentation is indifferent to order and sensitive to budget.** At 4 MB and
+8 MB the blob count, fill and waste are identical to three significant figures
+across routing, walk and random. What does move is the budget: at 8 MB, 14 of
+38 blobs are under half full, and they are exactly the 13 churn backups plus a
+tail. **A budget above a backup's new-byte volume leaves a half-empty blob per
+backup**, since each backup's churn is packed and then closed. On this workload
+(~3 MB of new bodies per backup) 4 MB leaves none under half full, and that
+coincidence is the reason to pick it — not a general constant.
+
+Three limits on this, all worth carrying forward:
+
+- The simulation packs **sequentially**. A real backup uploads concurrently, so
+  bodies reach the packer interleaved by worker and walk order's locality
+  degrades unless the packer is explicitly order-preserving. Every walk number
+  above is an upper bound on what a parallel implementation delivers, and
+  "preserve walk order into the packer" is a requirement the implementation
+  inherits rather than a free property.
+- The metric counts **distinct blobs fetched, not prefetch**. Routing-key order
+  is the order a leaf-order restore traverses, so it could win on sequential
+  prefetch while losing on request count. That is unmeasured and is the
+  strongest remaining argument for the other choice.
+- **The first backup dominates**: 297.5 MB of 350 MB of new bodies land in it,
+  so packing order is mostly a property of the initial ingest. A repository
+  grown from empty would show a weaker ordering effect either way.
 
 ### What would break silently
 
@@ -614,9 +671,10 @@ Two more that are visible but easy to get wrong:
    rather than soundness.
 1. ~~**Does the inline threshold survive?**~~ Answered below: yes, and it
    means something sharper than it did.
-1. **What packs a blob?** Walk order preserves the upload locality RFC 0025
-   established; routing-key order groups a directory's bodies for a path-scoped
-   restore. These differ, and the choice is a measurement.
+1. ~~**What packs a blob?**~~ Answered above: walk order, which also wins the
+   path-scoped-restore metric that routing order was supposed to win. The
+   remaining requirement is that the packer preserve walk order under
+   concurrency, which it does not get for free.
 1. **Does the metadata tree still want hash routing?** With content gone a leaf
    holds thousands of entries and the tree is a handful of nodes. Ordering by
    path would make a source walk and a tree traversal the same order, which is

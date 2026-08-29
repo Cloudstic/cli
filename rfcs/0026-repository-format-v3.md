@@ -496,9 +496,22 @@ repository accumulates blobs that are mostly garbage — exactly what `PackStore
 did and what this format exists to escape. This is the question that decides
 whether the revision is sound, so it is worked here rather than deferred.
 
-**The obvious answer does not work.** v2 repacked fragmented packs during
-`prune` (`internal/engine/prune.go`), and it could only do so because the pack
-catalog was an indirection: an object's key resolved to a pack through
+**The obvious answer does not work, and that is architectural rather than a
+failure of imagination.** Across thirteen systems surveyed the rule is without
+exception: *every system that repacks has an indirection between the logical
+name and the physical location, and every system that lacks one does not
+repack.* ZFS is the pure case of our constraint — an immutable Merkle tree
+whose parents embed both a physical address and the child's checksum — and
+block pointer rewrite has gone unimplemented for two decades, with ZFS's own
+architect on record that it would be the last feature ever added; the accepted
+remedy is `send | recv` into a fresh pool, which is consolidate-forward at
+whole-pool granularity. git enforces the same discipline deliberately:
+`OFS_DELTA` is the only physical offset it uses and it is valid only inside its
+own pack, never escaping into a commit or tree, precisely so that `repack` stays
+free.
+
+v2 repacked fragmented packs during `prune` (`internal/engine/prune.go`), and it
+could only do so because the pack catalog was an indirection: an object's key resolved to a pack through
 `index/packs`, so repacking rewrote the catalog and left every snapshot alone.
 That catalog is precisely what this format removed, and RFC 0023 is the record
 of failing to bound it.
@@ -510,9 +523,22 @@ to the root, which changes the snapshot. Repacking at `prune` would mean
 content-addressed and immutable, and changing snapshot identities that users
 and `copy` rely on. That is not available at any price.
 
-**Consolidating forward is.** A backup already writes a new snapshot with a new
-root. It can therefore write *fresh* blobs for bodies it finds in fragmented
-ones, and reference those instead:
+**Consolidating forward is, and it is a published technique rather than an
+invention.** It is *History-Aware Rewriting* (Fu et al., USENIX ATC 2014): a
+container whose utilization falls below a threshold is a **sparse container**,
+and the *next* backup rewrites into fresh containers the members it would
+otherwise have deduplicated against a sparse one. Old snapshots are never
+touched. HAR's central empirical finding is exactly the one this design needs —
+**a sparse container stays sparse in the next backup** — which makes the
+prediction cheap and accurate. The industry term is *copy forward* (Data
+Domain); SlimStore (ICDE 2021) does the same thing on cloud object storage,
+though with a fingerprint index that lets it update old recipes, which is why
+HAR and not SlimStore is the precedent here. Searching for "rewriting sparse
+containers" finds the literature; "consolidate forward" finds nothing.
+
+A backup already writes a new snapshot with a new root. It can therefore write
+*fresh* blobs for bodies it finds in fragmented ones, and reference those
+instead:
 
 - No existing tree is rewritten. Older snapshots keep pointing at the old
   blobs, which stay live and correct for exactly as long as those snapshots do.
@@ -564,6 +590,20 @@ live.
 Three things about this table are worth stating so it is not read for more than
 it says.
 
+**The 15% is not the alarming number, and it was nearly read as one.** Every
+shipped threshold in the field sits at or above it: restic's `--max-unused`
+defaults to 5%, borg's `compact --threshold` and `bup gc --threshold` to 10%,
+HAR's sparse-container line to ~50%, SlimStore's to ~30%. By prevailing practice
+a repository with 15% dead bytes is barely worth touching for space.
+
+**The alarming number is the other one: 0 of 62 containers collectable.** That
+is a container-count and request-count problem, not a byte problem, and
+utilization is the wrong metric for it. The metric that matches is Lillibridge's
+*capping* criterion — how many distinct containers must be read to reconstruct
+the newest snapshot — which is also what actually drives request counts. **The
+consolidation trigger should be that, with utilization as a secondary filter,
+rather than a dead-byte percentage.**
+
 **The 15% is churn, not fragmentation.** Sweeping the blob budget from 1 MB to
 16 MB moves the waste by less than 0.1 MB — it is 35.4 MB at every size, and
 15.1% again under position-addressed bodies. It is simply the fraction of body
@@ -582,6 +622,48 @@ run unconditionally.
 50% live" requires the blob's total size; an entry knows its own offset and
 length. Blob size has to be recorded somewhere the backup can read cheaply,
 which is unspecified above and is a real gap in the design rather than a detail.
+
+**The LFS cleaning formula half applies, and the half that does not is
+inverted.** Rosenblum and Ousterhout select a segment by
+`(1 − u) × age / (1 + u)`. The `(1 − u)/(1 + u)` term transfers directly — `u`
+is the blob's live fraction and `1 + u` is genuinely the cost, one read plus a
+rewrite of the live members. In consolidate-forward the read is partly free
+because the backup was reading those leaves anyway, which lowers the denominator
+and argues for a *more* aggressive threshold than a repacking system would use.
+
+The `age` term does not transfer. LFS uses age as a proxy for how long reclaimed
+space will stay free, assuming old data stays put. A retention-driven backup
+does not need a proxy — **the retention policy says exactly when each snapshot
+dies** — and the correlation runs backwards: an old blob that has survived
+several `forget` cycles is one pinned by the *oldest retained* snapshot, which
+is the next to expire, so consolidating it is close to pure waste. The
+substitution is to weigh the expected remaining lifetime of the *youngest*
+snapshot referencing the blob, computed from the retention policy. That is a
+strictly better estimator than LFS's, because we have ground truth where it had
+a heuristic.
+
+**And the cost needs a ceiling.** Rewriting forgoes deduplication for the
+migrated members — a second copy exists until the old blob dies — and the cost
+scales with how much of the live working set currently sits in sparse blobs,
+which can spike after an unusual `forget`. HAR and the context-based-rewriting
+line both bound this with an explicit per-backup rewrite budget, and any
+implementation here should carry one.
+
+**The strongest justification for the design is not the one this RFC gave.**
+A blob written by snapshot N holds exactly the bodies snapshot N found new, so
+if nothing ever appends to an existing blob, its liveness is a step function of
+retention and it dies whole. The reason all 62 blobs are partially live is
+*deduplication*: snapshot N references bodies inside blobs written by 1..N−1.
+Consolidating forward is precisely the operation that converts a shared blob
+back into an unshared one and restores the die-whole property.
+
+**The cautionary tale is bup.** git packfiles plus backup semantics produced
+exactly this failure mode — backups entangled, no pack safely deletable — and
+bup escaped only because git packs carry an `.idx`, so `bup gc` can rewrite
+them. Even then the shipped implementation is probabilistic and retains some
+unreachable data by design. **A format with no index has no such escape hatch**,
+and that is the thing to be certain about before committing: we are giving up
+the option bup needed.
 
 **And the comparison that matters is not close.** The same 14 snapshots, in
 encoded bytes:

@@ -283,9 +283,18 @@ entries' bodies; an entry names `(blob ref, offset, length)`. The entry's value
 — the content address of its metadata — does not change, so change detection,
 `diff` and dedup semantics are untouched.
 
-This is a revision of v3 rather than a new format because v3 is opt-in and not
-yet the default (#517). Nothing a released build has written would be stranded,
-and that is only true until #517 lands — which is the reason to settle it now.
+This is a revision of v3 rather than a new format because **format v3 has never
+been released**. The most recent release, v1.18.0 (2026-08-02), stamps
+`MaxSupportedRepoFormat = 2` and cannot read a v3 repository at all; v3 landed
+on `main` on 2026-08-28, twenty-six days later. So there is no repository
+anywhere that a change here could strand, and no build in a user's hands that
+could misread one.
+
+That freedom is absolute today and ends the moment a release is cut from `main`
+— not when #517 flips the default, which is the weaker claim an earlier draft
+made. A release cut today would ship both the v3 writer (`init -format 3`) and
+the v3 reader, and nobody would notice until someone created a repository with
+it. Issue #545 tracks guarding against that.
 
 ### Why the format had only one dial
 

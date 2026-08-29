@@ -240,6 +240,105 @@ Two gaps remain open, and neither is a defect in the format:
    detection already reads; a repository-wide content index is the thing this
    format exists to avoid.
 
+### Revision: metadata and content become separate objects
+
+The fat-leaf thesis was that v2 minted too many small objects and that
+aggregating an entry's metadata *and* its content into one leaf fixes it. The
+aggregation was right. Putting those two things in the *same* object was not,
+and the profiles taken for issues #535, #538 and #539 are what showed it.
+
+A leaf is 3% metadata and 97% file content. Measured on the 20,000-file
+`source` tree, 25,321 entries at 369 bytes of metadata each:
+
+| | as built | metadata alone |
+|---|---:|---:|
+| bytes in the tree | 306.4 MB | 8.9 MB |
+| leaves | 219 | ~5 |
+| nodes including interior | 302 | ~8 |
+
+Change detection, `prune`, `ls`, `find` and `diff` read the metadata and never
+touch the content, so they pay for 306 MB to use 8.9 MB — a structure 34x
+larger and 40x more numerous than the one they need. It shows in every profile:
+a no-change backup allocates 3,125 MB, 1.23 GB of it decompressing and decoding
+leaves for change detection; `prune` allocates 9,360 MB after #539, essentially
+all of it decompressing leaves to read chunk refs. #539 could stop prune
+*decoding* the payloads it does not want but not stop it *fetching* them,
+because they share the object it must read.
+
+**So v3's leaves hold metadata and a reference to where the content lives.**
+File bodies move into content-addressed `blob/` objects, each a packed run of
+many entries' bodies; an entry names `(blob ref, offset, length)`. The entry's
+value — the content address of its metadata — does not change, so change
+detection, `diff` and dedup semantics are untouched.
+
+This is a revision of v3 rather than a new format because v3 is opt-in and not
+yet the default (#517). Nothing has been written by a released build that this
+would strand.
+
+#### What it changes about the one dial
+
+[RFC 0027](0027-limits-of-format-v3.md) establishes that every knob in v3 is
+the same knob, moving along a provably optimal curve. It does not say why there
+is only one. There is only one because metadata and content share an object, so
+one size serves two opposed purposes. Separated, there are two:
+
+| dial | trades | acts on |
+|---|---|---|
+| metadata leaf size | traversal requests **vs** metadata rewritten per backup | 8.9 MB |
+| content blob size | restore requests **vs** content rewritten per backup | 297.5 MB |
+
+Write amplification — RFC 0027's `directories touched x leaf size` — keeps its
+shape but multiplies metadata rather than whole leaves. And a content blob is
+not routed, so it escapes the ~50% fill that split geometry imposes on a leaf
+(see `bitsPerLevelV3`): 297.5 MB packs into ~74 blobs at 4 MB where it occupies
+219 leaves today, 3x fewer objects for the same bytes before anything else
+changes.
+
+#### What it costs, and the question that decides it
+
+- **A targeted read gains a request.** `cat` of one small file reads its
+  metadata leaf and then its blob. Ranged reads are unavailable above the
+  crypto layer (RFC 0027 §4.1), so blob size bounds the waste — an argument for
+  keeping blobs near today's leaf budget rather than large.
+- **`prune` gains an object kind.** A `blob/` is live while any retained
+  snapshot references it: set membership, as chunks already are.
+- **Partially-dead blobs are the risk, and they are the pack problem
+  returning.** A blob holding fifty bodies stays live while one is referenced,
+  so a repository accumulates blobs that are mostly garbage — which is exactly
+  what `PackStore` did and what this format exists to escape. The answer is
+  presumably repacking during `prune`, and it needs a bound. **If that bound
+  cannot be found, this revision is unsound and the fat leaf stays.** It is the
+  first thing to settle, before any encoding work.
+- **Whole-file dedup does not improve.** Two identical small bodies still
+  occupy two copies within their blobs, compressed away by zstd, exactly as
+  today. Deduplicating blob contents is the design issue #514 measured and
+  rejected, and this does not reopen it — a blob is per *run of entries*, not
+  per file body, so #514's failure (a body shared by nine files fetched nine
+  times) does not apply either.
+
+#### Open questions for the revision
+
+1. **Can partially-dead blobs be bounded?** See above. Settle first.
+1. **Does the inline threshold survive?** With bodies in blobs, "inline" and
+   "chunked" are two kinds of blob reference and may collapse into one — a
+   chunk is a blob holding a single body. That would remove a concept rather
+   than add one, and it decides the encoding.
+1. **What packs a blob?** Walk order preserves the upload locality RFC 0025
+   established; routing-key order groups a directory's bodies for a path-scoped
+   restore. These differ, and the choice is a measurement.
+1. **Does the metadata tree still want hash routing?** With content gone a leaf
+   holds thousands of entries and the tree is a handful of nodes. Ordering by
+   path would make a source walk and a tree traversal the same order, which is
+   what the streaming merge join in #538 needs — at the cost of the balance
+   hash routing provides.
+
+#### Sequencing for the revision
+
+Question 1 on paper first; the rest does not matter if it fails. Then confirm
+the 34x without writing a format, by having `internal/cmd/leafstat` emit the
+metadata-only tree for an existing v3 repository and counting what traversing
+it would cost. Only then an encoding, with question 2 settled.
+
 ## Context
 
 The evidence is spread over three RFCs and is summarised here so this document
@@ -395,6 +494,11 @@ Gone relative to v2: `filemeta/*` (absorbed into leaves), `packs/*`,
 manifest (it survives only as the spill form).
 
 ### 2. Fat leaves
+
+> **Revised.** Leaves carry metadata and a reference to a `blob/` object
+> holding the content, not the content itself. See "Revision: metadata and
+> content become separate objects" above for the measurement that changed it.
+> The rest of this section is as originally proposed.
 
 The design is RFC 0024's, promoted from opportunistic layout change to the
 only form:

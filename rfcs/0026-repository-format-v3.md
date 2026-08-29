@@ -836,6 +836,67 @@ Two more that are visible but easy to get wrong:
   repository's largest namespace — correct, silent, and it undoes the compact
   representation that exists so the set fits in memory.
 
+### What a survey of the field says about the HAMT
+
+Thirteen systems were classified by how they represent directory metadata.
+There are three families, not two:
+
+- **Directory-mirroring** — one object per directory. restic, rustic, Kopia,
+  bup, Perkeep, git, OSTree.
+- **Chunked metadata stream** — items serialised into one stream and
+  content-chunked, often with smaller chunker parameters than file data. Borg,
+  Duplicacy, bupstash, Tarsnap.
+- **Flat sorted index** — plakar, a path-keyed B+tree.
+
+**No backup tool hash-routes file metadata into a global trie.** Nor is there a
+design document or thread in any of these projects rejecting the idea; it
+appears never to have been considered, which is weaker evidence than a
+considered rejection and is recorded as such. Hash routing is routine one layer
+down — btrfs keys directory entries by `crc32c(filename)` in a global B-tree —
+but those structures update in place, so none of the content-addressed
+rewrite cost applies.
+
+The one real precedent is **Hyperdrive**, which in v10 adopted "hypertrie, an
+append-only implementation of a hashed array-mapped trie" for a
+content-addressed Merkle store, citing scaling to tens of millions of files at
+`O(log₄ n)` requests — very close to this format's reasoning. Hyperdrive v11
+replaced it with Hyperbee, an append-only *path-ordered* B-tree, and the whole
+API became prefix-range shaped. The move is verifiable from primary sources;
+**no published rationale for it could be found**, so it is suggestive rather
+than dispositive.
+
+**Where the HAMT genuinely wins, and it is not where this RFC assumed.**
+
+| | HAMT | directory-mirroring |
+|---|---|---|
+| path-scoped read locality | clustered, never contiguous | **optimal — one object is one directory** |
+| write amplification per changed file | `O(log₃₂ N)` bounded nodes, independent of tree shape | `Σ` ancestor fan-outs — unbounded if any ancestor is wide |
+| a 100k-entry directory | **free** | needs an explicit splitter |
+| subtree rename | free only for ID-stable sources | **free always** |
+
+So the case for the HAMT rests on **bounded node size** and **depth-independent
+write amplification** — not on locality, which mirroring wins outright, and not
+on renames. The wide-directory failure is real and not hypothetical: restic
+reports 2.8 GB of peak memory for a one-million-file directory, and Kopia's
+issue #1542 proposes *mtime-bucketed* sharding for the same problem — reaching
+for churn locality, which is the opposite of what hash spreading provides.
+
+**And our rename story is worse than the table suggests.** `AffinityKey` is
+built from `parentID` and `fileID`, and a local or SFTP source sets
+`FileID` to the normalised path (`pkg/source/local/source.go:221`,
+`pkg/source/sftp/source.go:219`). Renaming a directory therefore changes every
+descendant's routing key, re-routing and rewriting the whole subtree — `O(subtree)`,
+strictly worse than mirroring, on the most common source. Drive and OneDrive,
+which carry stable provider IDs, are unaffected. This is a defect in the format
+as it stands rather than in the revision, and it is inside the retention
+measurements above, since `gentree` renames one directory per churn round.
+
+**A hybrid is where at least one system independently landed.** plakar keys a
+B+tree by full path *and* keeps a second tree mapping a parent path to a single
+packed object holding that directory's entries. Whoever built that started from
+a global index and found they needed directory-granular objects for read
+locality anyway — which is the same conclusion the affinity key gropes towards.
+
 ### Open questions and sequencing
 
 1. ~~**How fragmented do blobs actually get?**~~ Answered above: 15% waste,
@@ -848,15 +909,12 @@ Two more that are visible but easy to get wrong:
    path-scoped-restore metric that routing order was supposed to win. The
    remaining requirement is that the packer preserve walk order under
    concurrency, which it does not get for free.
-1. **Does the metadata tree still want hash routing?** Neither restic nor kopia
-   uses one; both mirror the directory structure, which gives exact locality
-   for free and rewrites an ancestor chain of small objects rather than a leaf.
-   With content gone the case for a HAMT is weaker still — the tree is a
-   handful of nodes and `AffinityKey` exists to approximate what a directory
-   tree has natively. Ordering by path would also make a source walk and a tree
-   traversal the same order, which is what the streaming merge join in #538
-   needs. This revision does not depend on the answer, but it is the strongest
-   reason to think v3 is not yet in its final shape.
+1. **Does the metadata tree still want hash routing?** See "What a survey of
+   the field says about the HAMT" below. The short version: its case rests on
+   bounded node size and depth-independent write amplification, not on locality
+   or renames, and one of our four sources makes the rename case actively bad.
+   This revision does not depend on the answer, but it remains the strongest
+   reason to think v3 is not in its final shape.
 
 Questions 1 and 2 are answered: the soundness objection is cleared, and the
 encoding keeps two content concepts whose boundary is the inline threshold.

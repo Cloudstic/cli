@@ -634,6 +634,74 @@ Three limits on this, all worth carrying forward:
   so packing order is mostly a property of the initial ingest. A repository
   grown from empty would show a weaker ordering effect either way.
 
+### Where v3 actually stands against v2, and what other tools do
+
+Two things were checked before committing to the revision: what v3 costs against
+v2 on identical history, and whether separating metadata from content is a good
+idea or merely a local one.
+
+**On identical history, v3 stores 3.4x more than v2.** Same 20,000-file tree,
+same 14 backups, same churn seeds, same seeds for everything, local unencrypted
+store:
+
+| | v2 (packfile) | v3 |
+|---|---:|---:|
+| repository on disk | **123 MB** | **415 MB** |
+| `check` | 1.78s, 1,221 MB alloc | 0.59s, 822 MB alloc |
+| `restore` | 2.02s, 1,602 MB alloc | 2.42s, 1,739 MB alloc |
+
+That is not a tuning gap. v3 bought its flat request curve — the aging tables
+above, where v2 grows about seven requests per backup and v3 does not — and paid
+for it in stored bytes. On a local disk that is a bad trade; against object
+storage with a year of history it is the trade the format was designed to make.
+But 3.4x is large enough to be a user-visible regression, and it is the axis the
+revision closes: bodies written once put the repository at roughly 121 MB
+stored, which is parity with v2.
+
+**And the separation is what every comparable tool already does.**
+
+- **restic** stores one tree object per directory and packs trees and data
+  apart. Its format version 1 said data and tree blobs *should* be in separate
+  pack files; **version 2 says they must be**. They hardened the rule when they
+  revised the format.
+- **Kopia** stores directory listings as objects with a `k` prefix and routes
+  every prefixed object into `q` metadata packs, with file content in `p` data
+  packs — the split is enforced by the storage layer rather than left to the
+  caller.
+- **Borg** serialises item metadata into its own stream and runs it through the
+  chunker with *different parameters* from file data, deliberately producing
+  smaller chunks for metadata.
+
+Three tools, three mechanisms, one decision. **v3's fat leaf — file bodies
+inside the metadata structure — is the outlier**, and the revision moves it back
+towards what the field settled on.
+
+**The part that is genuinely unusual is the HAMT, and it deserves its own
+question.** restic and kopia both use a directory-mirroring tree, where a
+directory *is* an object. That gives exact directory locality for free, makes a
+path-scoped read exactly a subtree read, and means a changed file rewrites its
+ancestor chain of small objects rather than a 4 MB leaf. v3's `AffinityKey` —
+`parentHash[:4] + fileHash[4:]`, with the 16 bits of directory locality noted
+above — is a workaround for something a directory tree does not need to work
+around.
+
+The reason v3 does not do that is the reason it exists: one object per directory
+is a great many small objects, which needs packing, which needs an index, which
+is what RFC 0023 failed to bound. So the real axis is **index or no index**:
+
+- restic and kopia keep an index. Repacking is free, because the index absorbs
+  the move. The index is what must be bounded, and Kopia #5057 is what happens
+  when that bound fails.
+- v3 has no index. There is nothing to bound, but repacking cannot rewrite
+  history, so reclamation has to consolidate forward — and until it does, prune
+  reclaims nothing.
+
+That bet is coherent and this revision keeps it: an entry names its blob
+directly, so no catalog appears. Whether the *metadata* structure should stay a
+HAMT is a separate question that this revision does not answer and does not
+depend on, and it is the strongest remaining reason to think v3 is not yet in
+its final shape.
+
 ### What would break silently
 
 A survey of every producer and consumer of `Payload.Inline` turned up four
@@ -715,11 +783,15 @@ Two more that are visible but easy to get wrong:
    path-scoped-restore metric that routing order was supposed to win. The
    remaining requirement is that the packer preserve walk order under
    concurrency, which it does not get for free.
-1. **Does the metadata tree still want hash routing?** With content gone a leaf
-   holds thousands of entries and the tree is a handful of nodes. Ordering by
-   path would make a source walk and a tree traversal the same order, which is
-   what the streaming merge join in #538 needs — at the cost of the balance
-   hash routing provides.
+1. **Does the metadata tree still want hash routing?** Neither restic nor kopia
+   uses one; both mirror the directory structure, which gives exact locality
+   for free and rewrites an ancestor chain of small objects rather than a leaf.
+   With content gone the case for a HAMT is weaker still — the tree is a
+   handful of nodes and `AffinityKey` exists to approximate what a directory
+   tree has natively. Ordering by path would also make a source walk and a tree
+   traversal the same order, which is what the streaming merge join in #538
+   needs. This revision does not depend on the answer, but it is the strongest
+   reason to think v3 is not yet in its final shape.
 
 Questions 1 and 2 are answered: the soundness objection is cleared, and the
 encoding keeps two content concepts whose boundary is the inline threshold.

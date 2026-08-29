@@ -68,10 +68,14 @@ Three layers, in cost order:
 - **`internal/cmd/leafstat/`** — reports what a format-v3 repository's HAMT
   leaves are made of: their size distribution, how much of each is inline file
   content rather than metadata, and — via `-refs` set-differenced across
-  snapshots — how much of the tree each backup rewrote. The other tools observe
-  a repository from outside and so cannot answer why a v3 repository grows with
-  retained snapshots, which is a property of individual leaves (issue #525,
-  RFC 0026 "What v3 stores, and when"). Local, unencrypted repositories only.
+  snapshots — how much of the tree each backup rewrote. `-entries` emits one
+  line per entry naming its body and size, which differenced across a
+  repository's snapshots is what lets a layout be *simulated* over real churn
+  before it is built: the blob-packing numbers in RFC 0026's revision come from
+  that, on repositories that already existed. The other tools observe a
+  repository from outside and so cannot answer why a v3 repository grows with
+  retained snapshots, which is a property of individual leaves (issue #525).
+  Local, unencrypted repositories only.
 - **`scripts/benchmark/bench.sh`** — one pass over the pipeline collecting every
   metric it can yield: wall time and peak RSS from `time(1)`, cumulative
   allocation from the binary's `-memstats`, and — on a MinIO backend — requests

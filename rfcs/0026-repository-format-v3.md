@@ -1176,19 +1176,43 @@ inside that band, which is reassuring but was luck.
 #### Encryption
 
 Per member, with the key derived from the member's own plaintext hash and a
-repository secret, and the containing blob's ref bound into the AAD. Three
-consequences, all wanted:
+repository secret, and the containing blob's ref bound into the AAD.
+
+**The AAD binding is load-bearing, not belt-and-braces.** A blob's ref is the
+hash of its *plaintext*, which is the discipline every self-addressed namespace
+here already follows — `core.VerifyRef` hashes decrypted bytes, and `chunk/`
+refs are HMACs rather than hashes for the same reason. But a blob is the first
+object whose plaintext **no reader ever assembles**: readers want one member,
+so nothing recomputes the concatenation and `VerifyRef` can never be applied.
+`blob/` therefore stays out of `core.SelfAddressedPrefixes`, and the binding
+that whole-object addressing would have supplied has to come from somewhere
+else. It comes from the AAD: a member lifted from another blob, or moved within
+one, fails to authenticate.
+
+`meta.ContentHash` is a second, independent check on the same substitution —
+but it is not a *replacement*, because `restore -no-verify` skips it by
+construction. The AAD binding holds on that path too.
+
+Three further consequences, all wanted:
 
 - A ranged read decrypts exactly its member.
-- Encryption becomes **deterministic**, so re-uploading a member is
-  byte-identical and a retry is free — which a random nonce cannot offer a
-  content-addressed store.
+- Sealing is **deterministic given the blob**, so a retried upload is
+  byte-identical — which a random nonce cannot offer a content-addressed
+  store. It is deliberately not deterministic *across* blobs; that is the
+  same AAD binding seen from the other side, and it costs nothing, since
+  bodies deduplicate on `ContentHash` and never on sealed bytes.
 - Nonce reuse across distinct plaintexts would require a hash collision, since
-  two members with the same key are the same member.
+  two members with the same key and AAD are the same member of the same blob.
 
-A ranged read authenticates only what it fetches; `check` and `restore` read
-wholes and keep the strong guarantee. Members are fixed-framed so boundaries
-leak nothing beyond the blob's length.
+A ranged read authenticates only what it fetches; `restore` and
+`check -read-data` read wholes and keep the strong guarantee. Members are
+fixed-framed so boundaries leak nothing beyond the blob's length.
+
+**This needs a primitive `pkg/crypto` does not have.** `Encrypt` takes no AAD
+and draws a random nonce; both are wrong here. The member seal is a third
+sibling to `HKDFInfoBackupV1` and `HKDFInfoPackIndexV1`, and it is the one
+piece of this design that touches the security boundary — it should land as its
+own reviewed change, before anything that calls it.
 
 #### What each operation does
 
@@ -1198,8 +1222,13 @@ leak nothing beyond the blob's length.
   per-backup rewrite budget.
 - **restore** — reads metadata leaves, then fetches each referenced blob whole
   (it wants all of it), or ranges into it for a path-scoped restore.
-- **check** — verifies each blob's index against its ref, and under
-  `-read-data` each member against `meta.ContentHash`.
+- **check** — a default run confirms each referenced blob exists and that its
+  trailing index authenticates and covers the offsets entries name. It cannot
+  do more: verifying a blob against its ref means decrypting every member and
+  hashing the concatenation, which *is* the `-read-data` path, where each
+  member is checked against `meta.ContentHash`. Saying a default run
+  "verifies blobs" would be the same overclaim as reading "cannot decode" as
+  "empty".
 - **prune** — marks `blob/` refs alongside `chunk/`, and deletes blobs no
   retained snapshot references. **It never repacks.**
 
@@ -1224,7 +1253,10 @@ after:
    body is a memory copy. It becomes a fetch and needs resizing against the
    bandwidth-delay product above.
 
-And two that are visible but easy to get wrong: `copy`'s payload elision should
+And three that are visible but easy to get wrong. `blob/` must **not** be added
+to `core.SelfAddressedPrefixes`: every other member of that list names an
+object whose plaintext a reader reconstructs, and a blob's never is, so
+`VerifyRef` would fail on correct data. `copy`'s payload elision should
 be **deleted**, not translated — a body reference is small enough to cache,
 and rewriting the condition would re-read the body on every repeated visit; and
 `objkey` needs `blob/` appended to its namespaces, or the reachable set falls
@@ -1259,6 +1291,9 @@ expressed in terms of a leaf that will no longer exist.
 All four questions are answered and the encoding is written above, so what
 remains is building it. The order that follows from the blast-radius survey is:
 
+1. **The member seal** — an AAD-taking, deterministic-nonce primitive in
+   `pkg/crypto` with its own HKDF info string. It is the only step that moves
+   the security boundary, so it lands alone and reviewed, ahead of any caller.
 1. **The leaf encoding and the blob writer**, together, since a blob reference
    is meaningless without something to point at.
 1. **`prune` and `check` in the same change** — not after. Adding `blob/` to

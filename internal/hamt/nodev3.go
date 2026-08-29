@@ -175,6 +175,20 @@ func (d *v3Decoder) bytes() ([]byte, error) {
 	}
 	// Copy out of the transport buffer so a decoded node does not pin the
 	// whole object's backing array through the node cache.
+	//
+	// Aliasing instead looks obviously cheaper and is not: it was measured and
+	// it made a 20,000-file backup worse on every axis — peak RSS 957 MB to
+	// 2231 MB, allocation 3123 MB to 3292 MB, wall 1.71s to 2.49s. The copies
+	// are 24% of that backup's allocation, so the arithmetic seems to favour
+	// aliasing right up until the retention is accounted for.
+	//
+	// What breaks it is who holds the result. A leaf's payloads are most of
+	// its bytes, so a *node* aliasing its buffer retains about what copying
+	// would have. But payloads outlive the node: the meta loader keeps
+	// p.Meta — a few hundred bytes — and each surviving slice pins the entire
+	// megabytes-wide leaf buffer it came from. Backup holds metas for many
+	// entries at once, so a small retained slice per entry pinned a whole leaf
+	// each.
 	out := make([]byte, len(b))
 	copy(out, b)
 	return out, nil

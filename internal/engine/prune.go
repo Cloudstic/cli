@@ -259,19 +259,23 @@ func (pm *PruneManager) markSnapshot(ctx context.Context, ref string, reachable 
 	// chunk refs are unknowable, and docs/compatibility.md forbids collecting
 	// garbage over data that could not be fully read.
 	if pm.v3 {
-		return pm.tree.WalkTree(ctx, snap.Root,
+		// WalkChunkRefs rather than WalkTree: marking reads an entry's chunk
+		// refs and nothing else, and a leaf's Meta and Inline are almost all of
+		// its bytes. Decoding them cost 45% of the allocation of marking one
+		// 357 MB repository.
+		return pm.tree.WalkChunkRefs(ctx, snap.Root,
 			func(r string) error {
 				reachable.Add(r)
 				return nil
 			},
-			func(key, ref string, p *hamt.Payload) error {
+			func(key, ref string, chunks []string, hasPayload bool) error {
 				if !reachable.Add(ref) {
 					return nil
 				}
-				if p == nil {
+				if !hasPayload {
 					return fmt.Errorf("v3 leaf entry %s (%s) carries no payload; refusing to prune", key, ref)
 				}
-				for _, c := range p.Chunks {
+				for _, c := range chunks {
 					reachable.Add(c)
 				}
 				return nil

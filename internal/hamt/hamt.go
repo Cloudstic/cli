@@ -336,6 +336,41 @@ func (t *Tree) NodeRefs(ctx context.Context, root string, fn func(ref string) er
 //
 // A node is loaded once and reported before its children, so a caller can
 // treat onNode as the point where a node's bytes were read and verified.
+// WalkChunkRefs is WalkTree for a caller that needs an entry's chunk refs and
+// nothing else — prune, marking what a snapshot reaches.
+//
+// It exists because the reduction is worth having and is dangerous to express
+// as an option on WalkTree. A leaf's Meta and Inline are almost all of its
+// bytes, so skipping them is most of the cost of a traversal; but a *Payload
+// with those fields silently empty is indistinguishable from one whose entry
+// genuinely has no inline content, and a caller reading Inline from it would
+// see an empty file rather than an error. Reporting chunk refs directly keeps
+// the reduced payload inside this package.
+//
+// hasPayload separates an entry with no payload at all from one whose payload
+// names no chunks. prune needs that: an entry whose chunk refs are unknowable
+// must fail the prune rather than count as reaching nothing
+// (docs/compatibility.md).
+func (t *Tree) WalkChunkRefs(ctx context.Context, root string, onNode func(ref string) error, onEntry func(key, value string, chunks []string, hasPayload bool) error, opts ...WalkOption) error {
+	if root == "" {
+		return nil
+	}
+	cfg := walkConfig{load: t.nodes.loadChunksOnly}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	var entry func(key, value string, p *Payload) error
+	if onEntry != nil {
+		entry = func(key, value string, p *Payload) error {
+			if p == nil {
+				return onEntry(key, value, nil, false)
+			}
+			return onEntry(key, value, p.Chunks, true)
+		}
+	}
+	return walkTree(ctx, t.nodes, root, 0, onNode, entry, cfg)
+}
+
 func (t *Tree) WalkTree(ctx context.Context, root string, onNode func(ref string) error, onEntry func(key, value string, p *Payload) error, opts ...WalkOption) error {
 	if root == "" {
 		return nil
@@ -352,6 +387,9 @@ type WalkOption func(*walkConfig)
 
 type walkConfig struct {
 	onNodeError func(ref string, err error) error
+	// load fetches a node, so a walk can choose how much of each payload it
+	// materialises. Nil means the full decode.
+	load func(ctx context.Context, ref string) (*node, error)
 }
 
 // WithNodeErrorHandler makes a walk survive a node it cannot read.
@@ -382,7 +420,11 @@ func walkTree(ctx context.Context, ns *NodeStore, ref string, depth int, onNode 
 			return err
 		}
 	}
-	n, err := ns.load(ctx, ref)
+	load := cfg.load
+	if load == nil {
+		load = ns.load
+	}
+	n, err := load(ctx, ref)
 	if err != nil {
 		if cfg.onNodeError == nil {
 			return err

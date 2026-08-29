@@ -180,6 +180,17 @@ func (d *v3Decoder) bytes() ([]byte, error) {
 	return out, nil
 }
 
+// skipBytes advances past a length-prefixed field without copying it, for a
+// decode that does not want the field. See payloadChunksOnly.
+func (d *v3Decoder) skipBytes() error {
+	n, err := d.uvarint()
+	if err != nil {
+		return err
+	}
+	_, err = d.take(n)
+	return err
+}
+
 func (d *v3Decoder) byte() (byte, error) {
 	if d.off >= len(d.data) {
 		return 0, fmt.Errorf("truncated byte at offset %d", d.off)
@@ -189,8 +200,33 @@ func (d *v3Decoder) byte() (byte, error) {
 	return b, nil
 }
 
+// payloadDetail selects how much of an entry's payload a decode materialises.
+//
+// A leaf's Meta and Inline are essentially all of its bytes — 97-100% at every
+// profile measured — so a caller that needs neither pays for the whole leaf to
+// learn a handful of chunk refs. prune is exactly that caller: it reads
+// p.Chunks and nothing else, and marking one 357 MB repository allocated
+// 17 GB, 45% of it copying payload fields it never looked at.
+//
+// A reduced node is never cached. The cache holds complete nodes only, so a
+// later reader that does need Meta or Inline cannot be served a node missing
+// them — which is the one way this could go quietly wrong. A traversal visits
+// each node once, so it loses nothing by not caching.
+type payloadDetail int
+
+const (
+	payloadFull payloadDetail = iota
+	payloadChunksOnly
+)
+
 // decodeNodeV3 parses a binary v3 node into the in-memory form.
 func decodeNodeV3(data []byte) (*node, error) {
+	return decodeNodeV3Detail(data, payloadFull)
+}
+
+// decodeNodeV3Detail is decodeNodeV3 with control over how much of each
+// payload is materialised.
+func decodeNodeV3Detail(data []byte, detail payloadDetail) (*node, error) {
 	d := &v3Decoder{data: data, off: len(nodeMagicV3)}
 	kind, err := d.byte()
 	if err != nil {
@@ -249,12 +285,23 @@ func decodeNodeV3(data []byte) (*node, error) {
 					return nil, err
 				}
 				p.Size = int64(size)
-				if p.Meta, err = d.bytes(); err != nil {
-					return nil, err
-				}
-				if flags&entryFlagInline != 0 {
-					if p.Inline, err = d.bytes(); err != nil {
+				if detail == payloadChunksOnly {
+					if err := d.skipBytes(); err != nil {
 						return nil, err
+					}
+					if flags&entryFlagInline != 0 {
+						if err := d.skipBytes(); err != nil {
+							return nil, err
+						}
+					}
+				} else {
+					if p.Meta, err = d.bytes(); err != nil {
+						return nil, err
+					}
+					if flags&entryFlagInline != 0 {
+						if p.Inline, err = d.bytes(); err != nil {
+							return nil, err
+						}
 					}
 				}
 				if flags&entryFlagChunks != 0 {

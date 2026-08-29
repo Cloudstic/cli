@@ -858,6 +858,54 @@ HAMT is a separate question that this revision does not answer and does not
 depend on, and it is the strongest remaining reason to think v3 is not yet in
 its final shape.
 
+### Why the HAMT stays
+
+The survey found that no other backup tool hash-routes metadata, that
+directory-mirroring wins on locality and on renames, and that the HAMT's case
+rests on bounded node size and depth-independent write amplification. On that
+evidence the trie looked like the weakest part of the format. It is not, and the
+argument that saves it only becomes visible once content leaves the leaves.
+
+**A directory-mirroring tree makes objects far too small to be worth a
+request.** The 20,000-file tree has 1,548 directories and 14.9 MB of metadata:
+
+| structure | objects | each | against the PUT break-even |
+|---|---:|---:|---|
+| directory-mirroring | 1,548 | 9.9 KB | **23x below** |
+| hash-routed HAMT | 33 | 462 KB | 2.1x above |
+
+One S3 PUT costs what storing 223 KB for a month costs, so a 9.9 KB object is
+dominated by its own request fee. That is why every directory-mirroring system
+in the survey packs — and packing is what needs an index mapping object to
+`(pack, offset)`, which is the catalog RFC 0023 failed to bound and this format
+was created to remove.
+
+**So the trie is not an eccentricity; it is the aggregation.** restic and Kopia
+aggregate metadata with packs plus an index. This format aggregates it with a
+trie and needs no index, because a node *is* the aggregate and its content
+address *is* its location. Same goal, different mechanism, and ours is the one
+that does not accumulate a catalog.
+
+That reframes the earlier finding rather than contradicting it. The HAMT's
+advantages really are bounded node size and shape-independent write
+amplification — and "bounded node size" turns out to mean *bounded below* as
+well as above. A directory-mirroring tree has no lower bound at all: a
+directory with three files in it is an object with three files in it.
+
+**What it costs, stated honestly.** Exact path locality, which the affinity key
+only approximates and which the survey measured as the metric mirroring wins
+outright; and free subtree renames, which are worth about 9% of retention cost
+here and are fixable independently by giving local and SFTP sources a
+rename-stable identity (issue #543). Both are real. Neither is worth
+reintroducing a catalog for.
+
+**And the two are not mutually exclusive.** plakar keys a B+tree by path *and*
+keeps a per-directory packed object, which is a directory-mirroring read path
+over an aggregated storage layer. If path locality later proves to matter more
+than these measurements suggest, that hybrid is the shape to reach for — but it
+buys locality by adding the index this format exists without, so it is a
+different bet rather than an improvement on this one.
+
 ### What object storage actually charges, and who else has built this
 
 **Two of our four backends stopped charging for requests.** Backblaze made all
@@ -1075,12 +1123,10 @@ locality anyway — which is the same conclusion the affinity key gropes towards
    path-scoped-restore metric that routing order was supposed to win. The
    remaining requirement is that the packer preserve walk order under
    concurrency, which it does not get for free.
-1. **Does the metadata tree still want hash routing?** See "What a survey of
-   the field says about the HAMT" below. The short version: its case rests on
-   bounded node size and depth-independent write amplification, not on locality
-   or renames, and one of our four sources makes the rename case actively bad.
-   This revision does not depend on the answer, but it remains the strongest
-   reason to think v3 is not in its final shape.
+1. ~~**Does the metadata tree still want hash routing?**~~ Answered below:
+   yes, and for a reason neither this RFC nor the survey had assembled — the
+   trie is what makes the metadata objects large enough to be worth a request
+   *without* an index.
 
 Questions 1 and 2 are answered: the soundness objection is cleared, and the
 encoding keeps two content concepts whose boundary is the inline threshold.

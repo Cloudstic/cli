@@ -246,32 +246,36 @@ The fat-leaf thesis was that v2 minted too many small objects, and that
 aggregating an entry's metadata *and* its content into one leaf fixes it. The
 aggregation was right. Putting those two things in the *same* object was not.
 
-A leaf is 3% metadata and 97% file content. Measured on the 20,000-file
-`source` tree, 25,321 entries at 369 bytes of metadata each:
+A leaf is mostly file content. Measured on the 20,000-file `source` tree — and
+*measured*, not extrapolated: setting the inline threshold to 1 byte makes
+every body chunked, which produces a real tree whose leaves carry metadata and
+refs and no bodies, the closest thing the current format can express to the
+proposed one.
 
-| | as built | metadata alone |
+| | as built | metadata only |
 |---|---:|---:|
-| bytes in the tree | 306.4 MB | **8.9 MB** |
-| leaves | 219 | ~23 |
-| nodes including interior | 302 | ~32 |
-
-The leaf count needs care, and an earlier draft of this section got it wrong by
-extrapolating from the byte budget alone. With bodies gone a leaf cannot reach
-4 MB of metadata, so `leafSplitBytesV3` never fires and `maxLeafEntriesV3`
-(2048) becomes the sole split rule — v3 would silently revert to an
-entry-count split. At 2 bits per level a full leaf quarters and each child
-refills, so fill averages around half the cap: 25,321 entries land in roughly
-23 leaves, not the ~5 a byte-budget estimate suggests. **That is a 9x
-reduction in objects, not 40x. The 34x on bytes is unaffected**, and it is the
-bytes that dominate what a traversal costs.
+| plaintext | 311.1 MB | **14.9 MB** |
+| stored | 69.4 MB | **3.1 MB** |
+| leaves | 219 | 25 |
+| nodes including interior | 302 | 33 |
 
 Change detection, `prune`, `ls`, `find` and `diff` read the metadata and never
-touch the content, so they pay for a structure **34x larger and 9x more
+touch the content, so they pay for a structure **21x larger and 9x more
 numerous** than the one they use. A no-change backup allocates 3,125 MB,
 1.23 GB of it decompressing and decoding leaves; `prune` allocates 9,360 MB,
 essentially all of it decompressing leaves to read chunk refs. Issue #539 could
 stop prune *decoding* the payloads it does not want but not stop it *fetching*
 them, because they share the object it must read.
+
+An earlier draft of this section put the metadata at 8.9 MB and the tree at ~5
+leaves, and both were wrong. The byte figure came from `leafstat`, which sums
+payload fields and omits each entry's key, path key and value — about 180 bytes
+an entry, or 4.6 MB here. The leaf count came from extrapolating the 4 MB byte
+budget, but with bodies gone a leaf cannot reach 4 MB of metadata, so
+`leafSplitBytesV3` never fires and `maxLeafEntriesV3` (2048) becomes the sole
+split rule. The measured tree has 25 leaves, against a floor of 13 at perfect
+fill. **The metadata-leaf dial is therefore the entry cap, not the byte budget**
+— which the "two dials" framing below has to mean literally.
 
 **So a leaf holds metadata and a reference to where the content lives.** File
 bodies move into content-addressed `blob/` objects, each a packed run of many
@@ -315,10 +319,10 @@ purposes. Separated, there are two:
 
 | dial | trades | acts on |
 |---|---|---|
-| metadata leaf size | traversal requests **vs** metadata rewritten per backup | 8.9 MB |
+| metadata leaf size (`maxLeafEntriesV3`) | traversal requests **vs** metadata rewritten per backup | 14.9 MB |
 | content blob size | restore requests **vs** content rewritten per backup | 297.5 MB |
 
-Write amplification keeps its shape but multiplies 8.9 MB rather than 306 MB.
+Write amplification keeps its shape but multiplies 14.9 MB rather than 311 MB.
 A content blob is also not routed, so it escapes the ~50% fill that split
 geometry imposes on a leaf (see `bitsPerLevelV3`): 297.5 MB packs into ~74
 blobs at 4 MB where it occupies 219 leaves today — 3x fewer objects for the
@@ -331,18 +335,21 @@ the inline threshold disappears and v3 has one content concept instead of two.
 It does not, and the reason is worth stating because it explains the threshold
 rather than merely preserving it.
 
-**Chunks exist to be deduplicated, and the dedup is temporal.** Measured across
-snapshot sequences with `leafstat -entries`:
+**Chunks are shared between different files almost never.** Measured across
+snapshot sequences, distinct chunks appearing under more than one path within a
+single snapshot are 21 of 2,578 on `media` and 5 of 68 on `source` — **under
+1%**. Every one of those was verified to span genuinely different files rather
+than repeated positions in one.
 
-| | chunk references | distinct chunks | dedup | in >1 snapshot | reused within one snapshot |
-|---|---:|---:|---:|---:|---:|
-| `media`, 6 snapshots | 11,629 | 2,578 | **4.51x** | 85% | 21 |
-| `source`, 14 snapshots | 919 | 68 | **13.51x** | 93% | 5 |
-
-Almost all of that saving is the same file's chunks surviving from one snapshot
-to the next. Sharing *between different files* is 21 of 2,578 and 5 of 68 —
-under 1%. So content addressing is earning its keep on the temporal axis, which
-is exactly what `Exists("chunk/<hash>")` buys with no index.
+That is the only thing content addressing earns here, and it is worth being
+precise about why. An earlier draft of this section reported a "4.51x / 13.51x
+dedup factor" and read it as content addressing paying off on the temporal
+axis. Both halves were wrong. The factor is just the snapshot count times the
+survival rate — divide it by the number of snapshots and a retention rate is
+what remains — and the temporal axis is not bought by content addressing at
+all: change detection re-inserts an unchanged entry with its previous payload
+verbatim (`internal/engine/backup_scan.go`), so the file is never re-read,
+never re-chunked, and no `Exists("chunk/<hash>")` probe is ever issued.
 
 **But that is not what settles it.** A chunk is already at least
 `inlineThreshold` bytes, because that is the CDC minimum chunk size — the two
@@ -354,8 +361,9 @@ chunk bodies and comparing against the previous version's chunk list instead,
 which recovers the temporal dedup but loses the spatial and adds a hash per
 reference to every entry.
 
-So the threshold survives, and its meaning is now precise: **it is the size at
-which a body is already large enough to be its own object.** Below it, bodies
+So the threshold survives, and its meaning is precise — and it does not rest on
+the dedup argument at all: **it is the size at which a body is already large
+enough to be its own object.** Below it, bodies
 are too small to be objects and are packed into blobs, addressed by position,
 never deduplicated (which issue #514 measured and accepted). Above it, chunking
 already produces blob-sized objects, addressed by content, deduplicated for
@@ -413,8 +421,8 @@ fan-out, so 200 files cannot change in 4 directories of median fan-out 6.
 In money this is small — daily backups kept a year cost about $2 to $8 more
 than the packfile format at S3 Standard, and the ratio that looks alarming on a
 357 MB repository is three per cent on a 1 TB one. **The case for this revision
-is not the storage.** It is the 34x on every metadata-only read, and the fact
-that write amplification then acts on 8.9 MB instead of 306 MB.
+is not the storage.** It is the 21x on every metadata-only read, and the fact
+that write amplification then acts on 14.9 MB instead of 311 MB.
 
 ### The risk, and why it is answerable
 
@@ -480,29 +488,61 @@ blobs in routing-key order, then forgetting all but the newest snapshot:
 three rows are 62 / 70 / — blobs and 15.1% / 6.0% waste for +7.3%: the same
 curve, reached at a slightly different point.)
 
-So the pessimistic guess was half right. Blobs do **not** die wholesale — with
-no consolidation not one of 62 blobs is collectable, because each retains a few
-bodies of files that were touched once and never again. But the waste that
-causes is 15%, not a multiple, and consolidation is cheap exactly where it is
-worthwhile: a sparse blob is cheap to migrate out of precisely because little
-of it is live. Halving the waste costs under 6% in extra bytes written.
+The important row is the first one, and it is worse than "15% waste" makes it
+sound: **not one of 62 blobs is collectable.** Where v2 would reclaim a whole
+pack, a blob repository reclaims essentially nothing, because each blob retains
+a few bodies of files that were touched once and never again. Consolidation is
+what buys the reclamation back, and it is cheap exactly where it is worthwhile
+— a sparse blob is cheap to migrate out of precisely because little of it is
+live.
+
+Three things about this table are worth stating so it is not read for more than
+it says.
+
+**The 15% is churn, not fragmentation.** Sweeping the blob budget from 1 MB to
+16 MB moves the waste by less than 0.1 MB — it is 35.4 MB at every size, and
+15.1% again under position-addressed bodies. It is simply the fraction of body
+bytes that `keep-last-1` supersedes, and one object per body would show the
+same number. So this table does not measure how *fragmented* blobs get; what it
+establishes is the sentence above, that nothing becomes collectable, which is
+the real cost of aggregating bodies at all.
+
+**Consolidation is measured at its most favourable retention.** `live` here is
+the newest snapshot alone. Under retain-all the store has no waste to recover
+and consolidation is strictly negative — it adds 13.4 MB of duplication for
+nothing. The policy has to be driven by what `forget` will actually remove, not
+run unconditionally.
+
+**And it needs a fact the entries do not carry.** Deciding "this blob is below
+50% live" requires the blob's total size; an entry knows its own offset and
+length. Blob size has to be recorded somewhere the backup can read cheaply,
+which is unspecified above and is a real gap in the design rather than a detail.
 
 **And the comparison that matters is not close.** The same 14 snapshots, in
 encoded bytes:
 
-| | stored for 14 snapshots |
+| | stored, 14 snapshots |
 |---|---:|
-| v3 today | **1,695.7 MB** (1,666 distinct nodes) |
-| bodies in blobs, written once | 233.8 MB |
-| metadata, rewritten per snapshot | ~126 MB (~9 MB x 14) |
-| **blob design** | **~360 MB** |
+| v3 today | **392.0 MB** (measured on disk, 1,666 distinct nodes) |
+| bodies in blobs, position-addressed | 355.5 MB plaintext → ~78 MB |
+| metadata, 14.9 MB x 14 snapshots | 208.6 MB plaintext → ~43 MB |
+| **blob design** | **~121 MB** |
 
 A leaf carries content, so every snapshot that touches a leaf stores another
-copy of its neighbours' bodies; 14 snapshots of a tree whose latest is 311.5 MB
-cost 1,695.7 MB. Bodies in blobs are written once and shared by every snapshot
-that references them, and only the 9 MB of metadata is rewritten. That is
-**4.7x less stored** for the same history, on top of the 34x on every
-metadata-only read.
+copy of its neighbours' bodies. Bodies in blobs are written once and shared by
+every snapshot that references them, and only the metadata is rewritten. That
+is **about 3.2x less stored** for the same history.
+
+An earlier draft claimed 4.7x, from two mistakes that happened to compound.
+The 1,695.7 MB figure was *plaintext* — `leafstat -refs` reports encoded bytes
+before compression — where the repository on disk holds 392.0 MB for exactly
+those refs. And the two sides of the comparison used different dedup rules: the
+blob column came from a simulation that keys bodies by content hash, granting
+whole-body dedup across files, while the design as written says bodies are
+addressed by position and never deduplicated. Under the design's own rule the
+bodies are 355.5 MB rather than 233.8 MB. Both figures above are now in stored
+bytes, with metadata compressing at the 4.81x measured on the metadata-only
+tree and content at the 4.56x measured on the repository.
 
 These are simulations over a real repository's bodies, churn and snapshot
 sequence — not a running implementation — and they are the numbers to re-check

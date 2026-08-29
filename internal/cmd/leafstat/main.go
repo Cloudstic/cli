@@ -25,11 +25,13 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
@@ -57,6 +59,7 @@ func main() {
 	snap := flag.String("snapshot", "", "snapshot ref to read (default: the latest)")
 	perLeaf := flag.Bool("per-leaf", false, "print one line per leaf, smallest first")
 	refsOnly := flag.Bool("refs", false, `print "<node ref> <encoded bytes>" per node and exit`)
+	entriesOnly := flag.Bool("entries", false, `print "<key> <body id> <body bytes>" per entry and exit`)
 	flag.Parse()
 
 	if *repo == "" {
@@ -81,6 +84,10 @@ func main() {
 		for _, n := range nodes {
 			fmt.Printf("%s %d\n", n.ref, n.size())
 		}
+		return
+	}
+	if *entriesOnly {
+		check(printEntries(ctx, s, root))
 		return
 	}
 	report(root, nodes, *perLeaf)
@@ -156,6 +163,35 @@ func report(root string, nodes []leaf, perLeaf bool) {
 		fmt.Printf("  %s entries=%d size=%s meta=%s inline=%s chunkrefs=%s(%d)\n",
 			short(l.ref), l.entries, size(l.size()), size(l.meta), size(l.inline), size(l.chunks), l.nchunks)
 	}
+}
+
+// printEntries emits one line per entry: its key, the content address of its
+// body, and the body's size. Differencing that across a repository's snapshots
+// is what lets blob packing be simulated on a repository that already exists —
+// which body a backup would have written, and how much of a blob is still
+// referenced later (RFC 0026, "The risk, and why it is answerable").
+//
+// The body id is the hash of the inline bytes rather than the entry's value,
+// because the value is the content address of the *metadata* and moves when a
+// file's mtime does. An entry whose body is chunked reports its chunk list
+// instead, since that is what identifies the body there.
+func printEntries(ctx context.Context, s store.ObjectStore, root string) error {
+	return hamt.NewTree(s, hamt.WithFormatV3()).WalkEntries(ctx, root,
+		func(key, _ string, p *hamt.Payload) error {
+			if p == nil {
+				fmt.Printf("%s\t-\t0\n", key)
+				return nil
+			}
+			switch {
+			case len(p.Inline) > 0:
+				fmt.Printf("%s\t%x\t%d\n", key, sha256.Sum256(p.Inline), len(p.Inline))
+			case len(p.Chunks) > 0:
+				fmt.Printf("%s\tchunks:%s\t%d\n", key, strings.Join(p.Chunks, ","), p.Size)
+			default:
+				fmt.Printf("%s\tempty\t0\n", key)
+			}
+			return nil
+		})
 }
 
 // rootOf resolves a snapshot ref to its tree root, defaulting to whatever

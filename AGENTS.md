@@ -64,7 +64,11 @@ Three layers, in cost order:
   directories a churn is spread across, independently of how many files it
   changes — the profile's own `churnDirZipfS` chooses *which* directories are
   hot rather than how many are reached, and sweeping it moved the directories
-  touched by 200 changed files only from 53 to 41.
+  touched by 200 changed files only from 53 to 41. `-churn-renames 0` suppresses
+  the per-round directory rename, which matters because under a path-identity
+  source a rename re-keys every descendant (issue #543): every retention
+  measurement taken before that knob existed had one folded into it, and
+  isolating it put renames at about 9% of the cost.
 - **`internal/cmd/leafstat/`** — reports what a format-v3 repository's HAMT
   leaves are made of: their size distribution, how much of each is inline file
   content rather than metadata, and — via `-refs` set-differenced across

@@ -150,7 +150,8 @@ func main() {
 		// share of a directory's files and the `source` profile's median
 		// fan-out is 6. Breadth there is budget divided by files-per-directory,
 		// whatever the ranking says.
-		churnDirs = flag.Int("churn-dirs", 0, "churn: spread the change across at most this many directories, taking as many files from each as needed; 0 uses the profile's natural spread")
+		churnRenames = flag.Int("churn-renames", 1, "churn: directory renames per round; 0 suppresses them, which isolates what a rename costs under a path-identity source")
+		churnDirs    = flag.Int("churn-dirs", 0, "churn: spread the change across at most this many directories, taking as many files from each as needed; 0 uses the profile's natural spread")
 	)
 	flag.Parse()
 
@@ -184,7 +185,7 @@ func main() {
 		if *maxBytes > 0 {
 			p = fitToBudget(p, n, *maxBytes)
 		}
-		st, err = applyChurn(*churn, p, *seed, *fraction, *count, *churnDirs)
+		st, err = applyChurn(*churn, p, *seed, *fraction, *count, *churnDirs, *churnRenames)
 	}
 	if err != nil {
 		fatalf("%v", err)

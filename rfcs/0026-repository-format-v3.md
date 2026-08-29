@@ -487,16 +487,54 @@ These are simulations over a real repository's bodies, churn and snapshot
 sequence — not a running implementation — and they are the numbers to re-check
 against one.
 
+### Why "inline" and "chunked" do not collapse
+
+The tempting simplification is that a chunk is just a blob holding one body, so
+the inline threshold disappears and v3 has one content concept instead of two.
+It does not, and the reason is worth stating because it explains the threshold
+rather than merely preserving it.
+
+**Chunks exist to be deduplicated, and the dedup is temporal.** Measured across
+snapshot sequences with `leafstat -entries`:
+
+| | chunk references | distinct chunks | dedup | in >1 snapshot | reused within one snapshot |
+|---|---:|---:|---:|---:|---:|
+| `media`, 6 snapshots | 11,629 | 2,578 | **4.51x** | 85% | 21 |
+| `source`, 14 snapshots | 919 | 68 | **13.51x** | 93% | 5 |
+
+Almost all of that saving is the same file's chunks surviving from one snapshot
+to the next. Sharing *between different files* is 21 of 2,578 and 5 of 68 —
+under 1%. So content addressing is earning its keep on the temporal axis, which
+is exactly what `Exists("chunk/<hash>")` buys with no index.
+
+**But that is not what settles it.** A chunk is already at least
+`inlineThreshold` bytes, because that is the CDC minimum chunk size — the two
+constants are the same number for that reason. Chunks are therefore *already*
+objects of the size blobs exist to create. Packing them into blobs would buy a
+smaller factor than it costs, and it would require either a hash-to-location
+index — the catalog this format removed — or dropping content addressing for
+chunk bodies and comparing against the previous version's chunk list instead,
+which recovers the temporal dedup but loses the spatial and adds a hash per
+reference to every entry.
+
+So the threshold survives, and its meaning is now precise: **it is the size at
+which a body is already large enough to be its own object.** Below it, bodies
+are too small to be objects and are packed into blobs, addressed by position,
+never deduplicated (which issue #514 measured and accepted). Above it, chunking
+already produces blob-sized objects, addressed by content, deduplicated for
+free.
+
+Blobs and chunks are the same idea — aggregate until an object is worth a
+request — applied at the two sizes where the answer differs.
+
 ### Open questions and sequencing
 
 1. ~~**How fragmented do blobs actually get?**~~ Answered above: 15% waste,
    uncollectable without consolidation, halved for under 6% extra bytes
    written with it. What is left is choosing a threshold, which is tuning
    rather than soundness.
-1. **Does the inline threshold survive?** With bodies in blobs, "inline" and
-   "chunked" are two kinds of blob reference and may collapse into one — a
-   chunk is a blob holding a single body. That removes a concept rather than
-   adding one, and it decides the encoding.
+1. ~~**Does the inline threshold survive?**~~ Answered below: yes, and it
+   means something sharper than it did.
 1. **What packs a blob?** Walk order preserves the upload locality RFC 0025
    established; routing-key order groups a directory's bodies for a path-scoped
    restore. These differ, and the choice is a measurement.
@@ -506,12 +544,16 @@ against one.
    what the streaming merge join in #538 needs — at the cost of the balance
    hash routing provides.
 
-Question 1 is answered, so the soundness objection is cleared and what remains
-is an encoding. Question 2 decides its shape and should be settled first, since
-it determines whether v3 has two content concepts or one. The threshold in the
-consolidation table is a default to pick, not a question to answer — 50% is the
-obvious starting point and the harness can sweep it once there is something to
-sweep.
+Questions 1 and 2 are answered: the soundness objection is cleared, and the
+encoding keeps two content concepts whose boundary is the inline threshold.
+What remains before an encoding is question 3, which is a measurement the
+harness can already make, and question 4, which is a larger change that this
+revision does not depend on — a metadata tree can be hash-routed exactly as it
+is today.
+
+The consolidation threshold is a default to pick rather than a question to
+answer: 50% is the obvious start, and the harness can sweep it once there is
+something to sweep.
 
 ## Context
 

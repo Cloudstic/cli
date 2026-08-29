@@ -399,20 +399,72 @@ Verified against the code while working through this:
    Aliasing was measured and is worse on every axis, because a small retained
    slice pins the whole object's buffer (see `v3Decoder.bytes`).
 
-### The risk that decides it
+### The risk, and why it is answerable
 
 **A blob stays live while any one of its bodies is referenced**, so a
-repository accumulates blobs that are mostly garbage — which is exactly what
-`PackStore` did and what this format exists to escape. The answer is presumably
-repacking during `prune`, and it needs a bound that is not a clock.
+repository accumulates blobs that are mostly garbage — exactly what `PackStore`
+did and what this format exists to escape. This is the question that decides
+whether the revision is sound, so it is worked here rather than deferred.
 
-**If that bound cannot be found, this revision is unsound and the fat leaf
-stays.**
+**The obvious answer does not work.** v2 repacked fragmented packs during
+`prune` (`internal/engine/prune.go`), and it could only do so because the pack
+catalog was an indirection: an object's key resolved to a pack through
+`index/packs`, so repacking rewrote the catalog and left every snapshot alone.
+That catalog is precisely what this format removed, and RFC 0023 is the record
+of failing to bound it.
+
+Without an indirection an entry names its blob directly, so moving a body to a
+new blob changes the entry, which changes its leaf, which changes every node up
+to the root, which changes the snapshot. Repacking at `prune` would mean
+**rewriting the tree of every retained snapshot** — mutating objects that are
+content-addressed and immutable, and changing snapshot identities that users
+and `copy` rely on. That is not available at any price.
+
+**Consolidating forward is.** A backup already writes a new snapshot with a new
+root. It can therefore write *fresh* blobs for bodies it finds in fragmented
+ones, and reference those instead:
+
+- No existing tree is rewritten. Older snapshots keep pointing at the old
+  blobs, which stay live and correct for exactly as long as those snapshots do.
+- A blob dies **whole**, when the last snapshot referencing it is forgotten.
+  `prune` therefore needs no repacking at all: fully-dead blobs are set
+  membership, the same test chunks already get.
+- The bound lives on the **write path**, which is where this repository has
+  already learned it must live. `packIndexCompactThreshold` exists because
+  shard count "grows with the number of backups a repository has ever taken,
+  and only `prune` ever bounded it", and Kopia #5057 is that same failure left
+  running for a week. A consolidation triggered by a measured live fraction is
+  an absorption bound, not a clock.
+
+So the space a repository wastes is bounded by how fragmented a blob is allowed
+to get before the next backup migrates out of it, times how many snapshots are
+retained — rather than growing without limit in time.
+
+**What it costs is write amplification, and that is the honest trade.**
+Consolidation rewrites live bodies out of sparse blobs, so the threshold is a
+dial between wasted space and bytes written per backup. It is the same trade
+this format has fought throughout — but now it applies to content bytes at a
+tunable rate, rather than being forced on every touched leaf at a rate the leaf
+budget fixes.
+
+**What is not yet known** is how fragmented blobs actually become. Bodies
+written by one backup have correlated lifetimes: they are the files that
+changed together, and the churn model says most of them are hot files that will
+change again, so a blob should mostly die wholesale. If that holds,
+consolidation rarely triggers and the cost is near zero. If it does not — if
+each blob retains a long tail of bodies from files touched once and never
+again — consolidation runs constantly and the design is worse than the fat
+leaf. That is measurable on an aged repository before any encoding exists, and
+it is the next thing to do.
 
 ### Open questions and sequencing
 
-1. **Can partially-dead blobs be bounded?** Settle first, on paper. Nothing
-   else matters if it fails.
+1. **How fragmented do blobs actually get?** The bound above is sound —
+   consolidate forward at backup, never repack — but its *cost* depends on
+   whether a blob dies wholesale or retains a long tail. Measurable on an aged
+   repository before any encoding exists, by simulating blob packing over the
+   snapshots already there. This is the next thing to do, and it can still say
+   the fat leaf should stay.
 1. **Does the inline threshold survive?** With bodies in blobs, "inline" and
    "chunked" are two kinds of blob reference and may collapse into one — a
    chunk is a blob holding a single body. That removes a concept rather than
@@ -426,9 +478,11 @@ stays.**
    what the streaming merge join in #538 needs — at the cost of the balance
    hash routing provides.
 
-Then confirm the 34x without writing a format: have `internal/cmd/leafstat`
-emit the metadata-only tree for an existing v3 repository and count what
-traversing it would cost. Only then an encoding, with question 2 settled.
+Question 1 is a measurement rather than a design question now, and it comes
+first. Alongside it, confirm the 34x without writing a format: have
+`internal/cmd/leafstat` emit the metadata-only tree for an existing v3
+repository and count what traversing it would cost. Only then an encoding, with
+question 2 settled.
 
 ## Context
 

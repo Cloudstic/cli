@@ -251,12 +251,22 @@ A leaf is 3% metadata and 97% file content. Measured on the 20,000-file
 
 | | as built | metadata alone |
 |---|---:|---:|
-| bytes in the tree | 306.4 MB | 8.9 MB |
-| leaves | 219 | ~5 |
-| nodes including interior | 302 | ~8 |
+| bytes in the tree | 306.4 MB | **8.9 MB** |
+| leaves | 219 | ~23 |
+| nodes including interior | 302 | ~32 |
+
+The leaf count needs care, and an earlier draft of this section got it wrong by
+extrapolating from the byte budget alone. With bodies gone a leaf cannot reach
+4 MB of metadata, so `leafSplitBytesV3` never fires and `maxLeafEntriesV3`
+(2048) becomes the sole split rule — v3 would silently revert to an
+entry-count split. At 2 bits per level a full leaf quarters and each child
+refills, so fill averages around half the cap: 25,321 entries land in roughly
+23 leaves, not the ~5 a byte-budget estimate suggests. **That is a 9x
+reduction in objects, not 40x. The 34x on bytes is unaffected**, and it is the
+bytes that dominate what a traversal costs.
 
 Change detection, `prune`, `ls`, `find` and `diff` read the metadata and never
-touch the content, so they pay for a structure **34x larger and 40x more
+touch the content, so they pay for a structure **34x larger and 9x more
 numerous** than the one they use. A no-change backup allocates 3,125 MB,
 1.23 GB of it decompressing and decoding leaves; `prune` allocates 9,360 MB,
 essentially all of it decompressing leaves to read chunk refs. Issue #539 could
@@ -526,6 +536,75 @@ Verified against the code while working through this:
 1. Decoded payloads must be copied out of the transport buffer, not aliased.
    Aliasing was measured and is worse on every axis, because a small retained
    slice pins the whole object's buffer (see `v3Decoder.bytes`).
+
+### What would break silently
+
+A survey of every producer and consumer of `Payload.Inline` turned up four
+places that keep compiling and stop being correct. They are listed first
+because they are the ones a compiler will not find.
+
+**1. `prune` would delete every blob.** This is data loss and it passes through
+three layers unchanged. `prune`'s v3 marking uses `Tree.WalkChunkRefs`, whose
+callback is `func(key, value string, chunks []string, hasPayload bool)` — there
+is no slot for a blob ref. Underneath, `loadChunksOnly` decodes with
+`payloadChunksOnly`, which `skipBytes()`es exactly the region where a blob ref
+would sit. So the entry reports `chunks=[], hasPayload=true`, prune concludes it
+reaches nothing, and the sweep collects the blob. `hasPayload` is *true*, so the
+safety valve that refuses to prune an entry whose refs are unknowable never
+fires.
+
+What makes it worse: `objectPrefixesV3` does not list `blob/`, so today the
+sweep would not delete them — **the two bugs cancel**. Adding `blob/` to the
+prefix list, which any correct implementation must do or blobs leak forever, is
+what *activates* the deletion. Either half alone is wrong in a different
+direction.
+
+This is precisely the hazard `WalkChunkRefs`'s own doc comment warns about in
+prose. That warning was written about `Inline`; the change makes it true of the
+body pointer instead, and the reduced decoder must learn about blob refs in the
+same commit that adds them.
+
+**2. `check` would stop verifying that bodies exist.** The per-entry chunk loop
+in `checkLeafEntry` is the only existence check a default `check` makes. A
+blob-referencing entry has an empty `Chunks`, so the loop runs zero times and
+the entry passes. A repository whose every blob had been deleted — by bug 1 —
+would report healthy. Only `-read-data`, which is opt-in, would catch it.
+
+**3. `restore`'s directory detection degrades silently.** It uses
+`len(p.Inline) > 0 || len(p.Chunks) > 0` as a cheap "this entry has content, so
+it is not a directory" test, and a blob-bodied file matches neither. The answer
+stays correct because a type check catches it, but the pass then decodes
+`p.Meta` for every entry in the snapshot instead of a few per cent — an
+order-of-magnitude regression in a pass that exists to be cheap.
+
+**4. `restore`'s worker pool changes character.** Writing an inline body is a
+memory copy, which is why the pool hands payloads to workers without copying and
+is capped at 16. With a blob ref, each small file becomes a store fetch inside
+that fan-out. The streaming-restore premise — "the leaf a file's metadata comes
+from is the leaf its content comes from, so reading it once serves both" — is
+exactly what the change removes, and the pool would need resizing against a
+different cost.
+
+Two more that are visible but easy to get wrong:
+
+- **`copy`'s payload-elision must be deleted, not ported.** It caches an entry
+  without its payload because inline bytes are unbounded in aggregate. With a
+  blob ref a payload is a few hundred bytes and the cache can hold it — but
+  rewriting the condition as `BlobRef != ""` would make copy re-read and
+  re-write the body on every repeated visit to the same file, which is every
+  snapshot after the first in a lineage. Deleting the mechanism is right;
+  translating it is a performance trap.
+- **The split rule has to be re-chosen, not inherited.** As above,
+  `leafSplitBytesV3` stops binding and `maxLeafEntriesV3` becomes the whole
+  rule. Related constants inherit the same mistake: the node cache is sized as
+  "16 leaf budgets", which would then bound a wildly different number of
+  entries, and `sealFlushBytes` is justified in terms of "every dirty leaf's
+  encoded bytes — inline file content included". All three are measuring a leaf
+  that no longer exists.
+- **`objkey` needs `blob/` appended to its namespaces.** Without it the
+  reachable set falls back to a `map[string]struct{}` for what would be the
+  repository's largest namespace — correct, silent, and it undoes the compact
+  representation that exists so the set fits in memory.
 
 ### Open questions and sequencing
 

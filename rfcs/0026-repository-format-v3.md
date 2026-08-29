@@ -849,6 +849,81 @@ HAMT is a separate question that this revision does not answer and does not
 depend on, and it is the strongest remaining reason to think v3 is not yet in
 its final shape.
 
+### What object storage actually charges, and who else has built this
+
+**Two of our four backends stopped charging for requests.** Backblaze made all
+standard B2 API calls free on 1 May 2026, raising storage from $6.00 to
+$6.95/TB-month to pay for it; Wasabi has never charged per request, subject to a
+fair-use clause. So on B2 and Wasabi, **aggregation buys latency and nothing
+else** — the money argument that motivates this whole format applies to S3 and
+R2 only. That is a change to the premise, not to a constant, and it should be
+stated wherever the format's rationale is.
+
+Where requests are still billed the arithmetic is stark (checked 2026-08-29,
+us-east-1). One S3 PUT costs the same as storing **223 KB for a month**. Writing
+1 TB of new data costs **$83.89** in PUT fees at 64 KB objects and **$0.66** at
+8 MB. GETs are 12.5x cheaper than PUTs, so on the read side money stops
+mattering above a few kilobytes and **latency is the binding constraint**.
+
+That last point has a formula, and it is the most directly useful number this
+survey produced. Arrow's range coalescer merges two byte ranges whenever the gap
+between them is smaller than the bandwidth-delay product:
+
+```text
+max_io_gap = time-to-first-byte x bandwidth
+```
+
+At 50–100 ms and ~90 MB/s that is **4.5–9 MB**; on a domestic uplink
+(10 MB/s, 100 ms) it is **1 MB**. In other words it is cheaper to fetch and
+discard several megabytes of unwanted bytes than to issue a second request.
+**That is the number that should size a blob and drive a restore planner**, and
+it is a better basis than the 4 MB we arrived at by sweeping.
+
+**Someone has already shipped this design.** Arq 7 stores a `BlobLoc` inside the
+tree node carrying `relativePath`, `offset`, `length` and `isPacked` — a file's
+bytes are located by **one ranged GET with no index lookup, because the pointer
+is the range**. That is precisely the blob reference proposed here, in a
+shipping product, and it is the strongest evidence that the shape is viable.
+Duplicati is the control: it aggregates into 50 MB volumes but cannot read
+inside them, and its documentation states plainly that it "needs to download the
+entire remote volume" — aggregation without ranged reads, which is what we have
+today.
+
+**And a mature tool has just gone the other way.** Borg 2 removed both its
+segment files and its repository index: "Repository stores objects separately
+now… no repository index is needed anymore because we can directly find the
+objects by their ID." A well-engineered project looked at the same trade and
+abandoned aggregation entirely, accepting more filesystem overhead to be rid of
+compaction. On a backend with free requests that reasoning is stronger than
+ours, and it deserves to be weighed rather than dismissed.
+
+Two further ideas worth stealing:
+
+- **rustic's hot/cold split.** `--hot-only` mirrors *all metadata* — under 1% of
+  a repository's bytes — into a second always-warm bucket while packs go to
+  Glacier, so `ls`, `diff` and `snapshots` never touch cold storage. That is a
+  user-visible feature the metadata/content separation proposed here would make
+  possible, and it is a better argument for the separation than any allocation
+  number.
+- **Parquet stratifies metadata by access frequency.** A footer at a fixed
+  discoverable position holds what every reader needs; the page index sits
+  *adjacent* to the footer so it coalesces into the same request when wanted and
+  costs nothing when not; page headers are inline with the payload. Reading one
+  column of one row group is **two requests**, independent of how many columns
+  or row groups were skipped. Iceberg v4 applies the same instinct to the
+  versioning problem under the name *commit amplification*, and its remedy —
+  inlining small changes into the root rather than rewriting it — is a direct
+  suggestion for a fat-leaf format.
+
+**No published work addresses this exact trade**: aggregating small objects to
+cut object-store request counts, against the write amplification that
+aggregation causes under versioning. The deduplication-fragmentation literature
+has aggregation and versioning but prices reads in disk seeks; the table-format
+literature has aggregation, versioning and request costs but no deduplication
+and no tree-restore access pattern; Tarsnap and WarpStream have aggregation and
+request costs but treat versioning as an append-only log. The gap is where this
+RFC sits.
+
 ### What would break silently
 
 A survey of every producer and consumer of `Payload.Inline` turned up four

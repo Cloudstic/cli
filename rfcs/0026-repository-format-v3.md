@@ -240,6 +240,196 @@ Two gaps remain open, and neither is a defect in the format:
    detection already reads; a repository-wide content index is the thing this
    format exists to avoid.
 
+## Revision: metadata and content become separate objects
+
+The fat-leaf thesis was that v2 minted too many small objects, and that
+aggregating an entry's metadata *and* its content into one leaf fixes it. The
+aggregation was right. Putting those two things in the *same* object was not.
+
+A leaf is 3% metadata and 97% file content. Measured on the 20,000-file
+`source` tree, 25,321 entries at 369 bytes of metadata each:
+
+| | as built | metadata alone |
+|---|---:|---:|
+| bytes in the tree | 306.4 MB | 8.9 MB |
+| leaves | 219 | ~5 |
+| nodes including interior | 302 | ~8 |
+
+Change detection, `prune`, `ls`, `find` and `diff` read the metadata and never
+touch the content, so they pay for a structure **34x larger and 40x more
+numerous** than the one they use. A no-change backup allocates 3,125 MB,
+1.23 GB of it decompressing and decoding leaves; `prune` allocates 9,360 MB,
+essentially all of it decompressing leaves to read chunk refs. Issue #539 could
+stop prune *decoding* the payloads it does not want but not stop it *fetching*
+them, because they share the object it must read.
+
+**So a leaf holds metadata and a reference to where the content lives.** File
+bodies move into content-addressed `blob/` objects, each a packed run of many
+entries' bodies; an entry names `(blob ref, offset, length)`. The entry's value
+— the content address of its metadata — does not change, so change detection,
+`diff` and dedup semantics are untouched.
+
+This is a revision of v3 rather than a new format because v3 is opt-in and not
+yet the default (#517). Nothing a released build has written would be stranded,
+and that is only true until #517 lands — which is the reason to settle it now.
+
+### Why the format had only one dial
+
+Sweeping v3's knobs — leaf budget at 2/4/8 MB, routing arity at 1/2/3 bits, the
+inline threshold, chunk promotion — always produced the same shape: requests
+against stored bytes against write amplification, with no setting winning
+everything. That is not a missing idea.
+
+**The read/update trade is provably intrinsic.** Brodal and Fagerberg (SODA
+2003) showed that in the external-memory model a dictionary whose insertions
+cost `O(λ log_λ N / B)` must admit a query costing `Ω(log_λ N)`, and the
+Bε-tree meets that bound. Choosing the leaf budget *is* choosing λ, so every
+sweep was moving along a proven-optimal curve. Looking for a cleverer
+arrangement of leaves was the wrong search.
+
+**But the retention cost is not on that curve.** v3 makes its tree persistent
+by *path copying*, the least efficient of the standard techniques since
+Driscoll, Sarnak, Sleator and Tarjan (1986). The multiversion B-tree (Becker et
+al., VLDB J. 1996) retains every version in space **linear in the number of
+updates**, and the buffered version (ESA 2025) achieves that together with
+Bε-tree update bounds.
+
+**And full scans do not pay for buffering.** In those bounds the buffering
+factor multiplies the `log_B N` term and not the `K/B` output term — and
+`restore`, `check`, `prune` and `find` are all `K/B`. That is what makes this a
+backup-shaped problem rather than a database-shaped one.
+
+What none of that explains is why v3 has only *one* knob. It has one because
+metadata and content share an object, so a single size serves two opposed
+purposes. Separated, there are two:
+
+| dial | trades | acts on |
+|---|---|---|
+| metadata leaf size | traversal requests **vs** metadata rewritten per backup | 8.9 MB |
+| content blob size | restore requests **vs** content rewritten per backup | 297.5 MB |
+
+Write amplification keeps its shape but multiplies 8.9 MB rather than 306 MB.
+A content blob is also not routed, so it escapes the ~50% fill that split
+geometry imposes on a leaf (see `bitsPerLevelV3`): 297.5 MB packs into ~74
+blobs at 4 MB where it occupies 219 leaves today — 3x fewer objects for the
+same bytes before anything else changes.
+
+### What this rules out, and why
+
+- **Ranged reads inside an object are unavailable.** The chain is
+  `CompressedStore → EncryptedStore → MeteredStore → <backend>`: a node is one
+  zstd stream inside one AES-256-GCM box, so byte *k* of the stored object is
+  unrelated to byte *k* of the node and the tag authenticates all or nothing.
+  Neither layer implements `store.RangeGetter` and neither structurally can;
+  `PackStore` ranges only because it sits *below* encryption with its own
+  derived key. This is why blob size bounds the waste on a targeted read rather
+  than being hidden by a range request.
+- **Buffering updates in the tree is the same design Kopia ships, and its
+  failures are public.** Kopia's epoch manager advances on >20 index blobs and
+  >24 hours; issue #5057 is a repository at 28,467 index blobs where ten full
+  maintenance runs *increased* the count, because a clock-based safety window
+  held a backlog permanently, and #3224 is the epoch manager compacting on a
+  read path and hanging against read-only storage. Any buffering here must
+  bound on *absorption* rather than a clock — which is what this repository's
+  own pack-catalog compaction already does.
+- **Prolly trees offer nothing v3 lacks.** Hash-routed HAMT already has history
+  independence, structural sharing and diff by content address, and they do not
+  escape the trade either: Dolt targets 4 KB chunks where v3 targets 4 MB, a
+  difference that is purely the cost model.
+- **This is not issue #514.** That promoted bodies to *per-file* `chunk/`
+  objects, where a body shared by nine files is fetched nine times. A blob is
+  per run of entries, fetched once by whoever reads that run.
+
+### What retention costs, measured
+
+A snapshot keeps a superseded copy of every leaf a backup touched. What that
+costs is an occupancy curve rather than a linear law: with `L` leaves and `D`
+directories touched, the leaves rewritten are `L(1 − e^{−D/L})` — linear while
+`D ≪ L`, saturating at a full repository copy once `D` approaches `L`.
+
+Measured with `gentree -churn-dirs` on the 20,000-file tree, 219 leaves:
+
+| churn | directories touched | stored per snapshot |
+|---|---:|---:|
+| 200 files, capped at 24 dirs | 11–20 | 12–16 MB |
+| 200 files, natural | 41–52 | 20–23 MB |
+| 1000 files, natural | 190–197 | 46–49 MB |
+
+Five times the volume gives four times the breadth and only twice the retained
+bytes, because touched directories increasingly land in leaves already being
+rewritten. Breadth is also not free to choose: it is coupled to volume by
+fan-out, so 200 files cannot change in 4 directories of median fan-out 6.
+
+In money this is small — daily backups kept a year cost about $2 to $8 more
+than the packfile format at S3 Standard, and the ratio that looks alarming on a
+357 MB repository is three per cent on a 1 TB one. **The case for this revision
+is not the storage.** It is the 34x on every metadata-only read, and the fact
+that write amplification then acts on 8.9 MB instead of 306 MB.
+
+### Constraints any implementation must respect
+
+Verified against the code while working through this:
+
+1. A node's ref is the SHA-256 of its plaintext bytes, checked in
+   `NodeStore.load` for every consumer. Any split encoding must keep every
+   fetched object independently verifiable, or the Merkle chain breaks on
+   exactly the reads it was added for.
+1. `diff` skips identical subtrees by ref (`internal/hamt/hamt.go`). A design
+   where a subtree's identity stops being a content address of its contents
+   loses that.
+1. Reads must never require a write. `LoadRepoConfig` deliberately does not
+   stamp a version on read paths, because restore runs under read-only
+   credentials. Repacking can never be a precondition for reading.
+1. "Cannot decode" is never "empty" (`docs/compatibility.md`). An unreadable
+   blob must fail its operation, and `prune` must abort rather than treat an
+   entry whose bodies it could not read as reaching nothing.
+1. Anything bounded only by maintenance is unbounded.
+   `packIndexCompactThreshold` exists because shard count "grows with the
+   number of backups a repository has ever taken, and only `prune` ever bounded
+   it"; Kopia #5057 is that failure left to run for a week.
+1. Compaction must not delete what a concurrent reader listed — remove only
+   what the store has itself absorbed.
+1. WORM mode (RFC 0020, draft) cannot delete a superseded blob, so repacking
+   there is pure growth and probably should not run.
+1. `copy` between repositories (RFC 0017) must transfer a whole chain or
+   repack in flight.
+1. Whole-leaf compression is a measured win; splitting an object into
+   independently compressed pieces spends stored size to buy read locality.
+1. Decoded payloads must be copied out of the transport buffer, not aliased.
+   Aliasing was measured and is worse on every axis, because a small retained
+   slice pins the whole object's buffer (see `v3Decoder.bytes`).
+
+### The risk that decides it
+
+**A blob stays live while any one of its bodies is referenced**, so a
+repository accumulates blobs that are mostly garbage — which is exactly what
+`PackStore` did and what this format exists to escape. The answer is presumably
+repacking during `prune`, and it needs a bound that is not a clock.
+
+**If that bound cannot be found, this revision is unsound and the fat leaf
+stays.**
+
+### Open questions and sequencing
+
+1. **Can partially-dead blobs be bounded?** Settle first, on paper. Nothing
+   else matters if it fails.
+1. **Does the inline threshold survive?** With bodies in blobs, "inline" and
+   "chunked" are two kinds of blob reference and may collapse into one — a
+   chunk is a blob holding a single body. That removes a concept rather than
+   adding one, and it decides the encoding.
+1. **What packs a blob?** Walk order preserves the upload locality RFC 0025
+   established; routing-key order groups a directory's bodies for a path-scoped
+   restore. These differ, and the choice is a measurement.
+1. **Does the metadata tree still want hash routing?** With content gone a leaf
+   holds thousands of entries and the tree is a handful of nodes. Ordering by
+   path would make a source walk and a tree traversal the same order, which is
+   what the streaming merge join in #538 needs — at the cost of the balance
+   hash routing provides.
+
+Then confirm the 34x without writing a format: have `internal/cmd/leafstat`
+emit the metadata-only tree for an existing v3 repository and count what
+traversing it would cost. Only then an encoding, with question 2 settled.
+
 ## Context
 
 The evidence is spread over three RFCs and is summarised here so this document
@@ -395,6 +585,11 @@ Gone relative to v2: `filemeta/*` (absorbed into leaves), `packs/*`,
 manifest (it survives only as the spill form).
 
 ### 2. Fat leaves
+
+> **Revised.** Leaves carry metadata and a reference to a `blob/` object
+> holding the content, not the content itself — see "Revision: metadata and
+> content become separate objects" above. The rest of this section is as
+> originally proposed.
 
 The design is RFC 0024's, promoted from opportunistic layout change to the
 only form:

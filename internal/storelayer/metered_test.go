@@ -2,9 +2,12 @@ package storelayer
 
 import (
 	"context"
+	"errors"
+	"sync/atomic"
 	"testing"
 
 	"github.com/cloudstic/cli/pkg/store/local"
+	"github.com/cloudstic/cli/pkg/store/storetest"
 )
 
 func TestMeteredStore(t *testing.T) {
@@ -131,5 +134,73 @@ func TestMeteredStore(t *testing.T) {
 	meteredStore.Reset()
 	if bw := meteredStore.BytesWritten(); bw != 0 {
 		t.Errorf("Reset should clear BytesWritten to %d, got %d", 0, bw)
+	}
+}
+
+// countingRanger is an inner store that can range and records when it is
+// asked to, so a test can tell forwarding from a fallback that happens to
+// return the same bytes.
+type countingRanger struct {
+	*storetest.MemStore
+	ranged atomic.Int64
+}
+
+func (c *countingRanger) GetRange(ctx context.Context, key string, offset, length int64) ([]byte, error) {
+	c.ranged.Add(1)
+	data, err := c.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	if offset < 0 || length < 0 || offset+length > int64(len(data)) {
+		return nil, errors.New("range outside object")
+	}
+	out := make([]byte, length)
+	copy(out, data[offset:offset+length])
+	return out, nil
+}
+
+// The point of the method: a ranged read must reach a backend that can serve
+// one. Without it a v3 blob read transfers the whole blob to get at one
+// member, which is the cost the byte range exists to avoid — and it would do
+// so silently, since the bytes come back correct either way.
+func TestMeteredStoreForwardsRangedReads(t *testing.T) {
+	ctx := context.Background()
+	inner := &countingRanger{MemStore: storetest.NewMemStore()}
+	m := NewMeteredStore(inner)
+
+	if err := m.Put(ctx, "blob/abc", []byte("0123456789")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.GetRange(ctx, "blob/abc", 3, 4)
+	if err != nil {
+		t.Fatalf("GetRange: %v", err)
+	}
+	if string(got) != "3456" {
+		t.Fatalf("GetRange = %q, want %q", got, "3456")
+	}
+	if n := inner.ranged.Load(); n != 1 {
+		t.Fatalf("inner store served %d ranged reads, want 1; the range fell back to a whole-object Get", n)
+	}
+}
+
+// Over a backend that cannot range, the fallback must still be correct — that
+// is what lets a backend opt out by not implementing the interface.
+func TestMeteredStoreRangeGetterConformance(t *testing.T) {
+	storetest.AssertRangeGetterConformance(t, NewMeteredStore(storetest.NewMemStore()))
+}
+
+// Metering counts bytes written; a read of any shape must not move it.
+func TestMeteredStoreRangedReadDoesNotMeter(t *testing.T) {
+	ctx := context.Background()
+	m := NewMeteredStore(storetest.NewMemStore())
+	if err := m.Put(ctx, "blob/abc", []byte("0123456789")); err != nil {
+		t.Fatal(err)
+	}
+	before := m.BytesWritten()
+	if _, err := m.GetRange(ctx, "blob/abc", 0, 4); err != nil {
+		t.Fatal(err)
+	}
+	if after := m.BytesWritten(); after != before {
+		t.Fatalf("a ranged read moved the meter from %d to %d", before, after)
 	}
 }

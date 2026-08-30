@@ -1,8 +1,12 @@
 # RFC 0026: Repository Format v3 (Fat Leaves, No Packfiles)
 
-- **Status:** Proposed. Stages 1–3 implemented behind `init -format 3`; see
-  "Implementation outcome" for what the first measurements changed about the
-  design.
+- **Status:** Proposed, and **revised under measurement**. Stages 1–3 were
+  implemented behind `init -format 3` and then profiled, which showed the
+  aggregation was right and putting metadata and content in the *same* object
+  was not. "Revision: metadata and content become separate objects" is the
+  current design and supersedes the "Proposal" section below, which is kept as
+  the record of what was built and what measuring it showed. Nothing released
+  has ever written format v3, which is what makes revising it free.
 - **Date:** 2026-08-28
 - **Affects:** repository format (major version), `internal/hamt`,
   `internal/storelayer`, `internal/engine`, `internal/core`, `pkg/store`,
@@ -32,10 +36,11 @@ family. Throughout this document "v2" means that current packfile-era family
 as a whole — everything a released build reads today — and "v3" means the
 format proposed here:
 
-- File metadata and small-file content move **into the HAMT leaves**, in a
-  binary encoding, with leaves sized by a byte budget so that every stored
-  object is large. Chunk manifests inline into the leaf entry, with a spill
-  object only for very large files.
+- File metadata moves **into the HAMT leaves**, in a binary encoding, with
+  chunk manifests inlined into the leaf entry. Small-file content moved there
+  too in the version first built; the revision moves it back out into `blob/`
+  objects an entry points at, because a leaf turned out to be 3% metadata and
+  97% content, and every operation but restore reads only the 3%.
 - The packfile layer is **removed entirely**. Nothing in v3 is small enough to
   need it, so the catalog, shards, footers, admission heuristics, group plans,
   heal and repack machinery are deleted rather than improved.
@@ -1120,8 +1125,19 @@ Concrete enough to implement against and to argue with. Nothing here is built.
 `node/`, `chunk/`, `snapshot/`, `config`, `keys/` are unchanged. One kind is
 added:
 
-- **`blob/<hash>`** — a packed run of file bodies, addressed by the hash of its
-  plaintext, written in walk order, never appended to after it is sealed.
+- **`blob/<hash>`** — a packed run of file bodies, written in walk order, never
+  appended to after it is sealed, and addressed by the hash of its members'
+  **digests in order**.
+
+  Not by the hash of the concatenated bodies, which does not determine where
+  one member ends and the next begins: `["a", "bc"]` and `["ab", "c"]` would
+  name one object with two different layouts, and an empty file reaches that
+  without contrivance since `["", "abc"]` and `["abc"]` concatenate alike. A
+  content-addressed store would keep whichever arrived first while the other's
+  entries carried offsets into it. Fixed-width digests remove the ambiguity,
+  commit to the bodies exactly as strongly — a member's digest is its identity
+  everywhere else — and are already in hand, so naming a blob costs no second
+  pass over its content.
 
 #### The leaf entry
 
@@ -1198,6 +1214,25 @@ inside that band, which is reassuring but was luck.
 Per member, with the key derived from the member's own plaintext hash and a
 repository secret, and the containing blob's ref bound into the AAD.
 
+**Two bindings, doing different jobs.** The *key* is derived from the member's
+own plaintext hash, so it binds the member; the *AAD* is the blob's ref, so it
+binds the container. Both matter, and conflating them invites a simplification
+that removes one.
+
+The key binding is what defeats the cheapest leaf-level mutation: repointing an
+entry's byte range at another member of the same blob. Every member of a blob
+shares the AAD, so the AAD cannot catch that — but the reader derives its key
+from the entry's own content hash, so it derives the wrong key and the bytes do
+not authenticate. This is the mutation `restore -no-verify` would otherwise
+write to disk, since that flag skips the `meta.ContentHash` comparison by
+construction.
+
+It also means **nonce reuse cannot arise**. Key and nonce are both functions of
+(plaintext hash, blob ref), so two members sharing them are the same plaintext
+in the same blob — identical ciphertext, which leaks nothing — unless SHA-256
+collides. A blob stores a repeated body once in any case, so the question does
+not come up within one, and across blobs the differing ref separates them.
+
 **The AAD binding is load-bearing, not belt-and-braces.** A blob's ref is the
 hash of its *plaintext*, which is the discipline every self-addressed namespace
 here already follows — `core.VerifyRef` hashes decrypted bytes, and `chunk/`
@@ -1225,8 +1260,18 @@ Three further consequences, all wanted:
   two members with the same key and AAD are the same member of the same blob.
 
 A ranged read authenticates only what it fetches; `restore` and
-`check -read-data` read wholes and keep the strong guarantee. Members are
-fixed-framed so boundaries leak nothing beyond the blob's length.
+`check -read-data` read wholes and keep the strong guarantee.
+
+Members are **not** padded, and their sizes are not uniform: each is compressed
+on its own, so its stored length is a function of its content. What that
+discloses, and to whom, is worth stating rather than waving at. The index is
+sealed, so offsets and lengths are not visible without the key; an observer with
+store access alone learns a blob's total size and how many blobs there are,
+which is what any layout grouping bodies discloses. A holder of the key sees
+per-member compressed sizes, and is entitled to the bodies themselves anyway.
+Padding to fixed frames would close the first gap at a cost in stored bytes
+nothing here has shown is worth paying — but that is the claim to make, not
+that framing leaks nothing.
 
 **This needs a primitive `pkg/crypto` does not have.** `Encrypt` takes no AAD
 and draws a random nonce; both are wrong here. The member seal is a third
@@ -1471,6 +1516,15 @@ one-time re-baselining. Both are accepted.
   problem; they are large and random-access by nature.
 
 ## Proposal
+
+> **Superseded in part.** This section describes format v3 as it was first
+> built and measured. Where it says a leaf carries an entry's *content*, the
+> current design has the leaf carry a reference to a `blob/` object holding it
+> — see "Revision: metadata and content become separate objects" above, which
+> takes precedence throughout. It is kept rather than rewritten because the
+> revision is only legible against what it revises: the object model, the
+> removal of packs, the routing and the batched deletes all survive unchanged,
+> and knowing which parts did not is the point.
 
 ### 1. The v3 object model
 

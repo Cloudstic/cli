@@ -48,26 +48,7 @@ func (s *DebugStore) Get(ctx context.Context, key string) ([]byte, error) {
 // rather than inherited.
 func (s *DebugStore) GetRange(ctx context.Context, key string, offset, length int64) ([]byte, error) {
 	start := time.Now()
-
-	ranger, ok := s.inner.(RangeGetter)
-	if !ok {
-		data, err := s.inner.Get(ctx, key)
-		if err != nil {
-			s.log("GETRANGE", key, 0, 0, time.Since(start), err)
-			return nil, err
-		}
-		if offset < 0 || length < 0 || offset+length > int64(len(data)) {
-			err := fmt.Errorf("range %d+%d is outside %s (%d bytes)", offset, length, key, len(data))
-			s.log("GETRANGE", key, 0, 0, time.Since(start), err)
-			return nil, err
-		}
-		out := make([]byte, length)
-		copy(out, data[offset:offset+length])
-		s.log("GETRANGE", key, len(out), 0, time.Since(start), nil)
-		return out, nil
-	}
-
-	data, err := ranger.GetRange(ctx, key, offset, length)
+	data, err := GetRange(ctx, s.inner, key, offset, length)
 	s.log("GETRANGE", key, len(data), 0, time.Since(start), err)
 	return data, err
 }

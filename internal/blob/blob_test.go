@@ -214,6 +214,54 @@ func TestMemberDoesNotOpenUnderAnotherBlobsRef(t *testing.T) {
 	}
 }
 
+// Repointing one entry's byte range at another member of the *same* blob must
+// fail, and the AAD is not what stops it — every member of a blob shares that.
+// The member's own content hash is key material, so a range read under the
+// wrong entry's hash derives the wrong key.
+//
+// This is the mutation a leaf-level attacker can make most cheaply, and it is
+// the one restore -no-verify would otherwise write to disk, since that flag
+// skips the meta.ContentHash comparison by construction.
+func TestMemberRangeCannotBeRepointedWithinItsBlob(t *testing.T) {
+	s := testSealer(t, "master")
+	first, second := []byte("the first body"), []byte("an entirely different second body")
+	ref, data, members := addAll(t, NewWriter(s), first, second)
+
+	a, b := members[0], members[1]
+	// The attacker moves entry A's range onto member B, leaving A's metadata —
+	// and so A's content hash — untouched.
+	if _, err := ReadMember(data[b.Offset:b.Offset+b.Length], a.ContentHash, ref, s, a.PlainSize); err == nil {
+		t.Fatal("member B opened under member A's content hash")
+	}
+	if _, err := ReadMember(data[a.Offset:a.Offset+a.Length], b.ContentHash, ref, s, b.PlainSize); err == nil {
+		t.Fatal("member A opened under member B's content hash")
+	}
+}
+
+// A body appearing twice in one blob is stored once, so no key and nonce are
+// ever reused across *different* plaintexts within a blob. Across blobs the
+// same body seals differently, since the blob's ref is bound into the
+// derivation.
+func TestRepeatedBodySealsOnceWithinABlobAndDiffersAcross(t *testing.T) {
+	s := testSealer(t, "master")
+	body := []byte("a body that appears in two blobs")
+
+	refA, dataA, mA := addAll(t, NewWriter(s), body, []byte("filler one"))
+	refB, dataB, mB := addAll(t, NewWriter(s), body, []byte("filler two"))
+	if refA == refB {
+		t.Fatal("two different blobs share a ref")
+	}
+
+	sealedA := dataA[mA[0].Offset : mA[0].Offset+mA[0].Length]
+	sealedB := dataB[mB[0].Offset : mB[0].Offset+mB[0].Length]
+	if bytes.Equal(sealedA, sealedB) {
+		t.Fatal("the same body sealed identically in two blobs; the blob ref is not bound in")
+	}
+	if _, err := ReadMember(sealedA, mA[0].ContentHash, refB, s, mA[0].PlainSize); err == nil {
+		t.Fatal("a member opened under the other blob's ref")
+	}
+}
+
 func TestBlobDoesNotOpenUnderAnotherMasterKey(t *testing.T) {
 	ref, data, members := addAll(t, NewWriter(testSealer(t, "one")), []byte("secret"))
 	other := testSealer(t, "two")

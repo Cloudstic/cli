@@ -32,15 +32,20 @@ type PruneResult struct {
 var objectPrefixes = []string{"chunk/", "content/", "filemeta/", "node/", "snapshot/"}
 
 // objectPrefixesV3 are the namespaces a format-v3 repository actually stores
-// in. filemeta/ and content/ do not exist there — an entry's metadata and its
-// small content live in the leaf — so listing them would spend a request per
-// prune to enumerate nothing, on every backend, forever.
+// in. filemeta/ and content/ do not exist there — an entry's metadata lives in
+// the leaf and its body in a blob/ object — so listing them would spend a
+// request per prune to enumerate nothing, on every backend, forever.
+//
+// blob/ belongs here only because the marking pass above knows how to reach a
+// blob. Adding the prefix is what makes blobs collectable, and therefore what
+// makes a marking pass that missed them destructive; the two must never be
+// separated.
 //
 // Sweeping a prefix that cannot exist is not merely wasteful, it is a claim
 // about the format that stops being true if it is ever wrong: a listing that
 // failed would fail the prune (docs/compatibility.md requires it), so the
 // honest set is the one the format writes.
-var objectPrefixesV3 = []string{"chunk/", "node/", "snapshot/"}
+var objectPrefixesV3 = []string{"blob/", "chunk/", "node/", "snapshot/"}
 
 // prefixes returns the namespaces this repository's format stores objects in.
 func (pm *PruneManager) prefixes() []string {
@@ -259,24 +264,32 @@ func (pm *PruneManager) markSnapshot(ctx context.Context, ref string, reachable 
 	// chunk refs are unknowable, and docs/compatibility.md forbids collecting
 	// garbage over data that could not be fully read.
 	if pm.v3 {
-		// WalkChunkRefs rather than WalkTree: marking reads an entry's chunk
-		// refs and nothing else, and a leaf's Meta and Inline are almost all of
-		// its bytes. Decoding them cost 45% of the allocation of marking one
+		// WalkReachable rather than WalkTree: marking reads what an entry
+		// reaches and nothing else, and Meta is the bulk of what a leaf
+		// carries. Decoding it cost 45% of the allocation of marking one
 		// 357 MB repository.
-		return pm.tree.WalkChunkRefs(ctx, snap.Root,
+		//
+		// EntryRefs.Objects rather than a field-by-field loop, so that a kind
+		// of reference added to the format is marked here without an edit. The
+		// alternative failed once already: when bodies moved into blob/
+		// objects, a marking loop that knew only about chunks would have
+		// reported every entry as reaching nothing and swept the lot.
+		var buf []string
+		return pm.tree.WalkReachable(ctx, snap.Root,
 			func(r string) error {
 				reachable.Add(r)
 				return nil
 			},
-			func(key, ref string, chunks []string, hasPayload bool) error {
+			func(key, ref string, refs hamt.EntryRefs) error {
 				if !reachable.Add(ref) {
 					return nil
 				}
-				if !hasPayload {
+				if !refs.HasPayload {
 					return fmt.Errorf("v3 leaf entry %s (%s) carries no payload; refusing to prune", key, ref)
 				}
-				for _, c := range chunks {
-					reachable.Add(c)
+				buf = refs.Objects(buf[:0])
+				for _, o := range buf {
+					reachable.Add(o)
 				}
 				return nil
 			})

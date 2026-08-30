@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -129,6 +128,12 @@ type CopySide struct {
 	Store  store.ObjectStore
 	RepoID string
 
+	// BlobStore and Sealer are how a format-v3 source's file bodies are read:
+	// the store below compression and encryption, and the key its blob members
+	// were sealed under. Both are ignored when FormatV3 is false.
+	BlobStore store.ObjectStore
+	Sealer    *crypto.MemberSealer
+
 	// FormatV3 marks the source as a recorded format-v3 repository (RFC 0026),
 	// where an entry's metadata and small content ride in the leaf and there
 	// are no filemeta/ or content/ objects to read.
@@ -163,6 +168,16 @@ type CopyManager struct {
 
 	reporter ui.Reporter
 	log      *logger.Logger
+
+	// srcBlobs reads bodies out of the source's blobs; dstBlobs packs them
+	// into the destination's. Either is nil when that side is not v3.
+	srcBlobs *blobReader
+	dstBlobs *blobWriter
+
+	// pendingInserts are entries whose body is in a blob that has not sealed
+	// yet, so their body reference does not exist to be encoded. See
+	// flushInserts.
+	pendingInserts []pendingInsert
 
 	// A copy reads one repository's catalog and writes another's, so it binds
 	// one per side rather than passing a store per call.
@@ -217,17 +232,41 @@ type copiedEntry struct {
 	// it nil.
 	payload *hamt.Payload
 
-	// payloadElided marks a cache entry whose payload was dropped rather than
-	// kept: inline content is bounded per entry but not in aggregate, and
-	// holding every inlined file of a run at once is how a copy of a tree of
-	// small files runs a machine out of memory.
-	//
-	// It has to be distinguishable from "no payload". Inserting a v3 entry
-	// without one writes a leaf whose metadata is simply absent — a tree that
-	// commits, verifies, and cannot be restored — so a hit on an elided entry
-	// rebuilds instead of reusing.
-	payloadElided bool
+	// promise is where this entry's body landed in the destination, resolved
+	// when the blob holding it seals. Nil when the entry has no body — and
+	// nil on a cache hit, whose payload already carries a resolved reference.
+	promise *bodyPromise
+
+	// There is deliberately no elision flag here. One existed while a payload
+	// carried the entry's content, because that was bounded per entry but not
+	// in aggregate, and holding every inlined file of a run at once is how a
+	// copy of a tree of small files ran a machine out of memory. A payload is
+	// now metadata and a body reference — a few hundred bytes — so caching it
+	// is what the cache is for, and re-reading instead would fetch the body
+	// again on every repeated visit.
 }
+
+// pendingInsert is one entry waiting on the blob holding its body.
+//
+// A payload cannot be inserted with its body reference still missing, and not
+// only because the reference would be lost. Payload.approxSize feeds the leaf
+// split rule, so an entry inserted as though it had no body would size its
+// leaf differently from the same entry written by backup — and a repository
+// written by copy has to be indistinguishable from one written by backup, down
+// to the root hash.
+type pendingInsert struct {
+	affinityKey string
+	key         string
+	ref         string
+	payload     *hamt.Payload
+	promise     *bodyPromise
+}
+
+// copyInsertBatch is how many entries copy buffers before sealing whatever
+// blob is pending and filing them. Large enough that most blobs fill and seal
+// on their own during packing, so the forced seal at the boundary usually
+// takes only a remainder.
+const copyInsertBatch = 2048
 
 // copiedTree pairs a source tree with the destination tree copy produced from
 // it, so the next snapshot of the same lineage can be applied incrementally.
@@ -250,7 +289,7 @@ func NewCopyManager(d Deps, src CopySide, dstRepoID string) *CopyManager {
 		srcOpts = append([]hamt.TreeOption{hamt.WithFormatV3()}, srcOpts...)
 	}
 
-	return &CopyManager{
+	cm := &CopyManager{
 		src:         src,
 		dst:         d.Store,
 		dstHMAC:     d.HMACKey,
@@ -268,6 +307,13 @@ func NewCopyManager(d Deps, src CopySide, dstRepoID string) *CopyManager {
 		metaRefs:    map[string]copiedEntry{},
 		lastCopied:  map[string]copiedTree{},
 	}
+	if src.FormatV3 {
+		cm.srcBlobs = newBlobReader(src.BlobStore, src.Sealer)
+	}
+	if d.FormatV3 {
+		cm.dstBlobs = newBlobWriter(d.BlobStore, d.Sealer)
+	}
+	return cm
 }
 
 // Run performs the copy.
@@ -570,6 +616,12 @@ func (cm *CopyManager) copySnapshot(ctx context.Context, entry SnapshotEntry, se
 		return "", err
 	}
 
+	if cm.dstV3 {
+		if err := cm.flushInserts(ctx, txn); err != nil {
+			return "", err
+		}
+	}
+
 	root, err := txn.Commit(ctx)
 	if err != nil {
 		return "", fmt.Errorf("commit destination tree: %w", err)
@@ -596,7 +648,7 @@ func (cm *CopyManager) applyWholeTree(ctx context.Context, txn *hamt.Txn, root s
 			return fmt.Errorf("entry %s: %w", shortRef(srcMetaRef), err)
 		}
 		phase.Increment(1)
-		return txn.InsertWithPayload(ctx, copied.affinityKey, fileID, copied.ref, copied.payload)
+		return cm.bufferInsert(ctx, txn, copied, fileID)
 	})
 }
 
@@ -639,8 +691,54 @@ func (cm *CopyManager) applySourceDiff(
 		if err != nil {
 			return fmt.Errorf("entry %s: %w", shortRef(entry.NewValue), err)
 		}
-		return txn.InsertWithPayload(ctx, copied.affinityKey, entry.Key, copied.ref, copied.payload)
+		return cm.bufferInsert(ctx, txn, copied, entry.Key)
 	})
+}
+
+// bufferInsert files one copied entry, deferring it when its body is still in
+// an unsealed blob.
+//
+// Deletes are applied as they arrive rather than queued alongside. A diff
+// reports each key once, so a deferred insert and an immediate delete never
+// concern the same key, and inserts and deletes of distinct keys commute.
+func (cm *CopyManager) bufferInsert(ctx context.Context, txn *hamt.Txn, copied copiedEntry, key string) error {
+	if copied.promise == nil {
+		return txn.InsertWithPayload(ctx, copied.affinityKey, key, copied.ref, copied.payload)
+	}
+	cm.pendingInserts = append(cm.pendingInserts, pendingInsert{
+		affinityKey: copied.affinityKey,
+		key:         key,
+		ref:         copied.ref,
+		payload:     copied.payload,
+		promise:     copied.promise,
+	})
+	if len(cm.pendingInserts) < copyInsertBatch {
+		return nil
+	}
+	return cm.flushInserts(ctx, txn)
+}
+
+// flushInserts seals whatever blob is pending, resolves every deferred entry's
+// body reference, and files them. It must run before the destination tree is
+// committed: an entry left unresolved would be encoded with no body.
+func (cm *CopyManager) flushInserts(ctx context.Context, txn *hamt.Txn) error {
+	if len(cm.pendingInserts) == 0 {
+		return nil
+	}
+	if err := cm.dstBlobs.Flush(ctx); err != nil {
+		return err
+	}
+	for _, pi := range cm.pendingInserts {
+		if pi.promise.ref == nil {
+			return fmt.Errorf("entry %s: its body was never placed in a blob", shortRef(pi.ref))
+		}
+		pi.payload.Body = pi.promise.ref
+		if err := txn.InsertWithPayload(ctx, pi.affinityKey, pi.key, pi.ref, pi.payload); err != nil {
+			return err
+		}
+	}
+	cm.pendingInserts = cm.pendingInserts[:0]
+	return nil
 }
 
 // affinityKeyFor returns the routing key an existing source filemeta was filed
@@ -761,7 +859,7 @@ func (cm *CopyManager) writeSnapshot(
 // The cache is consulted before the source is read, so a file unchanged across
 // a run of snapshots is fetched once no matter how many snapshots contain it.
 func (cm *CopyManager) copyEntry(ctx context.Context, srcRef string, srcPayload *hamt.Payload) (copiedEntry, error) {
-	if cached, ok := cm.metaRefs[srcRef]; ok && !cached.payloadElided {
+	if cached, ok := cm.metaRefs[srcRef]; ok {
 		return cached, nil
 	}
 
@@ -790,16 +888,18 @@ func (cm *CopyManager) copyEntry(ctx context.Context, srcRef string, srcPayload 
 	copied := copiedEntry{ref: destRef, affinityKey: AffinityKey(primaryParentID(meta), meta.FileID)}
 	if cm.dstV3 {
 		copied.payload = newLeafPayload(encoded, body)
-		copied.payloadElided = len(copied.payload.Inline) > 0
+		if len(body.body) > 0 {
+			promise, err := cm.dstBlobs.Add(ctx, meta.ContentHash, body.body)
+			if err != nil {
+				return copiedEntry{}, err
+			}
+			copied.promise = promise
+		}
 	} else if err := cm.putIfMissing(ctx, destRef, encoded); err != nil {
 		return copiedEntry{}, err
 	}
 
-	cached := copied
-	if cached.payloadElided {
-		cached.payload = nil
-	}
-	cm.metaRefs[srcRef] = cached
+	cm.metaRefs[srcRef] = copied
 	return copied, nil
 }
 
@@ -904,7 +1004,7 @@ func (cm *CopyManager) copyContent(
 		Type:          core.ObjectTypeContent,
 		Size:          body.size,
 		Chunks:        body.chunks,
-		DataInlineB64: body.inline,
+		DataInlineB64: body.body,
 	})
 	if err != nil {
 		return "", contentBody{}, err
@@ -925,12 +1025,20 @@ func (cm *CopyManager) readSourceContent(
 ) (contentBody, error) {
 	if p != nil {
 		body := contentBody{size: p.Size, chunks: p.Chunks}
-		if len(p.Inline) > 0 {
-			// Copied out: a payload is shared with the source tree's node
-			// cache and must not be retained past the walk callback, and this
-			// one lives until the destination tree commits.
-			body.inline = bytes.Clone(p.Inline)
-			cm.bytesRead += int64(len(p.Inline))
+		if p.Body != nil {
+			meta, err := cm.readSourceMeta(ctx, srcKey, p)
+			if err != nil {
+				return contentBody{}, err
+			}
+			// Read whole: the destination repacks bodies into its own blobs,
+			// so there is nothing to be gained by keeping the source's layout,
+			// and the content hash is what keys the member's seal.
+			raw, err := cm.srcBlobs.Body(ctx, p, meta.ContentHash)
+			if err != nil {
+				return contentBody{}, err
+			}
+			body.body = raw
+			cm.bytesRead += int64(len(raw))
 		}
 		return body, nil
 	}
@@ -943,7 +1051,7 @@ func (cm *CopyManager) readSourceContent(
 	if err := json.Unmarshal(raw, &content); err != nil {
 		return contentBody{}, fmt.Errorf("parse content %s: %w", shortRef(srcKey), err)
 	}
-	return contentBody{size: content.Size, inline: content.DataInlineB64, chunks: content.Chunks}, nil
+	return contentBody{size: content.Size, body: content.DataInlineB64, chunks: content.Chunks}, nil
 }
 
 // copyChunk transfers one chunk, re-addressing it under the destination's key.

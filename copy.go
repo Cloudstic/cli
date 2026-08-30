@@ -96,7 +96,13 @@ func (c *Client) CopyFrom(ctx context.Context, src *Client, opts ...CopyOption) 
 
 	mgr := engine.NewCopyManager(
 		c.engineDeps(),
-		engine.CopySide{Store: src.store, RepoID: srcID, FormatV3: src.formatV3()},
+		engine.CopySide{
+			Store:     src.store,
+			RepoID:    srcID,
+			FormatV3:  src.formatV3(),
+			BlobStore: src.storedMeter,
+			Sealer:    src.memberSealer,
+		},
 		dstID,
 	)
 

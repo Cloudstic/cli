@@ -25,7 +25,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -111,7 +110,9 @@ func collect(ctx context.Context, s store.ObjectStore, root string) ([]leaf, err
 				return nil
 			}
 			cur.meta += len(p.Meta)
-			cur.inline += len(p.Inline)
+			if p.Body != nil {
+				cur.inline += int(p.Body.Length)
+			}
 			cur.nchunks += len(p.Chunks)
 			for _, c := range p.Chunks {
 				cur.chunks += len(c) + 2
@@ -183,8 +184,11 @@ func printEntries(ctx context.Context, s store.ObjectStore, root string) error {
 				return nil
 			}
 			switch {
-			case len(p.Inline) > 0:
-				fmt.Printf("%s\t%x\t%d\n", key, sha256.Sum256(p.Inline), len(p.Inline))
+			case p.Body != nil:
+				// The blob and offset, not a hash of the body: reading the
+				// body would mean a ranged fetch per entry, and what this
+				// output is for is seeing which blob an entry landed in.
+				fmt.Printf("%s\t%s@%d+%d\t%d\n", key, p.Body.Blob, p.Body.Offset, p.Body.Length, p.Size)
 			case len(p.Chunks) > 0:
 				fmt.Printf("%s\tchunks:%s\t%d\n", key, strings.Join(p.Chunks, ","), p.Size)
 			default:

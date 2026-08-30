@@ -64,6 +64,10 @@ type uploadResult struct {
 	// plus either the inline content or its chunk refs. Nil in v2, where both
 	// were persisted as their own objects by the worker.
 	payload *hamt.Payload
+	// promise is where this entry's body landed, resolved once the blob
+	// holding it is sealed. Nil for a folder, an empty file, or a chunked
+	// body, none of which put anything in a blob.
+	promise *bodyPromise
 	err     error
 }
 
@@ -143,20 +147,48 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 	// It costs no memory: an insert hands the payload to the transaction,
 	// which holds it until commit either way, so buffering only moves when
 	// that happens rather than adding to it.
+	pending2 := make([]uploadResult, 0, insertBatch)
 	buf := make([]uploadResult, 0, insertBatch)
-	flush := func() error {
-		if len(buf) == 0 {
+	ready := make([]uploadResult, 0, insertBatch)
+
+	// An entry whose body is still in an unsealed blob has no reference to
+	// encode, so it is held back rather than inserted. Holding back is the
+	// alternative to sealing the blob early, which would let the insert batch
+	// — an unrelated quantity — decide blob sizes, and produce a blob per
+	// batch of small files far below the budget. What is held back is bounded
+	// by one blob, since Add seals as soon as one fills.
+	//
+	// sealAll forces the last, partial blob out; every other flush lets the
+	// budget decide.
+	flush := func(sealAll bool) error {
+		if sealAll && bm.blobs != nil {
+			if err := bm.blobs.Flush(ctx); err != nil {
+				return err
+			}
+		}
+		ready, buf = ready[:0], buf[:0]
+		for _, res := range pending2 {
+			if res.promise != nil && res.promise.ref == nil {
+				buf = append(buf, res)
+				continue
+			}
+			if res.promise != nil {
+				res.payload.Body = res.promise.ref
+			}
+			ready = append(ready, res)
+		}
+		pending2 = append(pending2[:0], buf...)
+		if len(ready) == 0 {
 			return nil
 		}
-		sort.Slice(buf, func(i, j int) bool {
-			return AffinityKey(buf[i].parentID, buf[i].fileID) < AffinityKey(buf[j].parentID, buf[j].fileID)
+		sort.Slice(ready, func(i, j int) bool {
+			return AffinityKey(ready[i].parentID, ready[i].fileID) < AffinityKey(ready[j].parentID, ready[j].fileID)
 		})
-		for _, res := range buf {
+		for _, res := range ready {
 			if err := bm.txn.InsertWithPayload(ctx, AffinityKey(res.parentID, res.fileID), res.fileID, res.ref, res.payload); err != nil {
 				return fmt.Errorf("hamt insert: %w", err)
 			}
 		}
-		buf = buf[:0]
 		return nil
 	}
 
@@ -190,9 +222,9 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 			return res.err
 		}
 		if res.payload != nil {
-			retained += len(res.payload.Inline) + len(res.payload.Meta)
+			retained += len(res.payload.Meta)
 		}
-		buf = append(buf, res)
+		pending2 = append(pending2, res)
 
 		// Two independent triggers, because they bound different things. The
 		// entry count keeps the insert batch large enough to be worth sorting;
@@ -200,12 +232,12 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 		// on its own — a run of half-megabyte inlined files reaches the byte
 		// budget in a couple of hundred entries and would otherwise wait for a
 		// batch that is ten times further off.
-		full := len(buf) >= insertBatch
+		full := len(pending2) >= insertBatch
 		heavy := retained >= uploadCommitBytes
 		if !full && !heavy {
 			continue
 		}
-		if err := flush(); err != nil {
+		if err := flush(false); err != nil {
 			phase.Error()
 			return err
 		}
@@ -216,7 +248,7 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 			}
 		}
 	}
-	if err := flush(); err != nil {
+	if err := flush(true); err != nil {
 		phase.Error()
 		return err
 	}
@@ -249,8 +281,8 @@ type uploadedContent struct {
 	hash   string
 	size   int64
 	ref    string   // HMAC(dedupKey, hash), or hash when unencrypted
-	chunks []string // chunk refs; nil for inline or dedup'd content
-	inline []byte   // v3 only: the content itself, owned by the caller
+	chunks []string // chunk refs; nil for a blob-bound or dedup'd body
+	body   []byte   // v3 only: the body itself, bound for a blob/ object
 }
 
 // processFile uploads (or deduplicates) a single file's content and persists
@@ -274,19 +306,27 @@ func (bm *BackupManager) processFile(ctx context.Context, meta core.FileMeta, ph
 	}
 
 	if bm.v3 {
-		// The filemeta and the content's location ride in the leaf entry; the
-		// only standalone objects a v3 file produces are its chunks.
-		return uploadResult{
+		// The filemeta rides in the leaf entry, and so does a reference to
+		// where the body landed; the standalone objects a v3 file produces are
+		// its chunks, or a share of one blob.
+		res := uploadResult{
 			fileID:   meta.FileID,
 			parentID: primaryParentID(&meta),
 			ref:      metaRef,
 			payload: &hamt.Payload{
 				Meta:   metaData,
 				Size:   content.size,
-				Inline: content.inline,
 				Chunks: content.chunks,
 			},
 		}
+		if content.body != nil {
+			promise, err := bm.blobs.Add(ctx, content.hash, content.body)
+			if err != nil {
+				return uploadResult{err: err}
+			}
+			res.promise = promise
+		}
+		return res
 	}
 
 	if err := bm.store.Put(ctx, metaRef, metaData); err != nil {
@@ -376,10 +416,10 @@ func (bm *BackupManager) uploadInline(ctx context.Context, r io.Reader, meta cor
 
 	if bm.v3 {
 		// Copied out of the pooled buffer, which goes back to the pool on
-		// return while the payload lives until the tree commits.
-		inline := make([]byte, n)
-		copy(inline, data)
-		return uploadedContent{hash: hash, size: size, ref: contentRef, inline: inline}, nil
+		// return while the body lives until its blob is sealed.
+		bodyCopy := make([]byte, n)
+		copy(bodyCopy, data)
+		return uploadedContent{hash: hash, size: size, ref: contentRef, body: bodyCopy}, nil
 	}
 
 	contentKey := "content/" + contentRef

@@ -457,7 +457,7 @@ func TestWalkChunkRefsReportsEveryChunk(t *testing.T) {
 // The one way the reduction could go quietly wrong: a node decoded without its
 // Meta and Inline becoming someone else's cache hit, so a later reader that
 // does need them sees an entry with no metadata and an empty file rather than
-// an error. loadChunksOnly must never write the cache.
+// an error. loadRefsOnly must never write the cache.
 func TestWalkChunkRefsDoesNotPoisonTheNodeCache(t *testing.T) {
 	const n = 100
 	fresh, root := buildChunkRefTree(t, n)
@@ -648,7 +648,7 @@ func TestChunksOnlyDecodeRejectsATruncatedLeaf(t *testing.T) {
 		t.Fatal("fixture has no leaf node")
 	}
 	for _, cut := range []int{len(leaf) / 2, len(leaf) - 1} {
-		if _, err := decodeNodeV3Detail(leaf[:cut], payloadChunksOnly); err == nil {
+		if _, err := decodeNodeV3Detail(leaf[:cut], payloadRefsOnly); err == nil {
 			t.Errorf("a leaf truncated to %d of %d bytes decoded without error", cut, len(leaf))
 		}
 	}
@@ -709,7 +709,7 @@ func TestWalkChunkRefsFailsOnAnUnreadableNode(t *testing.T) {
 // An empty ref is a malformed tree, not an empty one.
 func TestLoadChunksOnlyRejectsAnEmptyRef(t *testing.T) {
 	tree, _ := v3TestTree()
-	if _, err := tree.nodes.loadChunksOnly(ctx, ""); err == nil {
+	if _, err := tree.nodes.loadRefsOnly(ctx, ""); err == nil {
 		t.Error("an empty node ref loaded without error")
 	}
 }

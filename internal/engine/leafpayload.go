@@ -14,9 +14,14 @@ type contentBody struct {
 	// size is the entry's content size in bytes. Zero for folders.
 	size int64
 
-	// inline is the entry's whole content, for content small enough to store
-	// in place. Nil when the content is chunked or empty.
-	inline []byte
+	// body is the entry's whole content, for content small enough not to be
+	// chunked. Nil when the content is chunked or empty.
+	//
+	// It is the bytes rather than a reference because this is the seam between
+	// reading content and writing it: where the bytes end up is the
+	// destination repository's business, and in v3 that is a blob whose
+	// identity is not known until it seals.
+	body []byte
 
 	// chunks is the ordered list of "chunk/<hash>" refs reconstructing the
 	// content, named under the repository the body is bound for. Nil when the
@@ -38,13 +43,12 @@ type contentBody struct {
 // folder and an empty file carry.
 func newLeafPayload(meta []byte, body contentBody) *hamt.Payload {
 	p := &hamt.Payload{Meta: meta, Size: body.size}
-	// Inline and chunks are alternatives, never both: a repository that
+	// A body and chunks are alternatives, never both: a repository that
 	// recorded one of each for the same entry would restore it twice over.
-	switch {
-	case len(body.chunks) > 0:
+	// A body's own placement is filled in by whoever seals the blob holding
+	// it, so a payload leaves here with Body still nil.
+	if len(body.chunks) > 0 {
 		p.Chunks = body.chunks
-	case len(body.inline) > 0:
-		p.Inline = body.inline
 	}
 	return p
 }

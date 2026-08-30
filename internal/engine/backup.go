@@ -115,10 +115,13 @@ type BackupManager struct {
 	// store is the key-cached view of the destination, and the only store this
 	// manager writes through. It is held at its concrete type so PreloadKeys
 	// stays reachable; every other use goes through store.ObjectStore.
-	store      *storelayer.KeyCacheStore
-	tree       *hamt.Tree
-	txn        *hamt.Txn // working tree; opened by scanSource, written by Commit
-	chunker    *Chunker
+	store   *storelayer.KeyCacheStore
+	tree    *hamt.Tree
+	txn     *hamt.Txn // working tree; opened by scanSource, written by Commit
+	chunker *Chunker
+	// blobs packs file bodies into blob/ objects. Nil outside format v3,
+	// where bodies are content objects and there is nothing to pack.
+	blobs      *blobWriter
 	reporter   ui.Reporter
 	stats      *backupStats
 	sourceInfo core.SourceInfo
@@ -166,7 +169,7 @@ func NewBackupManager(d Deps, src source.Source, opts ...BackupOption) *BackupMa
 
 	sourceInfo := src.Info()
 	keyCache := storelayer.NewKeyCacheStore(d.Store)
-	return &BackupManager{
+	bm := &BackupManager{
 		log:          defaultBackupLog.To(d.LogSink),
 		catalog:      newSnapshotCatalog(keyCache, d.LogSink),
 		source:       src,
@@ -182,6 +185,15 @@ func NewBackupManager(d Deps, src source.Source, opts ...BackupOption) *BackupMa
 		hmacKey:      d.HMACKey,
 		v3:           d.FormatV3,
 	}
+	if d.FormatV3 {
+		// Bodies go to the store below compression and encryption, since a
+		// blob's members carry their own of each (RFC 0026). Not through
+		// keyCache: a blob is named by its member sequence, so a repeat is
+		// possible but rare, and caching one would hold megabytes to save a
+		// request that is almost never made.
+		bm.blobs = newBlobWriter(d.BlobStore, d.Sealer)
+	}
+	return bm
 }
 
 // RunResult holds the outcome of a successful backup run.

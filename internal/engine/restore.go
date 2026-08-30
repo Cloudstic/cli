@@ -124,6 +124,8 @@ type RestoreManager struct {
 	metas     *metaLoader
 	reporter  ui.Reporter
 	memBudget *semaphore.Weighted
+	// blobs reads a body out of the blob holding it. Nil outside format v3.
+	blobs *blobReader
 	// v3 is the repository's recorded format (Deps.FormatV3): metadata and
 	// content locations are read from leaf payloads, never from filemeta/ or
 	// content/ objects.
@@ -138,6 +140,7 @@ func NewRestoreManager(d Deps) *RestoreManager {
 		reporter:  d.Reporter,
 		memBudget: semaphore.NewWeighted(restoreMemoryBudget),
 		v3:        d.FormatV3,
+		blobs:     d.blobReader(),
 	}
 }
 
@@ -940,8 +943,12 @@ func (rm *RestoreManager) writeContentFromPayload(ctx context.Context, out io.Wr
 		if err := rm.writeChunks(ctx, dst, p.Chunks, avg); err != nil {
 			return err
 		}
-	case len(p.Inline) > 0:
-		if _, err := dst.Write(p.Inline); err != nil {
+	case p.Body != nil:
+		body, err := rm.blobs.Body(ctx, p, meta.ContentHash)
+		if err != nil {
+			return err
+		}
+		if _, err := dst.Write(body); err != nil {
 			return err
 		}
 	}
@@ -1108,7 +1115,7 @@ func (rm *RestoreManager) collectDirectoriesFromLeaves(ctx context.Context, root
 		if p == nil {
 			return fmt.Errorf("v3 leaf entry %s carries no metadata payload", ref)
 		}
-		if len(p.Inline) > 0 || len(p.Chunks) > 0 {
+		if p.Body != nil || len(p.Chunks) > 0 {
 			return nil // has content, so not a directory
 		}
 		fm, err := decodePayloadMeta(ref, p)

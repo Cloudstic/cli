@@ -71,6 +71,8 @@ type CheckManager struct {
 	// why it is an objkey.Set rather than the map[string]bool it reads as.
 	verified *objkey.Set
 	hmacKey  []byte
+	// blobs reads a body out of the blob holding it. Nil outside format v3.
+	blobs *blobReader
 	// v3 is the repository's recorded format (Deps.FormatV3): entries carry
 	// their metadata and content in leaf payloads, so the per-entry chain is
 	// verified from the leaf rather than fetched per object.
@@ -85,6 +87,7 @@ func NewCheckManager(d Deps) *CheckManager {
 		reporter: d.Reporter,
 		hmacKey:  d.HMACKey,
 		v3:       d.FormatV3,
+		blobs:    d.blobReader(),
 	}
 }
 
@@ -339,8 +342,17 @@ func (cm *CheckManager) checkLeafContent(
 	phase ui.Phase,
 ) {
 	hasher := sha256.New()
-	if len(p.Inline) > 0 {
-		_, _ = hasher.Write(p.Inline)
+	if p.Body != nil {
+		body, err := cm.blobs.Body(ctx, p, meta.ContentHash)
+		if err != nil {
+			result.Errors = append(result.Errors, CheckError{
+				Key:     ref,
+				Type:    "corrupt",
+				Message: fmt.Sprintf("reading the body this entry references: %v", err),
+			})
+			return
+		}
+		_, _ = hasher.Write(body)
 	}
 	for _, chunkRef := range p.Chunks {
 		data, err := cm.store.Get(ctx, chunkRef)

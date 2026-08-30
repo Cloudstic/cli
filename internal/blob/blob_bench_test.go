@@ -39,8 +39,13 @@ func benchSealer(b *testing.B) *crypto.MemberSealer {
 	return s
 }
 
-// Sealing a blob is on the backup path, once per blob. The interesting number
-// is per member: a 4 MB blob of small files holds hundreds.
+// Sealing a blob is on the backup path, once per blob. It covers hashing each
+// body to verify the caller's digest, compressing and sealing every member,
+// sealing the index and assembling the object — so it is deliberately not
+// comparable with the compression-only baselines further down. Subtract
+// BenchmarkPerMemberCompress from it to see what everything other than
+// compression costs: on an M3 Max, 3.4ms of a 17.5ms 4 KiB-member blob and
+// 1.9ms of a 3.1ms 64 KiB-member one.
 func BenchmarkWriterSeal(b *testing.B) {
 	for _, size := range []int{4 << 10, 64 << 10} {
 		n := (4 << 20) / size // members in a 4 MB blob
@@ -120,16 +125,42 @@ func BenchmarkParseIndex(b *testing.B) {
 	}
 }
 
-// The same bytes compressed as ONE object, which is what the store chain does
-// for every object today. The gap is what per-member framing costs, and it is
-// the price of a ranged read rather than an inefficiency to remove: zstd
-// restarts per member, so it never sees redundancy across members.
+// BenchmarkPerMemberCompress isolates the one thing the layout changes about
+// compression: zstd restarts per member and never sees redundancy across them.
+// It compresses the same bytes member by member and does nothing else, so it
+// is directly comparable with BenchmarkWholeObjectCompress below. This pair,
+// and not BenchmarkWriterSeal against the baseline, is what measures framing.
 //
-// Measured on an M3 Max against BenchmarkWriterSeal over the same 4 MB:
-// 4 KiB members 17.4ms against 3.2ms one-shot (5.4x), 64 KiB members 3.2ms
-// against 1.3ms (2.5x). Member size dominates, which is worth knowing before
-// the inline threshold is re-chosen — it is now the knob that decides how much
-// of a repository is sealed in small pieces.
+// On an M3 Max over the same 4 MB: at 4 KiB members 14.1ms against 3.2ms
+// one-shot, a 4.4x penalty; at 64 KiB members 1.20ms against 1.34ms, which is
+// no penalty at all — per-member is marginally the faster of the two, since
+// zstd on 64 KiB already saturates its window and the one-shot path pays for a
+// single 4 MB buffer.
+//
+// So the cost of framing is not a property of the layout so much as of member
+// size, and it is confined to small members. That sharpens what the inline
+// threshold now decides: it is the knob choosing how much of a repository is
+// compressed in pieces too small to amortise a zstd restart.
+func BenchmarkPerMemberCompress(b *testing.B) {
+	initZstd()
+	for _, size := range []int{4 << 10, 64 << 10} {
+		n := (4 << 20) / size
+		bodies, _ := benchBodies(n, size)
+		b.Run(fmt.Sprintf("%dKiBmembers", size>>10), func(b *testing.B) {
+			b.SetBytes(int64(n * size))
+			b.ReportAllocs()
+			for range b.N {
+				for _, body := range bodies {
+					_ = compress(body)
+				}
+			}
+		})
+	}
+}
+
+// The same bytes compressed as ONE object, which is what the store chain does
+// for every object today. Against BenchmarkPerMemberCompress the gap is the
+// price of a ranged read rather than an inefficiency to remove.
 func BenchmarkWholeObjectCompress(b *testing.B) {
 	initZstd()
 	for _, size := range []int{4 << 10, 64 << 10} {

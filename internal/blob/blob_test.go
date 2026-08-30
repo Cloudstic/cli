@@ -268,6 +268,81 @@ func TestAddRejectsAMalformedContentHash(t *testing.T) {
 	}
 }
 
+// The sharper case: a well-formed digest that is simply not this body's. It
+// would misname the blob, and — worse — a later different body offered under a
+// hash already seen is dropped by the dedup, leaving its entry pointing at the
+// first body's bytes. That is wrong data returned successfully.
+func TestAddRejectsAValidHashOfDifferentBytes(t *testing.T) {
+	w := NewWriter(nil)
+	if err := w.Add(hashOf([]byte("some other body")), []byte("body")); err == nil {
+		t.Fatal("Add accepted a valid digest that is not the body's")
+	}
+	if w.Len() != 0 {
+		t.Fatalf("the rejected body was retained: %d members", w.Len())
+	}
+	// Uppercase hex is the same digest spelled differently, and would be a
+	// second dedup key for one body. Verification rejects it for free.
+	if err := w.Add(strings.ToUpper(hashOf([]byte("body"))), []byte("body")); err == nil {
+		t.Error("Add accepted a non-canonical hex digest")
+	}
+}
+
+// Member boundaries have to be part of a blob's identity. Hashing concatenated
+// bodies would give these pairs one ref for two different layouts, and a
+// content-addressed store would keep whichever arrived first while the other's
+// leaf entries carried offsets into it.
+func TestRefDistinguishesMemberBoundaries(t *testing.T) {
+	s := testSealer(t, "master")
+	cases := []struct {
+		name string
+		a, b [][]byte
+	}{
+		{"split differently", [][]byte{[]byte("a"), []byte("bc")}, [][]byte{[]byte("ab"), []byte("c")}},
+		// An empty file reaches the same collision without contrivance.
+		{"empty member", [][]byte{{}, []byte("abc")}, [][]byte{[]byte("abc")}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			refA, _, _ := addAll(t, NewWriter(s), tc.a...)
+			refB, _, _ := addAll(t, NewWriter(s), tc.b...)
+			if refA == refB {
+				t.Fatalf("%v and %v share the ref %s", tc.a, tc.b, refA)
+			}
+		})
+	}
+}
+
+// A forged member count must not be trusted to size an allocation: multiplied
+// by the digest width it wraps a uint64 to zero, so the guard has to divide.
+func TestIndexRejectsAForgedMemberCount(t *testing.T) {
+	plain := append([]byte{}, indexMagic[:]...)
+	plain = binary.AppendUvarint(plain, 1<<59)
+	// The index is read from immediately before the trailer, so it has to sit
+	// there — anything after it is read as the index instead.
+	forged := append(bytes.Repeat([]byte("m"), 16), plain...)
+	forged = binary.BigEndian.AppendUint32(forged, uint32(len(plain)))
+
+	if _, err := ParseIndex(forged, "blob/whatever", nil); !errors.Is(err, ErrMalformed) {
+		t.Fatalf("ParseIndex accepted an index claiming 1<<59 members: err = %v", err)
+	}
+}
+
+// Offset and Length are attacker-influenced, so their sum must never be the
+// thing that is bounds-checked: it can wrap negative and pass.
+func TestIndexRejectsAnOverflowingPlacement(t *testing.T) {
+	bad := Placement{ContentHash: hashOf([]byte("x")), Offset: 1 << 62, Length: 1 << 62}
+	index, err := encodeIndex([]Placement{bad})
+	if err != nil {
+		t.Fatal(err)
+	}
+	forged := append(bytes.Repeat([]byte("m"), 16), index...)
+	forged = binary.BigEndian.AppendUint32(forged, uint32(len(index)))
+
+	if _, err := ParseIndex(forged, "blob/whatever", nil); !errors.Is(err, ErrMalformed) {
+		t.Fatalf("ParseIndex accepted a placement whose offset+length overflows: err = %v", err)
+	}
+}
+
 // "Cannot decode" must never become "no members": a garbage collector reading
 // an unreadable blob as unreferenced deletes a live repository.
 func TestMalformedBlobsAreRefusedRatherThanReadAsEmpty(t *testing.T) {

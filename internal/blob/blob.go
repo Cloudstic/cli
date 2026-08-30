@@ -25,11 +25,20 @@
 //
 // # Addressing
 //
-// A blob's ref is the hash of its plaintext — the concatenation of its members'
-// bodies, in order, before compression or sealing — which is the discipline
-// every self-addressed namespace in this repository follows.
+// A blob's ref is the hash of its members' digests, in order — a manifest of
+// what it holds rather than of the bytes it stores.
 //
-// A blob is nonetheless the first object whose plaintext **no reader ever
+// Hashing the concatenated bodies instead would be ambiguous about member
+// boundaries: ["a", "bc"] and ["ab", "c"] concatenate identically and would
+// name one object with two different layouts, and an empty file reaches that
+// without contrivance, since ["", "abc"] and ["abc"] also concatenate alike.
+// The result would be a stored blob with one member partition and leaf entries
+// carrying offsets from the other. Fixed-width digests remove the ambiguity,
+// commit to the bodies exactly as strongly — a member's digest is its identity
+// everywhere else here — and are already in hand, so naming a blob costs no
+// second pass over its content.
+//
+// A blob is in any case the first object whose plaintext **no reader ever
 // assembles**: readers want one member. So core.VerifyRef can never be applied
 // to a blob, "blob/" is deliberately not in core.SelfAddressedPrefixes, and the
 // binding whole-object addressing would have supplied comes from the AAD
@@ -44,6 +53,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 
 	"github.com/klauspost/compress/zstd"
@@ -144,8 +154,13 @@ type Writer struct {
 }
 
 type memberBody struct {
+	// hash is the canonical lowercase hex digest, which is what the sealer
+	// takes as key material.
 	hash string
-	body []byte
+	// digest is the same value in raw form, used to name the blob. Add
+	// computes it to verify the caller's hash, so keeping it costs nothing.
+	digest [sha256.Size]byte
+	body   []byte
 }
 
 // NewWriter returns a Writer sealing with sealer, or storing members
@@ -163,17 +178,26 @@ func NewWriter(sealer *crypto.MemberSealer) *Writer {
 // twice — two entries with the same content share one member, and the second
 // Add is what makes that free.
 func (w *Writer) Add(contentHash string, body []byte) error {
-	if len(contentHash) != 2*sha256.Size {
-		return fmt.Errorf("blob: content hash %q is not a %d-character hex digest", contentHash, 2*sha256.Size)
-	}
-	if _, err := hex.DecodeString(contentHash); err != nil {
-		return fmt.Errorf("blob: content hash %q is not hex: %w", contentHash, err)
+	digest := sha256.Sum256(body)
+	got := hex.EncodeToString(digest[:])
+	if got != contentHash {
+		// Checked rather than trusted because the failure is otherwise silent
+		// and permanent. A wrong hash both misnames the blob and mis-keys the
+		// member, but the sharper case is the dedup below: a second, different
+		// body offered under a hash already seen would be dropped, and its
+		// entry would then point at the first body's bytes. That is wrong data
+		// returned successfully, which no later check catches.
+		//
+		// It costs a second pass over the content — about a tenth of what
+		// sealing the same bytes costs — and it is what lets the blob's ref be
+		// built from these digests rather than from the bodies again.
+		return fmt.Errorf("blob: content hash %q does not match the body, which hashes to %s", contentHash, got)
 	}
 	if _, ok := w.seen[contentHash]; ok {
 		return nil
 	}
 	w.seen[contentHash] = len(w.bodies)
-	w.bodies = append(w.bodies, memberBody{hash: contentHash, body: body})
+	w.bodies = append(w.bodies, memberBody{hash: got, digest: digest, body: body})
 	w.plain += int64(len(body))
 	return nil
 }
@@ -196,7 +220,7 @@ func (w *Writer) Seal() (ref string, data []byte, members []Placement, err error
 		return "", nil, nil, errors.New("blob: refusing to seal a blob with no members")
 	}
 
-	ref = Prefix + w.plaintextHash()
+	ref = Prefix + w.memberSequenceHash()
 	aad := []byte(ref)
 
 	data = make([]byte, 0, w.plain+int64(len(w.bodies))*int64(crypto.MemberOverhead))
@@ -220,18 +244,38 @@ func (w *Writer) Seal() (ref string, data []byte, members []Placement, err error
 	if err != nil {
 		return "", nil, nil, err
 	}
+	if int64(len(index)) > math.MaxUint32 {
+		// Unreachable at any sane blob size, and checked anyway: the trailer
+		// is a uint32, so a larger index would be silently truncated and the
+		// blob would read back as malformed rather than as too big.
+		return "", nil, nil, fmt.Errorf("blob: index of %d bytes exceeds the %d the trailer can express",
+			len(index), int64(math.MaxUint32))
+	}
 	data = append(data, index...)
 	data = binary.BigEndian.AppendUint32(data, uint32(len(index)))
 
 	return ref, data, members, nil
 }
 
-// plaintextHash hashes the members' bodies in order, streaming so that a blob
-// is never concatenated in memory purely to be hashed.
-func (w *Writer) plaintextHash() string {
+// memberSequenceHash names the blob by its members' digests in order.
+//
+// Hashing the *bodies* would be ambiguous about where one member ends and the
+// next begins: ["a", "bc"] and ["ab", "c"] concatenate identically, and so
+// would name one object with two different layouts. An empty file makes that
+// reachable without contrivance — ["", "abc"] and ["abc"] have the same
+// concatenation — and the consequence is a repository whose stored blob has
+// one member partition while some leaf's entries carry offsets from the other.
+// Sealed, those reads fail to authenticate; unsealed, they return the wrong
+// body.
+//
+// Fixed-width digests make the boundaries unambiguous, and they commit to the
+// bodies exactly as strongly, since a member's digest is its identity
+// everywhere else in the repository. They are also already in hand, so naming
+// a blob no longer hashes its whole content a second time.
+func (w *Writer) memberSequenceHash() string {
 	h := sha256.New()
 	for _, m := range w.bodies {
-		_, _ = h.Write(m.body)
+		_, _ = h.Write(m.digest[:])
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }

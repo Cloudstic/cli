@@ -79,7 +79,10 @@ func ParseIndex(data []byte, ref string, sealer *crypto.MemberSealer) (*Index, e
 	// a reader authenticate the index as though it were a body.
 	bodyEnd := end - n
 	for _, m := range members {
-		if m.Offset < 0 || m.Length < 0 || m.Offset+m.Length > bodyEnd {
+		// Written as a subtraction rather than Offset+Length so the sum cannot
+		// overflow: both fields are attacker-influenced and bounded only at
+		// 1<<62, so their sum can wrap negative and pass a naive comparison.
+		if m.Offset < 0 || m.Length < 0 || m.Offset > bodyEnd || m.Length > bodyEnd-m.Offset {
 			return nil, fmt.Errorf("%w: member %s spans [%d,%d) outside the %d bytes of members",
 				ErrMalformed, m.ContentHash, m.Offset, m.Offset+m.Length, bodyEnd)
 		}
@@ -98,9 +101,14 @@ func decodeIndex(plain []byte) ([]Placement, error) {
 	}
 	// A count is a length prefix over attacker-influenced bytes, so it is
 	// checked against what remains rather than trusted to allocate.
-	if minSize := count * uint64(sha256.Size); minSize > uint64(len(plain)-d.off) {
+	//
+	// Divided rather than multiplied, because count is unbounded here: a
+	// forged 1<<59 times the 32-byte digest width wraps a uint64 to zero, the
+	// check passes, and the make below is asked for 1<<59 placements.
+	remaining := uint64(len(plain) - d.off)
+	if count > remaining/uint64(sha256.Size) {
 		return nil, fmt.Errorf("%w: index claims %d members, too many for %d remaining bytes",
-			ErrMalformed, count, len(plain)-d.off)
+			ErrMalformed, count, remaining)
 	}
 	out := make([]Placement, 0, count)
 	for i := uint64(0); i < count; i++ {

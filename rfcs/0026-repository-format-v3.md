@@ -1141,12 +1141,19 @@ payload (flag 1):
   chunks    (flag 4):  uvarint count, count x (uvarint len + bytes)
 ```
 
-`blobTotal` is the blob's whole plaintext size, repeated in every entry that
+`blobTotal` is the blob object's **stored** size, repeated in every entry that
 references it. It is three or four bytes and it closes the gap the review of
 this RFC found: deciding "this blob is below the threshold" needs the blob's
 total size, and an entry otherwise knows only its own slice. With it, a backup
 accumulates live bytes per blob as it walks and already holds the denominator —
 no lookup, no second index, no read of the blob itself.
+
+Stored rather than plaintext, and the distinction is not pedantic. `offset` and
+`length` address the stored object, because they are what a ranged GET is
+given, and members are compressed. Dividing summed stored lengths by a
+plaintext total would report a perfectly full blob as roughly half empty and
+consolidate it — turning compression into apparent waste and driving exactly
+the rewrite loop consolidation exists to bound.
 
 **Nothing carries a body hash.** The body's content address is already in
 `meta.ContentHash`, and any reader holding the metadata can verify a ranged
@@ -1166,6 +1173,19 @@ plaintext hash, is itself sealed, and makes the blob self-describing: an index
 can be rebuilt from the store without any catalog, exactly as `PackStore`'s
 footers already allow (RFC 0018). Index at the end rather than the start so a
 backup can stream members out as it packs them, which is restic's reason too.
+
+Two details that only surfaced on writing it, both load-bearing:
+
+- **A member's compression codec travels inside its sealed bytes**, not in the
+  index. Putting it in the index would make decoding a member require the
+  index, costing the second request the ranged read exists to avoid. One byte
+  per member buys a range that is self-describing.
+- **The index cannot be keyed on its own hash.** A reader must derive the key
+  before it can decrypt the index, and it does not know the plaintext until it
+  has. So the key material is a fixed domain string and the blob's ref in the
+  AAD is what makes it blob-specific — sound because a blob has exactly one
+  index whose contents are a function of the ref, so two distinct indexes under
+  one key would mean two member lists hashing alike.
 
 **Sizing is derived rather than swept.** A blob should be about the
 bandwidth-delay product, `time-to-first-byte x bandwidth` — 4.5–9 MB on a fast

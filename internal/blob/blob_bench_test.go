@@ -142,7 +142,6 @@ func BenchmarkParseIndex(b *testing.B) {
 // threshold now decides: it is the knob choosing how much of a repository is
 // compressed in pieces too small to amortise a zstd restart.
 func BenchmarkPerMemberCompress(b *testing.B) {
-	initZstd()
 	for _, size := range []int{4 << 10, 64 << 10} {
 		n := (4 << 20) / size
 		bodies, _ := benchBodies(n, size)
@@ -162,7 +161,6 @@ func BenchmarkPerMemberCompress(b *testing.B) {
 // for every object today. Against BenchmarkPerMemberCompress the gap is the
 // price of a ranged read rather than an inefficiency to remove.
 func BenchmarkWholeObjectCompress(b *testing.B) {
-	initZstd()
 	for _, size := range []int{4 << 10, 64 << 10} {
 		n := (4 << 20) / size
 		bodies, _ := benchBodies(n, size)
@@ -174,7 +172,7 @@ func BenchmarkWholeObjectCompress(b *testing.B) {
 			b.SetBytes(int64(len(whole)))
 			b.ReportAllocs()
 			for range b.N {
-				_ = zstdEncoder.EncodeAll(whole, nil)
+				_ = encoder().EncodeAll(whole, nil)
 			}
 		})
 	}

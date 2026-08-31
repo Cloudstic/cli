@@ -95,28 +95,31 @@ const indexKeyDomain = "cloudstic-blob-index-v1"
 // (docs/compatibility.md).
 var ErrMalformed = errors.New("blob: malformed blob object")
 
+// The codecs are accessed only through these, never as package variables.
+//
+// They used to be plain vars initialised by the writer's constructor, which
+// left them nil in any process that only reads — restore and check never build
+// a Writer — and reading panicked rather than failing. Accessors that
+// construct on first use make that unreachable rather than merely fixed.
 var (
-	zstdEncoder *zstd.Encoder
-	zstdDecoder *zstd.Decoder
-	zstdOnce    sync.Once
-)
-
-func initZstd() {
-	zstdOnce.Do(func() {
-		var err error
+	encoder = sync.OnceValue(func() *zstd.Encoder {
 		// Concurrency 1: blobs are sealed from many goroutines already, so an
 		// encoder spawning workers of its own multiplies rather than helps.
-		zstdEncoder, err = zstd.NewWriter(nil,
+		e, err := zstd.NewWriter(nil,
 			zstd.WithEncoderConcurrency(1), zstd.WithEncoderLevel(zstd.SpeedDefault))
 		if err != nil {
 			panic(err) // cannot fail with these options
 		}
-		zstdDecoder, err = zstd.NewReader(nil)
-		if err != nil {
-			panic(err)
-		}
+		return e
 	})
-}
+	decoder = sync.OnceValue(func() *zstd.Decoder {
+		d, err := zstd.NewReader(nil)
+		if err != nil {
+			panic(err) // cannot fail with no options
+		}
+		return d
+	})
+)
 
 // Placement is where one member ended up: the byte range a reader fetches, and
 // the content hash that names it.
@@ -166,7 +169,6 @@ type memberBody struct {
 // NewWriter returns a Writer sealing with sealer, or storing members
 // unsealed when sealer is nil.
 func NewWriter(sealer *crypto.MemberSealer) *Writer {
-	initZstd()
 	return &Writer{sealer: sealer, seen: make(map[string]int)}
 }
 
@@ -294,7 +296,7 @@ func (w *Writer) sealMember(m memberBody, aad []byte) ([]byte, error) {
 }
 
 func compress(body []byte) []byte {
-	out := zstdEncoder.EncodeAll(body, make([]byte, 1, len(body)+1))
+	out := encoder().EncodeAll(body, make([]byte, 1, len(body)+1))
 	if len(out) > len(body)+1 {
 		out = append(make([]byte, 1, len(body)+1), body...)
 		out[0] = codecRaw
@@ -319,7 +321,7 @@ func decompress(framed []byte, plainSize int64) ([]byte, error) {
 		if plainSize > 0 {
 			dst = make([]byte, 0, plainSize)
 		}
-		out, err := zstdDecoder.DecodeAll(body, dst)
+		out, err := decoder().DecodeAll(body, dst)
 		if err != nil {
 			return nil, fmt.Errorf("%w: decompress member: %w", ErrMalformed, err)
 		}

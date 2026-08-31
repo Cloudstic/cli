@@ -42,7 +42,7 @@ type Key [1 + 32]byte
 // That is enforced rather than asked for: the table is unexported and Namespaces
 // hands out a copy, so the invariant cannot be broken from outside the package
 // at all, let alone at run time between one Encode and the next.
-var namespaces = [...]string{"filemeta/", "node/", "snapshot/", "chunk/", "content/"}
+var namespaces = [...]string{"filemeta/", "node/", "snapshot/", "chunk/", "content/", "blob/"}
 
 // Namespaces returns the prefixes a Key can encode, in namespace-byte order.
 //

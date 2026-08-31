@@ -336,26 +336,57 @@ func (t *Tree) NodeRefs(ctx context.Context, root string, fn func(ref string) er
 //
 // A node is loaded once and reported before its children, so a caller can
 // treat onNode as the point where a node's bytes were read and verified.
-// WalkChunkRefs is WalkTree for a caller that needs an entry's chunk refs and
-// nothing else — prune, marking what a snapshot reaches.
+// EntryRefs is everything one leaf entry makes reachable.
+//
+// It is a struct with an Objects method rather than a list of callback
+// arguments for one reason: a garbage collector must never learn about a new
+// kind of reference by having someone remember to look for it. When v3 gained
+// blob bodies, the old signature reported only chunk refs, so an entry
+// referencing a blob reported reaching nothing while HasPayload stayed true —
+// the safety valve did not fire, and every blob in the repository would have
+// been swept. Adding a field here and returning it from Objects is enough for
+// every marking caller to pick it up.
+type EntryRefs struct {
+	// HasPayload separates an entry with no payload at all from one whose
+	// payload names nothing. prune needs that distinction: an entry whose
+	// references are unknowable must fail the prune rather than count as
+	// reaching nothing (docs/compatibility.md).
+	HasPayload bool
+
+	// Chunks are the "chunk/<hash>" objects reconstructing a chunked body.
+	Chunks []string
+
+	// Body is where a non-chunked body lives, or nil.
+	Body *BodyRef
+}
+
+// Objects appends every object ref this entry reaches to dst and returns it.
+//
+// Appending to a caller-supplied slice so that marking a whole repository
+// reuses one buffer rather than allocating per entry.
+func (r EntryRefs) Objects(dst []string) []string {
+	dst = append(dst, r.Chunks...)
+	if r.Body != nil {
+		dst = append(dst, r.Body.Blob)
+	}
+	return dst
+}
+
+// WalkReachable is WalkTree for a caller that needs what an entry *reaches*
+// and nothing else — prune, marking what a snapshot keeps alive.
 //
 // It exists because the reduction is worth having and is dangerous to express
-// as an option on WalkTree. A leaf's Meta and Inline are almost all of its
-// bytes, so skipping them is most of the cost of a traversal; but a *Payload
-// with those fields silently empty is indistinguishable from one whose entry
-// genuinely has no inline content, and a caller reading Inline from it would
-// see an empty file rather than an error. Reporting chunk refs directly keeps
-// the reduced payload inside this package.
-//
-// hasPayload separates an entry with no payload at all from one whose payload
-// names no chunks. prune needs that: an entry whose chunk refs are unknowable
-// must fail the prune rather than count as reaching nothing
-// (docs/compatibility.md).
-func (t *Tree) WalkChunkRefs(ctx context.Context, root string, onNode func(ref string) error, onEntry func(key, value string, chunks []string, hasPayload bool) error, opts ...WalkOption) error {
+// as an option on WalkTree. Meta is the bulk of what a leaf carries, so
+// skipping it is most of the cost of a traversal; but a *Payload with that
+// field silently empty is indistinguishable from one whose entry genuinely has
+// none, and a caller reading it would see an empty file rather than an error.
+// Reporting the references directly keeps the reduced payload inside this
+// package.
+func (t *Tree) WalkReachable(ctx context.Context, root string, onNode func(ref string) error, onEntry func(key, value string, refs EntryRefs) error, opts ...WalkOption) error {
 	if root == "" {
 		return nil
 	}
-	cfg := walkConfig{load: t.nodes.loadChunksOnly}
+	cfg := walkConfig{load: t.nodes.loadRefsOnly}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
@@ -363,9 +394,9 @@ func (t *Tree) WalkChunkRefs(ctx context.Context, root string, onNode func(ref s
 	if onEntry != nil {
 		entry = func(key, value string, p *Payload) error {
 			if p == nil {
-				return onEntry(key, value, nil, false)
+				return onEntry(key, value, EntryRefs{})
 			}
-			return onEntry(key, value, p.Chunks, true)
+			return onEntry(key, value, EntryRefs{HasPayload: true, Chunks: p.Chunks, Body: p.Body})
 		}
 	}
 	return walkTree(ctx, t.nodes, root, 0, onNode, entry, cfg)

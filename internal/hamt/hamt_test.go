@@ -35,6 +35,14 @@ func insertCommit(tree *Tree, root, routingKey, key, value string) (string, erro
 	return tx.Commit(ctx)
 }
 
+func insertPayloadCommit(tree *Tree, root, routingKey, key, value string, p *Payload) (string, error) {
+	tx := tree.Edit(root)
+	if err := tx.InsertWithPayload(ctx, routingKey, key, value, p); err != nil {
+		return "", err
+	}
+	return tx.Commit(ctx)
+}
+
 func deleteCommit(tree *Tree, root, routingKey, key string) (string, error) {
 	tx := tree.Edit(root)
 	if err := tx.Delete(ctx, routingKey, key); err != nil {

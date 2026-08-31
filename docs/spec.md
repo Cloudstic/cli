@@ -327,7 +327,40 @@ The token format is source-specific:
 | `gdrive-changes`    | Google Drive Changes API start page token     |
 | `onedrive-changes`  | Microsoft OneDrive delta API next-link/token  |
 
-### 6. Packfiles (`packs/` and `index/packs`)
+### 6. Blob (`blob/`, format v3 only)
+
+A packed run of file bodies, so that a repository of small files does not mint
+a stored object per file. Written by format-v3 repositories only; a v2
+repository stores a body as a `content/` object instead.
+
+* Object key: `blob/<sha256>`, over the members' **digests in order** — a
+  manifest of what the blob holds rather than of the bytes it stores. Hashing
+  the concatenated bodies would not determine where one member ends and the
+  next begins, and an empty file makes that collide without contrivance.
+* Layout: `member_1 || ... || member_n || index || uint32 index length`.
+* Each member is compressed and sealed **independently**, so a reader that
+  wants one body fetches its byte range and decrypts exactly it. The member's
+  compression codec travels inside its sealed bytes, which is what makes a
+  ranged read self-describing.
+* Members are keyed from the member's own plaintext hash — the value the
+  entry's metadata already records — with the containing blob's ref as
+  additional authenticated data. The key binds the member, the AAD binds the
+  container.
+* The trailing index lists each member's offset, length and plaintext hash and
+  is itself sealed, so a blob is self-describing and the repository needs no
+  blob catalog.
+* `blob/` is **not** in `core.SelfAddressedPrefixes`: it is the one namespace
+  whose plaintext no reader ever assembles, so its ref cannot be verified by
+  hashing what was fetched.
+* Blobs bypass the store chain's compression and encryption, carrying their own
+  per member. They are written below both, the position `PackStore`'s catalog
+  and footers occupy.
+
+A leaf entry referencing a blob carries `(blob ref, offset, length, stored
+total)`. The stored total is repeated in every referencing entry so that
+consolidation has a denominator without a lookup or a second index.
+
+### 7. Packfiles (`packs/` and `index/packs`)
 
 To avoid issuing hundreds of thousands of S3 `PUT` and `GET` requests for tiny metadata objects, the storage layer implements a stateless PackStore.
 
@@ -362,7 +395,7 @@ Entries are sorted by key, so an identical set of objects produces a byte-identi
 
 Object bytes keep their position and meaning, so a reader that resolves objects by explicit offset and length is unaffected by the footer's presence. Packfiles written before RFC 0018 have no footer and remain readable through the catalog.
 
-### 7. Index
+### 8. Index
 
 #### index/latest
 

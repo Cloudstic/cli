@@ -5,6 +5,7 @@ import (
 
 	"github.com/cloudstic/cli/internal/hamt"
 	"github.com/cloudstic/cli/internal/ui"
+	"github.com/cloudstic/cli/pkg/crypto"
 	"github.com/cloudstic/cli/pkg/store"
 )
 
@@ -44,6 +45,21 @@ type Deps struct {
 	// filemeta/ or content/ objects. Set from the repository's recorded
 	// version at client open, never per operation.
 	FormatV3 bool
+
+	// BlobStore is where format-v3 blob/ objects are read and written.
+	//
+	// It is deliberately not Store. A blob's members are compressed and sealed
+	// one by one, so the object must not pass through the chain's compression
+	// and encryption a second time — it sits below both, the position
+	// PackStore's own self-sealed catalog and footers occupy, while staying
+	// metered because blob bytes are most of what a backup writes.
+	//
+	// Nil outside format v3, where nothing writes a blob.
+	BlobStore store.ObjectStore
+
+	// Sealer seals and opens the members of those blobs. Nil in a repository
+	// with no encryption, where members are stored as they are compressed.
+	Sealer *crypto.MemberSealer
 }
 
 // treeOptions returns the hamt options this dependency set implies, with any
@@ -55,4 +71,17 @@ func (d Deps) treeOptions(extra ...hamt.TreeOption) []hamt.TreeOption {
 		opts = append(opts, hamt.WithFormatV3())
 	}
 	return append(opts, extra...)
+}
+
+// blobReader builds the reader for this repository's blob objects, or nil
+// outside format v3 where there are none.
+//
+// Built from Deps rather than passed in, so no manager can be handed a reader
+// pointed at a different store or key than the one the repository was opened
+// with.
+func (d Deps) blobReader() *blobReader {
+	if !d.FormatV3 || d.BlobStore == nil {
+		return nil
+	}
+	return newBlobReader(d.BlobStore, d.Sealer)
 }

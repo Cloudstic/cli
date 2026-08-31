@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/cloudstic/cli/internal/core"
@@ -50,23 +51,27 @@ func putV2Entry(t *testing.T, s *MockStore, name string, data []byte) string {
 	return ref
 }
 
-// TestCopyEntry_RebuildsAnElidedInlinePayload pins the one rule that makes the
-// remap table safe to shrink.
+// TestCopyEntry_CachedEntryKeepsItsBodyReference pins what replaced the
+// payload-elision rule.
 //
-// An entry whose content is inline is cached without its payload, because
-// keeping every inlined file of a run resident is how a copy of a tree of small
-// files exhausts memory. The cost of that is that a second visit must rebuild
-// rather than reuse — and getting it wrong is silent: a v3 entry inserted with
-// no payload commits, hashes, and passes check, but its metadata and its bytes
-// are simply not there to restore.
-func TestCopyEntry_RebuildsAnElidedInlinePayload(t *testing.T) {
+// A payload used to be dropped from the remap table when it carried inline
+// content, because keeping every inlined file of a run resident is how a copy
+// of a tree of small files exhausted memory. A payload is now metadata and a
+// body reference, so it is cached whole — and the thing that must hold is that
+// a second visit reuses the *same* body, rather than packing it into the
+// destination twice.
+//
+// Getting it wrong is silent in both directions: a cache hit that lost its
+// reference inserts an entry with nothing to restore, and one that re-added
+// the body would store it twice under two references that both work.
+func TestCopyEntry_CachedEntryKeepsItsBodyReference(t *testing.T) {
 	ctx := context.Background()
 	src, dst := NewMockStore(), NewMockStore()
-	data := []byte("small enough to be stored inline")
+	data := []byte("small enough to travel in a blob")
 	srcRef := putV2Entry(t, src, "small.txt", data)
 
 	cm := NewCopyManager(
-		Deps{Store: dst, Reporter: ui.NewNoOpReporter(), FormatV3: true},
+		Deps{Store: dst, Reporter: ui.NewNoOpReporter(), FormatV3: true, BlobStore: dst},
 		CopySide{Store: src},
 		"dest-repo",
 	)
@@ -75,11 +80,11 @@ func TestCopyEntry_RebuildsAnElidedInlinePayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first copyEntry: %v", err)
 	}
-	if first.payload == nil || !bytes.Equal(first.payload.Inline, data) {
-		t.Fatalf("first copy produced payload %+v, want one carrying the inline content", first.payload)
+	if first.payload == nil {
+		t.Fatal("first copy produced no payload")
 	}
-	if !first.payloadElided {
-		t.Fatal("an inline payload should be marked elided, so a cache hit rebuilds it")
+	if first.promise == nil {
+		t.Fatal("first copy produced no body promise: the content would never reach a blob")
 	}
 
 	second, err := cm.copyEntry(ctx, srcRef, nil)
@@ -89,11 +94,30 @@ func TestCopyEntry_RebuildsAnElidedInlinePayload(t *testing.T) {
 	if second.payload == nil {
 		t.Fatal("cache hit returned no payload: the entry would be inserted with nothing to restore")
 	}
-	if !bytes.Equal(second.payload.Inline, data) {
-		t.Fatalf("rebuilt payload carries %q, want %q", second.payload.Inline, data)
-	}
 	if second.ref != first.ref {
 		t.Fatalf("rebuilt entry names %s, want %s", second.ref, first.ref)
+	}
+
+	if err := cm.dstBlobs.Flush(ctx); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if first.promise.placed() == nil {
+		t.Fatal("the body was never placed in a blob")
+	}
+	if second.promise == nil || *second.promise.placed() != *first.promise.placed() {
+		t.Fatalf("the cache hit points at a different body: %+v vs %+v", second.promise, first.promise)
+	}
+
+	// One body, stored once: a second copy of the same content must not have
+	// produced a second blob.
+	blobs := 0
+	for key := range dst.Data {
+		if strings.HasPrefix(key, "blob/") {
+			blobs++
+		}
+	}
+	if blobs != 1 {
+		t.Fatalf("destination holds %d blobs for one body, want 1", blobs)
 	}
 }
 
@@ -119,8 +143,8 @@ func TestCopyEntry_ReadsMetadataFromAV3Payload(t *testing.T) {
 	}
 
 	cm := NewCopyManager(
-		Deps{Store: dst, Reporter: ui.NewNoOpReporter(), FormatV3: true},
-		CopySide{Store: src, FormatV3: true},
+		Deps{Store: dst, Reporter: ui.NewNoOpReporter(), FormatV3: true, BlobStore: dst},
+		CopySide{Store: src, FormatV3: true, BlobStore: src},
 		"dest-repo",
 	)
 

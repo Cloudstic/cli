@@ -132,10 +132,16 @@ type BackupManager struct {
 	// anything but a full-scan format-v3 backup that is actually writing —
 	// see there for why an incremental scan must not feed one.
 	consolidation *blobConsolidator
-	reporter      ui.Reporter
-	stats         *backupStats
-	sourceInfo    core.SourceInfo
-	cfg           backupConfig
+	// reuse maps a content hash to a body placement the repository already
+	// holds, so a file whose bytes are already stored is pointed at rather
+	// than packed again. Populated by change detection and by this run's own
+	// blob writer, bounded in bytes, and released when the upload ends — see
+	// bodyindex.go. Nil for anything but a format-v3 backup that is writing.
+	reuse      *bodyIndex
+	reporter   ui.Reporter
+	stats      *backupStats
+	sourceInfo core.SourceInfo
+	cfg        backupConfig
 
 	// newMetas holds filemetas produced by the current scan, whose bytes are
 	// still queued in pendingMetas and so cannot be read back through metas.
@@ -353,6 +359,14 @@ func (bm *BackupManager) run(ctx context.Context) (*RunResult, error) {
 		bm.log.Debugf("no previous snapshot found, running full scan")
 	}
 
+	// Built before the scan rather than inside it, because both scan
+	// strategies feed it: a change feed resolves the previous entry of every
+	// upsert it reports, which is where an inherited placement comes from.
+	// A dry run writes nothing and uploads nothing, so it has no use for one.
+	if bm.v3 && !bm.cfg.dryRun && bm.blobs != nil {
+		bm.reuse = newBodyIndex()
+	}
+
 	pending, totalBytes, newToken, usedFullScan, err := bm.scanSource(ctx, oldRoot, changeToken)
 	if err != nil {
 		return nil, err
@@ -414,6 +428,20 @@ func (bm *BackupManager) run(ctx context.Context) (*RunResult, error) {
 	if err := bm.upload(ctx, pending, totalBytes); err != nil {
 		return nil, err
 	}
+
+	// The index belongs to the upload, which is over: every worker has
+	// reported, so nothing reads it after this point. Released here rather
+	// than left to the manager's lifetime for two reasons — it is the one
+	// structure here sized by the repository's distinct bodies, and
+	// consolidation below must not see it. Consolidation moves a body *out*
+	// of the blob it is retiring, and the placement the index would hand back
+	// is the one inside that blob; it calls the writer directly, and this
+	// makes that independent of the order these phases happen to run in.
+	if hits, saved, entries := bm.reuse.stats(); hits > 0 {
+		bm.log.Debugf("whole-file dedup: %d bodies reused, %d bytes not stored, %d placements held",
+			hits, saved, entries)
+	}
+	bm.reuse = nil
 
 	if usedFullScan {
 		if err := bm.countRemoved(ctx, oldRoot); err != nil {

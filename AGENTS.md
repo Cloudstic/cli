@@ -354,9 +354,13 @@ inline threshold, so setting it to 1 chunks every body and produces a tree
 whose leaves carry metadata and refs only — which is how RFC 0026's
 metadata-only figures were measured rather than extrapolated;
 `CLOUDSTIC_TEST_BLOB_BYTES` (`internal/engine/blobwriter.go`) sets how much
-body plaintext a `blob/` object accumulates before it seals, and
+body plaintext a `blob/` object accumulates before it seals;
 `CLOUDSTIC_TEST_UPLOAD_COMMIT_BYTES` (`internal/engine/backup_upload.go`) how
-much metadata a backup holds before committing the working tree. Blob
+much metadata a backup holds before committing the working tree; and
+`CLOUDSTIC_TEST_BODY_INDEX_BYTES` (`internal/engine/bodyindex.go`) how much
+whole-file dedup state a backup holds, whose floor is the interesting end —
+setting it to 1 turns deduplication off, which is how a measurement separates
+what reuse saves from what the rest of the run does. Blob
 consolidation adds three (`internal/engine/blobconsolidate.go`):
 `CLOUDSTIC_TEST_BLOB_FILL` is the percentage of a full blob's live bytes below
 which a blob is rewritten forward, and is the one meant to be swept;

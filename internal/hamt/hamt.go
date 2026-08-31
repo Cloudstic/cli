@@ -54,86 +54,36 @@ const (
 	branchingV3    = 4  // 2^bitsPerLevelV3
 	maxDepthV3     = 15 // 30 of the 32 routing bits, as in v2
 
-	// The format-v3 leaf split rule (RFC 0026 §2): a leaf splits when its
-	// encoded size passes a byte budget, not when it holds a fixed number of
-	// entries. Every stored object being large is the property the whole
-	// format rests on, so the budget is the primary bound; the entry cap only
-	// keeps the linear scans inside one leaf bounded when entries are tiny.
+	// leafSplitBytesV3 and maxLeafEntriesV3 bound a v3 leaf. Only the second of
+	// them binds.
 	//
-	// Both are write-path tuning knobs, not compatibility surface: a reader
-	// accepts any leaf size, so revising them changes new nodes only. Routing
-	// arity is not revisable that way — a routed lookup must use the shape
-	// that wrote the tree — but the budget is.
+	// A leaf carried its entries' file content when these were chosen, so 4 MB
+	// was a real ceiling and the entry cap rarely fired. Bodies now live in
+	// blob/ objects (RFC 0026), so a leaf holds metadata and references: on a
+	// 20,000-file source tree the largest is about 300 KB, more than an order of
+	// magnitude below the budget. maxLeafEntriesV3 is therefore the split rule
+	// in practice, and 4 MB is a ceiling nothing reaches.
 	//
-	// The budget counts *encoded* bytes, while the 8 MB packfiles this format
-	// replaces are 8 MB *stored*. Nothing reconciles the two: a leaf passes
-	// through CompressedStore on its way out, and zstd takes a leaf of real
-	// file content to roughly a fifth of its encoded size. A 2 MB budget was
-	// therefore producing ~190 KB objects — a repository of 667 of them where
-	// the packfile format held 21 — which is where v3's request counts on a
-	// fresh repository came from, not from leaves failing to fill.
+	// Both are kept at these values because the operating point they produce is
+	// the right one, which is a measurement rather than an assumption. Sweeping
+	// the effective leaf size on that tree, 9 retained snapshots:
 	//
-	// 4 MB is chosen against four axes rather than against request count alone,
-	// which is what an earlier 8 MB setting optimised. Sweeping 2/4/8 MB on the
-	// benchmark pipeline over a 2,000-file `source` tree, against the packfile
-	// format's figures:
+	//	leaf size   nodes read per traversal   metadata per snapshot
+	//	   128 KB                        530                 1.41 MB
+	//	   256 KB                        238                 1.98 MB
+	//	   512 KB                        105                 2.77 MB
+	//	  ~196 KB median at these caps     29                 3.51 MB
 	//
-	//	                 packfile     2 MB     4 MB     8 MB
-	//	 restore req          994      918      422      131
-	//	 check req            118      905      409      207
-	//	 restore sent MB      345      100       98       52
-	//	 stored            81.2 MB  77.1 MB  89.3 MB  103.9 MB
-	//	 restore peak RSS   442 MB   214 MB   354 MB   518 MB
+	// Smaller leaves buy retained bytes and cost requests, and the exchange rate
+	// is bad: reaching 128 KB leaves would multiply the node objects a traversal
+	// reads by 18 to save 2.5x on metadata — about 15 MB of a 107 MB repository,
+	// against a restore that issues ~214 requests in total and would be tripled
+	// by the node reads alone. Requests are what object storage bills and what
+	// this format exists to reduce; retained metadata is a smaller number in a
+	// repository dominated by blob bytes.
 	//
-	// Requests fall monotonically with the budget and both storage and memory
-	// rise with it, so there is no setting that wins everything and the choice
-	// is which axis to spend. 4 MB keeps the wins that matter — restore 2.4x
-	// fewer requests than the packfile format and 3.5x fewer bytes, and the flat
-	// aging curve the format exists for — while holding stored size to +10%
-	// rather than +28% and read memory below the packfile format's.
-	//
-	// What 8 MB buys over it is restore 422 -> 131 requests and backup-dedup
-	// 966 -> 181, which is real and is the right setting for someone restoring
-	// over a metered or high-latency link. It is a configuration rather than a
-	// correction, and the reason both remain reachable.
-	//
-	// What pays for any of this is write amplification: a changed entry rewrites
-	// its whole leaf including the untouched content of its neighbours, so the
-	// budget is also the granularity of an incremental — and, because every
-	// retained snapshot keeps the leaves it rewrote, the budget is what a
-	// retained snapshot costs.
-	//
-	// The cost has a shape worth stating, because it is not proportional to
-	// churn (issue #525). A backup rewrites one leaf per *directory* it touched,
-	// since the affinity key routes a directory's entries together, so the bytes
-	// a snapshot retains are about
-	//
-	//	directories touched x mean leaf size
-	//
-	// which is independent of how large the repository is. Measured on `source`
-	// trees, six backups of 200 churned files each — a churn that lands in ~47
-	// directories:
-	//
-	//	                        2,000 files      20,000 files
-	//	 leaves in the tree              19               219
-	//	 nodes rewritten per backup   20/21            ~91/296
-	//	 of the tree                   100%               31%
-	//	 stored per retained snapshot  5.5 MB           23 MB
-	//
-	// The small tree *saturates*: 47 touched directories cannot fit in 19
-	// leaves, so every leaf holds a change and each snapshot costs a full copy
-	// of the repository. That is arithmetic rather than a defect in the routing,
-	// and no locality scheme escapes it — the only cure is more leaves, which is
-	// a smaller budget, which is the trade above. Once leaves outnumber the
-	// touched directories the absolute cost settles at the product and the
-	// fraction decays with every file added.
-	//
-	// So v3 stores less live data and more history. At 20,000 files it holds
-	// 82 MB against the packfile format's 103 MB after `forget --keep-last 1
-	// --prune`, and 198 MB against 105 MB with all six snapshots retained. A
-	// repository that is pruned is smaller than on the packfile format; one that
-	// retains everything is larger, and by ~23 MB per snapshot rather than by a
-	// factor.
+	// So: do not "fix" the budget by lowering it to bind. It not binding is the
+	// tree sitting where it should.
 	leafSplitBytesV3 = 4 * 1024 * 1024
 	maxLeafEntriesV3 = 2048
 
@@ -618,17 +568,24 @@ func (tx *Txn) Root(ctx context.Context) (string, error) {
 // holds before flushing them.
 //
 // The seal used to build the whole batch first and write it at the end, which
-// on a v2 tree was a map of small JSON documents and on a v3 tree is every
+// on a v2 tree was a map of small JSON documents and on a v3 tree was every
 // dirty leaf's encoded bytes — inline file content included — held alongside
 // the payloads the tree still points at. That is what took an initial v3
 // backup's peak RSS to 561 MB against v2's 183 MB, and 1.2 GB on a 200 MB
 // addition. Flushing as the seal goes bounds it by this budget instead of by
 // how much the backup changed.
 //
-// The value trades that residency against write parallelism: a flush is where
-// concurrency happens (putAll fans out across the batch), so too small a
-// budget serialises the uploads. 32 MB keeps several hundred small nodes, or
-// a few dozen full leaves, in flight per flush.
+// That reasoning is now history rather than justification: a leaf carries no
+// file content since bodies moved into blob/ objects (RFC 0026), so the bytes
+// this bounds are metadata, and the residency it was protecting against is
+// gone. 32 MB of metadata nodes is a great many — hundreds of leaves at the
+// few-hundred-KB they now reach.
+//
+// It is kept because the other half of the trade still holds: a flush is where
+// write concurrency happens (putAll fans out across the batch), so too small a
+// budget serialises the uploads, and nothing argues for a smaller one. The
+// bound is now slack rather than binding, which is the safe direction for a
+// memory guard to be wrong in.
 const sealFlushBytes = 32 * 1024 * 1024
 
 // Commit writes every node that is actually part of the final tree and returns

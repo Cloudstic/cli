@@ -57,9 +57,25 @@ const (
 	// memory than the packfile format while keeping the request wins.
 	nodeCacheSizeV3 = 8192
 
-	// nodeCacheLeaves is that budget expressed in leaves, which is the unit it
-	// means something in: the working set is counted in leaves, so the cache has
-	// to move when the leaf size does. See nodeCacheBytes().
+	// nodeCacheLeaves expresses that budget as a multiple of the leaf budget.
+	//
+	// It was chosen when a leaf could actually reach 4 MB, so 16 of them was a
+	// 64 MB cache and the unit meant something: the working set was counted in
+	// leaves and the cache moved with them. Bodies now live in blob/ objects,
+	// so a leaf is a few hundred KB and the *budget* it multiplies no longer
+	// binds (see leafSplitBytesV3).
+	//
+	// The product is still 64 MB and 64 MB is still right — a 20,000-file
+	// tree's metadata is a few MB, so the cache holds it many times over, which
+	// is why the cliff #535 reported no longer reproduces. But it lands there
+	// by multiplying a number that stopped describing anything, so read this as
+	// "64 MB, expressed awkwardly" rather than as a live relationship.
+	//
+	// Left as a multiple rather than rewritten to a byte constant for one
+	// reason: CLOUDSTIC_TEST_LEAF_BYTES sweeps the leaf size, and sweeping it
+	// should move the cache with it, or a sweep of small leaves would measure a
+	// cache that holds proportionally far more of the tree than the default
+	// does. The awkwardness is what keeps a sweep honest.
 	nodeCacheLeaves = 16
 )
 

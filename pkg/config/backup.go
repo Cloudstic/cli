@@ -81,6 +81,20 @@ type Backup struct {
 	// credentials in Source, or that should. MergeProfileBackup reads it and
 	// records the entry it used, so the resolved configuration says where the
 	// credentials came from.
+	//
+	// A profiles file can state the same cloud credential twice: profile.Profile
+	// carries GoogleCreds, GoogleTokenFile and the rest, and so does the
+	// profile.Auth entry a profile points at. **The auth entry wins**, field by
+	// field — an auth entry silent about a field leaves the profile's value
+	// alone rather than blanking it.
+	//
+	// That order is deliberate and pinned by
+	// TestMergeProfileBackup_AuthEntryBeatsProfileCredentials: an auth entry is
+	// the shared, deliberate statement of where a provider's credentials live,
+	// while the fields on a profile predate auth entries and are kept only so
+	// that files written before them keep working. Prefer the auth entry when
+	// writing a profiles file; the duplication is a compatibility artefact, not
+	// a feature.
 	AuthRef string
 
 	DryRun  bool
@@ -109,41 +123,168 @@ const (
 	FieldAuthRef           Field = "auth-ref"
 )
 
-// backupFieldKeys maps each backup field to its profiles-file spelling, so an
-// error can name the YAML entry rather than the flag. It is separate from
-// fieldSpecs because these fields are not all strings — bools and string slices
-// among them — and no single accessor shape fits, which is why the fold below is
-// written out rather than driven from a table.
-var backupFieldKeys = map[Field]string{
-	FieldSourceURI:         "source",
-	FieldTags:              "tags",
-	FieldExcludes:          "excludes",
-	FieldExcludeFile:       "exclude_file",
-	FieldIgnoreEmpty:       "ignore_empty",
-	FieldSkipNativeFiles:   "skip_native_files",
-	FieldVolumeUUID:        "volume_uuid",
-	FieldGoogleCreds:       "google_credentials",
-	FieldGoogleCredsRef:    "google_credentials_ref",
-	FieldGoogleCredsJSON:   "google_credentials_json",
-	FieldGoogleTokenFile:   "google_token_file",
-	FieldGoogleTokenRef:    "google_token_ref",
-	FieldOneDriveClientID:  "onedrive_client_id",
-	FieldOneDriveTokenFile: "onedrive_token_file",
-	FieldOneDriveTokenRef:  "onedrive_token_ref",
-	FieldAuthRef:           "auth_ref",
+// backupFieldSpec describes one field a profile can supply about what to back
+// up: where the profiles file states it, where it lands in a Backup, and — for
+// the cloud credentials — which provider's auth entry may also supply it.
+//
+// These fields are not all strings, which is why this is a second table rather
+// than more rows in fieldSpecs: two bools and two string slices need different
+// accessors and merge on different rules. Exactly one accessor group is
+// non-nil, and kindOf reports which.
+//
+// One table rather than three parallel lists. The const block, a key map and a
+// hand-written BackupFields() used to state the same 16 fields separately, and
+// only the first two were consulted by anything — a field added to two of the
+// three silently stopped being covered by the CLI's decided-field set (#569).
+type backupFieldSpec struct {
+	field Field
+	// key is the profiles-file spelling, used in errors so a failure names the
+	// YAML entry to go fix rather than the flag that would have replaced it.
+	key string
+
+	// str, bl and sl address the field by type. Exactly one is set.
+	str struct {
+		dest        func(*Backup) *string
+		fromProfile func(profile.Profile) string
+		// fromAuth reads the field from an auth entry, for the cloud
+		// credentials an auth entry may supply instead of the profile.
+		// provider names which auth provider owns it.
+		fromAuth func(profile.Auth) string
+		provider string
+	}
+	bl struct {
+		dest        func(*Backup) *bool
+		fromProfile func(profile.Profile) bool
+	}
+	sl struct {
+		dest        func(*Backup) *[]string
+		fromProfile func(profile.Profile) []string
+	}
+
+	// always takes the profile's value even when it is empty, rather than only
+	// when the profile names one. The source is the one field like this: the
+	// caller asked for this profile, so its source is the source, and an empty
+	// result is reported rather than falling back to whatever base held —
+	// which would back up the wrong tree under a profile's name.
+	always bool
 }
+
+func backupFieldSpecs() []backupFieldSpec {
+	str := func(f Field, key string, dest func(*Backup) *string, from func(profile.Profile) string) backupFieldSpec {
+		var s backupFieldSpec
+		s.field, s.key = f, key
+		s.str.dest, s.str.fromProfile = dest, from
+		return s
+	}
+	cloud := func(f Field, key, provider string, dest func(*Backup) *string,
+		from func(profile.Profile) string, fromAuth func(profile.Auth) string) backupFieldSpec {
+		s := str(f, key, dest, from)
+		s.str.fromAuth, s.str.provider = fromAuth, provider
+		return s
+	}
+	boolean := func(f Field, key string, dest func(*Backup) *bool, from func(profile.Profile) bool) backupFieldSpec {
+		var s backupFieldSpec
+		s.field, s.key = f, key
+		s.bl.dest, s.bl.fromProfile = dest, from
+		return s
+	}
+	slice := func(f Field, key string, dest func(*Backup) *[]string, from func(profile.Profile) []string) backupFieldSpec {
+		var s backupFieldSpec
+		s.field, s.key = f, key
+		s.sl.dest, s.sl.fromProfile = dest, from
+		return s
+	}
+
+	source := str(FieldSourceURI, "source",
+		func(b *Backup) *string { return &b.Source.URI },
+		func(p profile.Profile) string { return p.Source })
+	source.always = true
+
+	return []backupFieldSpec{
+		source,
+		str(FieldAuthRef, "auth_ref",
+			func(b *Backup) *string { return &b.AuthRef },
+			func(p profile.Profile) string { return p.AuthRef }),
+		str(FieldExcludeFile, "exclude_file",
+			func(b *Backup) *string { return &b.Source.ExcludeFile },
+			func(p profile.Profile) string { return p.ExcludeFile }),
+		str(FieldVolumeUUID, "volume_uuid",
+			func(b *Backup) *string { return &b.Source.VolumeUUID },
+			func(p profile.Profile) string { return p.VolumeUUID }),
+
+		cloud(FieldGoogleCreds, "google_credentials", ProviderGoogle,
+			func(b *Backup) *string { return &b.Source.Google.CredsPath },
+			func(p profile.Profile) string { return p.GoogleCreds },
+			func(a profile.Auth) string { return a.GoogleCreds }),
+		cloud(FieldGoogleCredsRef, "google_credentials_ref", ProviderGoogle,
+			func(b *Backup) *string { return &b.Source.Google.CredsRef },
+			func(p profile.Profile) string { return p.GoogleCredsRef },
+			func(a profile.Auth) string { return a.GoogleCredsRef }),
+		cloud(FieldGoogleCredsJSON, "google_credentials_json", ProviderGoogle,
+			func(b *Backup) *string { return &b.Source.Google.CredsJSON },
+			func(p profile.Profile) string { return p.GoogleCredsJSON },
+			func(a profile.Auth) string { return a.GoogleCredsJSON }),
+		cloud(FieldGoogleTokenFile, "google_token_file", ProviderGoogle,
+			func(b *Backup) *string { return &b.Source.Google.TokenPath },
+			func(p profile.Profile) string { return p.GoogleTokenFile },
+			func(a profile.Auth) string { return a.GoogleTokenFile }),
+		cloud(FieldGoogleTokenRef, "google_token_ref", ProviderGoogle,
+			func(b *Backup) *string { return &b.Source.Google.TokenRef },
+			func(p profile.Profile) string { return p.GoogleTokenRef },
+			func(a profile.Auth) string { return a.GoogleTokenRef }),
+		cloud(FieldOneDriveClientID, "onedrive_client_id", ProviderOneDrive,
+			func(b *Backup) *string { return &b.Source.OneDrive.ClientID },
+			func(p profile.Profile) string { return p.OneDriveClientID },
+			func(a profile.Auth) string { return a.OneDriveClientID }),
+		cloud(FieldOneDriveTokenFile, "onedrive_token_file", ProviderOneDrive,
+			func(b *Backup) *string { return &b.Source.OneDrive.TokenPath },
+			func(p profile.Profile) string { return p.OneDriveTokenFile },
+			func(a profile.Auth) string { return a.OneDriveTokenFile }),
+		cloud(FieldOneDriveTokenRef, "onedrive_token_ref", ProviderOneDrive,
+			func(b *Backup) *string { return &b.Source.OneDrive.TokenRef },
+			func(p profile.Profile) string { return p.OneDriveTokenRef },
+			func(a profile.Auth) string { return a.OneDriveTokenRef }),
+
+		boolean(FieldIgnoreEmpty, "ignore_empty",
+			func(b *Backup) *bool { return &b.IgnoreEmpty },
+			func(p profile.Profile) bool { return p.IgnoreEmpty }),
+		boolean(FieldSkipNativeFiles, "skip_native_files",
+			func(b *Backup) *bool { return &b.Source.SkipNativeFiles },
+			func(p profile.Profile) bool { return p.SkipNativeFiles }),
+
+		slice(FieldTags, "tags",
+			func(b *Backup) *[]string { return &b.Tags },
+			func(p profile.Profile) []string { return p.Tags }),
+		slice(FieldExcludes, "excludes",
+			func(b *Backup) *[]string { return &b.Source.Excludes },
+			func(p profile.Profile) []string { return p.Excludes }),
+	}
+}
+
+// backupFieldKeys maps each backup field to its profiles-file spelling, derived
+// from the table so the two cannot disagree.
+var backupFieldKeys = func() map[Field]string {
+	m := make(map[Field]string)
+	for _, s := range backupFieldSpecs() {
+		m[s.field] = s.key
+	}
+	return m
+}()
 
 // BackupFields returns every field a profile can supply about what to back up,
 // in a fresh slice. See StoreFields for the ones describing where it goes.
+//
+// Derived from the table rather than listed, so a field added to the const
+// block and the table is covered here without a third edit — the hand-written
+// version of this list is what allowed the CLI's decided-field set to fall
+// behind.
 func BackupFields() []Field {
-	return []Field{
-		FieldSourceURI, FieldTags, FieldExcludes, FieldExcludeFile, FieldIgnoreEmpty,
-		FieldSkipNativeFiles, FieldVolumeUUID,
-		FieldGoogleCreds, FieldGoogleCredsRef, FieldGoogleCredsJSON,
-		FieldGoogleTokenFile, FieldGoogleTokenRef,
-		FieldOneDriveClientID, FieldOneDriveTokenFile, FieldOneDriveTokenRef,
-		FieldAuthRef,
+	specs := backupFieldSpecs()
+	out := make([]Field, 0, len(specs))
+	for _, s := range specs {
+		out = append(out, s.field)
 	}
+	return out
 }
 
 // MergeProfileBackup returns base with profile name's backup settings folded in
@@ -170,56 +311,28 @@ func MergeProfileBackup(base Backup, decided FieldSet, name string, cfg *profile
 	}
 
 	out := base
-
-	// Taken even when the profile is silent: the caller asked for this profile,
-	// so its source is the source. An empty result is reported below rather
-	// than falling back to whatever base held, which would back up the wrong
-	// tree under a profile's name.
-	if !decided.Has(FieldSourceURI) {
-		out.Source.URI = p.Source
+	for _, s := range backupFieldSpecs() {
+		// AuthRef has its own rule; see below.
+		if s.field == FieldAuthRef {
+			continue
+		}
+		// The repeatable fields merge on emptiness rather than on being
+		// decided: a caller that passed none has nothing to lose by taking the
+		// profile's, and one that passed some means those instead of, not in
+		// addition to, them. So they are not skipped here.
+		if s.sl.dest == nil && decided.Has(s.field) {
+			continue
+		}
+		s.applyProfile(&out, p)
 	}
 	if out.Source.URI == "" {
 		return Backup{}, fmt.Errorf("profile %q has empty source", name)
 	}
-	if !decided.Has(FieldSkipNativeFiles) {
-		out.Source.SkipNativeFiles = p.SkipNativeFiles
-	}
-	if !decided.Has(FieldIgnoreEmpty) {
-		out.IgnoreEmpty = p.IgnoreEmpty
-	}
 
-	// Taken only when the profile names a value.
-	for _, f := range []struct {
-		field Field
-		val   string
-		dest  *string
-	}{
-		{FieldVolumeUUID, p.VolumeUUID, &out.Source.VolumeUUID},
-		{FieldExcludeFile, p.ExcludeFile, &out.Source.ExcludeFile},
-		{FieldGoogleCreds, p.GoogleCreds, &out.Source.Google.CredsPath},
-		{FieldGoogleCredsRef, p.GoogleCredsRef, &out.Source.Google.CredsRef},
-		{FieldGoogleCredsJSON, p.GoogleCredsJSON, &out.Source.Google.CredsJSON},
-		{FieldGoogleTokenFile, p.GoogleTokenFile, &out.Source.Google.TokenPath},
-		{FieldGoogleTokenRef, p.GoogleTokenRef, &out.Source.Google.TokenRef},
-		{FieldOneDriveClientID, p.OneDriveClientID, &out.Source.OneDrive.ClientID},
-		{FieldOneDriveTokenFile, p.OneDriveTokenFile, &out.Source.OneDrive.TokenPath},
-		{FieldOneDriveTokenRef, p.OneDriveTokenRef, &out.Source.OneDrive.TokenRef},
-	} {
-		if !decided.Has(f.field) && f.val != "" {
-			*f.dest = f.val
-		}
-	}
-
-	// The repeatable flags merge on emptiness rather than on being decided: a
-	// caller that passed none has nothing to lose by taking the profile's, and
-	// one that passed some means those instead of, not in addition to, them.
-	if len(out.Tags) == 0 && len(p.Tags) > 0 {
-		out.Tags = append([]string(nil), p.Tags...)
-	}
-	if len(out.Source.Excludes) == 0 && len(p.Excludes) > 0 {
-		out.Source.Excludes = append([]string(nil), p.Excludes...)
-	}
-
+	// AuthRef is the one field where a decided caller value does not simply
+	// win: an empty one falls back to the profile's entry, because a cloud
+	// source with no auth cannot run at all, so "" reads as "no override"
+	// rather than as "no auth entry".
 	authRef := p.AuthRef
 	if decided.Has(FieldAuthRef) && base.AuthRef != "" {
 		authRef = base.AuthRef
@@ -236,6 +349,26 @@ func MergeProfileBackup(base Backup, decided FieldSet, name string, cfg *profile
 	}
 
 	return out, nil
+}
+
+// applyProfile folds this field's profile value into out, by the rule its type
+// implies: a string is taken when the profile names one (or always, for the
+// source), a bool is taken as it stands, and a slice is taken only when the
+// destination has none.
+func (s backupFieldSpec) applyProfile(out *Backup, p profile.Profile) {
+	switch {
+	case s.str.dest != nil:
+		if v := s.str.fromProfile(p); s.always || v != "" {
+			*s.str.dest(out) = v
+		}
+	case s.bl.dest != nil:
+		*s.bl.dest(out) = s.bl.fromProfile(p)
+	case s.sl.dest != nil:
+		dest := s.sl.dest(out)
+		if v := s.sl.fromProfile(p); len(*dest) == 0 && len(v) > 0 {
+			*dest = append([]string(nil), v...)
+		}
+	}
 }
 
 // ApplyProfileAuth folds a named auth entry's credentials into base, after
@@ -263,9 +396,9 @@ func applyAuth(cfg *Backup, decided FieldSet, auth profile.Auth) error {
 	var required string
 	switch uri.Scheme {
 	case "gdrive", "gdrive-changes":
-		required = "google"
+		required = ProviderGoogle
 	case "onedrive", "onedrive-changes":
-		required = "onedrive"
+		required = ProviderOneDrive
 	default:
 		return fmt.Errorf("auth refs are only valid for Google Drive and OneDrive sources")
 	}
@@ -273,38 +406,19 @@ func applyAuth(cfg *Backup, decided FieldSet, auth profile.Auth) error {
 		return fmt.Errorf("provider mismatch: source requires %q but auth entry is %q", required, auth.Provider)
 	}
 
-	var fields []struct {
-		field Field
-		val   string
-		dest  *string
-	}
-	switch required {
-	case "google":
-		fields = []struct {
-			field Field
-			val   string
-			dest  *string
-		}{
-			{FieldGoogleCreds, auth.GoogleCreds, &cfg.Source.Google.CredsPath},
-			{FieldGoogleCredsRef, auth.GoogleCredsRef, &cfg.Source.Google.CredsRef},
-			{FieldGoogleCredsJSON, auth.GoogleCredsJSON, &cfg.Source.Google.CredsJSON},
-			{FieldGoogleTokenFile, auth.GoogleTokenFile, &cfg.Source.Google.TokenPath},
-			{FieldGoogleTokenRef, auth.GoogleTokenRef, &cfg.Source.Google.TokenRef},
+	// One fold over the table, filtered by provider. This used to be three
+	// copies of the same loop — one here per provider, plus a third in
+	// MergeProfileBackup — over three hand-written field lists.
+	//
+	// Only the credentials belonging to auth's provider are carried over, so an
+	// entry holding both providers' fields (which a hand-edited file may) does
+	// not produce a source that would try both.
+	for _, s := range backupFieldSpecs() {
+		if s.str.fromAuth == nil || s.str.provider != required || decided.Has(s.field) {
+			continue
 		}
-	case "onedrive":
-		fields = []struct {
-			field Field
-			val   string
-			dest  *string
-		}{
-			{FieldOneDriveClientID, auth.OneDriveClientID, &cfg.Source.OneDrive.ClientID},
-			{FieldOneDriveTokenFile, auth.OneDriveTokenFile, &cfg.Source.OneDrive.TokenPath},
-			{FieldOneDriveTokenRef, auth.OneDriveTokenRef, &cfg.Source.OneDrive.TokenRef},
-		}
-	}
-	for _, f := range fields {
-		if !decided.Has(f.field) && f.val != "" {
-			*f.dest = f.val
+		if v := s.str.fromAuth(auth); v != "" {
+			*s.str.dest(cfg) = v
 		}
 	}
 	return nil

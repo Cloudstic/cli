@@ -287,3 +287,67 @@ func TestBackupFields_AreUniqueAndKeyed(t *testing.T) {
 		}
 	}
 }
+
+// TestMergeProfileBackup_AuthEntryBeatsProfileCredentials pins the precedence
+// between the two places a profiles file can state the same cloud credential.
+//
+// profile.Profile and profile.Auth both carry GoogleCreds, GoogleTokenFile and
+// the rest, and a hand-edited file may set both. The auth entry wins: it is the
+// deliberate, shared statement of where a provider's credentials live, while
+// the profile's own copies predate auth entries. Before this test the
+// precedence was an accident of statement order inside MergeProfileBackup.
+func TestMergeProfileBackup_AuthEntryBeatsProfileCredentials(t *testing.T) {
+	cfg := &profile.Config{
+		Profiles: map[string]profile.Profile{
+			"p": {
+				Source:          "gdrive",
+				AuthRef:         "a",
+				GoogleCreds:     "/from/profile.json",
+				GoogleTokenFile: "/from/profile-token.json",
+			},
+		},
+		Auth: map[string]profile.Auth{
+			"a": {
+				Provider:        config.ProviderGoogle,
+				GoogleCreds:     "/from/auth.json",
+				GoogleTokenFile: "/from/auth-token.json",
+			},
+		},
+	}
+
+	got, err := config.MergeProfileBackup(config.Backup{}, nil, "p", cfg)
+	if err != nil {
+		t.Fatalf("MergeProfileBackup: %v", err)
+	}
+	if got.Source.Google.CredsPath != "/from/auth.json" {
+		t.Errorf("auth entry must win over the profile's own copy, got %q", got.Source.Google.CredsPath)
+	}
+	if got.Source.Google.TokenPath != "/from/auth-token.json" {
+		t.Errorf("auth entry must win over the profile's own copy, got %q", got.Source.Google.TokenPath)
+	}
+}
+
+// TestMergeProfileBackup_ProfileCredentialSurvivesASilentAuthEntry is the other
+// half: an auth entry that says nothing about a field must not blank the
+// profile's value, which is what lets the two coexist rather than conflict.
+func TestMergeProfileBackup_ProfileCredentialSurvivesASilentAuthEntry(t *testing.T) {
+	cfg := &profile.Config{
+		Profiles: map[string]profile.Profile{
+			"p": {Source: "gdrive", AuthRef: "a", GoogleCreds: "/from/profile.json"},
+		},
+		Auth: map[string]profile.Auth{
+			"a": {Provider: config.ProviderGoogle, GoogleTokenFile: "/from/auth-token.json"},
+		},
+	}
+
+	got, err := config.MergeProfileBackup(config.Backup{}, nil, "p", cfg)
+	if err != nil {
+		t.Fatalf("MergeProfileBackup: %v", err)
+	}
+	if got.Source.Google.CredsPath != "/from/profile.json" {
+		t.Errorf("a silent auth entry must not clear the profile's value, got %q", got.Source.Google.CredsPath)
+	}
+	if got.Source.Google.TokenPath != "/from/auth-token.json" {
+		t.Errorf("the auth entry's own field must still apply, got %q", got.Source.Google.TokenPath)
+	}
+}

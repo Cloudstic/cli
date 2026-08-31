@@ -499,13 +499,19 @@ func (rm *RestoreManager) runWithWriterV3(ctx context.Context, plan restorePlan,
 	// which on a tree whose files were backed up together — and so packed
 	// together — is N requests for bytes that arrive in one.
 	//
-	// The pools are separate because the two halves stopped being the same
-	// quantity. While a body was one fetch per file, "files in flight" and
-	// "requests in flight" were the same number and one limit served both. A
-	// span now serves many files, so the read side is bounded by how many
-	// blobs are worth being resident in and the write side by how much
-	// decoding and writing there is room for — see restoreSpansInFlight and
-	// restoreWriteConcurrency.
+	// There are three pools because there are three costs, and the single one
+	// this replaced conflated them. While a body was one fetch per file,
+	// "files in flight" and "requests in flight" were the same number and one
+	// limit served both; a span now serves many files, so:
+	//
+	//   - the blob reads are bounded by how many blobs are worth being
+	//     resident in at once (restoreSpansInFlight);
+	//   - the files cut out of those spans by how much decoding and writing
+	//     there is room for, which is not a store property at all
+	//     (restoreWriteConcurrency);
+	//   - and the files that still make a request of their own — chunked, or
+	//     fallen back from a span that could not be read — by the store's own
+	//     hint, exactly as before (restoreFileConcurrency).
 	flush := func() error {
 		if len(batch) == 0 {
 			return nil
@@ -594,8 +600,8 @@ func (rm *RestoreManager) runWithWriterV3(ctx context.Context, plan restorePlan,
 					// this goroutine holds. The only writes running while a
 					// span is resident are blob members, and a member cut out
 					// of a span in hand waits on nothing; the files that do
-					// wait — the chunked ones, on restoreMemoryBudget — are
-					// dispatched below, once every span slot is free.
+					// wait — the chunked ones, on restoreMemoryBudget — go to
+					// the request pool below, after every span slot is free.
 					w := batch[idx]
 					dispatched[idx] = true
 					pending.Add(1)
@@ -611,6 +617,26 @@ func (rm *RestoreManager) runWithWriterV3(ctx context.Context, plan restorePlan,
 			return err
 		}
 
+		// What is left is the request-bound work, and it gets its own pool.
+		//
+		// Under the concurrent writer every span-served file has already gone
+		// to wg above, so everything reaching here still has a request to
+		// make: a chunked file, which opens a fetch window of its own inside
+		// writeChunks, or a body whose span could not be read and which falls
+		// back to its own ranged read. Those are exactly the files the single
+		// pool used to admit at restoreFileConcurrency, and they still want
+		// that width — it is a statement about requests, which they still
+		// issue, where restoreWriteConcurrency is a statement about decoding
+		// and writing, which is all a span-served file does.
+		//
+		// Collapsing the two is what would cost: a store hinting above 8 —
+		// S3 hints 128 — would have its chunked files throttled to a number
+		// measured on a local disk, where the constraint is directory
+		// metadata and no request is made at all.
+		rg, rgCtx := errgroup.WithContext(ctx)
+		if concurrent {
+			rg.SetLimit(restoreFileConcurrency(rm.store))
+		}
 		for i := range batch {
 			if dispatched[i] {
 				continue
@@ -620,12 +646,15 @@ func (rm *RestoreManager) runWithWriterV3(ctx context.Context, plan restorePlan,
 				// A zip is one sequential stream with one open entry at a
 				// time, so its files are written here, in batch order, rather
 				// than as their spans arrive.
-				if err := writeOne(wgCtx, w, m); err != nil {
+				if err := writeOne(rgCtx, w, m); err != nil {
 					return err
 				}
 				continue
 			}
-			wg.Go(func() error { return writeOne(wgCtx, w, m) })
+			rg.Go(func() error { return writeOne(rgCtx, w, m) })
+		}
+		if err := rg.Wait(); err != nil {
+			return err
 		}
 		return wg.Wait()
 	}
@@ -737,14 +766,21 @@ func restoreFileConcurrency(s store.ObjectStore) int {
 // restoreWriteConcurrency is how many files a v3 restore decodes and writes at
 // once, once their bytes are in hand.
 //
-// Separating this from the read pool is the point of the split. A file served
-// out of a span issues no request at all — it is a decrypt, a decompress, a
-// hash and a write — so a *store* concurrency hint says nothing about how many
-// of them are worth running, and that is what a single pool made it decide.
+// It governs *only* files whose bytes came out of a span. A file that still
+// has a request to make — a chunked one, or a body whose span read failed and
+// falls back to its own ranged read — goes through restoreFileConcurrency
+// instead, where the store's hint is the right input because a request is what
+// it is about. Applying this width to those too is a real regression on a
+// store that hints above 8, and the reason there are two pools rather than one
+// constant.
+//
+// For the files it does govern, a store concurrency hint says nothing: they
+// are a decrypt, a decompress, a hash and a write, and no request at all.
 //
 // It is a constant rather than a function of GOMAXPROCS, which is what this
 // was written as first and what measurement rejected. Sweeping the width over
-// one 3,000-file repository on a 14-core machine, median of five restores each:
+// one 3,000-file repository on a 14-core machine against a **local** store,
+// median of five restores each:
 //
 //	 2      4      6      8     10     12     14     16
 //	0.52s  0.44s  0.45s  0.45s  0.45s  0.46s  0.48s  0.49s
@@ -756,6 +792,11 @@ func restoreFileConcurrency(s store.ObjectStore) int {
 // that has the most of them. 8 sits in the middle of the flat region, and is
 // also where a local restore already ran (GetConcurrencyHint's default), so
 // nothing about the write side moves with this change.
+//
+// The sweep is local-only, and that is a real limit on what it proves: it says
+// where filesystem contention sets in, not what a remote restore wants. It is
+// allowed to be the whole answer here only because the remote question — how
+// many requests to have open — is asked of the other pool.
 const restoreWriteConcurrency = 8
 
 func (rm *RestoreManager) prepareRestore(ctx context.Context, snapshotRef string, opts ...RestoreOption) (restorePlan, error) {

@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -145,6 +146,83 @@ func TestPlanBlobSpansStillReadsAMemberLargerThanTheCap(t *testing.T) {
 	}
 }
 
+// Offset and Length are read off a store, so their sum is not to be trusted to
+// fit. Two references that are individually only implausible combine, through
+// the merge, into a span of *negative* length — which reaches make() in a
+// backend's GetRange and takes the process down.
+//
+// The planner drops them instead. A dropped reference is still read, on its own,
+// where an unreadable one is reported against the one file it belongs to.
+func TestPlanBlobSpansDropsAReferenceItCannotAddUp(t *testing.T) {
+	const gap = 1 << 20
+
+	tests := []struct {
+		name  string
+		reads []blobRead
+	}{
+		{
+			// The pair the merge turns negative: planned as one span, it comes
+			// out at -9223372036854774810.
+			name: "two members whose extents overflow",
+			reads: []blobRead{
+				{index: 0, ref: ref("blob/a", 1, math.MaxInt64)},
+				{index: 1, ref: ref("blob/a", 1000, math.MaxInt64)},
+			},
+		},
+		{
+			name: "one member ending past the end of the number line",
+			reads: []blobRead{
+				{index: 0, ref: ref("blob/a", math.MaxInt64, 8)},
+			},
+		},
+		{
+			name: "an overflowing member beside an ordinary one",
+			reads: []blobRead{
+				{index: 0, ref: ref("blob/a", 0, 100)},
+				{index: 1, ref: ref("blob/a", 64, math.MaxInt64)},
+				{index: 2, ref: ref("blob/a", 200, 100)},
+			},
+		},
+		{
+			name: "a negative offset",
+			reads: []blobRead{
+				{index: 0, ref: ref("blob/a", -1, 100)},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			spans := planBlobSpans(tc.reads, gap, restoreSpanBytes())
+			for _, s := range spans {
+				if s.length <= 0 {
+					t.Errorf("planned a span of length %d, which no store can be asked for", s.length)
+				}
+				if s.offset < 0 || s.offset > math.MaxInt64-s.length {
+					t.Errorf("planned span [%d,%d+%d) does not fit an int64", s.offset, s.offset, s.length)
+				}
+				for _, idx := range s.members {
+					r := tc.reads[idx].ref
+					if r.Offset < 0 || r.Length <= 0 || r.Offset > math.MaxInt64-r.Length {
+						t.Errorf("span %v carries member %d, whose extent does not fit", s, idx)
+					}
+				}
+			}
+		})
+	}
+
+	// The sound references either side of a bad one are still planned, so one
+	// unusable entry costs its own file and not its neighbours' coalescing.
+	spans := planBlobSpans([]blobRead{
+		{index: 0, ref: ref("blob/a", 0, 100)},
+		{index: 1, ref: ref("blob/a", 64, math.MaxInt64)},
+		{index: 2, ref: ref("blob/a", 100, 100)},
+	}, gap, restoreSpanBytes())
+	if len(spans) != 1 || spans[0].length != 200 || len(spans[0].members) != 2 {
+		t.Fatalf("planned %v, want the two sound members merged into one 200-byte span", spans)
+	}
+}
+
 // A member's bytes are sliced out of the span that covered it, and a reference
 // the span does not cover is refused rather than read out of bounds.
 func TestBlobSpanSliceIsBoundedByWhatWasRead(t *testing.T) {
@@ -265,18 +343,18 @@ func TestRestoreCoalescesTheReadsWithinABlob(t *testing.T) {
 	}
 	assertRestoredTree(t, root, want)
 
-	// One request per blob is the floor, and with every file wanted it is also
-	// the ceiling: the batch sees the whole blob's worth of members before it
-	// issues anything. The comparison that matters is against the file count,
-	// which is what restore used to pay.
-	got := counting.countUnder("blob/")
-	if got > blobs {
-		t.Errorf("restore issued %d ranged reads for %d blobs; coalescing did not happen", got, blobs)
+	// Exactly one ranged read per blob. It is the floor, and with every file
+	// wanted and one batch to plan them in it is the ceiling too: the batch
+	// sees the whole blob's worth of members before it issues anything.
+	//
+	// Asserted as equality rather than as an upper bound, because an upper
+	// bound is also satisfied by *no* ranged reads at all — a restore that
+	// regressed to whole-object Gets, or that stopped going through
+	// deps.BlobStore, would restore every file correctly and pass.
+	if got := counting.countUnder("blob/"); got != blobs {
+		t.Errorf("restore issued %d ranged reads for %d blobs and %d files, want one per blob",
+			got, blobs, len(want))
 	}
-	if got >= len(want) {
-		t.Errorf("restore issued %d ranged reads for %d files, no better than one apiece", got, len(want))
-	}
-	t.Logf("%d files in %d blobs cost %d ranged reads", len(want), blobs, got)
 }
 
 // The sequential writer coalesces too. It writes its files one at a time —
@@ -330,8 +408,12 @@ func TestZipRestoreCoalescesItsReadsToo(t *testing.T) {
 		t.Fatalf("zip holds %d of %d files", seen, len(want))
 	}
 
-	if got := counting.countUnder("blob/"); got > blobs {
-		t.Errorf("zip restore issued %d ranged reads for %d blobs", got, blobs)
+	// One per blob, exactly, for the same reason the directory restore asserts
+	// equality: an upper bound would also pass if no ranged read were issued
+	// at all.
+	if got := counting.countUnder("blob/"); got != blobs {
+		t.Errorf("zip restore issued %d ranged reads for %d blobs and %d files, want one per blob",
+			got, blobs, len(want))
 	}
 }
 

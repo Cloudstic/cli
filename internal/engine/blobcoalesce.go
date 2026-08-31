@@ -3,6 +3,7 @@ package engine
 import (
 	"cmp"
 	"fmt"
+	"math"
 	"slices"
 
 	"github.com/cloudstic/cli/internal/hamt"
@@ -91,7 +92,22 @@ func planBlobSpans(reads []blobRead, maxGap, maxSpan int64) []blobSpan {
 	byBlob := make(map[string][]blobRead)
 	var order []string
 	for _, r := range reads {
-		if r.ref == nil || r.ref.Length <= 0 || r.ref.Offset < 0 {
+		// A reference whose extent is not representable is not planned over.
+		// Offset and Length are read off a store rather than computed here, so
+		// nothing downstream may assume their sum fits: two entries that each
+		// merely look implausible on their own combine, in the merge below,
+		// into a span of *negative* length — (1, MaxInt64) and (1000,
+		// MaxInt64) of one blob produce one span of -9223372036854774810 —
+		// and a negative length reaches make() in a backend's GetRange. This
+		// is the check blob.ParseIndex makes for the same reason.
+		//
+		// Skipped rather than rejected, because "cannot coalesce" and "cannot
+		// read" are different answers. The entry falls through to the
+		// single-member read it would have made anyway, which is where a
+		// reference that is genuinely unreadable should be reported, against
+		// the one file it belongs to.
+		if r.ref == nil || r.ref.Length <= 0 || r.ref.Offset < 0 ||
+			r.ref.Offset > math.MaxInt64-r.ref.Length {
 			continue
 		}
 		if _, seen := byBlob[r.ref.Blob]; !seen {
@@ -117,9 +133,13 @@ func planBlobSpans(reads []blobRead, maxGap, maxSpan int64) []blobSpan {
 			members: []int{group[0].index},
 		}
 		for _, r := range group[1:] {
+			// Every sum here is representable, and only because the filter
+			// above dropped the references for which it would not be: an
+			// admitted Offset+Length fits, cur.offset+cur.length is one of
+			// those sums by induction, and grown is their max minus a value no
+			// larger. The subtraction form is what keeps that induction going
+			// — grown is a width, never a second sum to overflow.
 			end := cur.offset + cur.length
-			// Written as a subtraction rather than a sum so the comparison
-			// cannot depend on an overflowing offset+length.
 			grown := max(end, r.ref.Offset+r.ref.Length) - cur.offset
 			if r.ref.Offset-end <= maxGap && grown <= maxSpan {
 				cur.length = grown

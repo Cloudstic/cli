@@ -63,6 +63,40 @@ referencing a blob that was never stored is a dangling reference, and a
 snapshot carrying one is worse than a failed backup — so a body is not
 considered placed until its blob has been put.
 
+### Blob consolidation (format v3)
+
+A blob stays live while any one of its bodies is still referenced, so without
+a counter-measure a repository accumulates blobs that are mostly garbage. The
+counter-measure is **not** repacking during prune: rewriting a blob an old
+snapshot references either breaks that snapshot or needs an indirection layer
+the format exists to avoid. Instead the *next backup* consolidates forward
+(History-Aware Rewriting, Fu et al., USENIX ATC '14).
+
+A full-scan v3 backup accumulates, per blob it inherits, the bytes the
+snapshot it is writing still needs — the denominator comes free from
+`BodyRef.Total`, which every referencing entry repeats. After the upload it
+rewrites the live bodies of its sparsest blobs into the blobs it is already
+writing, and repoints those entries. Three properties bound it:
+
+- **A blob is worth rewriting when its live bytes are below half of what a
+  full blob delivers in this repository.** That covers both a blob whose
+  members have mostly been superseded and one that was sealed small — the tail
+  blob every incremental backup writes for its own churn, which is why blob
+  count otherwise grows with the number of backups rather than with the data.
+- **The work is bounded by a byte budget per backup**, not by a clock. What
+  one backup does not reach, the next one does.
+- **Old snapshots are untouched.** An entry's value is the content address of
+  its metadata and does not change; only the body reference inside the leaf
+  moves, in the new snapshot's own leaves. Older snapshots keep naming the
+  blobs they always did and keep restoring byte for byte. The retired blobs
+  become collectable once no retained snapshot references them, which is where
+  the waste is actually reclaimed — see Garbage Collection below.
+
+Consolidation is skipped for change-feed sources, whose scan visits only what
+changed and so cannot say what a blob still holds; for a dry run, which writes
+nothing; and for a backup asked to produce no snapshot when nothing changed
+(`WithIgnoreEmptySnapshot`), whose contract it would otherwise break.
+
 ## Crash Safety
 
 Because all data objects are content-addressed and append-only, an interrupted
@@ -138,6 +172,12 @@ Prune performs a mark-and-sweep to reclaim space from orphaned objects:
 3. **Repack** — when packfiles are enabled, fragmented packs (more than 30%
    wasted space from deleted objects) are repacked: live objects are extracted,
    re-bundled into new packs, and the old packs are deleted.
+
+   Format-v3 blobs are **never** repacked, here or anywhere else. A blob an
+   old snapshot references cannot be rewritten without either breaking that
+   snapshot or introducing an indirection layer, so a sparse blob is retired
+   forward by the next backup instead (see Blob consolidation above) and
+   collected here, unchanged, once no retained snapshot names it.
 
 Running prune after an interrupted backup will delete all orphaned objects and
 restore the repository to a clean state. No data from completed snapshots is

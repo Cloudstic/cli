@@ -239,8 +239,9 @@ All objects are addressed by `<type>/<sha256>`:
 2. Source is scanned via `Walk()` (full) or `WalkChanges()` (incremental, for gdrive-changes/onedrive-changes). The full scan buffers the walk into batches of `entryBatch` and resolves each batch's previous refs before reading any of them, so change detection's filemeta reads are declared to the store together rather than arriving one at a time in an order unrelated to storage layout (RFC 0025). Entries are still *processed* in walk order — that order becomes the upload order, and with it the locality of newly written objects.
 3. New/changed files are chunked (`internal/engine/chunker.go`) using FastCDC, content-addressed, and uploaded.
 4. The HAMT tree is updated with new filemeta refs through a `hamt.Txn`, which holds every intermediate node in memory and serializes only the dirty spine reachable from the final root.
-5. A new `Snapshot` object is written, and `index/latest` is updated.
-6. After the shared lock is released, the pack index is consolidated if it has grown past its threshold (see `PackStore` above).
+5. In a format-v3 repository, a full scan then consolidates its sparsest `blob/` objects forward (`internal/engine/blobconsolidate.go`): it has accumulated, per blob it inherited, the bytes the new snapshot still needs, and it rewrites the live bodies of the blobs delivering least of one into the blobs it is already writing, under a per-backup byte budget. Nothing older changes — an entry's value is its metadata's content address either way, only the body reference inside the *new* leaf moves — so old snapshots keep restoring identically and `prune` collects the retired blobs once none of them names one. `prune` never repacks a blob; see `docs/storage-model.md`.
+6. A new `Snapshot` object is written, and `index/latest` is updated.
+7. After the shared lock is released, the pack index is consolidated if it has grown past its threshold (see `PackStore` above).
 
 ### Batched Deletion
 
@@ -352,7 +353,13 @@ metadata-only figures were measured rather than extrapolated;
 `CLOUDSTIC_TEST_BLOB_BYTES` (`internal/engine/blobwriter.go`) sets how much
 body plaintext a `blob/` object accumulates before it seals, and
 `CLOUDSTIC_TEST_UPLOAD_COMMIT_BYTES` (`internal/engine/backup_upload.go`) how
-much metadata a backup holds before committing the working tree.
+much metadata a backup holds before committing the working tree. Blob
+consolidation adds three (`internal/engine/blobconsolidate.go`):
+`CLOUDSTIC_TEST_BLOB_FILL` is the percentage of a full blob's live bytes below
+which a blob is rewritten forward, and is the one meant to be swept;
+`CLOUDSTIC_TEST_BLOB_REWRITE_BYTES` is the per-backup rewrite budget, which set
+below one blob's worth doubles as the off switch a comparison needs; and
+`CLOUDSTIC_TEST_BLOB_TRACK_BYTES` caps what the accumulator holds.
 
 Each exists because the constant it overrides is a dial nothing outside the
 process can move, and a dial that cannot be moved cannot be swept. Note what

@@ -122,11 +122,20 @@ type BackupManager struct {
 	chunker *Chunker
 	// blobs packs file bodies into blob/ objects. Nil outside format v3,
 	// where bodies are content objects and there is nothing to pack.
-	blobs      *blobWriter
-	reporter   ui.Reporter
-	stats      *backupStats
-	sourceInfo core.SourceInfo
-	cfg        backupConfig
+	blobs *blobWriter
+	// bodies reads them back, which a backup does only to move a body out of
+	// a blob it is retiring. Nil outside format v3.
+	bodies *blobReader
+	// consolidation accumulates what the snapshot being written still needs
+	// from each blob it inherited, and decides which of those blobs are worth
+	// rewriting forward. Built by scan and nowhere else, so it is nil for
+	// anything but a full-scan format-v3 backup that is actually writing —
+	// see there for why an incremental scan must not feed one.
+	consolidation *blobConsolidator
+	reporter      ui.Reporter
+	stats         *backupStats
+	sourceInfo    core.SourceInfo
+	cfg           backupConfig
 
 	// newMetas holds filemetas produced by the current scan, whose bytes are
 	// still queued in pendingMetas and so cannot be read back through metas.
@@ -193,6 +202,7 @@ func NewBackupManager(d Deps, src source.Source, opts ...BackupOption) *BackupMa
 		// possible but rare, and caching one would hold megabytes to save a
 		// request that is almost never made.
 		bm.blobs = newBlobWriter(d.BlobStore, d.Sealer)
+		bm.bodies = d.blobReader()
 	}
 	return bm
 }
@@ -411,6 +421,18 @@ func (bm *BackupManager) run(ctx context.Context) (*RunResult, error) {
 		}
 	}
 
+	// Consolidation runs after the upload rather than during it, so a body it
+	// moves joins the blob the writer opens next instead of displacing the
+	// content this backup came here to write; after countRemoved, whose diff
+	// counts what the *source* dropped and has no opinion about where a body
+	// lives; and before the commit, so the entries it repoints are part of the
+	// snapshot about to be written.
+	if bm.shouldConsolidate() {
+		if err := bm.consolidate(ctx); err != nil {
+			return nil, fmt.Errorf("consolidate blobs: %w", err)
+		}
+	}
+
 	// Commit the tree before anything points at it. A snapshot naming a root
 	// whose nodes are not yet written is unreadable, so the order here —
 	// nodes, then snapshot, then index/latest — is load-bearing, not stylistic.
@@ -455,6 +477,26 @@ func (bm *BackupManager) run(ctx context.Context) (*RunResult, error) {
 	r.SnapshotRef = snapRef
 	r.Root = newRoot
 	return r, nil
+}
+
+// shouldConsolidate reports whether this run may rewrite bodies forward.
+//
+// The one case a full-scan v3 backup still declines is a caller that asked for
+// an unchanged tree to produce no snapshot. Consolidation changes the tree —
+// that is what it is for — so running it would turn every such backup into a
+// written snapshot, which is precisely the outcome WithIgnoreEmptySnapshot
+// exists to prevent. A run that changed nothing has also introduced no new
+// blob, so there is nothing new to consolidate away.
+func (bm *BackupManager) shouldConsolidate() bool {
+	if bm.consolidation == nil {
+		return false
+	}
+	if !bm.cfg.ignoreEmptySnapshot {
+		return true
+	}
+	changed := bm.stats.filesNew.Load() + bm.stats.filesChanged.Load() + bm.stats.filesRemoved.Load() +
+		bm.stats.dirsNew.Load() + bm.stats.dirsChanged.Load() + bm.stats.dirsRemoved.Load()
+	return changed > 0
 }
 
 func (bm *BackupManager) buildResult() *RunResult {

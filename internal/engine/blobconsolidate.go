@@ -505,6 +505,16 @@ func (bm *BackupManager) rewriteBodies(ctx context.Context, plan blobRewritePlan
 	// either way; unreferenced, they are ordinary garbage for the next prune.
 	failed := map[string]bool{}
 	out := make([]blobRewrite, 0, len(targets))
+
+	// Where this pass has already staged each body, so a member several
+	// entries share is moved once rather than once per entry.
+	//
+	// It is local to the rewrite and deliberately not bm.reuse, which is
+	// released before consolidation runs: that index would answer with the
+	// placement inside the blob being retired, and the body would never move
+	// at all. This one only ever holds promises from Adds this loop made, so
+	// it cannot name a blob this pass is retiring.
+	staged := make(map[string]*bodyPromise, len(targets))
 	abandon := func(blob string) {
 		failed[blob] = true
 		out = slices.DeleteFunc(out, func(r blobRewrite) bool {
@@ -527,6 +537,12 @@ func (bm *BackupManager) rewriteBodies(ctx context.Context, plan blobRewritePlan
 		}
 		for _, idx := range s.members {
 			t := targets[idx]
+			if p, ok := staged[hashes[idx]]; ok {
+				t.promise = p
+				out = append(out, t)
+				phase.Increment(1)
+				continue
+			}
 			sealed, err := s.slice(data, t.payload.Body)
 			if err != nil {
 				bm.log.Debugf("consolidation skipped a member of %s: %v", s.blob, err)
@@ -546,6 +562,7 @@ func (bm *BackupManager) rewriteBodies(ctx context.Context, plan blobRewritePlan
 				// skipped.
 				return nil, err
 			}
+			staged[hashes[idx]] = promise
 			t.promise = promise
 			out = append(out, t)
 			phase.Increment(1)

@@ -104,6 +104,18 @@ type blobWriter struct {
 type bodyPromise struct {
 	contentHash string
 	ref         atomic.Pointer[hamt.BodyRef]
+
+	// inherited marks a promise that was never handed to this writer at all:
+	// a placement a previous backup made, which bodyIndex resolved on the spot
+	// so that an entry whose bytes the repository already holds writes nothing
+	// (see bodyindex.go).
+	//
+	// It is kept because the two kinds mean different things to consolidation.
+	// An entry reusing an inherited placement keeps that blob alive exactly as
+	// an unchanged entry does, so the accumulator must be told about it; an
+	// entry sharing a blob this run is writing must not be, or a freshly
+	// sealed blob would look sparse and be rewritten the moment it was made.
+	inherited bool
 }
 
 // placed returns where the body landed, or nil while its blob is unsealed.
@@ -122,6 +134,11 @@ func newBlobWriter(s store.ObjectStore, sealer *crypto.MemberSealer) *blobWriter
 // Add hands one body to the writer and returns the promise that will name
 // where it landed. It writes a blob whenever one fills, so a caller's memory is
 // bounded by blobBudget rather than by the run.
+//
+// It always packs. A caller that would rather reuse a placement the repository
+// already holds goes through bodyIndex.place, which calls this on a miss;
+// consolidation deliberately does not, since the placement it would be handed
+// is the one inside the blob it is retiring.
 func (w *blobWriter) Add(ctx context.Context, contentHash string, body []byte) (*bodyPromise, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()

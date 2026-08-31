@@ -26,6 +26,7 @@ event (`docs/compatibility.md`).
 | `PackStore.packCache` | `internal/storelayer/packbodycache.go` | pack ref → raw packfile bytes | `Client` | LRU bounded by bytes, `packBodyCacheBudget` (64 MB) |
 | `NodeStore.cache` | `internal/hamt/nodestore.go` | node ref → decoded `*node` | `hamt.Tree` | LRU, 4096 nodes |
 | `metaLoader.cache` | `internal/engine/metaloader.go` | filemeta ref → decoded `core.FileMeta` | `diff`: manager. `backup`: the scan phase only — released before the upload | unbounded while enabled; enabled only for `backup` and `diff` |
+| `bodyIndex.placed` | `internal/engine/bodyindex.go` | content hash → body placement (`hamt.BodyRef`, or a promise for one) | one `backup` run, format v3 only — released when the upload ends | bounded by bytes, `bodyIndexBytes` (32 MB) |
 | `findScanner.evaluated` | `internal/engine/find_scan.go` | 16-byte ref digest → match verdict | one `find` run | one small entry per distinct filemeta ref |
 | `Resolver.cache` | `pkg/secretref/secretref.go` | `scheme://path` → secret | `Resolver` | only `keychain`, `wincred`, `secret-service` |
 | `Client.repoIDCache`, `openCfg` | `client.go` | — → repository marker fields | `Client` | one value each |
@@ -81,6 +82,29 @@ worth being careful about. They are not interchangeable:
   content-addressed key, and uses `singleflight` so concurrent writes of the
   same key collapse into one. The pack catalog has no equivalent; it is an
   index, not a write gate.
+
+### `bodyIndex` vs `KeyCacheStore`
+
+The same job in two formats, which is why only one of them is ever built.
+
+Whole-file deduplication asks "does the repository already hold these bytes". In
+format v2 the answer is a key: the content object is addressed by the content
+hash, so `KeyCacheStore` answers it — negatively and with no round trip —
+and `KeyCacheStore.Put` then elides the write. In format v3 a body is a member
+of a `blob/` object, addressed by *where it sits*, so there is no key to ask
+about; the answer has to be a placement, and `bodyIndex` is what holds one.
+
+Its entries come from two places, both free: the previous snapshot's tree, read
+by the change-detection sweep that already decodes every entry's metadata, and
+this run's own blob writer. A hit writes nothing at all — the entry points at a
+blob a retained snapshot already names, so no object is added and a restore
+issues no extra request.
+
+It is capped in bytes rather than grown to fit, because nothing in a v3 backup
+may be proportional to the repository. Reaching the cap costs deduplication and
+nothing else: the index stops recording, keeps serving what it has, and the
+bodies it can no longer answer for are packed exactly as they were before it
+existed.
 
 ### `NodeStore.cache` vs `PackStore.packCache`
 

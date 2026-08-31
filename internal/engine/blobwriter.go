@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 	"sync"
 
 	"github.com/cloudstic/cli/internal/blob"
@@ -25,6 +27,24 @@ import (
 // Measured in plaintext rather than stored bytes so that blob size does not
 // vary with how compressible a directory happens to be.
 const blobBudget = 8 << 20
+
+// envBlobBudget overrides blobBudget, for sweeps and tests only. It joins the
+// CLOUDSTIC_TEST_* family described in AGENTS.md.
+//
+// The budget is the one dial acting on the 97% of a repository that is
+// content, and it has never been swept — 8 MB was derived from the
+// bandwidth-delay product rather than measured (#551). A dial that cannot be
+// moved from outside cannot be swept at all.
+const envBlobBudget = "CLOUDSTIC_TEST_BLOB_BYTES"
+
+func blobLimit() int64 {
+	if v, ok := os.LookupEnv(envBlobBudget); ok {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			return n
+		}
+	}
+	return blobBudget
+}
 
 // blobWriter packs file bodies into blob/ objects.
 //
@@ -80,7 +100,7 @@ func (w *blobWriter) Add(ctx context.Context, contentHash string, body []byte) (
 	p := &bodyPromise{contentHash: contentHash}
 	w.promises = append(w.promises, p)
 
-	if w.pending.PlaintextBytes() >= blobBudget {
+	if w.pending.PlaintextBytes() >= blobLimit() {
 		if err := w.sealLocked(ctx); err != nil {
 			return nil, err
 		}

@@ -348,7 +348,17 @@ fails if a flag's `env` binding has no matching row.
 `CLOUDSTIC_TEST_INLINE_BYTES` (`internal/engine/backup_upload.go`) sets the
 inline threshold, so setting it to 1 chunks every body and produces a tree
 whose leaves carry metadata and refs only — which is how RFC 0026's
-metadata-only figures were measured rather than extrapolated.
+metadata-only figures were measured rather than extrapolated;
+`CLOUDSTIC_TEST_BLOB_BYTES` (`internal/engine/blobwriter.go`) sets how much
+body plaintext a `blob/` object accumulates before it seals, and
+`CLOUDSTIC_TEST_UPLOAD_COMMIT_BYTES` (`internal/engine/backup_upload.go`) how
+much metadata a backup holds before committing the working tree.
+
+Each exists because the constant it overrides is a dial nothing outside the
+process can move, and a dial that cannot be moved cannot be swept. Note what
+the blob budget counts: **plaintext** bytes, not stored ones. Members are
+compressed, so an 8 MB budget yields a roughly 2 MB object on a typical source
+tree — the two are not interchangeable when reading a sweep (#551).
 
 ### Documentation Drift
 

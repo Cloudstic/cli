@@ -1327,22 +1327,6 @@ func setInteractiveStdinLines(t *testing.T, lines ...string) {
 	})
 }
 
-func TestValidRefName(t *testing.T) {
-	valid := []string{"abc", "a-b", "a.b", "a_b", "A1", "test-store.v2"}
-	for _, name := range valid {
-		if !validRefName.MatchString(name) {
-			t.Errorf("expected %q to be valid", name)
-		}
-	}
-
-	invalid := []string{"", "-abc", ".abc", "_abc", "a b", "a!b", "a@b"}
-	for _, name := range invalid {
-		if validRefName.MatchString(name) {
-			t.Errorf("expected %q to be invalid", name)
-		}
-	}
-}
-
 func TestRunStoreList_MultipleStores(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")

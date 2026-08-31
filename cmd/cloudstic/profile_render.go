@@ -108,7 +108,7 @@ func boolLabel(v bool) string {
 
 func profileConfigStatus(cfg *profile.Config, p profile.Profile) (status string, details []string) {
 	status = "ready"
-	provider := profileProviderFromSource(p.Source)
+	provider := config.ProviderForSourceURI(p.Source)
 	if !p.IsEnabled() {
 		status = "disabled"
 	}
@@ -421,7 +421,7 @@ func renderProfileShow(out io.Writer, cfg *profile.Config, name string, profile 
 	renderKVTable(out, appendWarningRow([]table.Row{
 		{"Source", profile.Source},
 		{"Source Type", sourceScheme(profile.Source)},
-		{"Provider", dashIfEmpty(profileProviderFromSource(profile.Source))},
+		{"Provider", dashIfEmpty(config.ProviderForSourceURI(profile.Source))},
 		{"Enabled", boolLabel(profile.IsEnabled())},
 		{"Status", statusLabel(status)},
 	}, warnings))

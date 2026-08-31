@@ -2,10 +2,12 @@ package main
 
 import (
 	"fmt"
+
 	"github.com/cloudstic/cli/pkg/config"
 
 	"github.com/cloudstic/cli/pkg/profile"
 
+	"github.com/cloudstic/cli/internal/onboarding"
 	"github.com/cloudstic/cli/internal/tui"
 )
 
@@ -73,7 +75,7 @@ func (b *tuiFormsBackend) ComposeSource(sourceType, value string) (string, error
 }
 
 func (b *tuiFormsBackend) ValidateNewName(name string) error {
-	return validateRefName("profile", name)
+	return onboarding.ValidateRefName("profile", name)
 }
 
 func (b *tuiFormsBackend) ProfileExists(name string) bool {

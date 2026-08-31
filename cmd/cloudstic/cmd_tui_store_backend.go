@@ -2,10 +2,12 @@ package main
 
 import (
 	"fmt"
+
 	"github.com/cloudstic/cli/pkg/config"
 
 	"github.com/cloudstic/cli/pkg/profile"
 
+	"github.com/cloudstic/cli/internal/onboarding"
 	"github.com/cloudstic/cli/internal/tui/forms"
 	"github.com/cloudstic/cli/pkg/secretref"
 )
@@ -34,7 +36,7 @@ func (b *tuiFormsBackend) ComposeStore(storeType, value string) (string, error) 
 }
 
 func (b *tuiFormsBackend) ValidateStoreName(name string) error {
-	return validateRefName("store", name)
+	return onboarding.ValidateRefName("store", name)
 }
 
 func (b *tuiFormsBackend) StoreExists(name string) bool {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/cloudstic/cli/pkg/profile"
 
+	"github.com/cloudstic/cli/internal/onboarding"
 	"github.com/cloudstic/cli/internal/workstation"
 
 	"github.com/jedib0t/go-pretty/v6/table"
@@ -49,7 +50,7 @@ func runSetupWorkstation(r *runner, ctx context.Context, a *setupWorkstationArgs
 			if !r.canPrompt() || a.yes {
 				return r.fail("No store is configured; create one first with 'cloudstic store new' or rerun interactively")
 			}
-			ref, created, selErr := promptStoreSelection(r, ctx, cfg)
+			ref, created, selErr := onboarding.SelectStore(ctx, prompterFor(r), cfg)
 			if selErr != nil {
 				return r.fail("Failed to %v", selErr)
 			}
@@ -72,7 +73,7 @@ func runSetupWorkstation(r *runner, ctx context.Context, a *setupWorkstationArgs
 			if !r.canPrompt() || a.yes {
 				return r.fail("Multiple stores are configured; pass -store-ref or rerun interactively")
 			}
-			ref, _, selErr := promptStoreSelection(r, ctx, cfg)
+			ref, _, selErr := onboarding.SelectStore(ctx, prompterFor(r), cfg)
 			if selErr != nil {
 				return r.fail("Failed to %v", selErr)
 			}
@@ -287,7 +288,7 @@ func promptWorkstationProfileName(ctx context.Context, prompts workstationReview
 		if v == "" {
 			return fmt.Errorf("profile name is required")
 		}
-		if err := validateRefName("profile", v); err != nil {
+		if err := onboarding.ValidateRefName("profile", v); err != nil {
 			return err
 		}
 		if nameTakenInWorkstationPlan(cfg, plan, index, v) {

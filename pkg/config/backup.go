@@ -395,18 +395,11 @@ func ApplyProfileAuth(base Backup, decided FieldSet, auth profile.Auth) (Backup,
 }
 
 func applyAuth(cfg *Backup, decided FieldSet, auth profile.Auth) error {
-	uri, err := ParseSourceURI(cfg.Source.URI)
-	if err != nil {
+	if _, err := ParseSourceURI(cfg.Source.URI); err != nil {
 		return fmt.Errorf("parse source URI: %w", err)
 	}
-
-	var required string
-	switch uri.Scheme {
-	case "gdrive", "gdrive-changes":
-		required = ProviderGoogle
-	case "onedrive", "onedrive-changes":
-		required = ProviderOneDrive
-	default:
+	required := ProviderForSourceURI(cfg.Source.URI)
+	if required == "" {
 		return fmt.Errorf("auth refs are only valid for Google Drive and OneDrive sources")
 	}
 	if auth.Provider != "" && auth.Provider != required {

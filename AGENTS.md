@@ -702,6 +702,20 @@ and #236–#237 as references).
   `gh api repos/Cloudstic/cli/issues/<NNN>/timeline --jq '.[] | select(.event=="cross-referenced")'`.
   A PR that closes a sub-issue says `Closes #<child>`, never `Closes #<epic>`;
   the epic closes when its last sub-issue does.
+  **After opening a PR that completes an issue, check that the closing reference
+  actually exists** — knowing the rule is demonstrably not enough to apply it:
+
+  ```bash
+  gh pr view <pr> --json closingIssuesReferences --jq '.closingIssuesReferences[].number'
+  ```
+
+  An empty result means nothing will close on merge. That happened to #568: the
+  PR completing it said `Part of`, so GitHub had no closing reference to act on,
+  the issue stayed open after the merge, and it had to be closed by hand. The
+  timeline check above does not catch this — a `Part of` produces a perfectly
+  good cross-reference, which is exactly why the mistake is invisible without
+  asking this second question. An epic is the one case where an empty result is
+  correct.
 - Read `docs/compatibility.md` before changing anything written to a store. The
   compatibility section must identify the legacy read path, safe failure
   behavior for older builds, and repository-format version decision.

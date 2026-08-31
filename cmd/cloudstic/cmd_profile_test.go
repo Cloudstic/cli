@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudstic/cli/pkg/config"
 	"github.com/cloudstic/cli/pkg/profile"
 )
 
@@ -392,9 +393,9 @@ func TestProfileProviderFromSource(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.source, func(t *testing.T) {
-			got := profileProviderFromSource(tt.source)
+			got := config.ProviderForSourceURI(tt.source)
 			if got != tt.want {
-				t.Fatalf("profileProviderFromSource(%q) = %q, want %q", tt.source, got, tt.want)
+				t.Fatalf("config.ProviderForSourceURI(%q) = %q, want %q", tt.source, got, tt.want)
 			}
 		})
 	}

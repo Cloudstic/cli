@@ -34,6 +34,30 @@ func SourceURIForProvider(provider string) (string, error) {
 	}
 }
 
+// ProviderForSourceURI returns the auth provider a source URI needs, or empty
+// when it needs none — a local or SFTP source, or a URI that does not parse.
+//
+// It is the inverse of SourceURIForProvider, and the single answer to "which
+// provider does this source authenticate against". That question was previously
+// answered by two switches over the same schemes: one here, inside applyAuth,
+// and one in the CLI as profileProviderFromSource, which the TUI and the
+// profiles-file renderer also called. A scheme added to ParseSourceURI had to
+// reach both.
+func ProviderForSourceURI(raw string) string {
+	uri, err := ParseSourceURI(raw)
+	if err != nil {
+		return ""
+	}
+	switch uri.Scheme {
+	case "gdrive", "gdrive-changes":
+		return ProviderGoogle
+	case "onedrive", "onedrive-changes":
+		return ProviderOneDrive
+	default:
+		return ""
+	}
+}
+
 // SourceForAuth returns the source configuration that authenticates auth's
 // provider with auth's credentials.
 //

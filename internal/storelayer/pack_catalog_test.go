@@ -175,6 +175,46 @@ func TestPackStore_ExistsFailsWhenCatalogUnreadable(t *testing.T) {
 	}
 }
 
+// And for sizing, where the permissive answer is dangerous for a third reason.
+// Exists can be made to rewrite an object; Size is consulted immediately before
+// one is destroyed. MeteredStore sizes an object to credit its bytes back
+// before deleting it, so a Size that fell through to the backend on an
+// unreadable catalog would report a packed object as absent on the one path
+// whose next step is a deletion.
+func TestPackStore_SizeFailsWhenCatalogUnreadable(t *testing.T) {
+	ctx := context.Background()
+	faulty, inner := newCatalogTestStore(t)
+	seedPackedRepo(t, inner, "filemeta/a")
+
+	faulty.failsLeft = 1
+	ps := newPackStoreT(t, faulty)
+
+	size, err := ps.Size(ctx, "filemeta/a")
+	if err == nil {
+		t.Fatalf("Size succeeded (= %d); want an error when the catalog is unreadable", size)
+	}
+	if size != 0 {
+		t.Errorf("Size returned %d alongside an error; the answer must not be trusted", size)
+	}
+	if faulty.injected == 0 {
+		t.Fatal("fault was never injected")
+	}
+	if !errors.Is(err, errCatalogUnavailable) {
+		t.Errorf("error should wrap the backend failure, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "filemeta/a") {
+		t.Errorf("error should name the key that was looked up, got: %v", err)
+	}
+
+	// Not sticky either: once the backend recovers, the same store sizes the
+	// object from the catalog rather than caching a half-loaded one.
+	if size, err := ps.Size(ctx, "filemeta/a"); err != nil {
+		t.Errorf("Size after recovery: %v", err)
+	} else if size == 0 {
+		t.Error("Size(filemeta/a) = 0 after the backend recovered")
+	}
+}
+
 // Auto-flush adds authoritative local entries before the stored catalog is
 // loaded. A later load failure must discard only streamed remote entries: the
 // local objects remain readable without depending on an unrelated bad shard.

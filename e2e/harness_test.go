@@ -504,6 +504,11 @@ type forgetResult struct {
 	WouldRemoveCount int
 }
 
+type pruneResult struct {
+	*commandResult
+	ObjectsDeleted int
+}
+
 type restoreZipResult struct {
 	t       *testing.T
 	zipPath string
@@ -655,6 +660,23 @@ func (r *repo) Forget(extraArgs ...string) *forgetResult {
 	args = append(args, extraArgs...)
 	out := r.run(args...)
 	return parseForgetResult(r.h.t, out)
+}
+
+// ForgetSnapshot forgets one named snapshot. That is a different code path from
+// Forget's retention policy, which removes a batch and reports a count; this
+// one names its target and either removes it or fails.
+func (r *repo) ForgetSnapshot(id string, extraArgs ...string) *commandResult {
+	r.h.t.Helper()
+	args := append([]string{"forget", id}, r.authArgs...)
+	args = append(args, extraArgs...)
+	return r.run(args...)
+}
+
+func (r *repo) Prune(extraArgs ...string) *pruneResult {
+	r.h.t.Helper()
+	args := append([]string{"prune"}, r.authArgs...)
+	args = append(args, extraArgs...)
+	return parsePruneResult(r.h.t, r.run(args...))
 }
 
 func (r *repo) Diff(left, right string, extraArgs ...string) *diffResult {
@@ -891,6 +913,32 @@ func parseForgetResult(t *testing.T, result *commandResult) *forgetResult {
 		}
 	}
 	return fr
+}
+
+func parsePruneResult(t *testing.T, result *commandResult) *pruneResult {
+	t.Helper()
+	pr := &pruneResult{commandResult: result}
+	for _, line := range strings.Split(result.out, "\n") {
+		_, count, ok := strings.Cut(strings.TrimSpace(line), "Objects deleted:")
+		if !ok {
+			continue
+		}
+		if n, err := strconv.Atoi(strings.TrimSpace(count)); err == nil {
+			pr.ObjectsDeleted = n
+		}
+	}
+	return pr
+}
+
+// MustDeleteObjects asserts prune reclaimed something. The count itself is not
+// pinned: it is a property of how the tree happened to be laid out, while
+// "collected nothing at all" is the symptom of a forget that unlinked nothing.
+func (r *pruneResult) MustDeleteObjects() *pruneResult {
+	r.t.Helper()
+	if r.ObjectsDeleted <= 0 {
+		r.t.Fatalf("expected prune to delete objects, got %d\nraw output:\n%s", r.ObjectsDeleted, r.out)
+	}
+	return r
 }
 
 func leadingInt(s string) (int, bool) {

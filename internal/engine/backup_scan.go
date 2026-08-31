@@ -94,8 +94,17 @@ func (bm *BackupManager) processEntry(ctx context.Context, meta *core.FileMeta, 
 		// dropping the payload here would drop the file's body from the new
 		// snapshot. Identical entries encode to identical leaves, so this
 		// costs no new node where nothing around it changed.
-		if err := bm.txn.InsertWithPayload(ctx, AffinityKey(primaryParentID(meta), meta.FileID), meta.FileID, oldRef, old.payload); err != nil {
+		key := AffinityKey(primaryParentID(meta), meta.FileID)
+		if err := bm.txn.InsertWithPayload(ctx, key, meta.FileID, oldRef, old.payload); err != nil {
 			return fmt.Errorf("hamt insert: %w", err)
+		}
+		// This is the entry consolidation is about: one the backup is passing
+		// over, whose body sits where a previous backup put it. A changed
+		// entry is being rewritten anyway and a new one has nowhere to be
+		// moved from, so neither is a candidate and neither keeps its old
+		// blob alive.
+		if bm.consolidation != nil && old.payload != nil {
+			bm.consolidation.note(key, meta.FileID, old.payload.Body)
 		}
 		return nil
 	}
@@ -175,6 +184,16 @@ func approxMetaSize(m *core.FileMeta) int {
 func (bm *BackupManager) scan(ctx context.Context, oldRoot string) (pending []core.FileMeta, totalBytes int64, err error) {
 	phase := bm.reporter.StartPhase("Scanning", 0, false)
 	bm.txn = bm.tree.Edit("")
+
+	// Consolidation accumulates here and nowhere else. A full scan visits
+	// every entry the new snapshot will contain, which is what makes "these
+	// are the bytes of that blob the snapshot still needs" a complete
+	// statement; a change-feed scan visits only what changed, so every blob
+	// would look almost entirely dead and the whole repository would be
+	// rewritten. A dry run writes nothing, so it accumulates nothing.
+	if bm.v3 && !bm.cfg.dryRun && bm.blobs != nil && bm.bodies != nil {
+		bm.consolidation = newBlobConsolidator()
+	}
 	s := &scanState{}
 
 	batch := scanBatch{metas: make([]core.FileMeta, 0, entryBatch)}

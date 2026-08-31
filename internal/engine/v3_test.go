@@ -12,15 +12,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cloudstic/cli/internal/blob"
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
 	"github.com/cloudstic/cli/internal/ui"
+	"github.com/cloudstic/cli/pkg/store"
 )
 
 // v3Deps is the dependency set every manager in these tests is built from:
 // one store, format v3.
 func v3Deps(dest *MockStore) Deps {
-	return Deps{Store: dest, Reporter: ui.NewNoOpReporter(), FormatV3: true}
+	// BlobStore is the same store here because a MockStore has no format chain
+	// to sit below. In a real client the two differ: blobs go under
+	// compression and encryption, carrying their own of each per member.
+	return Deps{Store: dest, Reporter: ui.NewNoOpReporter(), FormatV3: true, BlobStore: dest}
 }
 
 // v3Source builds a small tree with every content shape the format stores:
@@ -281,7 +286,7 @@ func TestV3Check_ReportsBrokenLeafEntries(t *testing.T) {
 			ContentHash: core.ComputeHash([]byte("data")), ContentRef: "not-derived", Size: 4,
 		}
 		ref, data := metaFor(t, fm)
-		root := insertV3Entry(t, dest, ref, &hamt.Payload{Meta: data, Size: 4, Inline: []byte("data")})
+		root := insertV3Entry(t, dest, ref, &hamt.Payload{Meta: data, Size: 4, Body: blobFor(t, dest, []byte("data"))})
 		v3Snapshot(t, dest, root)
 		wantFinding(t, run(t, dest, hmacKey), "corrupt", "does not derive")
 	})
@@ -293,9 +298,12 @@ func TestV3Check_ReportsBrokenLeafEntries(t *testing.T) {
 			ContentHash: core.ComputeHash([]byte("original")), Size: 8,
 		}
 		ref, data := metaFor(t, fm)
-		root := insertV3Entry(t, dest, ref, &hamt.Payload{Meta: data, Size: 8, Inline: []byte("tampered")})
+		root := insertV3Entry(t, dest, ref, &hamt.Payload{Meta: data, Size: 8, Body: blobFor(t, dest, []byte("tampered"))})
 		v3Snapshot(t, dest, root)
-		wantFinding(t, run(t, dest, nil, WithReadData()), "corrupt", "reconstructed content")
+		// The mismatch is caught reading the member rather than after
+		// reconstructing it: a body's content hash is what keys its seal, so
+		// a body that is not the one the entry names fails at the read.
+		wantFinding(t, run(t, dest, nil, WithReadData()), "corrupt", "hashes to")
 	})
 
 	t.Run("leaf size disagrees with filemeta", func(t *testing.T) {
@@ -306,7 +314,7 @@ func TestV3Check_ReportsBrokenLeafEntries(t *testing.T) {
 			ContentHash: core.ComputeHash(body), Size: int64(len(body)),
 		}
 		ref, data := metaFor(t, fm)
-		root := insertV3Entry(t, dest, ref, &hamt.Payload{Meta: data, Size: 999, Inline: body})
+		root := insertV3Entry(t, dest, ref, &hamt.Payload{Meta: data, Size: 999, Body: blobFor(t, dest, body)})
 		v3Snapshot(t, dest, root)
 		wantFinding(t, run(t, dest, nil, WithReadData()), "corrupt", "records size")
 	})
@@ -357,9 +365,21 @@ func TestV3BackupCommitsIncrementally(t *testing.T) {
 	dest := NewMockStore()
 	src := NewMockSource()
 
-	// Enough inlined content to cross uploadCommitBytes several times over.
-	body := bytes.Repeat([]byte("payload"), 40*1024) // ~280 KB each
+	// A payload is metadata and a body reference now, so the natural threshold
+	// is hundreds of thousands of entries. Lowered to prove the mechanism,
+	// which is what this test is about — see envUploadCommitBytes.
+	// Both thresholds are lowered together, and they have to be: the commit
+	// bound alone would rewrite one leaf over and over, because 400 entries of
+	// metadata fit in a single leaf at the real budget. A tree with several
+	// leaves is what makes "how much garbage does committing leave" a
+	// meaningful question at all.
+	t.Setenv("CLOUDSTIC_TEST_LEAF_BYTES", "2048")
+	t.Setenv(envUploadCommitBytes, "32768")
+	// Distinct bodies, deliberately. Identical ones deduplicate to a single
+	// blob member, so the blob never fills and every entry waits on it — the
+	// case that forced the entry-count seal in flush.
 	for i := range 400 {
+		body := append(bytes.Repeat([]byte("payload"), 40*1024), fmt.Appendf(nil, "-%d", i)...)
 		src.AddFile(fmt.Sprintf("f-%d.bin", i), fmt.Sprintf("id-%d", i), body)
 	}
 
@@ -412,7 +432,11 @@ func TestV3CheckReportsEveryDamagedNode(t *testing.T) {
 	ctx := context.Background()
 	dest := NewMockStore()
 	src := NewMockSource()
-	// Enough entries to build a tree with several leaves under a spine.
+	// Enough entries to build a tree with several leaves under a spine. The
+	// leaf budget is lowered because a leaf holds metadata now: at the real
+	// budget these 200 entries fit in one leaf and there would be nothing to
+	// damage twice.
+	t.Setenv("CLOUDSTIC_TEST_LEAF_BYTES", "4096")
 	body := bytes.Repeat([]byte("content"), 40*1024)
 	for i := range 200 {
 		src.AddFile(fmt.Sprintf("f-%d.bin", i), fmt.Sprintf("id-%d", i), body)
@@ -428,7 +452,7 @@ func TestV3CheckReportsEveryDamagedNode(t *testing.T) {
 	// ref, one that is gone entirely.
 	var leaves []string
 	for key, data := range dest.Data {
-		if strings.HasPrefix(key, "node/") && len(data) > 4096 {
+		if strings.HasPrefix(key, "node/") && len(data) > 512 {
 			leaves = append(leaves, key)
 		}
 	}
@@ -457,5 +481,210 @@ func TestV3CheckReportsEveryDamagedNode(t *testing.T) {
 		if !reported[want] {
 			t.Errorf("damaged node %s was not reported; findings: %v", want, res.Errors)
 		}
+	}
+}
+
+// The point of the override is that it moves bodies out of leaves. Asserting
+// on inlineLimit() alone would pass while the threshold branch still read the
+// constant, which is the whole mechanism.
+func TestInlineLimitOverrideChunksSmallBodies(t *testing.T) {
+	ctx := context.Background()
+
+	// A body far below the built-in threshold: inlined by default.
+	inlined := NewMockStore()
+	src := NewMockSource()
+	src.AddFile("small.txt", "id-small", []byte("a small body, well under 512 KiB"))
+	if _, err := NewBackupManager(v3Deps(inlined), src).Run(ctx); err != nil {
+		t.Fatalf("default backup: %v", err)
+	}
+
+	// The same body with the threshold at 1 must be chunked instead.
+	t.Setenv(envInlineThreshold, "1")
+	chunked := NewMockStore()
+	src2 := NewMockSource()
+	src2.AddFile("small.txt", "id-small", []byte("a small body, well under 512 KiB"))
+	if _, err := NewBackupManager(v3Deps(chunked), src2).Run(ctx); err != nil {
+		t.Fatalf("override backup: %v", err)
+	}
+
+	countChunks := func(s *MockStore) int {
+		n := 0
+		for k := range s.Data {
+			if strings.HasPrefix(k, "chunk/") {
+				n++
+			}
+		}
+		return n
+	}
+	if got := countChunks(inlined); got != 0 {
+		t.Errorf("default: %d chunk objects, want the body inlined into its leaf", got)
+	}
+	if got := countChunks(chunked); got == 0 {
+		t.Error("override: no chunk objects, so the threshold branch ignored it")
+	}
+}
+
+// The inline threshold decides whether a body lives in its leaf or in chunk
+// objects, which is the variable a leaf's composition turns on. The override
+// exists so that can be varied without a rebuild — measuring what a
+// metadata-only tree costs needs a real one, not an extrapolation from the
+// byte budget (RFC 0026).
+func TestInlineLimitOverride(t *testing.T) {
+	if got := inlineLimit(); got != inlineThreshold {
+		t.Errorf("unset: inlineLimit() = %d, want the built-in %d", got, inlineThreshold)
+	}
+
+	t.Setenv(envInlineThreshold, "1")
+	if got := inlineLimit(); got != 1 {
+		t.Errorf("override: inlineLimit() = %d, want 1", got)
+	}
+
+	// Zero is a legitimate setting — it chunks every body, including empty
+	// ones — so it must not be confused with "unset".
+	t.Setenv(envInlineThreshold, "0")
+	if got := inlineLimit(); got != 0 {
+		t.Errorf("zero: inlineLimit() = %d, want 0", got)
+	}
+
+	// A malformed or negative value falls back rather than failing a backup:
+	// these are diagnostic knobs and a typo in one must not change what is
+	// written, let alone stop it.
+	for _, bad := range []string{"", "nonsense", "-1", "12.5"} {
+		t.Setenv(envInlineThreshold, bad)
+		if got := inlineLimit(); got != inlineThreshold {
+			t.Errorf("%q: inlineLimit() = %d, want the built-in %d", bad, got, inlineThreshold)
+		}
+	}
+}
+
+// blobFor packs one body into a blob in s and returns the reference a leaf
+// entry would carry. Unsealed, matching a MockStore with no encryption key.
+func blobFor(t *testing.T, s store.ObjectStore, body []byte) *hamt.BodyRef {
+	t.Helper()
+	w := blob.NewWriter(nil)
+	if err := w.Add(core.ComputeHash(body), body); err != nil {
+		t.Fatalf("add body to blob: %v", err)
+	}
+	ref, data, members, err := w.Seal()
+	if err != nil {
+		t.Fatalf("seal blob: %v", err)
+	}
+	if err := s.Put(context.Background(), ref, data); err != nil {
+		t.Fatalf("put %s: %v", ref, err)
+	}
+	return &hamt.BodyRef{
+		Blob:   ref,
+		Offset: members[0].Offset,
+		Length: members[0].Length,
+		Total:  int64(len(data)),
+	}
+}
+
+// Two snapshots can hold entries with the same metadata ref pointing at
+// different blobs: identical metadata says nothing about where the body was
+// packed, and a re-upload puts the same bytes into whatever blob is open.
+//
+// The mark used to deduplicate on that ref and skip the second entry's
+// objects, so the sweep deleted a blob a retained snapshot still needed. This
+// is the shape of that bug, built directly rather than through a backup,
+// because reproducing it through the upload path depends on packing timing.
+func TestV3Prune_MarksEveryPayloadEvenWhenTheMetadataRefRepeats(t *testing.T) {
+	ctx := context.Background()
+	dest := NewMockStore()
+
+	body := []byte("one body, packed twice into different blobs")
+	fm := core.FileMeta{
+		FileID: "id-x", Name: "x", Type: core.FileTypeFile,
+		ContentHash: core.ComputeHash(body), Size: int64(len(body)),
+	}
+	ref, data := metaFor(t, fm)
+
+	// The same entry value in two snapshots, each naming its own blob.
+	firstBlob := blobFor(t, dest, body)
+	rootA := insertV3Entry(t, dest, ref, &hamt.Payload{Meta: data, Size: fm.Size, Body: firstBlob})
+	snapA := v3Snapshot(t, dest, rootA)
+
+	// A second blob holding the body alongside other content, as a re-upload
+	// into a different run of the walk would produce.
+	secondBlob := blobFor(t, dest, append([]byte("padding"), body...))
+	if secondBlob.Blob == firstBlob.Blob {
+		t.Fatal("fixture produced one blob, not two")
+	}
+	rootB := insertV3Entry(t, dest, ref, &hamt.Payload{Meta: data, Size: fm.Size, Body: secondBlob})
+	snapB := v3Snapshot(t, dest, rootB)
+
+	if snapA == snapB {
+		t.Fatal("fixture produced one snapshot, not two")
+	}
+
+	if _, err := NewPruneManager(v3Deps(dest)).Run(ctx); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+
+	for _, b := range []string{firstBlob.Blob, secondBlob.Blob} {
+		if exists, _ := dest.Exists(ctx, b); !exists {
+			t.Errorf("prune deleted %s, which a retained snapshot still references", b)
+		}
+	}
+}
+
+// A default check must notice a missing blob. The per-entry chunk loop is the
+// only existence check a default run makes over an entry's content, and a
+// body-referencing entry has no chunks — so without an equivalent for blob/, a
+// repository missing every body reports healthy. -read-data is not a
+// substitute: nothing requires a user to run it before trusting a check.
+func TestV3Check_ReportsAMissingBlobWithoutReadData(t *testing.T) {
+	ctx := context.Background()
+	dest := NewMockStore()
+
+	body := []byte("a body that will go missing")
+	fm := core.FileMeta{
+		FileID: "id-x", Name: "x", Type: core.FileTypeFile,
+		ContentHash: core.ComputeHash(body), Size: int64(len(body)),
+	}
+	ref, data := metaFor(t, fm)
+	b := blobFor(t, dest, body)
+	root := insertV3Entry(t, dest, ref, &hamt.Payload{Meta: data, Size: fm.Size, Body: b})
+	v3Snapshot(t, dest, root)
+
+	// Healthy first, so the finding below is the deletion and not the fixture.
+	if res, err := NewCheckManager(v3Deps(dest)).Run(ctx); err != nil || len(res.Errors) != 0 {
+		t.Fatalf("baseline check: err=%v errors=%v", err, res.Errors)
+	}
+
+	delete(dest.Data, b.Blob)
+
+	res, err := NewCheckManager(v3Deps(dest)).Run(ctx)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if len(res.Errors) == 0 {
+		t.Fatal("a default check reported a repository healthy after its only blob was deleted")
+	}
+}
+
+// An entry naming bytes past the end of its blob is corruption a default run
+// must catch, and catching it costs no read: the blob's size is enough.
+func TestV3Check_ReportsARangePastTheEndOfItsBlob(t *testing.T) {
+	ctx := context.Background()
+	dest := NewMockStore()
+
+	body := []byte("a body whose entry will overreach")
+	fm := core.FileMeta{
+		FileID: "id-x", Name: "x", Type: core.FileTypeFile,
+		ContentHash: core.ComputeHash(body), Size: int64(len(body)),
+	}
+	ref, data := metaFor(t, fm)
+	b := blobFor(t, dest, body)
+	b.Length += 4096
+	root := insertV3Entry(t, dest, ref, &hamt.Payload{Meta: data, Size: fm.Size, Body: b})
+	v3Snapshot(t, dest, root)
+
+	res, err := NewCheckManager(v3Deps(dest)).Run(ctx)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if len(res.Errors) == 0 {
+		t.Fatal("a default check accepted an entry naming bytes past the end of its blob")
 	}
 }

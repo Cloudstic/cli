@@ -1,7 +1,6 @@
 package hamt
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"testing"
@@ -200,9 +199,14 @@ func v3EntriesWithOneSized(n, at, size int) []*Payload {
 			body = size
 		}
 		out[i] = &Payload{
-			Meta:   fmt.Appendf(nil, `{"fileId":"file-%d"}`, i),
-			Size:   int64(body),
-			Inline: bytes.Repeat([]byte{byte('a' + i%26)}, body),
+			Meta: fmt.Appendf(nil, `{"fileId":"file-%d"}`, i),
+			Size: int64(body),
+			Body: &BodyRef{
+				Blob:   fmt.Sprintf("blob/%064d", i),
+				Offset: int64(i) * 64,
+				Length: int64(body),
+				Total:  int64(body) * 16,
+			},
 		}
 	}
 	return out

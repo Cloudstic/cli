@@ -18,9 +18,21 @@ func v3TestTree() (*Tree, *inMemoryStore) {
 
 func testPayload(i int) *Payload {
 	return &Payload{
-		Meta:   fmt.Appendf(nil, `{"fileId":"file-%d","size":%d}`, i, i*10),
-		Size:   int64(i * 10),
-		Inline: fmt.Appendf(nil, "content-%d", i),
+		Meta: fmt.Appendf(nil, `{"fileId":"file-%d","size":%d}`, i, i*10),
+		Size: int64(i * 10),
+		Body: testBodyRef(i),
+	}
+}
+
+// testBodyRef places entry i in a blob shared with seven neighbours, which is
+// the shape a real backup produces: bodies packed in walk order, so entries
+// near each other in the tree are near each other in one blob.
+func testBodyRef(i int) *BodyRef {
+	return &BodyRef{
+		Blob:   fmt.Sprintf("blob/%064d", i/8),
+		Offset: int64(i%8) * 1024,
+		Length: 1024,
+		Total:  8 * 1024,
 	}
 }
 
@@ -38,8 +50,8 @@ func TestV3PayloadRoundTrip(t *testing.T) {
 		value := fmt.Sprintf("filemeta/%064d", i)
 		p := testPayload(i)
 		if i%3 == 0 {
-			// Every third entry is "chunked" rather than inline.
-			p.Inline = nil
+			// Every third entry is chunked rather than blob-packed.
+			p.Body = nil
 			p.Chunks = []string{fmt.Sprintf("chunk/%064d", i), fmt.Sprintf("chunk/%064d", i+1)}
 		}
 		if err := tx.InsertWithPayload(ctx, routingKeyFor(i), key, value, p); err != nil {
@@ -81,11 +93,11 @@ func TestV3PayloadRoundTrip(t *testing.T) {
 			t.Fatalf("lookup %s: size %d", key, p.Size)
 		}
 		if i%3 == 0 {
-			if p.Inline != nil || len(p.Chunks) != 2 {
-				t.Fatalf("lookup %s: chunked entry came back inline=%v chunks=%v", key, p.Inline, p.Chunks)
+			if p.Body != nil || len(p.Chunks) != 2 {
+				t.Fatalf("lookup %s: chunked entry came back body=%+v chunks=%v", key, p.Body, p.Chunks)
 			}
-		} else if !bytes.Equal(p.Inline, fmt.Appendf(nil, "content-%d", i)) {
-			t.Fatalf("lookup %s: inline %q", key, p.Inline)
+		} else if p.Body == nil || *p.Body != *testBodyRef(i) {
+			t.Fatalf("lookup %s: body %+v, want %+v", key, p.Body, testBodyRef(i))
 		}
 	}
 
@@ -140,14 +152,19 @@ func TestV3LeavesSplitOnByteBudget(t *testing.T) {
 	tree, store := v3TestTree()
 	tx := tree.Edit("")
 
-	// Four leaf budgets' worth of 64 KB inline entries: far over one leaf's
-	// budget, far under maxLeafEntriesV3, so only the byte rule can split it.
-	// Sized from the budget rather than at a fixed count, because what this
-	// asserts is that the rule fires — not where the budget happens to sit.
+	// Four leaf budgets' worth of 64 KB entries: far over one leaf's budget,
+	// far under maxLeafEntriesV3, so only the byte rule can split it. Sized
+	// from the budget rather than at a fixed count, because what this asserts
+	// is that the rule fires — not where the budget happens to sit.
+	//
+	// The bulk is Meta, which is the only thing that can make a leaf large now
+	// that bodies live in blobs. That makes the case synthetic — real metadata
+	// is a few hundred bytes and a leaf of it cannot approach the budget (see
+	// #550) — but the rule still exists and still has to work.
 	big := bytes.Repeat([]byte("x"), 64*1024)
 	n := 4 * leafSplitBytesV3 / len(big)
 	for i := range n {
-		p := &Payload{Meta: fmt.Appendf(nil, `{"i":%d}`, i), Inline: big, Size: int64(len(big))}
+		p := &Payload{Meta: big, Size: int64(len(big)), Body: testBodyRef(i)}
 		if err := tx.InsertWithPayload(ctx, routingKeyFor(i), fmt.Sprintf("file-%d", i), "v", p); err != nil {
 			t.Fatalf("insert: %v", err)
 		}
@@ -177,7 +194,7 @@ func TestV3LeavesSplitOnByteBudget(t *testing.T) {
 
 	// And the tree still reads correctly after splitting.
 	value, p, err := tree.LookupEntry(ctx, root, routingKeyFor(7), "file-7")
-	if err != nil || value != "v" || p == nil || !bytes.Equal(p.Inline, big) {
+	if err != nil || value != "v" || p == nil || !bytes.Equal(p.Meta, big) {
 		t.Fatalf("lookup after split: value=%q payload=%v err=%v", value, p != nil, err)
 	}
 }
@@ -356,7 +373,7 @@ func TestV3LeafBudgetOverrideChangesSplitting(t *testing.T) {
 		tx := tree.Edit("")
 		body := bytes.Repeat([]byte("x"), 32*1024)
 		for i := range 64 {
-			p := &Payload{Meta: fmt.Appendf(nil, `{"i":%d}`, i), Inline: body, Size: int64(len(body))}
+			p := &Payload{Meta: body, Size: int64(len(body)), Body: testBodyRef(i)}
 			if err := tx.InsertWithPayload(ctx, routingKeyFor(i), fmt.Sprintf("f-%d", i), "v", p); err != nil {
 				t.Fatalf("insert: %v", err)
 			}
@@ -390,7 +407,7 @@ func buildChunkRefTree(t *testing.T, n int) (*Tree, string) {
 	for i := range n {
 		p := testPayload(i)
 		if i%3 == 0 {
-			p.Inline = nil
+			p.Body = nil
 			p.Chunks = []string{fmt.Sprintf("chunk/%064d", i), fmt.Sprintf("chunk/%064d", i+1)}
 		}
 		if err := tx.InsertWithPayload(ctx, routingKeyFor(i), fmt.Sprintf("file-%d", i),
@@ -405,19 +422,21 @@ func buildChunkRefTree(t *testing.T, n int) (*Tree, string) {
 	return NewTree(store, WithFormatV3()), root
 }
 
-// WalkChunkRefs skips decoding Meta and Inline, so it has to be shown to still
-// report every chunk ref — prune marks reachability from exactly this, and a
-// chunk it misses is a chunk it deletes while a snapshot still needs it.
-func TestWalkChunkRefsReportsEveryChunk(t *testing.T) {
+// WalkReachable skips decoding Meta, so it has to be shown to still report
+// everything an entry reaches — prune marks reachability from exactly this,
+// and an object it misses is one it deletes while a snapshot still needs it.
+func TestWalkReachableReportsEveryReference(t *testing.T) {
 	const n = 100
 	fresh, root := buildChunkRefTree(t, n)
 
+	// The full walk is the reference: whatever a complete payload reaches is
+	// what the reduced walk has to report.
 	want := map[string][]string{}
 	if err := fresh.WalkEntries(ctx, root, func(key, _ string, p *Payload) error {
 		if p == nil {
 			t.Fatalf("entry %s has no payload", key)
 		}
-		want[key] = p.Chunks
+		want[key] = EntryRefs{HasPayload: true, Chunks: p.Chunks, Body: p.Body}.Objects(nil)
 		return nil
 	}); err != nil {
 		t.Fatalf("WalkEntries: %v", err)
@@ -425,46 +444,61 @@ func TestWalkChunkRefsReportsEveryChunk(t *testing.T) {
 
 	got := map[string][]string{}
 	entries := 0
-	if err := fresh.WalkChunkRefs(ctx, root, nil,
-		func(key, _ string, chunks []string, hasPayload bool) error {
-			if !hasPayload {
+	if err := fresh.WalkReachable(ctx, root, nil,
+		func(key, _ string, refs EntryRefs) error {
+			if !refs.HasPayload {
 				t.Errorf("entry %s reported no payload", key)
 			}
 			entries++
-			got[key] = chunks
+			got[key] = refs.Objects(nil)
 			return nil
 		}); err != nil {
-		t.Fatalf("WalkChunkRefs: %v", err)
+		t.Fatalf("WalkReachable: %v", err)
 	}
 
 	if entries != n {
 		t.Errorf("walked %d entries, want %d", entries, n)
 	}
-	for key, wantChunks := range want {
-		gotChunks := got[key]
-		if len(gotChunks) != len(wantChunks) {
-			t.Errorf("%s: %d chunk refs, want %d", key, len(gotChunks), len(wantChunks))
+	for key, wantRefs := range want {
+		gotRefs := got[key]
+		if len(gotRefs) != len(wantRefs) {
+			t.Errorf("%s: reaches %d objects, want %d (%v vs %v)", key, len(gotRefs), len(wantRefs), gotRefs, wantRefs)
 			continue
 		}
-		for i := range wantChunks {
-			if gotChunks[i] != wantChunks[i] {
-				t.Errorf("%s chunk %d: %q, want %q", key, i, gotChunks[i], wantChunks[i])
+		for i := range wantRefs {
+			if gotRefs[i] != wantRefs[i] {
+				t.Errorf("%s object %d: %q, want %q", key, i, gotRefs[i], wantRefs[i])
 			}
 		}
+	}
+	// A blob reference is the reason this walk exists in its current form: the
+	// signature it replaced had no slot for one, so an entry pointing at a
+	// blob reported reaching nothing while HasPayload stayed true, and prune
+	// would have swept every blob in the repository.
+	blobs := 0
+	for _, refs := range got {
+		for _, o := range refs {
+			if strings.HasPrefix(o, "blob/") {
+				blobs++
+			}
+		}
+	}
+	if blobs == 0 {
+		t.Error("no blob reference was reported; the reduced walk is not seeing bodies")
 	}
 }
 
 // The one way the reduction could go quietly wrong: a node decoded without its
-// Meta and Inline becoming someone else's cache hit, so a later reader that
-// does need them sees an entry with no metadata and an empty file rather than
-// an error. loadChunksOnly must never write the cache.
-func TestWalkChunkRefsDoesNotPoisonTheNodeCache(t *testing.T) {
+// Meta becoming someone else's cache hit, so a later reader that does need it
+// sees an entry with no metadata rather than an error. loadRefsOnly must never
+// write the cache.
+func TestWalkReachableDoesNotPoisonTheNodeCache(t *testing.T) {
 	const n = 100
 	fresh, root := buildChunkRefTree(t, n)
 
-	if err := fresh.WalkChunkRefs(ctx, root, nil,
-		func(string, string, []string, bool) error { return nil }); err != nil {
-		t.Fatalf("WalkChunkRefs: %v", err)
+	if err := fresh.WalkReachable(ctx, root, nil,
+		func(string, string, EntryRefs) error { return nil }); err != nil {
+		t.Fatalf("WalkReachable: %v", err)
 	}
 
 	// Same tree, so the same NodeStore and the same cache the reduced walk just
@@ -480,7 +514,7 @@ func TestWalkChunkRefsDoesNotPoisonTheNodeCache(t *testing.T) {
 		checked++
 		return nil
 	}); err != nil {
-		t.Fatalf("WalkEntries after WalkChunkRefs: %v", err)
+		t.Fatalf("WalkEntries after WalkReachable: %v", err)
 	}
 	if checked != n {
 		t.Errorf("checked %d entries, want %d", checked, n)
@@ -492,17 +526,16 @@ func TestWalkChunkRefsDoesNotPoisonTheNodeCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LookupEntry: %v", err)
 	}
-	if p == nil || !bytes.Equal(p.Inline, fmt.Appendf(nil, "content-%d", 1)) {
-		t.Errorf("inline content lost after a reduced walk: %q", p.Inline)
+	if p == nil || len(p.Meta) == 0 {
+		t.Errorf("metadata lost after a reduced walk: %+v", p)
 	}
 }
 
-// prune refuses to collect garbage over an entry whose chunk refs it could not
-// read, and hasPayload is how WalkChunkRefs tells it so. An entry inserted
-// without a payload has to arrive as hasPayload=false rather than as one
-// naming no chunks, which would read as "reaches nothing" and make its data
-// collectable.
-func TestWalkChunkRefsReportsAMissingPayload(t *testing.T) {
+// prune refuses to collect garbage over an entry whose references it could not
+// read, and HasPayload is how WalkReachable tells it so. An entry inserted
+// without a payload has to arrive as HasPayload=false rather than as one
+// reaching nothing, which would make its data collectable.
+func TestWalkReachableReportsAMissingPayload(t *testing.T) {
 	tree, store := v3TestTree()
 	tx := tree.Edit("")
 	if err := tx.InsertWithPayload(ctx, routingKeyFor(0), "with", "filemeta/a",
@@ -519,15 +552,15 @@ func TestWalkChunkRefsReportsAMissingPayload(t *testing.T) {
 
 	got := map[string]bool{}
 	fresh := NewTree(store, WithFormatV3())
-	if err := fresh.WalkChunkRefs(ctx, root, nil,
-		func(key, _ string, chunks []string, hasPayload bool) error {
-			got[key] = hasPayload
-			if !hasPayload && chunks != nil {
-				t.Errorf("%s: no payload but chunks %v", key, chunks)
+	if err := fresh.WalkReachable(ctx, root, nil,
+		func(key, _ string, refs EntryRefs) error {
+			got[key] = refs.HasPayload
+			if !refs.HasPayload && refs.Objects(nil) != nil {
+				t.Errorf("%s: no payload but reaches %v", key, refs.Objects(nil))
 			}
 			return nil
 		}); err != nil {
-		t.Fatalf("WalkChunkRefs: %v", err)
+		t.Fatalf("WalkReachable: %v", err)
 	}
 	if !got["with"] {
 		t.Error(`entry "with" reported no payload`)
@@ -537,10 +570,10 @@ func TestWalkChunkRefsReportsAMissingPayload(t *testing.T) {
 	}
 }
 
-// WalkChunkRefs must work on a v2 tree, where there are no payloads to reduce
+// WalkReachable must work on a v2 tree, where there are no payloads to reduce
 // and the ordinary decode is already right. A repository is a mixture of eras
 // indefinitely, so prune meets both.
-func TestWalkChunkRefsOnAV2Tree(t *testing.T) {
+func TestWalkReachableOnAV2Tree(t *testing.T) {
 	s := newInMemoryStore()
 	tree := NewTree(s)
 	tx := tree.Edit("")
@@ -556,11 +589,11 @@ func TestWalkChunkRefsOnAV2Tree(t *testing.T) {
 	}
 
 	entries, nodes := 0, 0
-	if err := NewTree(s).WalkChunkRefs(ctx, root,
+	if err := NewTree(s).WalkReachable(ctx, root,
 		func(string) error { nodes++; return nil },
-		func(_, _ string, chunks []string, hasPayload bool) error {
+		func(_, _ string, refs EntryRefs) error {
 			entries++
-			if hasPayload || chunks != nil {
+			if refs.HasPayload || refs.Objects(nil) != nil {
 				t.Error("a v2 entry reported a payload")
 			}
 			return nil
@@ -574,7 +607,7 @@ func TestWalkChunkRefsOnAV2Tree(t *testing.T) {
 
 // A node already in the cache is complete, so serving the reduced walk from it
 // is correct — and it must still report the chunk refs.
-func TestWalkChunkRefsServesCachedNodes(t *testing.T) {
+func TestWalkReachableServesCachedNodes(t *testing.T) {
 	fresh, root := buildChunkRefTree(t, 30)
 
 	// Populate the cache through the full path first.
@@ -583,17 +616,17 @@ func TestWalkChunkRefsServesCachedNodes(t *testing.T) {
 	}
 
 	found := false
-	if err := fresh.WalkChunkRefs(ctx, root, nil,
-		func(key, _ string, chunks []string, _ bool) error {
+	if err := fresh.WalkReachable(ctx, root, nil,
+		func(key, _ string, refs EntryRefs) error {
 			if key == "file-0" {
 				found = true
-				if len(chunks) != 2 {
-					t.Errorf("file-0 came back with %d chunk refs, want 2", len(chunks))
+				if len(refs.Chunks) != 2 {
+					t.Errorf("file-0 came back with %d chunk refs, want 2", len(refs.Chunks))
 				}
 			}
 			return nil
 		}); err != nil {
-		t.Fatalf("WalkChunkRefs: %v", err)
+		t.Fatalf("WalkReachable: %v", err)
 	}
 	if !found {
 		t.Error("file-0 was not walked")
@@ -602,19 +635,19 @@ func TestWalkChunkRefsServesCachedNodes(t *testing.T) {
 
 // An empty root is a tree with nothing in it, not an error, and a walk that
 // only wants node refs must be able to omit the entry callback.
-func TestWalkChunkRefsEmptyRootAndNoEntryCallback(t *testing.T) {
+func TestWalkReachableEmptyRootAndNoEntryCallback(t *testing.T) {
 	fresh, root := buildChunkRefTree(t, 10)
 
-	if err := fresh.WalkChunkRefs(ctx, "", nil, func(string, string, []string, bool) error {
+	if err := fresh.WalkReachable(ctx, "", nil, func(string, string, EntryRefs) error {
 		t.Error("an empty root walked an entry")
 		return nil
 	}); err != nil {
-		t.Errorf("WalkChunkRefs on an empty root: %v", err)
+		t.Errorf("WalkReachable on an empty root: %v", err)
 	}
 
 	nodes := 0
-	if err := fresh.WalkChunkRefs(ctx, root, func(string) error { nodes++; return nil }, nil); err != nil {
-		t.Fatalf("WalkChunkRefs without an entry callback: %v", err)
+	if err := fresh.WalkReachable(ctx, root, func(string) error { nodes++; return nil }, nil); err != nil {
+		t.Fatalf("WalkReachable without an entry callback: %v", err)
 	}
 	if nodes == 0 {
 		t.Error("no nodes visited")
@@ -624,7 +657,7 @@ func TestWalkChunkRefsEmptyRootAndNoEntryCallback(t *testing.T) {
 // A truncated leaf must fail the decode rather than parse into fewer entries:
 // skipping a field it cannot measure is how a reduced decode could silently
 // lose one.
-func TestChunksOnlyDecodeRejectsATruncatedLeaf(t *testing.T) {
+func TestReducedDecodeRejectsATruncatedLeaf(t *testing.T) {
 	tree, store := v3TestTree()
 	tx := tree.Edit("")
 	for i := range 5 {
@@ -648,7 +681,7 @@ func TestChunksOnlyDecodeRejectsATruncatedLeaf(t *testing.T) {
 		t.Fatal("fixture has no leaf node")
 	}
 	for _, cut := range []int{len(leaf) / 2, len(leaf) - 1} {
-		if _, err := decodeNodeV3Detail(leaf[:cut], payloadChunksOnly); err == nil {
+		if _, err := decodeNodeV3Detail(leaf[:cut], payloadRefsOnly); err == nil {
 			t.Errorf("a leaf truncated to %d of %d bytes decoded without error", cut, len(leaf))
 		}
 	}
@@ -658,7 +691,7 @@ func TestChunksOnlyDecodeRejectsATruncatedLeaf(t *testing.T) {
 // from this traversal and then deletes what it did not mark, so a read error
 // swallowed here is data collected while a snapshot still references it —
 // which docs/compatibility.md forbids outright.
-func TestWalkChunkRefsFailsOnAnUnreadableNode(t *testing.T) {
+func TestWalkReachableFailsOnAnUnreadableNode(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		damage func(store *inMemoryStore, ref string)
@@ -697,8 +730,8 @@ func TestWalkChunkRefsFailsOnAnUnreadableNode(t *testing.T) {
 			}
 			tc.damage(store, victim)
 
-			err = NewTree(store, WithFormatV3()).WalkChunkRefs(ctx, root, nil,
-				func(string, string, []string, bool) error { return nil })
+			err = NewTree(store, WithFormatV3()).WalkReachable(ctx, root, nil,
+				func(string, string, EntryRefs) error { return nil })
 			if err == nil {
 				t.Errorf("walk over a %s node returned no error", tc.name)
 			}
@@ -707,9 +740,9 @@ func TestWalkChunkRefsFailsOnAnUnreadableNode(t *testing.T) {
 }
 
 // An empty ref is a malformed tree, not an empty one.
-func TestLoadChunksOnlyRejectsAnEmptyRef(t *testing.T) {
+func TestLoadRefsOnlyRejectsAnEmptyRef(t *testing.T) {
 	tree, _ := v3TestTree()
-	if _, err := tree.nodes.loadChunksOnly(ctx, ""); err == nil {
+	if _, err := tree.nodes.loadRefsOnly(ctx, ""); err == nil {
 		t.Error("an empty node ref loaded without error")
 	}
 }

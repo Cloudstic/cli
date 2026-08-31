@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"io"
 )
 
 // ObjectStore is the interface for content-addressable object storage.
@@ -45,6 +46,63 @@ type Unwrapper interface {
 // a full Get, which is correct everywhere and merely slower.
 type RangeGetter interface {
 	GetRange(ctx context.Context, key string, offset, length int64) ([]byte, error)
+}
+
+// GetRange reads a byte range from s, using its RangeGetter when it has one
+// and falling back to a whole-object Get and a slice when it does not.
+//
+// It is the read-side sibling of DeleteAll: a caller wanting a range should
+// never have to branch on whether the store beneath it can serve one, and a
+// wrapper that forgets to forward the capability turns every ranged read into
+// a full transfer with nothing to show for it. Wrappers whose work does not
+// depend on an object's contents — logging, metering — declare GetRange in
+// terms of this helper, so they satisfy RangeGetter unconditionally and the
+// fallback is explicit rather than inherited.
+//
+// The fallback is correct everywhere and merely slower, which is the whole
+// point: it is what lets a backend opt out of ranging by not implementing it.
+func GetRange(ctx context.Context, s ObjectStore, key string, offset, length int64) ([]byte, error) {
+	if ranger, ok := s.(RangeGetter); ok {
+		return ranger.GetRange(ctx, key, offset, length)
+	}
+	data, err := s.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	if offset < 0 || length < 0 || offset+length > int64(len(data)) {
+		return nil, fmt.Errorf("range %d+%d is outside %s (%d bytes)", offset, length, key, len(data))
+	}
+	out := make([]byte, length)
+	copy(out, data[offset:offset+length])
+	return out, nil
+}
+
+// ReadExactly reads exactly length bytes from r, or reports why it could not.
+//
+// It exists so that no backend allocates a size it was merely *asked* for.
+// Offsets and lengths reach a RangeGetter from a repository's own metadata —
+// values read off a store rather than computed — so a malformed or hostile
+// repository can name a range no object could hold. Reserving that upfront
+// turns a bad number into a panic in make(), or an out-of-memory kill, before
+// a single byte has been read.
+//
+// Growing as bytes arrive costs nothing in the ordinary case, where the range
+// is a few hundred bytes of footer or one blob member and the buffer reaches
+// its final size in one or two steps. A short read stays an error: the caller
+// asked for bytes that are not there, and a truncated slice would be a
+// silently wrong answer.
+func ReadExactly(r io.Reader, length int64) ([]byte, error) {
+	if length < 0 {
+		return nil, fmt.Errorf("cannot read a negative length %d", length)
+	}
+	buf, err := io.ReadAll(io.LimitReader(r, length))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(buf)) != length {
+		return nil, fmt.Errorf("short read: got %d of %d bytes", len(buf), length)
+	}
+	return buf, nil
 }
 
 // BatchDeleter is an optional interface for backends that can delete many keys

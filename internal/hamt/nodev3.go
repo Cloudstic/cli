@@ -30,11 +30,13 @@ package hamt
 //	    key      uvarint length + bytes
 //	    pathKey  uvarint length + bytes
 //	    value    uvarint length + bytes
-//	    flags    1 byte: 1 = has payload, 2 = has inline, 4 = has chunks
+//	    flags    1 byte: 1 = has payload, 4 = has chunks, 8 = has body ref
+//	                     (2 is retired; see entryFlagInlineRetired)
 //	    payload (when flag 1):
 //	      size    uvarint
 //	      meta    uvarint length + bytes
-//	      inline  uvarint length + bytes            (when flag 2)
+//	      body    (when flag 8): blob ref (uvarint length + bytes),
+//	                             offset, length, total (uvarint each)
 //	      chunks  uvarint count, count × ref         (when flag 4)
 
 import (
@@ -49,8 +51,24 @@ const (
 	nodeKindLeafV3     byte = 1
 
 	entryFlagPayload byte = 1
-	entryFlagInline  byte = 2
-	entryFlagChunks  byte = 4
+
+	// entryFlagInlineRetired marked an entry whose content was carried in the
+	// leaf itself. Format v3 was revised before release to keep the content in
+	// a blob/ object and the reference in the entry, so nothing writes this
+	// bit any more.
+	//
+	// The bit is retired rather than reused. entryFlagBody takes a new value,
+	// so a leaf written by a pre-revision build is refused with an error that
+	// says what it is, instead of having its inline bytes decoded as a blob
+	// reference. Reusing 2 would have made the two encodings indistinguishable
+	// on the one axis that matters.
+	entryFlagInlineRetired byte = 2
+
+	entryFlagChunks byte = 4
+
+	// entryFlagBody marks an entry whose body lives in a blob/ object, with
+	// this entry naming the byte range (RFC 0026).
+	entryFlagBody byte = 8
 )
 
 // isV3NodeData reports whether data begins with the v3 node magic.
@@ -99,8 +117,8 @@ func encodeNodeV3(sn *storedNode) []byte {
 		var flags byte
 		if e.payload != nil {
 			flags |= entryFlagPayload
-			if len(e.payload.Inline) > 0 {
-				flags |= entryFlagInline
+			if e.payload.Body != nil {
+				flags |= entryFlagBody
 			}
 			if len(e.payload.Chunks) > 0 {
 				flags |= entryFlagChunks
@@ -112,8 +130,12 @@ func encodeNodeV3(sn *storedNode) []byte {
 		}
 		buf = appendUvarint(buf, uint64(e.payload.Size))
 		buf = appendBytes(buf, e.payload.Meta)
-		if flags&entryFlagInline != 0 {
-			buf = appendBytes(buf, e.payload.Inline)
+		if flags&entryFlagBody != 0 {
+			b := e.payload.Body
+			buf = appendString(buf, b.Blob)
+			buf = appendUvarint(buf, uint64(b.Offset))
+			buf = appendUvarint(buf, uint64(b.Length))
+			buf = appendUvarint(buf, uint64(b.Total))
 		}
 		if flags&entryFlagChunks != 0 {
 			buf = appendUvarint(buf, uint64(len(e.payload.Chunks)))
@@ -195,7 +217,7 @@ func (d *v3Decoder) bytes() ([]byte, error) {
 }
 
 // skipBytes advances past a length-prefixed field without copying it, for a
-// decode that does not want the field. See payloadChunksOnly.
+// decode that does not want the field. See payloadRefsOnly.
 func (d *v3Decoder) skipBytes() error {
 	n, err := d.uvarint()
 	if err != nil {
@@ -216,11 +238,16 @@ func (d *v3Decoder) byte() (byte, error) {
 
 // payloadDetail selects how much of an entry's payload a decode materialises.
 //
-// A leaf's Meta and Inline are essentially all of its bytes — 97-100% at every
-// profile measured — so a caller that needs neither pays for the whole leaf to
-// learn a handful of chunk refs. prune is exactly that caller: it reads
-// p.Chunks and nothing else, and marking one 357 MB repository allocated
-// 17 GB, 45% of it copying payload fields it never looked at.
+// Meta is the bulk of what is left in a leaf now that content lives in blob/
+// objects, and a caller that only needs to know what an entry *reaches* pays
+// for it needlessly. prune is exactly that caller: it wants the chunk refs and
+// the body reference, never the metadata, and marking one 357 MB repository
+// allocated 17 GB, 45% of it copying payload fields it never looked at.
+//
+// Note which field the reduction may not skip. Chunk refs and the body
+// reference are both reachability, so both are decoded at every level; only
+// Meta is dropped. A reduction that skipped the body reference would make
+// prune mark no blobs and sweep every one of them.
 //
 // A reduced node is never cached. The cache holds complete nodes only, so a
 // later reader that does need Meta or Inline cannot be served a node missing
@@ -230,7 +257,7 @@ type payloadDetail int
 
 const (
 	payloadFull payloadDetail = iota
-	payloadChunksOnly
+	payloadRefsOnly
 )
 
 // decodeNodeV3 parses a binary v3 node into the in-memory form.
@@ -292,6 +319,17 @@ func decodeNodeV3Detail(data []byte, detail payloadDetail) (*node, error) {
 			if err != nil {
 				return nil, err
 			}
+			if flags&entryFlagInlineRetired != 0 {
+				// A leaf from a pre-revision v3 build, whose entries carry
+				// their content rather than a reference to it. Refused rather
+				// than guessed at: format v3 has never been released, so no
+				// repository anyone was promised compatibility with can hold
+				// one, and decoding those bytes as a blob reference is the one
+				// outcome that must not happen quietly.
+				return nil, fmt.Errorf(
+					"leaf entry %q carries inline content, written by a pre-release format-v3 build; "+
+						"this repository predates the blob encoding and must be recreated", e.Key)
+			}
 			if flags&entryFlagPayload != 0 {
 				p := &Payload{}
 				size, err := d.uvarint()
@@ -299,24 +337,36 @@ func decodeNodeV3Detail(data []byte, detail payloadDetail) (*node, error) {
 					return nil, err
 				}
 				p.Size = int64(size)
-				if detail == payloadChunksOnly {
+				if detail == payloadRefsOnly {
 					if err := d.skipBytes(); err != nil {
 						return nil, err
 					}
-					if flags&entryFlagInline != 0 {
-						if err := d.skipBytes(); err != nil {
-							return nil, err
-						}
-					}
-				} else {
-					if p.Meta, err = d.bytes(); err != nil {
+				} else if p.Meta, err = d.bytes(); err != nil {
+					return nil, err
+				}
+				if flags&entryFlagBody != 0 {
+					// Decoded at every detail level. A body reference is what
+					// makes a blob reachable, so a reduced decode that skipped
+					// it would have prune mark nothing and sweep every blob in
+					// the repository.
+					b := &BodyRef{}
+					if b.Blob, err = d.str(); err != nil {
 						return nil, err
 					}
-					if flags&entryFlagInline != 0 {
-						if p.Inline, err = d.bytes(); err != nil {
-							return nil, err
-						}
+					off, err := d.uvarint()
+					if err != nil {
+						return nil, err
 					}
+					length, err := d.uvarint()
+					if err != nil {
+						return nil, err
+					}
+					total, err := d.uvarint()
+					if err != nil {
+						return nil, err
+					}
+					b.Offset, b.Length, b.Total = int64(off), int64(length), int64(total)
+					p.Body = b
 				}
 				if flags&entryFlagChunks != 0 {
 					m, err := d.uvarint()

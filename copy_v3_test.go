@@ -2,13 +2,17 @@ package cloudstic
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/cloudstic/cli/internal/core"
+	"github.com/cloudstic/cli/internal/hamt"
 	"github.com/cloudstic/cli/pkg/keychain"
 	localsource "github.com/cloudstic/cli/pkg/source/local"
 	localstore "github.com/cloudstic/cli/pkg/store/local"
@@ -176,11 +180,18 @@ func assertNamespaces(t *testing.T, dir string, format int) {
 // TestCopyFrom_CrossFormatMatchesADirectBackup is the strong form of "a v3
 // repository written by copy is indistinguishable from one written by backup".
 //
-// Both repositories end up with a tree over the same files, so if copy assembles
-// leaf payloads even slightly differently from backup — a size taken from the
-// wrong place, inline bytes where a chunk list belongs, a payload omitted on a
-// folder — the encodings differ, and with them every node ref up to the root.
-// Comparing the root hash is therefore the whole claim in one assertion.
+// It compares what the two repositories *hold*, not their root hashes, and the
+// difference is the point. A v3 leaf entry names where its body landed, and
+// placement depends on which bodies were packed alongside it — so two runs
+// over the same tree produce different roots, whether the runs are a copy and
+// a backup or two identical backups. Asserting root equality here was flaky
+// for exactly that reason.
+//
+// What must still hold is everything that is not placement: the same files,
+// the same metadata, the same bytes on restore. If copy assembles leaf
+// payloads even slightly differently from backup — a size taken from the wrong
+// place, a body where a chunk list belongs, a payload omitted on a folder —
+// one of those three diverges.
 func TestCopyFrom_CrossFormatMatchesADirectBackup(t *testing.T) {
 	ctx := context.Background()
 	tree := writeTree(t, crossFormatTree())
@@ -202,11 +213,49 @@ func TestCopyFrom_CrossFormatMatchesADirectBackup(t *testing.T) {
 		t.Fatalf("copied %d snapshots, want 1", len(res.Copied))
 	}
 
-	directRoot := snapshotRoot(t, direct, directRes.SnapshotRef)
-	copiedRoot := snapshotRoot(t, copied, res.Copied[0].DestRef)
-	if directRoot != copiedRoot {
-		t.Fatalf("tree root differs between a direct v3 backup and a v2→v3 copy:\n backup: %s\n   copy: %s",
-			directRoot, copiedRoot)
+	// The entry values are content addresses of the metadata, so they are
+	// independent of where a body landed. They must agree exactly.
+	wantEntries := listEntryValues(t, direct, directRes.SnapshotRef)
+	gotEntries := listEntryValues(t, copied, res.Copied[0].DestRef)
+	if !reflect.DeepEqual(wantEntries, gotEntries) {
+		t.Errorf("entry values differ between a direct v3 backup and a v2->v3 copy:\n backup: %v\n   copy: %v",
+			wantEntries, gotEntries)
+	}
+
+	// And both restore the tree they came from, byte for byte.
+	assertRestoresTo(t, direct, directRes.SnapshotRef, tree)
+	assertRestoresTo(t, copied, res.Copied[0].DestRef, tree)
+}
+
+// listEntryValues returns every entry in a snapshot's tree as "key=value",
+// sorted — the metadata identity of the snapshot, with placement excluded.
+func listEntryValues(t *testing.T, client *Client, ref string) []string {
+	t.Helper()
+	ctx := context.Background()
+	root := snapshotRoot(t, client, ref)
+
+	var out []string
+	err := hamt.NewTree(client.store, hamt.WithFormatV3()).WalkEntries(ctx, root,
+		func(key, value string, _ *hamt.Payload) error {
+			out = append(out, key+"="+value)
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("walk entries: %v", err)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// assertRestoresTo restores a snapshot and compares it with the source tree.
+func assertRestoresTo(t *testing.T, client *Client, ref, want string) {
+	t.Helper()
+	dir := t.TempDir()
+	if _, err := client.RestoreToDir(context.Background(), dir, ref); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if got, wantSum := treeFingerprint(t, dir), treeFingerprint(t, want); got != wantSum {
+		t.Errorf("restored tree differs from the source:\n got %s\nwant %s", got, wantSum)
 	}
 }
 
@@ -339,4 +388,36 @@ func TestCopyFrom_CrossFormatBetweenEncryptedRepositories(t *testing.T) {
 	if len(check.Errors) != 0 {
 		t.Fatalf("check reported %d errors: %v", len(check.Errors), check.Errors)
 	}
+}
+
+// treeFingerprint hashes every relative path and its contents, so two trees
+// compare equal only if they are byte-identical.
+func treeFingerprint(t *testing.T, root string) string {
+	t.Helper()
+	var paths []string
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			paths = append(paths, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", root, err)
+	}
+	sort.Strings(paths)
+
+	h := sha256.New()
+	for _, p := range paths {
+		rel, _ := filepath.Rel(root, p)
+		h.Write([]byte(rel))
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("read %s: %v", p, err)
+		}
+		h.Write(b)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }

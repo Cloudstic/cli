@@ -167,15 +167,16 @@ func (ns *NodeStore) decodeAndCache(ref string, data []byte) (*node, error) {
 	return n, nil
 }
 
-// loadChunksOnly is load for a traversal that reads an entry's chunk refs and
-// nothing else. A v3 node decoded this way skips its Meta and Inline fields,
-// which are almost all of a leaf's bytes.
+// loadRefsOnly is load for a traversal that reads what an entry *reaches* —
+// its chunk refs and its body reference — and nothing else. A v3 node decoded
+// this way skips its Meta fields, which are the bulk of what a leaf still
+// carries now that content lives in blob/ objects.
 //
 // It reads the cache but never writes it: the cache holds complete nodes, so a
 // hit here is a full node and is returned as-is, while a miss decodes a reduced
 // node that must not become someone else's cache hit. A traversal visits each
 // node once and so loses nothing by not caching.
-func (ns *NodeStore) loadChunksOnly(ctx context.Context, ref string) (*node, error) {
+func (ns *NodeStore) loadRefsOnly(ctx context.Context, ref string) (*node, error) {
 	if ref == "" {
 		return nil, fmt.Errorf("empty node ref")
 	}
@@ -194,7 +195,7 @@ func (ns *NodeStore) loadChunksOnly(ctx context.Context, ref string) (*node, err
 		// full path — cache included — is exactly right.
 		return ns.decodeAndCache(ref, data)
 	}
-	n, err := decodeNodeV3Detail(data, payloadChunksOnly)
+	n, err := decodeNodeV3Detail(data, payloadRefsOnly)
 	if err != nil {
 		return nil, fmt.Errorf("decode v3 node %s: %w", ref, err)
 	}

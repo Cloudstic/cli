@@ -228,8 +228,8 @@ func (s *Store) GetRange(ctx context.Context, key string, offset, length int64) 
 
 	// A short read means the object ended early: the caller asked for bytes
 	// that are not there, which must be an error rather than a truncated slice.
-	buf := make([]byte, length)
-	if _, err := io.ReadFull(out.Body, buf); err != nil {
+	buf, err := store.ReadExactly(out.Body, length)
+	if err != nil {
 		return nil, fmt.Errorf("read %s at %d+%d: %w", key, offset, length, err)
 	}
 	return buf, nil

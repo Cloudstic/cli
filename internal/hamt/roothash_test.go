@@ -39,6 +39,42 @@ func del(parent, file string) op        { return op{del: true, parentID: parent,
 type scenario struct {
 	name string
 	ops  []op
+	// v3 runs the scenario against a format-v3 tree, whose leaves carry
+	// binary-encoded payloads. Without this the golden pinned only the v2 JSON
+	// encoding, so every field, tag and flag of the v3 leaf could change
+	// without a test noticing — and a v3 leaf encoding change rewrites every
+	// root hash in every v3 repository just as surely.
+	v3 bool
+}
+
+// v3Payload is a deterministic payload for scenario entry o.
+//
+// It exercises all three shapes a v3 entry takes, because they are separate
+// branches of the encoder: metadata only (a folder), metadata plus a body
+// reference, and metadata plus chunk refs. Cycling by index means the golden
+// covers each without three scenarios.
+func v3Payload(o op, i int) *Payload {
+	p := &Payload{
+		Meta: fmt.Appendf(nil, `{"v":%q}`, o.value),
+		Size: int64(len(o.value)),
+	}
+	switch i % 3 {
+	case 0:
+		// Metadata only.
+	case 1:
+		p.Body = &BodyRef{
+			Blob:   fmt.Sprintf("blob/%064d", i/8),
+			Offset: int64(i%8) * 512,
+			Length: 512,
+			Total:  4096,
+		}
+	case 2:
+		p.Chunks = []string{
+			fmt.Sprintf("chunk/%064d", i),
+			fmt.Sprintf("chunk/%064d", i+1),
+		}
+	}
+	return p
 }
 
 func rootHashScenarios() []scenario {
@@ -101,19 +137,34 @@ func rootHashScenarios() []scenario {
 		{name: "insert-120-delete-even", ops: collapse},
 		{name: "insert-120-delete-to-20", ops: collapseDeep},
 		{name: "overwrite-and-absent-delete", ops: updates},
+		// The same shapes again in format v3, whose leaves carry binary
+		// payloads. A v3 leaf encoding change rewrites every root hash in
+		// every v3 repository, exactly as a v2 node change does, so it is
+		// pinned the same way.
+		{name: "v3-flat-200-no-parent", ops: flat, v3: true},
+		{name: "v3-affinity-10-dirs-30-files", ops: affinity, v3: true},
+		{name: "v3-insert-120-delete-even", ops: collapse, v3: true},
 	}
 }
 
 // runScenario applies ops in order and returns the final root ref.
 func runScenario(t *testing.T, s scenario) string {
 	t.Helper()
-	tree := NewTree(newInMemoryStore())
+	var tree *Tree
+	if s.v3 {
+		tree = NewTree(newInMemoryStore(), WithFormatV3())
+	} else {
+		tree = NewTree(newInMemoryStore())
+	}
 	root := ""
 	var err error
 	for i, o := range s.ops {
-		if o.del {
+		switch {
+		case o.del:
 			root, err = deleteCommit(tree, root, routingKey(o.parentID, o.fileID), o.fileID)
-		} else {
+		case s.v3:
+			root, err = insertPayloadCommit(tree, root, routingKey(o.parentID, o.fileID), o.fileID, o.value, v3Payload(o, i))
+		default:
 			root, err = insertCommit(tree, root, routingKey(o.parentID, o.fileID), o.fileID, o.value)
 		}
 		if err != nil {

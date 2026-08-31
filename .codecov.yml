@@ -1,5 +1,19 @@
 codecov:
   require_ci_to_pass: true
+  # Two jobs upload a report for a commit: the unit job's `unit.out` and the
+  # e2e job's `e2e_coverage.out` (both gated to ubuntu-latest, so the macOS
+  # half of each matrix uploads nothing). Without this, codecov posts its
+  # verdict on whichever arrives first and never re-evaluates: on #558 the
+  # e2e reports landed 28s before the unit one and `codecov/patch` reported
+  # "0.00% of diff hit" for a diff that unit tests covered completely, since
+  # e2e exercises the built binary and reaches neither `internal/blob` nor
+  # `pkg/crypto`. Keep in step with the number of `codecov/codecov-action`
+  # steps in `.github/workflows/ci.yml`.
+  notify:
+    after_n_builds: 2
+
+comment:
+  after_n_builds: 2
 
 # Test-support code. These packages exist to be consumed by *other* packages'
 # tests, so Go's per-package coverage cannot attribute their execution and

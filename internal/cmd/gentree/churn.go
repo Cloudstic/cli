@@ -37,7 +37,12 @@ import (
 // reach and lets each give up all of its files rather than a share. Volume and
 // breadth are independent variables and only volume had a knob; this is the
 // other one (RFC 0027 §6).
-func applyChurn(root string, p profile, seed int64, fraction float64, count, maxDirs int) (stats, error) {
+// renames, when zero, suppresses the directory rename a churn round performs.
+// It exists to isolate what a rename costs: under a path-identity source a
+// renamed directory re-keys every descendant, so every retention measurement
+// taken with renames on has that cost folded into it and none has ever been
+// taken with them off (issue #543).
+func applyChurn(root string, p profile, seed int64, fraction float64, count, maxDirs, renames int) (stats, error) {
 	rng := rand.New(rand.NewSource(seed ^ 0x5eed))
 	st := stats{}
 
@@ -197,7 +202,7 @@ func applyChurn(root string, p profile, seed int64, fraction float64, count, max
 
 	// One directory rename per churn, deep enough to carry a subtree. This is
 	// the case that separates identity models, and it costs nothing to include.
-	if renamed := renameOneDir(rng, root, dirs); renamed {
+	if renamed := renames > 0 && renameOneDir(rng, root, dirs); renamed {
 		st.Renamed++
 	}
 	return st, nil

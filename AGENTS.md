@@ -64,14 +64,22 @@ Three layers, in cost order:
   directories a churn is spread across, independently of how many files it
   changes — the profile's own `churnDirZipfS` chooses *which* directories are
   hot rather than how many are reached, and sweeping it moved the directories
-  touched by 200 changed files only from 53 to 41.
+  touched by 200 changed files only from 53 to 41. `-churn-renames 0` suppresses
+  the per-round directory rename, which matters because under a path-identity
+  source a rename re-keys every descendant (issue #543): every retention
+  measurement taken before that knob existed had one folded into it, and
+  isolating it put renames at about 9% of the cost.
 - **`internal/cmd/leafstat/`** — reports what a format-v3 repository's HAMT
   leaves are made of: their size distribution, how much of each is inline file
   content rather than metadata, and — via `-refs` set-differenced across
-  snapshots — how much of the tree each backup rewrote. The other tools observe
-  a repository from outside and so cannot answer why a v3 repository grows with
-  retained snapshots, which is a property of individual leaves (issue #525,
-  RFC 0026 "What v3 stores, and when"). Local, unencrypted repositories only.
+  snapshots — how much of the tree each backup rewrote. `-entries` emits one
+  line per entry naming its body and size, which differenced across a
+  repository's snapshots is what lets a layout be *simulated* over real churn
+  before it is built: the blob-packing numbers in RFC 0026's revision come from
+  that, on repositories that already existed. The other tools observe a
+  repository from outside and so cannot answer why a v3 repository grows with
+  retained snapshots, which is a property of individual leaves (issue #525).
+  Local, unencrypted repositories only.
 - **`scripts/benchmark/bench.sh`** — one pass over the pipeline collecting every
   metric it can yield: wall time and peak RSS from `time(1)`, cumulative
   allocation from the binary's `-memstats`, and — on a MinIO backend — requests
@@ -231,8 +239,9 @@ All objects are addressed by `<type>/<sha256>`:
 2. Source is scanned via `Walk()` (full) or `WalkChanges()` (incremental, for gdrive-changes/onedrive-changes). The full scan buffers the walk into batches of `entryBatch` and resolves each batch's previous refs before reading any of them, so change detection's filemeta reads are declared to the store together rather than arriving one at a time in an order unrelated to storage layout (RFC 0025). Entries are still *processed* in walk order — that order becomes the upload order, and with it the locality of newly written objects.
 3. New/changed files are chunked (`internal/engine/chunker.go`) using FastCDC, content-addressed, and uploaded.
 4. The HAMT tree is updated with new filemeta refs through a `hamt.Txn`, which holds every intermediate node in memory and serializes only the dirty spine reachable from the final root.
-5. A new `Snapshot` object is written, and `index/latest` is updated.
-6. After the shared lock is released, the pack index is consolidated if it has grown past its threshold (see `PackStore` above).
+5. In a format-v3 repository, a full scan then consolidates its sparsest `blob/` objects forward (`internal/engine/blobconsolidate.go`): it has accumulated, per blob it inherited, the bytes the new snapshot still needs, and it selects those whose live bytes are under half of what a *full* blob delivers in this repository — which catches both a blob whose members have been superseded and one that was sealed small — reading their bodies back and repacking them through the same blob writer, under a per-backup byte budget. Nothing older changes — an entry's value is its metadata's content address either way, only the body reference inside the *new* leaf moves — so old snapshots keep restoring identically and `prune` collects the retired blobs once none of them names one. `prune` never repacks a blob; see `docs/storage-model.md`.
+6. A new `Snapshot` object is written, and `index/latest` is updated.
+7. After the shared lock is released, the pack index is consolidated if it has grown past its threshold (see `PackStore` above).
 
 ### Batched Deletion
 
@@ -334,7 +343,29 @@ the "Environment Variables" table in `docs/user-guide.md`, kept complete by
 `TestUserGuideDocumentsEveryEnvVar` (`cmd/cloudstic/flagspec_test.go`), which
 fails if a flag's `env` binding has no matching row.
 
-`CLOUDSTIC_TEST_*` are test-only knobs, not user-facing.
+`CLOUDSTIC_TEST_*` are test-only knobs, not user-facing:
+`CLOUDSTIC_TEST_LEAF_BYTES` and `CLOUDSTIC_TEST_NODE_CACHE_BYTES`
+(`internal/hamt/tuning.go`) size a v3 leaf and the node cache;
+`CLOUDSTIC_TEST_INLINE_BYTES` (`internal/engine/backup_upload.go`) sets the
+inline threshold, so setting it to 1 chunks every body and produces a tree
+whose leaves carry metadata and refs only — which is how RFC 0026's
+metadata-only figures were measured rather than extrapolated;
+`CLOUDSTIC_TEST_BLOB_BYTES` (`internal/engine/blobwriter.go`) sets how much
+body plaintext a `blob/` object accumulates before it seals, and
+`CLOUDSTIC_TEST_UPLOAD_COMMIT_BYTES` (`internal/engine/backup_upload.go`) how
+much metadata a backup holds before committing the working tree. Blob
+consolidation adds three (`internal/engine/blobconsolidate.go`):
+`CLOUDSTIC_TEST_BLOB_FILL` is the percentage of a full blob's live bytes below
+which a blob is rewritten forward, and is the one meant to be swept;
+`CLOUDSTIC_TEST_BLOB_REWRITE_BYTES` is the per-backup rewrite budget, which set
+below one blob's worth doubles as the off switch a comparison needs; and
+`CLOUDSTIC_TEST_BLOB_TRACK_BYTES` caps what the accumulator holds.
+
+Each exists because the constant it overrides is a dial nothing outside the
+process can move, and a dial that cannot be moved cannot be swept. Note what
+the blob budget counts: **plaintext** bytes, not stored ones. Members are
+compressed, so an 8 MB budget yields a roughly 2 MB object on a typical source
+tree — the two are not interchangeable when reading a sweep (#551).
 
 ### Documentation Drift
 

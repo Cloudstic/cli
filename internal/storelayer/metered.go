@@ -48,6 +48,21 @@ func (m *MeteredStore) Put(ctx context.Context, key string, data []byte) error {
 	return nil
 }
 
+// GetRange implements store.RangeGetter. Metering counts bytes written and has
+// nothing to say about how a read is served, so a ranged read passes straight
+// through — and it has to, or a v3 repository's blob reads would each transfer
+// a whole blob to reach one member, which is the exact cost the byte range
+// exists to avoid.
+//
+// Declaring the method makes MeteredStore satisfy RangeGetter unconditionally,
+// including over an inner store that cannot range, so the fallback is explicit
+// rather than inherited. Embedding store.ObjectStore does not do this: the
+// embedded interface's method set is the only thing promoted, so a wrapper
+// silently loses every optional capability its inner store had.
+func (m *MeteredStore) GetRange(ctx context.Context, key string, offset, length int64) ([]byte, error) {
+	return store.GetRange(ctx, m.ObjectStore, key, offset, length)
+}
+
 func (m *MeteredStore) BytesWritten() int64 {
 	return m.bytesWritten.Load()
 }

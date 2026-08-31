@@ -3,6 +3,7 @@ package storetest
 import (
 	"bytes"
 	"context"
+	"math"
 	"testing"
 )
 
@@ -89,6 +90,29 @@ func AssertRangeGetterConformance(t *testing.T, s ObjectStore) {
 	t.Run("a negative range is rejected", func(t *testing.T) {
 		if _, err := ranger.GetRange(ctx, key, -1, 4); err == nil {
 			t.Error("expected an error for a negative offset")
+		}
+	})
+
+	// A length is a size an implementation is about to allocate, and offsets
+	// and lengths reach a backend from a repository's own metadata — values
+	// read off a store rather than computed. A malformed or hostile one can
+	// therefore ask for a range no object could hold, and "reject it" has to
+	// be part of the contract rather than a habit three of four backends
+	// happen to have.
+	//
+	// These are separated from the negative-offset case above because they
+	// fail differently: a bad offset makes a read return nothing, while a bad
+	// length makes an implementation that trusts it panic in make() before any
+	// read is attempted.
+	t.Run("a negative length is rejected", func(t *testing.T) {
+		if _, err := ranger.GetRange(ctx, key, 0, -1); err == nil {
+			t.Error("expected an error for a negative length")
+		}
+	})
+
+	t.Run("a length no object could hold is rejected", func(t *testing.T) {
+		if _, err := ranger.GetRange(ctx, key, 0, math.MaxInt64); err == nil {
+			t.Error("expected an error for an implausible length")
 		}
 	})
 

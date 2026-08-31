@@ -92,8 +92,12 @@ type Client struct {
 	// path where an identifier is already present. Without it, every backup,
 	// prune and forget would fetch the marker again purely to learn there was
 	// nothing to do.
-	repoIDCache    atomic.Pointer[string]
-	storedMeter    *storelayer.MeteredStore
+	repoIDCache atomic.Pointer[string]
+	storedMeter *storelayer.MeteredStore
+	// memberSealer seals format-v3 blob members. Derived once at open, since
+	// deriving it costs an HKDF expansion and a backup seals many thousands.
+	// Nil in a repository with no encryption.
+	memberSealer   *crypto.MemberSealer
 	encryptionKey  []byte
 	hmacKey        []byte
 	keychain       keychain.Chain
@@ -111,11 +115,13 @@ type Client struct {
 // backup, which meters its own — overrides Store on the returned value.
 func (c *Client) engineDeps() engine.Deps {
 	return engine.Deps{
-		Store:    c.store,
-		Reporter: c.reporter,
-		LogSink:  c.logWriter,
-		HMACKey:  c.hmacKey,
-		FormatV3: c.formatV3(),
+		Store:     c.store,
+		Reporter:  c.reporter,
+		LogSink:   c.logWriter,
+		HMACKey:   c.hmacKey,
+		FormatV3:  c.formatV3(),
+		BlobStore: c.storedMeter,
+		Sealer:    c.memberSealer,
 	}
 }
 
@@ -211,6 +217,13 @@ func NewClient(ctx context.Context, base store.ObjectStore, opts ...ClientOption
 	}
 	c.store = storelayer.NewCompressedStore(inner, storelayer.WithFrameGate(c.framingEnabled))
 	c.storedMeter = storedMeter
+	if len(c.encryptionKey) > 0 {
+		sealer, err := crypto.NewMemberSealer(c.encryptionKey)
+		if err != nil {
+			return nil, fmt.Errorf("derive blob member key: %w", err)
+		}
+		c.memberSealer = sealer
+	}
 	return c, nil
 }
 

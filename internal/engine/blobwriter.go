@@ -17,17 +17,36 @@ import (
 // blobBudget is how much body plaintext one blob accumulates before it is
 // sealed and written.
 //
-// Chosen from the bandwidth-delay product rather than by sweeping: a blob
-// should be about time-to-first-byte times bandwidth, since below that a
-// second request costs more than fetching and discarding the gap between two
-// members. That is 4.5-9 MB on a fast link and around 1 MB on a domestic
-// uplink (RFC 0026). 8 MB sits at the top of that band, where a restore
-// reading a whole blob is cheapest, and the cost of overshooting is only that
-// a partially-live blob holds a little more garbage before consolidation.
+// The target is the bandwidth-delay product — time-to-first-byte times
+// bandwidth — because below that a second request costs more than fetching and
+// discarding the gap between two members. That is 4.5-9 MB of *transferred*
+// bytes on a fast link (RFC 0026).
 //
-// Measured in plaintext rather than stored bytes so that blob size does not
-// vary with how compressible a directory happens to be.
-const blobBudget = 8 << 20
+// This budget counts **plaintext**, and members are compressed, so the two are
+// not the same number. Measured stored/plaintext on a `source` tree is about
+// 0.25, and the sweep below is the whole reason this is 32 rather than 8:
+//
+//	budget   repo MB   objects   blobs   stored median
+//	   4 MB       110       362      74         0.97 MB
+//	   8 MB       107       328      40         1.97 MB
+//	  16 MB       105       316      28         2.08 MB
+//	  32 MB       104       306      18         5.48 MB   <- in the band
+//
+// 8 MB was landing a ~2 MB object: a quarter of what the derivation asked for.
+// 32 MB lands 5.48 MB, inside the 4.5-9 MB band, and does so while making the
+// repository *smaller* and its object count lower — 306 against 328.
+//
+// That the larger budget costs nothing is a property of consolidation, not of
+// blobs. Before blobs were consolidated forward, a bigger blob fragmented
+// worse and there was nothing to reclaim it, which is why this stayed at 8
+// until #563 landed. Raising it before that would have bought fewer objects
+// and paid in retained bytes on the one axis where v3 loses to the packfile
+// format.
+//
+// Counted in plaintext rather than stored bytes so that blob size does not
+// vary with how compressible a directory happens to be. That choice is what
+// makes the two numbers differ, and it is deliberate.
+const blobBudget = 32 << 20
 
 // envBlobBudget overrides blobBudget, for sweeps and tests only. It joins the
 // CLOUDSTIC_TEST_* family described in AGENTS.md.

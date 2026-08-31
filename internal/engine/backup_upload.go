@@ -210,6 +210,10 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 	// nodes are content-addressed and the shape is a pure function of the
 	// contents; the superseded intermediate nodes are ordinary garbage that
 	// prune collects.
+	// Resolved once: the reader reaches os.Getenv and this loop runs once per
+	// file backed up (#538).
+	commitBytes := uploadCommitLimit()
+
 	var retained int
 	commitRetained := func() error {
 		if _, err := bm.txn.Commit(ctx); err != nil {
@@ -237,7 +241,7 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 		// budget in a couple of hundred entries and would otherwise wait for a
 		// batch that is ten times further off.
 		full := len(awaiting) >= insertBatch
-		heavy := retained >= uploadCommitLimit()
+		heavy := retained >= commitBytes
 		if !full && !heavy {
 			continue
 		}

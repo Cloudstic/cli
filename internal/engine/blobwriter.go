@@ -61,6 +61,12 @@ type blobWriter struct {
 	store  store.ObjectStore
 	sealer *crypto.MemberSealer
 
+	// budget is resolved once rather than per Add. The CLOUDSTIC_TEST_*
+	// readers reach os.Getenv, which is a syscall, and Add runs once per file
+	// backed up — the same shape that put 19% of a no-change backup in
+	// syscall.Getenv when leafOverfull read its budget per entry (#538).
+	budget int64
+
 	mu      sync.Mutex
 	pending *blob.Writer
 	// promises are the entries waiting on the blob currently being packed,
@@ -91,7 +97,7 @@ func newBlobWriter(s store.ObjectStore, sealer *crypto.MemberSealer) *blobWriter
 	if s == nil {
 		return nil
 	}
-	return &blobWriter{store: s, sealer: sealer}
+	return &blobWriter{store: s, sealer: sealer, budget: blobLimit()}
 }
 
 // Add hands one body to the writer and returns the promise that will name
@@ -110,7 +116,7 @@ func (w *blobWriter) Add(ctx context.Context, contentHash string, body []byte) (
 	p := &bodyPromise{contentHash: contentHash}
 	w.promises = append(w.promises, p)
 
-	if w.pending.PlaintextBytes() >= blobLimit() {
+	if w.pending.PlaintextBytes() >= w.budget {
 		if err := w.sealLocked(ctx); err != nil {
 			return nil, err
 		}

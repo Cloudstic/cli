@@ -348,6 +348,7 @@ func (c *blobConsolidator) plan() blobRewritePlan {
 	}
 
 	var live int64
+	fill := consolidateFill()
 	for _, u := range c.blobs {
 		live += u.live
 	}
@@ -358,7 +359,7 @@ func (c *blobConsolidator) plan() blobRewritePlan {
 		return empty
 	}
 
-	mark := full * consolidateFill() / 100
+	mark := full * fill / 100
 	candidates := make([]string, 0, len(c.blobs))
 	for _, ref := range c.order {
 		u := c.blobs[ref]

@@ -29,6 +29,12 @@ const (
 )
 
 // v3LeafSplitBytes returns the byte budget a v3 leaf splits at.
+//
+// Call it once, when a node store is put in v3 mode — NodeStore.leafBytes is
+// where the answer lives, and leafOverfull reads that. The split rule runs
+// once per entry of a leaf on every insert, so consulting the environment
+// there is an os.LookupEnv per entry per insert: 19% of a no-change backup's
+// CPU on a 20,000-file tree, more than the whole source walk (issue #538).
 func v3LeafSplitBytes() int {
 	return envInt(envLeafSplitBytesV3, leafSplitBytesV3)
 }

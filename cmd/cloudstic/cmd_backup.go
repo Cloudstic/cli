@@ -243,7 +243,7 @@ func ensureDefaultAuthRef(bcfg config.Backup, profilesFile string) (config.Backu
 	profile.EnsureMaps(cfg)
 
 	auth := cfg.Auth[authRef]
-	if auth.Provider != "" && auth.Provider != provider {
+	if !config.AuthProviderMatches(provider, auth) {
 		return config.Backup{}, fmt.Errorf("default auth %q has provider %q, expected %q", authRef, auth.Provider, provider)
 	}
 	auth.Provider = provider

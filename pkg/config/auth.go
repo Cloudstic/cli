@@ -58,6 +58,23 @@ func ProviderForSourceURI(raw string) string {
 	}
 }
 
+// AuthProviderMatches reports whether an auth entry may be used with a source
+// that requires the given provider.
+//
+// An entry naming no provider matches any source. The `provider` field
+// postdates auth entries, so a hand-written or older profiles file may omit it,
+// and refusing those would reject configurations that work today.
+//
+// That permissiveness is why this is a function rather than an inline
+// comparison. It was written out twice — once resolving a profile for a backup
+// (applyAuth) and once validating a profile before saving it
+// (cmd/cloudstic's `profile new`) — in opposite directions, with different
+// messages and different tests, so dropping the `== ""` half in one copy would
+// have gone unnoticed (#584).
+func AuthProviderMatches(required string, auth profile.Auth) bool {
+	return auth.Provider == "" || auth.Provider == required
+}
+
 // SourceForAuth returns the source configuration that authenticates auth's
 // provider with auth's credentials.
 //

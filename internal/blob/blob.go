@@ -228,18 +228,36 @@ func (w *Writer) Seal() (ref string, data []byte, members []Placement, err error
 	data = make([]byte, 0, w.plain+int64(len(w.bodies))*int64(crypto.MemberOverhead))
 	members = make([]Placement, 0, len(w.bodies))
 
+	// One scratch buffer for the whole blob, rather than two per member. Each
+	// body is compressed into it and then sealed out of it straight into data,
+	// which fuses the copy that used to append a finished member into the
+	// encryption pass — a pass that had to read those bytes and write that many
+	// anyway. It grows to the largest member and is reused for the rest, so
+	// packing n members allocates it once (issue #553).
+	var framed []byte
+
 	for _, m := range w.bodies {
-		sealed, err := w.sealMember(m, aad)
-		if err != nil {
-			return "", nil, nil, err
+		offset := int64(len(data))
+		// Compression happens before sealing, so the codec byte travels
+		// *inside* the sealed bytes. That is what makes a ranged read
+		// self-describing: a reader holding only (offset, length) and the
+		// content hash can decode the member without touching the index.
+		if w.sealer == nil {
+			// Nothing to seal in an unencrypted repository, so the compressed
+			// form is already the stored form and is built directly in place.
+			data = appendCompressed(data, m.body)
+		} else {
+			framed = appendCompressed(framed[:0], m.body)
+			if data, err = w.sealer.AppendSealMember(data, framed, m.hash, aad); err != nil {
+				return "", nil, nil, err
+			}
 		}
 		members = append(members, Placement{
 			ContentHash: m.hash,
-			Offset:      int64(len(data)),
-			Length:      int64(len(sealed)),
+			Offset:      offset,
+			Length:      int64(len(data)) - offset,
 			PlainSize:   int64(len(m.body)),
 		})
-		data = append(data, sealed...)
 	}
 
 	index, err := w.sealIndex(members, aad)
@@ -282,27 +300,22 @@ func (w *Writer) memberSequenceHash() string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// sealMember compresses one body, prefixes the codec, and seals the result.
+// appendCompressed appends one body's framed form — a codec byte, then the
+// payload — to dst and returns the extended slice.
 //
-// The codec byte travels *inside* the sealed bytes so that a ranged read is
-// self-describing: a reader holding only (offset, length) and the content hash
-// can decode the member without touching the index.
-func (w *Writer) sealMember(m memberBody, aad []byte) ([]byte, error) {
-	framed := compress(m.body)
-	if w.sealer == nil {
-		return framed, nil
+// Whether compression paid is only known once zstd has run, so the raw
+// fallback rewinds dst to where the member started and writes the body
+// verbatim over what zstd produced. Rewinding rather than starting a second
+// buffer matters because the fallback is not rare: it is every already-
+// compressed file in the source, and it used to cost an allocation the size of
+// the body on top of the one compression had already made.
+func appendCompressed(dst, body []byte) []byte {
+	start := len(dst)
+	out := encoder().EncodeAll(body, append(dst, codecZstd))
+	if len(out)-start > len(body)+1 {
+		out = append(out[:start], codecRaw)
+		return append(out, body...)
 	}
-	return w.sealer.SealMember(framed, m.hash, aad)
-}
-
-func compress(body []byte) []byte {
-	out := encoder().EncodeAll(body, make([]byte, 1, len(body)+1))
-	if len(out) > len(body)+1 {
-		out = append(make([]byte, 1, len(body)+1), body...)
-		out[0] = codecRaw
-		return out
-	}
-	out[0] = codecZstd
 	return out
 }
 

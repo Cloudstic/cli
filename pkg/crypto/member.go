@@ -126,13 +126,30 @@ func (s *MemberSealer) gcm(plaintextHash string, aad []byte) (cipher.AEAD, []byt
 // caller already holds it; recomputing it would hash the repository's whole
 // content a second time.
 func (s *MemberSealer) SealMember(plaintext []byte, plaintextHash string, aad []byte) ([]byte, error) {
+	return s.AppendSealMember(make([]byte, 0, MemberOverhead+len(plaintext)), plaintext, plaintextHash, aad)
+}
+
+// AppendSealMember seals one blob member as SealMember does and appends the
+// result to dst, returning the extended slice — the shape cipher.AEAD.Seal
+// has, and for the same reason. A member is never stored on its own: it is one
+// run of bytes inside a blob, so the caller that has to assemble it into one
+// can have the seal write it there directly rather than allocate a member and
+// copy it in. That copy is what this exists to remove; a blob holds hundreds
+// of members and the copy is over their whole content.
+//
+// dst's spare capacity must not overlap plaintext. That is cipher.AEAD.Seal's
+// requirement, inherited unchanged: the ciphertext is written over the
+// destination as the plaintext is read, so an overlap that is not exact
+// corrupts the very bytes still to be encrypted.
+//
+// SealMember is this with a fresh, exactly-sized destination, so the two
+// cannot drift — the framing lives here alone.
+func (s *MemberSealer) AppendSealMember(dst, plaintext []byte, plaintextHash string, aad []byte) ([]byte, error) {
 	g, nonce, err := s.gcm(plaintextHash, aad)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]byte, 1, MemberOverhead+len(plaintext))
-	out[0] = VersionMember1
-	return g.Seal(out, nonce, plaintext, aad), nil
+	return g.Seal(append(dst, VersionMember1), nonce, plaintext, aad), nil
 }
 
 // OpenMember reverses SealMember. It returns ErrDecryptFailed for bytes that

@@ -38,11 +38,11 @@ func declareSetupWorkstationArgs(g *globalFlags) (*setupWorkstationArgs, command
 
 func runSetupWorkstation(r *runner, ctx context.Context, a *setupWorkstationArgs) int {
 	a.storeRef = strings.TrimSpace(a.storeRef)
-	cfg, err := loadProfilesOrInit(a.profilesFile)
+	cfg, err := profile.LoadOrEmpty(a.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
 	}
-	ensureProfilesMaps(cfg)
+	profile.EnsureMaps(cfg)
 
 	if !a.dryRun && a.storeRef == "" {
 		if len(cfg.Stores) == 0 {

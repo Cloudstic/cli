@@ -82,9 +82,23 @@ func (bm *BackupManager) processEntry(ctx context.Context, meta *core.FileMeta, 
 		meta.Paths = []string{bm.buildPathFromTree(ctx, meta)}
 	}
 
-	changed, err := bm.compareWithOld(ctx, old, meta)
+	changed, oldMeta, err := bm.compareWithOld(ctx, old, meta)
 	if err != nil {
 		return err
+	}
+
+	// Every entry this scan resolves against the previous snapshot offers one
+	// placement the repository already holds, and offers it for free: the leaf
+	// carrying the body reference has been read, and the filemeta carrying the
+	// content hash that names it has been decoded, both by the change
+	// detection above. Recording the pair is what lets a body the repository
+	// already stores be pointed at rather than packed again.
+	//
+	// Both branches feed it, and the changed one is the case that matters: a
+	// touched file — new mtime, identical bytes — is *changed*, and is exactly
+	// what v3 used to re-store (issue #514).
+	if oldMeta != nil && old.payload != nil {
+		bm.reuse.inherit(oldMeta.ContentHash, old.payload.Body, old.payload.Size)
 	}
 
 	if !changed {
@@ -407,15 +421,22 @@ func (bm *BackupManager) lookupOldEntryByKey(ctx context.Context, oldRoot, routi
 // For sources that do not provide a content hash (e.g. Google Drive), a
 // fast-path compares observable metadata and carries the hash forward to avoid
 // false-positive diffs.
-func (bm *BackupManager) compareWithOld(ctx context.Context, old oldEntry, meta *core.FileMeta) (changed bool, err error) {
+//
+// It returns the previous filemeta as well as the verdict, because the caller
+// needs the content hash that names the body the previous snapshot's payload
+// points at, and this is where that filemeta is read. Returning it costs
+// nothing and is the alternative to decoding the payload a second time — a v3
+// loadMeta unmarshals rather than consulting the cache, so a second call is a
+// second decode of every entry in the tree. Nil when the entry is new.
+func (bm *BackupManager) compareWithOld(ctx context.Context, old oldEntry, meta *core.FileMeta) (changed bool, oldMeta *core.FileMeta, err error) {
 	oldRef := old.ref
 	if oldRef == "" {
-		return true, nil
+		return true, nil, nil
 	}
 
-	oldMeta, err := bm.metas.loadMeta(ctx, oldRef, old.payload)
+	oldMeta, err = bm.metas.loadMeta(ctx, oldRef, old.payload)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 
 	// Native Google files: use headRevisionId as the sole change signal.
@@ -428,9 +449,9 @@ func (bm *BackupManager) compareWithOld(ctx context.Context, old oldEntry, meta 
 			meta.ContentHash = oldMeta.ContentHash
 			meta.ContentRef = oldMeta.ContentRef
 			meta.Size = oldMeta.Size
-			return false, nil
+			return false, oldMeta, nil
 		}
-		return true, nil
+		return true, oldMeta, nil
 	}
 
 	if meta.ContentHash == "" && oldMeta.ContentHash != "" && metadataEqual(*meta, *oldMeta) {
@@ -446,9 +467,9 @@ func (bm *BackupManager) compareWithOld(ctx context.Context, old oldEntry, meta 
 	newPersisted := persistedFileMeta(*meta)
 	newRef, _, err := core.FileMetaRef(&newPersisted)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
-	return newRef != oldRef, nil
+	return newRef != oldRef, oldMeta, nil
 }
 
 // isGoogleNativeMeta returns true if the FileMeta represents a Google-native

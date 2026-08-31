@@ -17,17 +17,36 @@ import (
 // blobBudget is how much body plaintext one blob accumulates before it is
 // sealed and written.
 //
-// Chosen from the bandwidth-delay product rather than by sweeping: a blob
-// should be about time-to-first-byte times bandwidth, since below that a
-// second request costs more than fetching and discarding the gap between two
-// members. That is 4.5-9 MB on a fast link and around 1 MB on a domestic
-// uplink (RFC 0026). 8 MB sits at the top of that band, where a restore
-// reading a whole blob is cheapest, and the cost of overshooting is only that
-// a partially-live blob holds a little more garbage before consolidation.
+// The target is the bandwidth-delay product — time-to-first-byte times
+// bandwidth — because below that a second request costs more than fetching and
+// discarding the gap between two members. That is 4.5-9 MB of *transferred*
+// bytes on a fast link (RFC 0026).
 //
-// Measured in plaintext rather than stored bytes so that blob size does not
-// vary with how compressible a directory happens to be.
-const blobBudget = 8 << 20
+// This budget counts **plaintext**, and members are compressed, so the two are
+// not the same number. Measured stored/plaintext on a `source` tree is about
+// 0.25, and the sweep below is the whole reason this is 32 rather than 8:
+//
+//	budget   repo MB   objects   blobs   stored median
+//	   4 MB       110       362      74         0.97 MB
+//	   8 MB       107       328      40         1.97 MB
+//	  16 MB       105       316      28         2.08 MB
+//	  32 MB       104       306      18         5.48 MB   <- in the band
+//
+// 8 MB was landing a ~2 MB object: a quarter of what the derivation asked for.
+// 32 MB lands 5.48 MB, inside the 4.5-9 MB band, and does so while making the
+// repository *smaller* and its object count lower — 306 against 328.
+//
+// That the larger budget costs nothing is a property of consolidation, not of
+// blobs. Before blobs were consolidated forward, a bigger blob fragmented
+// worse and there was nothing to reclaim it, which is why this stayed at 8
+// until #563 landed. Raising it before that would have bought fewer objects
+// and paid in retained bytes on the one axis where v3 loses to the packfile
+// format.
+//
+// Counted in plaintext rather than stored bytes so that blob size does not
+// vary with how compressible a directory happens to be. That choice is what
+// makes the two numbers differ, and it is deliberate.
+const blobBudget = 32 << 20
 
 // envBlobBudget overrides blobBudget, for sweeps and tests only. It joins the
 // CLOUDSTIC_TEST_* family described in AGENTS.md.
@@ -61,6 +80,12 @@ type blobWriter struct {
 	store  store.ObjectStore
 	sealer *crypto.MemberSealer
 
+	// budget is resolved once rather than per Add. The CLOUDSTIC_TEST_*
+	// readers reach os.Getenv, which is a syscall, and Add runs once per file
+	// backed up — the same shape that put 19% of a no-change backup in
+	// syscall.Getenv when leafOverfull read its budget per entry (#538).
+	budget int64
+
 	mu      sync.Mutex
 	pending *blob.Writer
 	// promises are the entries waiting on the blob currently being packed,
@@ -79,6 +104,18 @@ type blobWriter struct {
 type bodyPromise struct {
 	contentHash string
 	ref         atomic.Pointer[hamt.BodyRef]
+
+	// inherited marks a promise that was never handed to this writer at all:
+	// a placement a previous backup made, which bodyIndex resolved on the spot
+	// so that an entry whose bytes the repository already holds writes nothing
+	// (see bodyindex.go).
+	//
+	// It is kept because the two kinds mean different things to consolidation.
+	// An entry reusing an inherited placement keeps that blob alive exactly as
+	// an unchanged entry does, so the accumulator must be told about it; an
+	// entry sharing a blob this run is writing must not be, or a freshly
+	// sealed blob would look sparse and be rewritten the moment it was made.
+	inherited bool
 }
 
 // placed returns where the body landed, or nil while its blob is unsealed.
@@ -91,12 +128,17 @@ func newBlobWriter(s store.ObjectStore, sealer *crypto.MemberSealer) *blobWriter
 	if s == nil {
 		return nil
 	}
-	return &blobWriter{store: s, sealer: sealer}
+	return &blobWriter{store: s, sealer: sealer, budget: blobLimit()}
 }
 
 // Add hands one body to the writer and returns the promise that will name
 // where it landed. It writes a blob whenever one fills, so a caller's memory is
 // bounded by blobBudget rather than by the run.
+//
+// It always packs. A caller that would rather reuse a placement the repository
+// already holds goes through bodyIndex.place, which calls this on a miss;
+// consolidation deliberately does not, since the placement it would be handed
+// is the one inside the blob it is retiring.
 func (w *blobWriter) Add(ctx context.Context, contentHash string, body []byte) (*bodyPromise, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -110,7 +152,7 @@ func (w *blobWriter) Add(ctx context.Context, contentHash string, body []byte) (
 	p := &bodyPromise{contentHash: contentHash}
 	w.promises = append(w.promises, p)
 
-	if w.pending.PlaintextBytes() >= blobLimit() {
+	if w.pending.PlaintextBytes() >= w.budget {
 		if err := w.sealLocked(ctx); err != nil {
 			return nil, err
 		}

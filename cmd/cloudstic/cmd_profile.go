@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/cloudstic/cli/internal/onboarding"
 	"github.com/cloudstic/cli/pkg/config"
 	"github.com/cloudstic/cli/pkg/profile"
 )
@@ -153,73 +154,52 @@ func declareProfileNewArgs(g *globalFlags) (*profileNewArgs, commandInput) {
 }
 
 func runProfileNew(r *runner, ctx context.Context, a *profileNewArgs) int {
-	if a.name == "" {
-		if r.canPrompt() {
-			v, err := r.promptValidatedLine(ctx, "Profile name", "", func(v string) error {
-				if v == "" {
-					return fmt.Errorf("profile name is required")
-				}
-				return validateRefName("profile", v)
-			})
-			if err != nil {
-				return r.fail("Failed to read profile name: %v", err)
-			}
-			a.name = v
-		}
-		if a.name == "" {
-			return r.fail("-name is required")
-		}
-	}
-	if err := validateRefName("profile", a.name); err != nil {
+	name, err := onboarding.Resolve(ctx, prompterFor(r), a.name, onboarding.Field{
+		Label:    "Profile name",
+		Missing:  "-name is required",
+		Validate: func(v string) error { return validateRefName("profile", v) },
+	})
+	if err != nil {
 		return r.fail("%v", err)
 	}
+	a.name = name
 
-	cfg, err := loadProfilesOrInit(a.profilesFile)
+	cfg, err := profile.LoadOrEmpty(a.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
 	}
-	ensureProfilesMaps(cfg)
+	profile.EnsureMaps(cfg)
 
 	// When editing an existing profile, prefill unset fields with current values.
 	if existing, ok := cfg.Profiles[a.name]; ok {
 		prefillProfileArgs(a, existing)
 	}
 
-	if a.source == "" {
-		if r.canPrompt() {
-			v, err := r.promptValidatedLine(ctx, "Source URI", "", func(v string) error {
-				if v == "" {
-					return fmt.Errorf("source URI is required")
-				}
-				_, err := config.ParseSourceURI(v)
-				if err != nil {
-					return fmt.Errorf("invalid source: %w", err)
-				}
-				return nil
-			})
-			if err != nil {
-				return r.fail("Failed to read source URI: %v", err)
+	source, err := onboarding.Resolve(ctx, prompterFor(r), a.source, onboarding.Field{
+		Label:   "Source URI",
+		Noun:    "source URI",
+		Missing: "-source is required",
+		Validate: func(v string) error {
+			if _, err := config.ParseSourceURI(v); err != nil {
+				return fmt.Errorf("invalid source: %w", err)
 			}
-			a.source = v
-		}
-		if a.source == "" {
-			return r.fail("-source is required")
-		}
+			return nil
+		},
+	})
+	if err != nil {
+		return r.fail("%v", err)
 	}
-	if _, err := config.ParseSourceURI(a.source); err != nil {
-		return r.fail("Invalid source: %v", err)
-	}
+	a.source = source
 	if a.store != "" && a.storeRef == "" {
-		if r.canPrompt() {
-			v, err := r.promptLine(ctx, "Store reference name", "default-store")
-			if err != nil {
-				return r.fail("Failed to read store reference: %v", err)
-			}
-			a.storeRef = v
+		ref, err := onboarding.Resolve(ctx, prompterFor(r), "", onboarding.Field{
+			Label:   "Store reference name",
+			Default: "default-store",
+			Missing: "-store requires -store-ref",
+		})
+		if err != nil {
+			return r.fail("%v", err)
 		}
-		if a.storeRef == "" {
-			return r.fail("-store requires -store-ref")
-		}
+		a.storeRef = ref
 	}
 
 	createdStore := false

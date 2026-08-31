@@ -67,15 +67,41 @@ import (
 // consolidateFillPercent is the share of a full blob's live bytes below which
 // a blob is worth rewriting.
 //
-// 50% is the starting point rather than a measured optimum, and it has a
-// convergence argument behind it: no two blobs under half a blob's worth may
-// both survive, since merging them yields at most one full blob. The steady
-// state is therefore "as many full blobs as the data needs, plus at most one
-// partial", which is what takes the blob count off the backup-count axis.
+// It converges: no set of blobs each under this share can all survive, since
+// merging 1/share of them yields at most one full blob. The steady state is
+// "as many full blobs as the data needs, plus a bounded number of partials",
+// which is what takes the blob count off the backup-count axis. That argument
+// holds for any value and so does not choose one.
 //
-// Raising it consolidates more aggressively and writes more; lowering it
-// leaves more small blobs standing. Sweep it with CLOUDSTIC_TEST_BLOB_FILL.
-const consolidateFillPercent = 50
+// 30 is measured. Sweeping it over a 6,000-file tree aged 20 backups, against
+// consolidation effectively off:
+//
+//	fill%   repo MB   blobs a restore reads   reads saved per MB added
+//	  off        53                      27   —
+//	   15        58                      16   2.20
+//	   30        64                      13   0.50
+//	   50        69                      12   0.20
+//	   70        83                      11   0.07
+//	   90       187                      10   0.01
+//
+// The knee is sharp and it is well below 50. Going from off to 30 removes 52%
+// of the blobs a restore reads for 21% more retained bytes; the next twenty
+// points buy 4% more for another 9%, and past 70 the curve explodes — 90 costs
+// 3.5x the repository to save one read.
+//
+// Rewriting bodies forward leaves older snapshots holding the originals, so a
+// repository that never forgets holds both copies. That is the cost this dial
+// spends, and 50 was spending it past the point where it bought anything: this
+// is the one axis where format v3 loses to the packfile format, so paying 30%
+// for the last 4% of the read win was the wrong trade.
+//
+// Run-to-run noise on the repository-size column is about ±3 MB, established
+// by three runs that were accidentally the same configuration.
+//
+// Sweep it with CLOUDSTIC_TEST_BLOB_FILL. Note that the override rejects
+// non-positive values, so 0 does not disable consolidation — it falls back to
+// this default. Use 1 for a practical "off".
+const consolidateFillPercent = 30
 
 // envConsolidateFill overrides consolidateFillPercent, for sweeps and tests
 // only. It joins the CLOUDSTIC_TEST_* family described in AGENTS.md.
@@ -322,6 +348,7 @@ func (c *blobConsolidator) plan() blobRewritePlan {
 	}
 
 	var live int64
+	fill := consolidateFill()
 	for _, u := range c.blobs {
 		live += u.live
 	}
@@ -332,7 +359,7 @@ func (c *blobConsolidator) plan() blobRewritePlan {
 		return empty
 	}
 
-	mark := full * consolidateFill() / 100
+	mark := full * fill / 100
 	candidates := make([]string, 0, len(c.blobs))
 	for _, ref := range c.order {
 		u := c.blobs[ref]
@@ -478,6 +505,16 @@ func (bm *BackupManager) rewriteBodies(ctx context.Context, plan blobRewritePlan
 	// either way; unreferenced, they are ordinary garbage for the next prune.
 	failed := map[string]bool{}
 	out := make([]blobRewrite, 0, len(targets))
+
+	// Where this pass has already staged each body, so a member several
+	// entries share is moved once rather than once per entry.
+	//
+	// It is local to the rewrite and deliberately not bm.reuse, which is
+	// released before consolidation runs: that index would answer with the
+	// placement inside the blob being retired, and the body would never move
+	// at all. This one only ever holds promises from Adds this loop made, so
+	// it cannot name a blob this pass is retiring.
+	staged := make(map[string]*bodyPromise, len(targets))
 	abandon := func(blob string) {
 		failed[blob] = true
 		out = slices.DeleteFunc(out, func(r blobRewrite) bool {
@@ -500,6 +537,12 @@ func (bm *BackupManager) rewriteBodies(ctx context.Context, plan blobRewritePlan
 		}
 		for _, idx := range s.members {
 			t := targets[idx]
+			if p, ok := staged[hashes[idx]]; ok {
+				t.promise = p
+				out = append(out, t)
+				phase.Increment(1)
+				continue
+			}
 			sealed, err := s.slice(data, t.payload.Body)
 			if err != nil {
 				bm.log.Debugf("consolidation skipped a member of %s: %v", s.blob, err)
@@ -519,6 +562,7 @@ func (bm *BackupManager) rewriteBodies(ctx context.Context, plan blobRewritePlan
 				// skipped.
 				return nil, err
 			}
+			staged[hashes[idx]] = promise
 			t.promise = promise
 			out = append(out, t)
 			phase.Increment(1)

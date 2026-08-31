@@ -18,9 +18,10 @@ import (
 // user actually typed, and opening a store or client has no side effects on
 // command input.
 //
-// Construction (storeuri.go, storebuild.go, keychain.go) consumes these values
-// and never sees globalFlags, which is what makes it unit-testable without
-// going through flag parsing.
+// Construction (storebuild.go, clientbuild.go, keychain.go) consumes these
+// values and never sees globalFlags, which is what makes it unit-testable
+// without going through flag parsing. URI parsing itself moved out of this
+// package entirely and lives in pkg/config (uri.go).
 
 // The resolved configuration types now live in pkg/config, so that a caller
 // outside this module can build the same values the CLI does. They are aliased

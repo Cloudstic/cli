@@ -6,7 +6,6 @@ import (
 	"unicode/utf8"
 
 	cloudstic "github.com/cloudstic/cli"
-	"github.com/cloudstic/cli/internal/engine"
 )
 
 type forgetSingleJSONResult struct {
@@ -15,9 +14,9 @@ type forgetSingleJSONResult struct {
 }
 
 type forgetPolicyJSONResult struct {
-	DryRun bool                       `json:"dry_run"`
-	Groups []engine.PolicyGroupResult `json:"groups"`
-	Prune  *cloudstic.PruneResult     `json:"prune,omitempty"`
+	DryRun bool                          `json:"dry_run"`
+	Groups []cloudstic.PolicyGroupResult `json:"groups"`
+	Prune  *cloudstic.PruneResult        `json:"prune,omitempty"`
 }
 
 type breakLockJSONResult struct {

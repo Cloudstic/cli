@@ -569,7 +569,7 @@ func TestRunProfileNew_InvalidSource(t *testing.T) {
 	if code := profileCommand().execute(r.withArgs(args), context.Background(), "profile"); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
-	if !strings.Contains(errOut.String(), "Invalid source") {
+	if !strings.Contains(errOut.String(), "invalid source") {
 		t.Fatalf("unexpected error output: %s", errOut.String())
 	}
 }

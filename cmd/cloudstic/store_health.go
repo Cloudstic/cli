@@ -27,6 +27,15 @@ type checkOrInitOptions struct {
 	assumeYes            bool
 }
 
+// checkOrInitStore connects to a store and checks whether it is initialized.
+// If it already is, this confirms connectivity; if it is not, it offers to
+// initialize it. The store's encryption configuration must already be saved in
+// profiles.yaml before calling this.
+//
+// Errors are reported to the caller but are never fatal to the command that
+// asked: `store new` and `profile new` have already written the configuration
+// by this point, so failing here would report a failure over work that
+// succeeded.
 func checkOrInitStore(r *runner, ctx context.Context, cfg *profile.Config, storeName, profilesFile string, opts checkOrInitOptions) error {
 	s := cfg.Stores[storeName]
 	resolved, err := clientConfigFromProfileStore(s, opts.configDir)

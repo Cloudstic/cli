@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cloudstic/cli/internal/engine"
+	cloudstic "github.com/cloudstic/cli"
 )
 
 func TestRunnerFailInterrupted(t *testing.T) {
@@ -30,7 +30,7 @@ func TestRunnerFailRepoLocked(t *testing.T) {
 	r := newRunner(nil)
 	r.errOut = &errOut
 
-	err := fmt.Errorf("acquire shared lock: %w", engine.ErrRepoLocked)
+	err := fmt.Errorf("acquire shared lock: %w", cloudstic.ErrRepoLocked)
 	code := r.fail("Backup failed: %v", err)
 	if code != exitFailure {
 		t.Fatalf("fail() exit code = %d, want %d", code, exitFailure)

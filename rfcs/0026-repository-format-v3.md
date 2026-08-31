@@ -232,18 +232,37 @@ against v2's 12x and 19x. The remaining growth is the leaf set of the latest
 snapshot getting larger as churn rewrites it, not a per-backup visit cost, so
 it is bounded by tree size rather than by history.
 
-Two gaps remain open, and neither is a defect in the format:
+One gap remains open, and it is not a defect in the format:
 
 1. **`check` and `prune` request counts** stay above v2's, because v2 answers
    a full traversal from ~50 packs where v3 reads ~900 leaves. Both are
    nonetheless faster in wall time and move half the bytes.
-1. **Whole-file dedup of inline content is not reinstated.** v2 skips a
-   duplicate file by probing `content/<hash>`; v3 has no such object, so
-   duplicate small files are re-read and re-inlined. Stored size is
-   unaffected — the redundancy compresses — but the work is wasted. The cheap
-   recovery is to probe the *previous snapshot's* entries, which change
-   detection already reads; a repository-wide content index is the thing this
-   format exists to avoid.
+
+**Whole-file dedup is reinstated, as placement reuse** (issue #514). The gap
+recorded here — a duplicate small file re-read and re-stored, because v3 has
+no `content/<hash>` to probe — turned out to cost far more than "the
+redundancy compresses" allowed for once bodies moved out of leaves and into
+`blob/`. Touching 300 files whose bytes did not change grew a repository by
+1,568 KB against format 2's 216 KB, none of it compressible away, and the same
+mechanism was 83% of what renaming a large directory cost (issue #543 §4).
+
+What is reused is a *placement*, not an object: the entry points at the blob
+member that already holds those bytes, so nothing is stored, no object is
+added, and restore issues no request it would not have issued anyway. That is
+the difference from the chunk promotion measured and rejected above, which
+added an object per duplicated file and a request per referencing file. The
+index behind it is populated by the change-detection sweep that already reads
+every leaf, bounded in bytes the way `consolidateTrackBytes` is, and released
+when the upload ends — it is written nowhere and read back nowhere, so it is
+not the repository-wide content index this format exists to avoid. Measured on
+a 3,000-file `source` tree: the touch above falls to 428 KB, all of it `node/`
+and all of it reclaimed by `prune`, with zero new `blob/` bytes; `backup-dedup`
+falls from 3,432 KB to 652 KB against v2's 620 KB; and an initial backup of the
+same tree drops 9.5%, because duplicates that landed either side of a blob seal
+were previously stored twice. That last figure is a function of the blob
+budget, and shrinks as the budget grows: at the 8 MB budget this was first
+measured against it was 15%, since a larger blob catches more duplicates on its
+own.
 
 ## Revision: metadata and content become separate objects
 
@@ -1879,7 +1898,9 @@ Each stage is a PR or small series; the format flips only once.
    measuring it — see "Whole-file dedup of inline content" above. The bytes
    are real (2–4.5% of stored size) and cost more in restore requests than
    they are worth, because a leaf's bytes are already being read while a
-   chunk's are not.
+   chunk's are not. Note this stayed rejected while whole-file dedup was
+   reinstated (issue #514): the two are different designs, and only this one
+   adds objects and restore requests.
 1. **Does `index/snapshots` want the same treatment later?** It is already a
    reconciling cache; nothing here changes it, but a v3 follow-up could fold
    snapshot summaries into a leaf-like object. Out of scope now.

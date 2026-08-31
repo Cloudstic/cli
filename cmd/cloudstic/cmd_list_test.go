@@ -7,8 +7,6 @@ import (
 	"testing"
 
 	cloudstic "github.com/cloudstic/cli"
-	"github.com/cloudstic/cli/internal/core"
-	"github.com/cloudstic/cli/internal/engine"
 )
 
 func TestRunList_Success(t *testing.T) {
@@ -16,9 +14,9 @@ func TestRunList_Success(t *testing.T) {
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
 		listResult: &cloudstic.ListResult{
-			Snapshots: []engine.SnapshotEntry{
-				{Ref: "snapshot/abc", Snap: core.Snapshot{Seq: 1, Created: "2024-01-01"}},
-				{Ref: "snapshot/def", Snap: core.Snapshot{Seq: 2, Created: "2024-01-02"}},
+			Snapshots: []cloudstic.SnapshotEntry{
+				{Ref: "snapshot/abc", Snap: cloudstic.Snapshot{Seq: 1, Created: "2024-01-01"}},
+				{Ref: "snapshot/def", Snap: cloudstic.Snapshot{Seq: 2, Created: "2024-01-02"}},
 			},
 		},
 	}}
@@ -36,8 +34,8 @@ func TestRunList_JSON(t *testing.T) {
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
 		listResult: &cloudstic.ListResult{
-			Snapshots: []engine.SnapshotEntry{
-				{Ref: "snapshot/abc", Snap: core.Snapshot{Seq: 1, Created: "2024-01-01"}},
+			Snapshots: []cloudstic.SnapshotEntry{
+				{Ref: "snapshot/abc", Snap: cloudstic.Snapshot{Seq: 1, Created: "2024-01-01"}},
 			},
 		},
 	}}
@@ -74,19 +72,19 @@ func TestRunList_Group(t *testing.T) {
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
 		listResult: &cloudstic.ListResult{
-			Snapshots: []engine.SnapshotEntry{
+			Snapshots: []cloudstic.SnapshotEntry{
 				{
 					Ref: "snapshot/abc",
-					Snap: core.Snapshot{
+					Snap: cloudstic.Snapshot{
 						Seq: 1, Created: "2024-01-01",
-						Source: &core.SourceInfo{Type: "gdrive", Account: "a@b.com", Path: "/", DriveName: "My Drive"},
+						Source: &cloudstic.SourceInfo{Type: "gdrive", Account: "a@b.com", Path: "/", DriveName: "My Drive"},
 					},
 				},
 				{
 					Ref: "snapshot/def",
-					Snap: core.Snapshot{
+					Snap: cloudstic.Snapshot{
 						Seq: 2, Created: "2024-01-02",
-						Source: &core.SourceInfo{Type: "local", Account: "host", Path: "/data"},
+						Source: &cloudstic.SourceInfo{Type: "local", Account: "host", Path: "/data"},
 					},
 				},
 			},

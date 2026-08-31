@@ -14,7 +14,6 @@ import (
 
 	cloudstic "github.com/cloudstic/cli"
 	"github.com/cloudstic/cli/internal/app"
-	"github.com/cloudstic/cli/internal/engine"
 	"github.com/cloudstic/cli/internal/tui"
 )
 
@@ -78,7 +77,7 @@ type tuiCLIBackend struct {
 	configDir    string
 }
 
-func (b tuiCLIBackend) LoadStoreSnapshots(ctx context.Context, storeName string, storeCfg profile.Store) ([]engine.SnapshotEntry, error) {
+func (b tuiCLIBackend) LoadStoreSnapshots(ctx context.Context, storeName string, storeCfg profile.Store) ([]cloudstic.SnapshotEntry, error) {
 	cfg, err := tuiClientConfig(storeCfg, b.configDir)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", storeName, err)

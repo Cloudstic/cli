@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/cloudstic/cli/pkg/store/local"
+	"github.com/cloudstic/cli/pkg/store/storetest"
 )
 
 func TestPackStore_RepackOrphan(t *testing.T) {
@@ -241,5 +242,55 @@ func TestPackStore_Exists(t *testing.T) {
 
 	if ok, err := packStore.Exists(ctx, "filemeta/never-written"); err != nil || ok {
 		t.Errorf("Exists(never-written) = %v, %v, want false, nil", ok, err)
+	}
+}
+
+// A packed key's size must be answerable without the catalog having been
+// touched by some earlier call. Delete has always loaded it; Size did not, and
+// MeteredStore asks for a size *before* it deletes — so `forget <snapshot>`
+// failed on every packfile repository, at a stat for an object that was never
+// meant to exist on the backend.
+//
+// The store is fresh here on purpose. Any prior Get, Put or Delete would load
+// the catalog as a side effect and hide the bug.
+func TestPackStoreSizeLoadsTheCatalogBeforeAnswering(t *testing.T) {
+	ctx := context.Background()
+	backing := storetest.NewMemStore()
+
+	ps, err := NewPackStore(backing)
+	if err != nil {
+		t.Fatalf("new pack store: %v", err)
+	}
+	const key = "snapshot/" + "0000000000000000000000000000000000000000000000000000000000000001"
+	if err := ps.Put(ctx, key, []byte("a snapshot small enough to be packed")); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if err := ps.Flush(ctx); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+
+	// A second store over the same backing, with nothing loaded yet.
+	fresh, err := NewPackStore(backing)
+	if err != nil {
+		t.Fatalf("new pack store: %v", err)
+	}
+	size, err := fresh.Size(ctx, key)
+	if err != nil {
+		t.Fatalf("Size on a packed key from a fresh store: %v", err)
+	}
+	if size == 0 {
+		t.Fatal("Size reported 0 for a packed key")
+	}
+
+	// And the delete that a size precedes must then work.
+	fresh2, err := NewPackStore(backing)
+	if err != nil {
+		t.Fatalf("new pack store: %v", err)
+	}
+	if _, err := fresh2.Size(ctx, key); err != nil {
+		t.Fatalf("Size: %v", err)
+	}
+	if err := fresh2.Delete(ctx, key); err != nil {
+		t.Fatalf("Delete after Size: %v", err)
 	}
 }

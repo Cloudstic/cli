@@ -467,25 +467,35 @@ func (bm *BackupManager) rewriteBodies(ctx context.Context, plan blobRewritePlan
 		targets = append(targets, blobRewrite{entry: e, value: value, payload: p})
 	}
 
-	// A blob is retired only if every one of its bodies moves, so once one of
-	// its spans cannot be read there is nothing further to gain from the rest:
-	// the entries that stayed keep the blob alive, and moving its neighbours
-	// would write bytes that buy nothing.
+	// A blob is retired only if every one of its bodies moves, so a blob one
+	// of whose bodies cannot be read is abandoned whole: the rest of its spans
+	// are skipped, and the bodies already staged out of it are dropped rather
+	// than repointed. Repointing them would be worse than doing nothing —
+	// the entries that stayed keep the old blob alive, so the snapshot would
+	// end up reading both it and the blob its neighbours moved into.
+	//
+	// The bodies were handed to the writer before the failure and are stored
+	// either way; unreferenced, they are ordinary garbage for the next prune.
 	failed := map[string]bool{}
-
 	out := make([]blobRewrite, 0, len(targets))
+	abandon := func(blob string) {
+		failed[blob] = true
+		out = slices.DeleteFunc(out, func(r blobRewrite) bool {
+			return r.payload.Body != nil && r.payload.Body.Blob == blob
+		})
+	}
+
 	for _, s := range planBlobSpans(reads, restoreIOGap, restoreSpanBytes()) {
 		if failed[s.blob] {
 			continue
 		}
 		data, err := bm.bodies.span(ctx, s)
 		if err != nil {
-			// A blob that cannot be read is not consolidated. Its entries keep
-			// naming it, so the snapshot stays correct and prune keeps the
-			// blob; the failure belongs to check, not to a housekeeping pass
-			// inside a backup that has otherwise succeeded.
+			// The failure belongs to check, not to a housekeeping pass inside
+			// a backup that has otherwise succeeded: the entries keep naming
+			// this blob, so the snapshot stays correct and prune keeps it.
 			bm.log.Debugf("consolidation skipped %s: %v", s.blob, err)
-			failed[s.blob] = true
+			abandon(s.blob)
 			continue
 		}
 		for _, idx := range s.members {
@@ -493,13 +503,13 @@ func (bm *BackupManager) rewriteBodies(ctx context.Context, plan blobRewritePlan
 			sealed, err := s.slice(data, t.payload.Body)
 			if err != nil {
 				bm.log.Debugf("consolidation skipped a member of %s: %v", s.blob, err)
-				failed[s.blob] = true
+				abandon(s.blob)
 				break
 			}
 			body, err := bm.bodies.member(sealed, t.payload, hashes[idx])
 			if err != nil {
 				bm.log.Debugf("consolidation skipped %s: %v", hashes[idx], err)
-				failed[s.blob] = true
+				abandon(s.blob)
 				break
 			}
 			promise, err := bm.blobs.Add(ctx, hashes[idx], body)

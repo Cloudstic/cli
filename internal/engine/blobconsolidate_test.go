@@ -3,6 +3,7 @@ package engine
 import (
 	"archive/zip"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -279,9 +280,8 @@ func consolidationRun(t *testing.T) (*MockStore, string, string) {
 	return dest, first.SnapshotRef, last.SnapshotRef
 }
 
-// snapshotBlobs is the set of blob objects a snapshot's entries reach, which
-// is what a restore of it has to issue requests against.
-func snapshotBlobs(t *testing.T, dest *MockStore, snapRef string) []string {
+// snapshotRoot is the tree a snapshot names.
+func snapshotRoot(t *testing.T, dest *MockStore, snapRef string) string {
 	t.Helper()
 	data, err := dest.Get(context.Background(), snapRef)
 	if err != nil {
@@ -291,9 +291,16 @@ func snapshotBlobs(t *testing.T, dest *MockStore, snapRef string) []string {
 	if err := json.Unmarshal(data, &snap); err != nil {
 		t.Fatalf("decode %s: %v", snapRef, err)
 	}
+	return snap.Root
+}
+
+// snapshotBlobs is the set of blob objects a snapshot's entries reach, which
+// is what a restore of it has to issue requests against.
+func snapshotBlobs(t *testing.T, dest *MockStore, snapRef string) []string {
+	t.Helper()
 	seen := map[string]bool{}
 	tree := hamt.NewTree(dest, hamt.WithFormatV3())
-	err = tree.WalkReachable(context.Background(), snap.Root, nil,
+	err := tree.WalkReachable(context.Background(), snapshotRoot(t, dest, snapRef), nil,
 		func(key, value string, refs hamt.EntryRefs) error {
 			if refs.Body != nil {
 				seen[refs.Body.Blob] = true
@@ -382,6 +389,92 @@ func TestV3Consolidate_TakesBlobCountOffTheBackupAxis(t *testing.T) {
 	}
 	if len(res.Errors) != 0 {
 		t.Fatalf("check -read-data after consolidation: %v", res.Errors)
+	}
+}
+
+// snapshotBodies maps each entry's file ID to where its body sits.
+func snapshotBodies(t *testing.T, dest *MockStore, snapRef string) map[string]hamt.BodyRef {
+	t.Helper()
+	out := map[string]hamt.BodyRef{}
+	tree := hamt.NewTree(dest, hamt.WithFormatV3())
+	err := tree.WalkTree(context.Background(), snapshotRoot(t, dest, snapRef), nil,
+		func(key, value string, p *hamt.Payload) error {
+			if p != nil && p.Body != nil {
+				out[key] = *p.Body
+			}
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("walk %s: %v", snapRef, err)
+	}
+	return out
+}
+
+// TestV3Consolidate_AbandonsABlobItCannotFullyRead covers the failure path a
+// partial rewrite would turn into a regression.
+//
+// A blob is retired only when every one of its live bodies moves. If one body
+// fails to decode after its neighbours have already been staged, repointing
+// those neighbours would leave the snapshot reading *both* the old blob, which
+// the unmoved entries keep alive, and the new one — strictly worse than
+// leaving the blob alone.
+func TestV3Consolidate_AbandonsABlobItCannotFullyRead(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv(envBlobBudget, strconv.Itoa(16<<10))
+
+	dest := NewMockStore()
+	src := NewMockSource()
+	for i := range 48 {
+		src.AddFile(fmt.Sprintf("f%02d.txt", i), fmt.Sprintf("id-%02d", i), body(int64(i), 1024))
+	}
+	first, err := NewBackupManager(v3Deps(dest), src).Run(ctx)
+	if err != nil {
+		t.Fatalf("first backup: %v", err)
+	}
+	before := snapshotBodies(t, dest, first.SnapshotRef)
+
+	// The bodies consolidation will read are the ones the churn below leaves
+	// alone. Pick the blob holding most of them, and corrupt the last of them
+	// so that its neighbours are staged before the read fails.
+	untouched := map[string]bool{}
+	for i := 40; i < 48; i++ {
+		untouched[fmt.Sprintf("id-%02d", i)] = true
+	}
+	live := map[string][]hamt.BodyRef{}
+	for id, ref := range before {
+		if untouched[id] {
+			live[ref.Blob] = append(live[ref.Blob], ref)
+		}
+	}
+	victim, refs := "", []hamt.BodyRef(nil)
+	for blob, rs := range live {
+		if len(rs) > len(refs) || (len(rs) == len(refs) && blob < victim) {
+			victim, refs = blob, rs
+		}
+	}
+	if len(refs) < 2 {
+		t.Fatalf("no blob holds two surviving bodies; %d blobs hold %v", len(live), live)
+	}
+	last := slices.MaxFunc(refs, func(a, b hamt.BodyRef) int { return cmp.Compare(a.Offset, b.Offset) })
+	dest.Data[victim][last.Offset+last.Length/2] ^= 0xff
+
+	for i := range 40 {
+		churn(src, i, i)
+	}
+	second, err := NewBackupManager(v3Deps(dest), src).Run(ctx)
+	if err != nil {
+		t.Fatalf("second backup: %v", err)
+	}
+
+	after := snapshotBodies(t, dest, second.SnapshotRef)
+	var moved []string
+	for id := range untouched {
+		if before[id].Blob == victim && after[id].Blob != victim {
+			moved = append(moved, id)
+		}
+	}
+	if len(moved) != 0 {
+		t.Errorf("consolidation moved %v out of %s, which it could not fully read", moved, victim)
 	}
 }
 

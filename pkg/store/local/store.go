@@ -86,14 +86,25 @@ func (s *Store) Get(_ context.Context, key string) ([]byte, error) {
 // GetRange implements RangeGetter, letting callers read a packfile footer
 // without loading the whole object.
 func (s *Store) GetRange(_ context.Context, key string, offset, length int64) ([]byte, error) {
+	// Checked before anything is opened or allocated, because length is a size
+	// this is about to hand to make(). Offsets and lengths reach a backend
+	// from a repository's own metadata — values read off a store rather than
+	// computed — so a malformed or hostile one can ask for a range no object
+	// could hold, and make() answers a negative length with a panic rather
+	// than an error. s3, b2 and sftp have always rejected these; this was the
+	// one implementation of the interface that no test held to the contract.
+	if offset < 0 || length < 0 {
+		return nil, fmt.Errorf("invalid range %d+%d for %s", offset, length, key)
+	}
+
 	f, err := os.Open(s.getPath(key))
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
 
-	buf := make([]byte, length)
-	if _, err := io.ReadFull(io.NewSectionReader(f, offset, length), buf); err != nil {
+	buf, err := store.ReadExactly(io.NewSectionReader(f, offset, length), length)
+	if err != nil {
 		return nil, fmt.Errorf("read %s at %d+%d: %w", key, offset, length, err)
 	}
 	return buf, nil

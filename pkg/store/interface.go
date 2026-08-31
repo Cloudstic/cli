@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"io"
 )
 
 // ObjectStore is the interface for content-addressable object storage.
@@ -74,6 +75,34 @@ func GetRange(ctx context.Context, s ObjectStore, key string, offset, length int
 	out := make([]byte, length)
 	copy(out, data[offset:offset+length])
 	return out, nil
+}
+
+// ReadExactly reads exactly length bytes from r, or reports why it could not.
+//
+// It exists so that no backend allocates a size it was merely *asked* for.
+// Offsets and lengths reach a RangeGetter from a repository's own metadata —
+// values read off a store rather than computed — so a malformed or hostile
+// repository can name a range no object could hold. Reserving that upfront
+// turns a bad number into a panic in make(), or an out-of-memory kill, before
+// a single byte has been read.
+//
+// Growing as bytes arrive costs nothing in the ordinary case, where the range
+// is a few hundred bytes of footer or one blob member and the buffer reaches
+// its final size in one or two steps. A short read stays an error: the caller
+// asked for bytes that are not there, and a truncated slice would be a
+// silently wrong answer.
+func ReadExactly(r io.Reader, length int64) ([]byte, error) {
+	if length < 0 {
+		return nil, fmt.Errorf("cannot read a negative length %d", length)
+	}
+	buf, err := io.ReadAll(io.LimitReader(r, length))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(buf)) != length {
+		return nil, fmt.Errorf("short read: got %d of %d bytes", len(buf), length)
+	}
+	return buf, nil
 }
 
 // BatchDeleter is an optional interface for backends that can delete many keys

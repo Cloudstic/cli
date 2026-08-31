@@ -982,6 +982,14 @@ func (s *PackStore) Delete(ctx context.Context, key string) error {
 	return s.ObjectStore.Delete(ctx, key)
 }
 
+// Size reports an object's length, resolving a packed key from the catalog
+// rather than from the backend, where it does not physically exist.
+//
+// Loading the catalog before the fallback is what makes that true on a client
+// that has not read the repository yet, and it is load-bearing for deletion
+// rather than merely for reporting: MeteredStore sizes an object before
+// removing it, so a Size that misses the catalog fails the whole delete with
+// the backend's "no such file" before PackStore.Delete is ever reached.
 func (s *PackStore) Size(ctx context.Context, key string) (int64, error) {
 	s.mu.RLock()
 	if entry, ok := s.packKeys[key]; ok {
@@ -993,6 +1001,18 @@ func (s *PackStore) Size(ctx context.Context, key string) (int64, error) {
 		return entry.Length, nil
 	}
 	s.mu.RUnlock()
+
+	if hasPackablePrefix(key) {
+		if err := s.ensureCatalogLoaded(ctx); err != nil {
+			return 0, fmt.Errorf("size of %s: %w", key, err)
+		}
+		s.mu.RLock()
+		entry, packed := s.catalog.Get(key)
+		s.mu.RUnlock()
+		if packed {
+			return entry.Length, nil
+		}
+	}
 
 	return s.ObjectStore.Size(ctx, key)
 }

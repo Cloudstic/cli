@@ -23,6 +23,7 @@ const cliPackage = "github.com/cloudstic/cli/cmd/cloudstic"
 var cliPrivateInternals = map[string]bool{
 	"github.com/cloudstic/cli/internal/app":         true,
 	"github.com/cloudstic/cli/internal/logger":      true,
+	"github.com/cloudstic/cli/internal/onboarding":  true,
 	"github.com/cloudstic/cli/internal/paths":       true,
 	"github.com/cloudstic/cli/internal/tui":         true,
 	"github.com/cloudstic/cli/internal/tui/forms":   true,

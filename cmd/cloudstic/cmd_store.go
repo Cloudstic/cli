@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/cloudstic/cli/internal/onboarding"
 	"github.com/cloudstic/cli/pkg/config"
 
 	"github.com/cloudstic/cli/pkg/profile"
@@ -152,26 +153,16 @@ func (a *storeNewArgs) value(flagName string) string {
 }
 
 func runStoreNew(r *runner, ctx context.Context, a *storeNewArgs) int {
-	if a.name == "" {
-		if r.canPrompt() {
-			v, err := r.promptValidatedLine(ctx, "Store reference name", "", func(v string) error {
-				if v == "" {
-					return fmt.Errorf("store reference name is required")
-				}
-				return validateRefName("store", v)
-			})
-			if err != nil {
-				return r.fail("Failed to read store name: %v", err)
-			}
-			a.name = v
-		}
-		if a.name == "" {
-			return r.fail("-name is required")
-		}
-	}
-	if err := validateRefName("store", a.name); err != nil {
+	name, err := onboarding.Resolve(ctx, prompterFor(r), a.name, onboarding.Field{
+		Label:    "Store reference name",
+		Noun:     "store reference name",
+		Missing:  "-name is required",
+		Validate: func(v string) error { return validateRefName("store", v) },
+	})
+	if err != nil {
 		return r.fail("%v", err)
 	}
+	a.name = name
 	cfg, err := profile.LoadOrEmpty(a.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)

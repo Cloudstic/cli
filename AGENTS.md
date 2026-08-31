@@ -684,6 +684,20 @@ and #236–#237 as references).
 
 - Keep the `Summary` bullets high-signal — what changed and why, not a file-by-file diff.
 - `Related issues` ties the PR to its issue; write `None` only for standalone work.
+  **The keyword decides whether merging closes the issue, so pick it for that and
+  not for emphasis.** `Closes #NNN` / `Fixes #NNN` create a GitHub *closing
+  reference*: the issue appears in the PR's Development panel and is closed
+  automatically on merge. Use one only when merging this PR completes that issue
+  entirely. `Part of #NNN` creates a plain cross-reference — the PR shows on the
+  issue's timeline and is discoverable from it, but nothing is closed.
+  That is the right form for a PR that advances a `tracking` epic or lands one
+  step of a multi-PR change, and using `Closes` there would shut the epic while
+  its sub-issues were still open. There is no separate "attach" action to
+  perform: the cross-reference *is* the attachment, and it is created by the
+  keyword in the body. Verify it landed with
+  `gh api repos/Cloudstic/cli/issues/<NNN>/timeline --jq '.[] | select(.event=="cross-referenced")'`.
+  A PR that closes a sub-issue says `Closes #<child>`, never `Closes #<epic>`;
+  the epic closes when its last sub-issue does.
 - Read `docs/compatibility.md` before changing anything written to a store. The
   compatibility section must identify the legacy read path, safe failure
   behavior for older builds, and repository-format version decision.

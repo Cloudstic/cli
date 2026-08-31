@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/cloudstic/cli/pkg/store"
+	"github.com/cloudstic/cli/pkg/store/storetest"
 )
 
 func TestStore(t *testing.T) {
@@ -123,4 +124,16 @@ func TestStore_GetNotFound(t *testing.T) {
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("Get(missing) error = %v, want errors.Is(err, store.ErrNotFound)", err)
 	}
+}
+
+// The shared RangeGetter contract. local implements RangeGetter and was the
+// one backend never held to it — which is how it came to be the only one that
+// does not reject a length it is about to allocate.
+func TestLocalStoreRangeGetterConformance(t *testing.T) {
+	dir := t.TempDir()
+	st, err := New(dir)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	storetest.AssertRangeGetterConformance(t, st)
 }

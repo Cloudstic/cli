@@ -73,7 +73,7 @@ func completionLoadProfilesConfig(path string) (*profile.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	ensureProfilesMaps(cfg)
+	profile.EnsureMaps(cfg)
 	return cfg, nil
 }
 

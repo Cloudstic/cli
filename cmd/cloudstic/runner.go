@@ -10,7 +10,7 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/cloudstic/cli/internal/engine"
+	cloudstic "github.com/cloudstic/cli"
 )
 
 const (
@@ -111,7 +111,7 @@ func (r *runner) fail(format string, args ...any) int {
 			message, exitCode = "Interrupted.", exitInterrupted
 			break
 		}
-		if errors.Is(err, engine.ErrRepoLocked) {
+		if errors.Is(err, cloudstic.ErrRepoLocked) {
 			message += " Run `cloudstic break-lock` to remove a stale lock left by a crashed process."
 			break
 		}

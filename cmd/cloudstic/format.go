@@ -5,10 +5,9 @@ import (
 	"io"
 	"strings"
 
-	"github.com/jedib0t/go-pretty/v6/table"
+	cloudstic "github.com/cloudstic/cli"
 
-	"github.com/cloudstic/cli/internal/core"
-	"github.com/cloudstic/cli/internal/engine"
+	"github.com/jedib0t/go-pretty/v6/table"
 )
 
 // plural renders a count with its noun, adding a trailing "s" for anything but
@@ -54,7 +53,7 @@ func formatBytes(b int64) string {
 
 // renderSnapshotTable prints a table of snapshot entries to w. If reasons
 // is non-nil, a "Reasons" column is appended with the value for each ref.
-func renderSnapshotTable(out io.Writer, entries []engine.SnapshotEntry, reasons map[string]string) {
+func renderSnapshotTable(out io.Writer, entries []cloudstic.SnapshotEntry, reasons map[string]string) {
 	t := table.NewWriter()
 	t.SetOutputMirror(out)
 
@@ -92,7 +91,7 @@ func renderSnapshotTable(out io.Writer, entries []engine.SnapshotEntry, reasons 
 }
 
 // sourceGroupKey returns a string key that groups snapshots by source identity.
-func sourceGroupKey(s *core.SourceInfo) string {
+func sourceGroupKey(s *cloudstic.SourceInfo) string {
 	if s == nil {
 		return ""
 	}
@@ -107,7 +106,7 @@ func sourceGroupKey(s *core.SourceInfo) string {
 }
 
 // sourceGroupLabel returns a human-readable label for a source group.
-func sourceGroupLabel(s *core.SourceInfo) string {
+func sourceGroupLabel(s *cloudstic.SourceInfo) string {
 	if s == nil {
 		return "(unknown source)"
 	}
@@ -128,12 +127,12 @@ func sourceGroupLabel(s *core.SourceInfo) string {
 }
 
 // renderGroupedSnapshotTables prints one table per source group.
-func renderGroupedSnapshotTables(out io.Writer, entries []engine.SnapshotEntry) {
+func renderGroupedSnapshotTables(out io.Writer, entries []cloudstic.SnapshotEntry) {
 	// Collect groups preserving first-seen order.
 	type group struct {
 		key     string
 		label   string
-		entries []engine.SnapshotEntry
+		entries []cloudstic.SnapshotEntry
 	}
 	var groups []group
 	idx := map[string]int{}
@@ -147,7 +146,7 @@ func renderGroupedSnapshotTables(out io.Writer, entries []engine.SnapshotEntry) 
 			groups = append(groups, group{
 				key:     k,
 				label:   sourceGroupLabel(e.Snap.Source),
-				entries: []engine.SnapshotEntry{e},
+				entries: []cloudstic.SnapshotEntry{e},
 			})
 		}
 	}

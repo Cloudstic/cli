@@ -84,12 +84,6 @@ func declareCopyArgs(g *globalFlags) (*copyArgs, commandInput) {
 	}
 }
 
-func copyCommand() command {
-	return repoLeaf("copy",
-		"Copy snapshots from another repository into this one",
-		repoCommandGroups, declareCopyArgs, runCopy)
-}
-
 // prepareCopyArgs derives everything that depends on more than one flag, and
 // settles what the source repository inherits from the destination's
 // invocation.
@@ -248,4 +242,11 @@ func copyOptions(a *copyArgs) []cloudstic.CopyOption {
 // credential prompt.
 func sameStoreTarget(a, b config.Store) bool {
 	return a.URI != "" && a.URI == b.URI
+}
+
+// copyCommand declares the `copy` command.
+func copyCommand() command {
+	return repoLeaf("copy",
+		"Copy snapshots from another repository into this one",
+		repoCommandGroups, declareCopyArgs, runCopy)
 }

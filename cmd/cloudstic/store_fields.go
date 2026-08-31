@@ -1,5 +1,16 @@
 package main
 
+// The hand-written store-field table: the 22 fields `store new` accepts, the
+// rule for prefilling them from an existing entry, and the assembly of a
+// profile.Store from them.
+//
+// This is one of six places the same field set is written out — here twice,
+// plus declareStoreNewArgs, secretDisplayRows, the TUI store form, and
+// profile.Store itself. pkg/config/field.go already drives the *read*
+// direction from a single table (fieldSpecs); the write direction has no
+// equivalent, which is why this exists and why nothing checks that it stays
+// complete. Folding it into that table is the intended fix.
+
 import "github.com/cloudstic/cli/pkg/profile"
 
 type storeNewFlagPtrs struct {

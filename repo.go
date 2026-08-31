@@ -12,6 +12,21 @@ import (
 	"github.com/cloudstic/cli/pkg/store"
 )
 
+// Repository format versions.
+//
+// These are re-exported because choosing a format is part of the public
+// surface — WithInitFormat and MigrateFormat both take one — so a caller that
+// cannot name the range this build accepts cannot validate an argument before
+// passing it. The CLI's `migrate -format` is exactly such a caller.
+const (
+	// RepoFormatVersion is stamped into every repository this build creates.
+	RepoFormatVersion = core.RepoFormatVersion
+	// MaxSupportedRepoFormat is the highest version this build can read, and
+	// the highest WithInitFormat accepts. It is above RepoFormatVersion while a
+	// newer format is opt-in rather than the default.
+	MaxSupportedRepoFormat = core.MaxSupportedRepoFormat
+)
+
 // ---------------------------------------------------------------------------
 // Init (operates on the raw store, before encryption is set up)
 // ---------------------------------------------------------------------------

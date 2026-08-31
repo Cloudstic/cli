@@ -7,8 +7,6 @@ import (
 	"testing"
 
 	cloudstic "github.com/cloudstic/cli"
-	"github.com/cloudstic/cli/internal/core"
-	"github.com/cloudstic/cli/internal/engine"
 )
 
 func TestRunForget_SingleSnapshot(t *testing.T) {
@@ -74,10 +72,10 @@ func TestRunForget_Policy_JSON(t *testing.T) {
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
 		policyResult: &cloudstic.PolicyResult{
-			Groups: []engine.PolicyGroupResult{
+			Groups: []cloudstic.PolicyGroupResult{
 				{
-					Key:    engine.GroupKey{Source: "local", Account: "user"},
-					Remove: []engine.SnapshotEntry{{Ref: "snapshot/old1", Snap: core.Snapshot{Seq: 1}}},
+					Key:    cloudstic.GroupKey{Source: "local", Account: "user"},
+					Remove: []cloudstic.SnapshotEntry{{Ref: "snapshot/old1", Snap: cloudstic.Snapshot{Seq: 1}}},
 				},
 			},
 		},
@@ -101,10 +99,10 @@ func TestRunForget_Policy_NoRemove(t *testing.T) {
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
 		policyResult: &cloudstic.PolicyResult{
-			Groups: []engine.PolicyGroupResult{
+			Groups: []cloudstic.PolicyGroupResult{
 				{
-					Key:    engine.GroupKey{Source: "source", Account: "account", Path: "path"},
-					Keep:   []engine.KeepReason{{Entry: engine.SnapshotEntry{Ref: "snapshot/keep1", Snap: core.Snapshot{Seq: 1}}, Reasons: []string{"keep-last"}}},
+					Key:    cloudstic.GroupKey{Source: "source", Account: "account", Path: "path"},
+					Keep:   []cloudstic.KeepReason{{Entry: cloudstic.SnapshotEntry{Ref: "snapshot/keep1", Snap: cloudstic.Snapshot{Seq: 1}}, Reasons: []string{"keep-last"}}},
 					Remove: nil,
 				},
 			},
@@ -124,11 +122,11 @@ func TestRunForget_Policy_WithRemoval(t *testing.T) {
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
 		policyResult: &cloudstic.PolicyResult{
-			Groups: []engine.PolicyGroupResult{
+			Groups: []cloudstic.PolicyGroupResult{
 				{
-					Key:    engine.GroupKey{Source: "local", Account: "user"},
-					Keep:   []engine.KeepReason{{Entry: engine.SnapshotEntry{Ref: "snapshot/keep1", Snap: core.Snapshot{Seq: 2}}, Reasons: []string{"keep-last"}}},
-					Remove: []engine.SnapshotEntry{{Ref: "snapshot/old1", Snap: core.Snapshot{Seq: 1}}},
+					Key:    cloudstic.GroupKey{Source: "local", Account: "user"},
+					Keep:   []cloudstic.KeepReason{{Entry: cloudstic.SnapshotEntry{Ref: "snapshot/keep1", Snap: cloudstic.Snapshot{Seq: 2}}, Reasons: []string{"keep-last"}}},
+					Remove: []cloudstic.SnapshotEntry{{Ref: "snapshot/old1", Snap: cloudstic.Snapshot{Seq: 1}}},
 				},
 			},
 		},
@@ -147,10 +145,10 @@ func TestRunForget_Policy_DryRun(t *testing.T) {
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
 		policyResult: &cloudstic.PolicyResult{
-			Groups: []engine.PolicyGroupResult{
+			Groups: []cloudstic.PolicyGroupResult{
 				{
-					Key:    engine.GroupKey{Source: "local", Account: "user"},
-					Remove: []engine.SnapshotEntry{{Ref: "snapshot/old1", Snap: core.Snapshot{Seq: 1}}},
+					Key:    cloudstic.GroupKey{Source: "local", Account: "user"},
+					Remove: []cloudstic.SnapshotEntry{{Ref: "snapshot/old1", Snap: cloudstic.Snapshot{Seq: 1}}},
 				},
 			},
 		},

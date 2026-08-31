@@ -3,12 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/cloudstic/cli/pkg/config"
 	"io"
 	"strings"
 
+	"github.com/cloudstic/cli/pkg/config"
+
 	cloudstic "github.com/cloudstic/cli"
-	"github.com/cloudstic/cli/internal/engine"
 )
 
 type forgetArgs struct {
@@ -248,7 +248,7 @@ func printPolicyResult(out io.Writer, result *cloudstic.PolicyResult, dryRun boo
 		if len(group.Keep) > 0 {
 			_, _ = fmt.Fprintf(out, "\nkeep %d snapshots:\n", len(group.Keep))
 			reasons := make(map[string]string, len(group.Keep))
-			entries := make([]engine.SnapshotEntry, 0, len(group.Keep))
+			entries := make([]cloudstic.SnapshotEntry, 0, len(group.Keep))
 			for _, k := range group.Keep {
 				entries = append(entries, k.Entry)
 				reasons[k.Entry.Ref] = strings.Join(k.Reasons, ", ")

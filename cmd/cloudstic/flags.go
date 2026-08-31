@@ -8,10 +8,6 @@ import (
 	"strings"
 )
 
-// defaultS3Region is the region used when neither a flag, environment
-// variable, nor profile names one.
-const defaultS3Region = "us-east-1"
-
 type globalFlags struct {
 	store                             string
 	configDir                         string
@@ -54,8 +50,16 @@ func repoFlagSpecs(g *globalFlags) []flagSpec {
 		stringFlag(&g.s3Endpoint, "s3-endpoint", "", "S3 compatible endpoint URL (for MinIO, R2, etc.)",
 			withEnv("CLOUDSTIC_S3_ENDPOINT"), withPlaceholder("<url>"),
 			withShortUsage("S3 compatible endpoint URL")),
-		stringFlag(&g.s3Region, "s3-region", defaultS3Region, "S3 region",
-			withEnv("CLOUDSTIC_S3_REGION"), withPlaceholder("<region>")),
+		// No default here on purpose: the S3 region default belongs to
+		// pkg/open, which applies it once at construction so that a
+		// configuration built from a profile and one built from flags cannot
+		// disagree about it. Pre-filling it as a flag default put "us-east-1"
+		// into every flag-built config, so open's default never fired on this
+		// path and the two definitions only agreed because the literal was
+		// copied.
+		stringFlag(&g.s3Region, "s3-region", "", "S3 region (default us-east-1)",
+			withEnv("CLOUDSTIC_S3_REGION"), withPlaceholder("<region>"),
+			withShortUsage("S3 region")),
 		stringFlag(&g.s3Profile, "s3-profile", envDefault("AWS_PROFILE", ""), "AWS shared config profile for S3 credentials",
 			withEnv("CLOUDSTIC_S3_PROFILE"), withPlaceholder("<name>")),
 		stringFlag(&g.s3AccessKey, "s3-access-key", "", "S3 access key ID",
@@ -115,7 +119,10 @@ func encryptionFlagSpecs(g *globalFlags) []flagSpec {
 		stringFlag(&g.kmsKeyARN, "kms-key-arn", "", "AWS KMS key ARN for kms-platform slots",
 			withEnv("CLOUDSTIC_KMS_KEY_ARN"), withPlaceholder("<arn>"),
 			withShortUsage("AWS KMS key ARN")),
-		stringFlag(&g.kmsRegion, "kms-region", "", "AWS KMS region (defaults to us-east-1)",
+		// Unset means the AWS SDK resolves the region itself, from AWS_REGION
+		// or the shared config. Nothing in this module supplies a KMS region
+		// default, which is what the text used to claim.
+		stringFlag(&g.kmsRegion, "kms-region", "", "AWS KMS region (default: from AWS environment)",
 			withEnv("CLOUDSTIC_KMS_REGION"), withPlaceholder("<region>"),
 			withShortUsage("AWS KMS region")),
 		stringFlag(&g.kmsEndpoint, "kms-endpoint", "", "Custom AWS KMS endpoint URL",
@@ -285,4 +292,19 @@ func (i *stringArrayFlags) String() string {
 func (i *stringArrayFlags) Set(value string) error {
 	*i = append(*i, value)
 	return nil
+}
+
+// profilesFileFlag declares -profiles-file, wherever it appears: as a global
+// flag on repository commands, and as its own flag on the commands that manage
+// the profiles file without opening a repository.
+//
+// The default is a path inside the config directory, so it can only be
+// computed once -config-dir has taken its final value — hence withLateDefault
+// rather than a default passed in here. That is also why the declaration takes
+// g: the two flags are resolved together, and this is the one place that
+// relationship is written down.
+func profilesFileFlag(target *string, g *globalFlags) flagSpec {
+	return stringFlag(target, "profiles-file", "", "Path to profiles YAML file",
+		withEnv("CLOUDSTIC_PROFILES_FILE"), withPlaceholder("<path>"), withCompleter("_files"),
+		withLateDefault(func() (string, error) { return defaultProfilesPath(g.configDir) }))
 }

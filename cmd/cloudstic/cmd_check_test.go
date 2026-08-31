@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	cloudstic "github.com/cloudstic/cli"
-	"github.com/cloudstic/cli/internal/engine"
 )
 
 func TestRunCheck_Healthy(t *testing.T) {
@@ -39,7 +38,7 @@ func TestRunCheck_JSONWithErrorsReturnsExitOne(t *testing.T) {
 		checkResult: &cloudstic.CheckResult{
 			SnapshotsChecked: 1,
 			ObjectsVerified:  2,
-			Errors: []engine.CheckError{
+			Errors: []cloudstic.CheckError{
 				{Type: "corrupt", Key: "content/xyz", Message: "checksum mismatch"},
 			},
 		},
@@ -83,7 +82,7 @@ func TestPrintCheckResult_WithErrors(t *testing.T) {
 	hasErrors := printCheckResult(r.errOut, &cloudstic.CheckResult{
 		SnapshotsChecked: 2,
 		ObjectsVerified:  40,
-		Errors: []engine.CheckError{
+		Errors: []cloudstic.CheckError{
 			{Type: "corrupt", Key: "content/xyz", Message: "checksum mismatch"},
 		},
 	})

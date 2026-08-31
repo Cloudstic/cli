@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	cloudstic "github.com/cloudstic/cli"
-	"github.com/cloudstic/cli/internal/engine"
 )
 
 type restoreArgs struct {
@@ -101,18 +100,18 @@ func execRestore(r *runner, ctx context.Context, a *restoreArgs, opts []cloudsti
 func buildRestoreOpts(a *restoreArgs) []cloudstic.RestoreOption {
 	var restoreOpts []cloudstic.RestoreOption
 	if a.dryRun {
-		restoreOpts = append(restoreOpts, engine.WithRestoreDryRun())
+		restoreOpts = append(restoreOpts, cloudstic.WithRestoreDryRun())
 	}
 	if a.pathFilter != "" {
-		restoreOpts = append(restoreOpts, engine.WithRestorePath(a.pathFilter))
+		restoreOpts = append(restoreOpts, cloudstic.WithRestorePath(a.pathFilter))
 	}
 	if a.noVerify {
-		restoreOpts = append(restoreOpts, engine.WithRestoreNoVerify())
+		restoreOpts = append(restoreOpts, cloudstic.WithRestoreNoVerify())
 	}
 	return restoreOpts
 }
 
-func printRestoreSummary(out io.Writer, result *engine.RestoreResult, output string) {
+func printRestoreSummary(out io.Writer, result *cloudstic.RestoreResult, output string) {
 	if result.DryRun {
 		_, _ = fmt.Fprintf(out, "\nRestore dry run complete. Snapshot: %s\n", result.SnapshotRef)
 		_, _ = fmt.Fprintf(out, "  Files: %d, Dirs: %d\n", result.FilesWritten, result.DirsWritten)

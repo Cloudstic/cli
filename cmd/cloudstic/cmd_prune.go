@@ -6,7 +6,6 @@ import (
 	"io"
 
 	cloudstic "github.com/cloudstic/cli"
-	"github.com/cloudstic/cli/internal/engine"
 )
 
 type pruneArgs struct {
@@ -43,7 +42,7 @@ func runPrune(r *runner, ctx context.Context, a *pruneArgs, cfg clientConfig) in
 func buildPruneOpts(a *pruneArgs) []cloudstic.PruneOption {
 	var pruneOpts []cloudstic.PruneOption
 	if a.dryRun {
-		pruneOpts = append(pruneOpts, engine.WithPruneDryRun())
+		pruneOpts = append(pruneOpts, cloudstic.WithPruneDryRun())
 	}
 	return pruneOpts
 }

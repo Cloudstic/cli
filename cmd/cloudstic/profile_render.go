@@ -1,11 +1,22 @@
 package main
 
+// Rendering for the profiles file: the tables behind `store list`/`show`,
+// `auth list`/`show` and `profile list`/`show`, and the static validation
+// those tables report as a Status column.
+//
+// The checks here are answered from the profiles file alone — is the store URI
+// parseable, does a profile point at a store and auth entry that exist. Nothing
+// here connects to anything, which is what separates it from store_health.go:
+// that file asks whether a store is reachable and initialized, and talks to it
+// to find out. Both used to be spelled storeHealth.
+
 import (
 	"fmt"
-	"github.com/cloudstic/cli/pkg/config"
 	"io"
 	"sort"
 	"strings"
+
+	"github.com/cloudstic/cli/pkg/config"
 
 	"github.com/cloudstic/cli/pkg/profile"
 
@@ -95,7 +106,7 @@ func boolLabel(v bool) string {
 	return "no"
 }
 
-func profileHealth(cfg *profile.Config, p profile.Profile) (status string, details []string) {
+func profileConfigStatus(cfg *profile.Config, p profile.Profile) (status string, details []string) {
 	status = "ready"
 	provider := profileProviderFromSource(p.Source)
 	if !p.IsEnabled() {
@@ -124,7 +135,7 @@ func profileHealth(cfg *profile.Config, p profile.Profile) (status string, detai
 	return status, details
 }
 
-func authHealth(auth profile.Auth) (string, []string) {
+func authConfigStatus(auth profile.Auth) (string, []string) {
 	switch auth.Provider {
 	case "google":
 		if auth.GoogleTokenFile == "" && auth.GoogleTokenRef == "" {
@@ -141,7 +152,7 @@ func authHealth(auth profile.Auth) (string, []string) {
 	}
 }
 
-func storeHealth(s profile.Store) (string, []string) {
+func storeConfigStatus(s profile.Store) (string, []string) {
 	if s.URI == "" {
 		return "error", []string{"missing uri"}
 	}
@@ -191,7 +202,7 @@ func renderStoreList(out io.Writer, cfg *profile.Config) {
 	t.AppendHeader(table.Row{"Name", "Type", "Target", "Auth", "Used By", "Status"})
 	for _, name := range names {
 		s := cfg.Stores[name]
-		status, warnings := storeHealth(s)
+		status, warnings := storeConfigStatus(s)
 		t.AppendRow(table.Row{
 			name,
 			storeScheme(s.URI),
@@ -215,7 +226,7 @@ func renderAuthList(out io.Writer, cfg *profile.Config) {
 	t.AppendHeader(table.Row{"Name", "Provider", "Token", "Used By", "Status"})
 	for _, name := range names {
 		auth := cfg.Auth[name]
-		status, warnings := authHealth(auth)
+		status, warnings := authConfigStatus(auth)
 		t.AppendRow(table.Row{
 			name,
 			auth.Provider,
@@ -238,7 +249,7 @@ func renderProfileList(out io.Writer, cfg *profile.Config) {
 	t.AppendHeader(table.Row{"Name", "Source", "Store", "Auth", "Tags", "Status"})
 	for _, name := range names {
 		profile := cfg.Profiles[name]
-		status, warnings := profileHealth(cfg, profile)
+		status, warnings := profileConfigStatus(cfg, profile)
 		t.AppendRow(table.Row{
 			name,
 			profile.Source,
@@ -282,7 +293,7 @@ func authTokenPath(auth profile.Auth) string {
 }
 
 func renderStoreShow(out io.Writer, cfg *profile.Config, name string, s profile.Store) {
-	status, warnings := storeHealth(s)
+	status, warnings := storeConfigStatus(s)
 	renderSectionHeading(out, fmt.Sprintf("Store %s", name), -1)
 	renderKVTable(out, appendWarningRow([]table.Row{
 		{"URI", s.URI},
@@ -359,7 +370,7 @@ func secretDisplayRows(s profile.Store) []table.Row {
 }
 
 func renderAuthShow(out io.Writer, cfg *profile.Config, name string, auth profile.Auth) {
-	status, warnings := authHealth(auth)
+	status, warnings := authConfigStatus(auth)
 	renderSectionHeading(out, fmt.Sprintf("Auth %s", name), -1)
 	renderKVTable(out, appendWarningRow([]table.Row{
 		{"Provider", auth.Provider},
@@ -409,7 +420,7 @@ func renderAuthShow(out io.Writer, cfg *profile.Config, name string, auth profil
 }
 
 func renderProfileShow(out io.Writer, cfg *profile.Config, name string, profile profile.Profile) {
-	status, warnings := profileHealth(cfg, profile)
+	status, warnings := profileConfigStatus(cfg, profile)
 	renderSectionHeading(out, fmt.Sprintf("Profile %s", name), -1)
 	renderKVTable(out, appendWarningRow([]table.Row{
 		{"Source", profile.Source},

@@ -360,6 +360,15 @@ A leaf entry referencing a blob carries `(blob ref, offset, length, stored
 total)`. The stored total is repeated in every referencing entry so that
 consolidation has a denominator without a lookup or a second index.
 
+Blobs are immutable and are never repacked. A blob that has become mostly
+garbage is retired by the **next** backup, which rewrites its still-live
+bodies into the blobs it is already writing and repoints those entries; older
+snapshots keep naming the original blob, which prune collects once no retained
+snapshot needs it. Consolidation changes no object format and produces
+ordinary blobs — a build that knows nothing about it reads a consolidated
+repository exactly as it reads any other. See "Blob consolidation" in
+`docs/storage-model.md`.
+
 ### 7. Packfiles (`packs/` and `index/packs`)
 
 To avoid issuing hundreds of thousands of S3 `PUT` and `GET` requests for tiny metadata objects, the storage layer implements a stateless PackStore.

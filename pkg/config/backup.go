@@ -161,11 +161,18 @@ type backupFieldSpec struct {
 		fromProfile func(profile.Profile) []string
 	}
 
-	// always takes the profile's value even when it is empty, rather than only
-	// when the profile names one. The source is the one field like this: the
-	// caller asked for this profile, so its source is the source, and an empty
-	// result is reported rather than falling back to whatever base held —
+	// always takes the profile's value even when it is *empty*, rather than
+	// only when the profile names one. The source is the only field like this:
+	// the caller asked for this profile, so its source is the source, and an
+	// empty result is reported rather than falling back to whatever base held —
 	// which would back up the wrong tree under a profile's name.
+	//
+	// It does NOT mean "even when the caller decided one". A decided field is
+	// skipped before this is consulted, because an explicit -source must beat
+	// the profile's; that is the precedence the whole FieldSet mechanism
+	// exists to enforce. Exempting always from the decided check was proposed
+	// in review of #578 and is a regression —
+	// TestMergeProfileBackup_DecidedSourceBeatsTheProfile fails under it.
 	always bool
 }
 

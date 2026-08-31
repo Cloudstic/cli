@@ -351,3 +351,45 @@ func TestMergeProfileBackup_ProfileCredentialSurvivesASilentAuthEntry(t *testing
 		t.Errorf("the auth entry's own field must still apply, got %q", got.Source.Google.TokenPath)
 	}
 }
+
+// TestMergeProfileBackup_DecidedSourceBeatsTheProfile pins the precedence a
+// code-review bot proposed inverting on #578: an explicitly passed -source wins
+// over the selected profile's.
+//
+// The `always` flag on the source spec means "take the profile's value even
+// when it is empty", not "take it even when the caller decided one". Exempting
+// it from the decided check — the suggested change — would make
+// `cloudstic backup -profile p -source /other` silently back up the profile's
+// tree instead of /other, breaking the precedence rule the whole FieldSet
+// mechanism exists to enforce.
+func TestMergeProfileBackup_DecidedSourceBeatsTheProfile(t *testing.T) {
+	cfg := &profile.Config{
+		Profiles: map[string]profile.Profile{
+			"p": {Source: "local:/from-profile"},
+		},
+	}
+	base := config.Backup{Source: config.Source{URI: "local:/from-flag"}}
+
+	got, err := config.MergeProfileBackup(base, config.NewFieldSet(config.FieldSourceURI), "p", cfg)
+	if err != nil {
+		t.Fatalf("MergeProfileBackup: %v", err)
+	}
+	if got.Source.URI != "local:/from-flag" {
+		t.Fatalf("an explicitly decided source must win over the profile's, got %q", got.Source.URI)
+	}
+}
+
+// TestMergeProfileBackup_UndecidedSourceTakesTheProfileEvenWhenEmpty is the
+// other half, and what `always` actually means: with nothing decided, the
+// profile's source replaces whatever the caller held, and an empty one is
+// reported rather than falling back — which would back up the wrong tree under
+// a profile's name.
+func TestMergeProfileBackup_UndecidedSourceTakesTheProfileEvenWhenEmpty(t *testing.T) {
+	cfg := &profile.Config{Profiles: map[string]profile.Profile{"p": {Source: ""}}}
+	base := config.Backup{Source: config.Source{URI: "local:/stale"}}
+
+	_, err := config.MergeProfileBackup(base, nil, "p", cfg)
+	if err == nil || !strings.Contains(err.Error(), "empty source") {
+		t.Fatalf("an empty profile source must be reported, not filled in from base; got %v", err)
+	}
+}

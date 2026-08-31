@@ -208,6 +208,33 @@ func TestBlobConsolidator_IgnoresUnusableReferences(t *testing.T) {
 	}
 }
 
+// TestShouldConsolidate_RespectsIgnoreEmptySnapshot pins the one contract
+// consolidation has to stand down for. Rewriting bodies changes the tree, so a
+// caller that asked an unchanged tree to produce no snapshot would get one
+// every time — and a run that changed nothing has written no blob for the next
+// one to consolidate away either.
+func TestShouldConsolidate_RespectsIgnoreEmptySnapshot(t *testing.T) {
+	bm := &BackupManager{stats: &backupStats{}}
+	if bm.shouldConsolidate() {
+		t.Error("consolidated with no accumulator")
+	}
+
+	bm.consolidation = newBlobConsolidator()
+	if !bm.shouldConsolidate() {
+		t.Error("declined an ordinary backup")
+	}
+
+	bm.cfg.ignoreEmptySnapshot = true
+	if bm.shouldConsolidate() {
+		t.Error("consolidated under -ignore-empty with nothing changed")
+	}
+
+	bm.stats.filesChanged.Add(1)
+	if !bm.shouldConsolidate() {
+		t.Error("declined under -ignore-empty although the source changed")
+	}
+}
+
 // --- end to end through the engine -----------------------------------------
 
 // consolidationRun ages a repository the way real churn does: 48 small files

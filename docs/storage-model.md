@@ -75,8 +75,11 @@ the format exists to avoid. Instead the *next backup* consolidates forward
 A full-scan v3 backup accumulates, per blob it inherits, the bytes the
 snapshot it is writing still needs — the denominator comes free from
 `BodyRef.Total`, which every referencing entry repeats. After the upload it
-rewrites the live bodies of its sparsest blobs into the blobs it is already
-writing, and repoints those entries. Three properties bound it:
+reads the live bodies of its sparsest blobs and hands them back to the same
+blob writer, which packs them into new blobs, and repoints those entries. At
+least two blobs are always merged: rewriting one blob's bodies into one new
+blob would leave the snapshot reading as many objects as before. Three
+properties bound it:
 
 - **A blob is worth rewriting when its live bytes are below half of what a
   full blob delivers in this repository.** That covers both a blob whose

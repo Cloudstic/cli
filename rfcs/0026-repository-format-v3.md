@@ -1385,6 +1385,43 @@ called for. The plaintext choice is defensible on its own terms, since a
 stored-bytes budget makes blob size vary with how compressible a directory
 happens to be, so this is a calibration to settle rather than a unit to switch.
 
+### What consolidation measured
+
+Consolidating forward was the last piece, and measuring it settled one thing
+and opened another. Against MinIO on a 5,000-file tree, at 1/10/25 retained
+backups:
+
+| | v2 | v3 before | v3 after |
+|---|---:|---:|---:|
+| restore@25 | 210 req | 101 req | **53 req** |
+| check@25 | 218 req | 58 req | **37 req** |
+| restore slope | 7.62/backup | 2.25/backup | **0.21/backup** |
+| check slope | 8.25/backup | 0.96/backup | **0.04/backup** |
+
+**The flat curve is real.** It is the property this format was argued for and
+the one it did not have until consolidation existed: a read costs what the data
+costs, not what the history costs. At 25 retained backups v3 is 4.0x cheaper
+than v2 on restore and 5.9x on check.
+
+**It is bought with retained bytes.** Over the same checkpoints the repository
+grows 18.6 → 36.1 → 71.0 MB, against 18.4 → 29.2 → 47.6 MB without
+consolidation and 24.7 → 29.6 → 39.4 MB for v2. Consolidation rewrites bodies
+forward while older snapshots still reference the originals, so a repository
+that never forgets holds both — about 0.97 MB per retained backup here, 1.8x
+v2's total at 25.
+
+Pruning reverses it, because the superseded blobs become collectable the moment
+the snapshots holding them are forgotten. So the trade is not "space for
+requests" flatly; it is **space while everything is retained, for requests
+always**. A repository with a retention policy pays little and gains the flat
+curve; one that keeps every snapshot forever pays 1.8x v2's storage to serve
+restores 4x cheaper.
+
+That is a real choice rather than a defect, but it is the format's sharpest
+remaining edge, and where `consolidateFillPercent` should sit on it is not yet
+established — 50 was chosen on a convergence argument (no two blobs under half
+a blob's worth can both survive a merge) rather than against this curve.
+
 ### Open questions and sequencing
 
 1. ~~**How fragmented do blobs actually get?**~~ Answered above: 15% waste,

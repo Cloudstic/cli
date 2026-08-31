@@ -150,7 +150,12 @@ func BenchmarkPerMemberCompress(b *testing.B) {
 			b.ReportAllocs()
 			for range b.N {
 				for _, body := range bodies {
-					_ = compress(body)
+					// A fresh, exactly-sized destination per member, which is
+					// what the writer used to do. Reusing one here would
+					// measure the writer's buffer reuse rather than the zstd
+					// restart this benchmark exists to price, and would stop
+					// it being comparable with the numbers recorded above.
+					_ = appendCompressed(make([]byte, 0, len(body)+1), body)
 				}
 			}
 		})

@@ -237,3 +237,60 @@ func TestMemberOverheadIsWhatWeClaim(t *testing.T) {
 			MemberOverhead, Overhead)
 	}
 }
+
+// The append form exists so a blob can be assembled without allocating each
+// member and copying it in. What it writes therefore has to be exactly what
+// SealMember would have written: those bytes are what a repository stores, and
+// the ref naming the blob is fixed before any of them exist.
+//
+// The destinations below are the three shapes a caller presents. "spare" is
+// the one the blob writer actually hits — a buffer sized for the whole blob,
+// so the seal writes into capacity that is already there — and it is where an
+// overlap between destination and plaintext would corrupt the output rather
+// than announce itself.
+func TestAppendSealMemberWritesWhatSealMemberWould(t *testing.T) {
+	s := newTestSealer(t, "master")
+	ref := []byte("blob/" + hashOf([]byte("a blob")))
+	prefix := []byte("the members already packed")
+
+	for _, body := range [][]byte{nil, []byte("one small file"), bytes.Repeat([]byte("body "), 1000)} {
+		want, err := s.SealMember(body, hashOf(body), ref)
+		if err != nil {
+			t.Fatalf("SealMember: %v", err)
+		}
+
+		dsts := []struct {
+			name string
+			dst  []byte
+		}{
+			{"empty", nil},
+			{"full", bytes.Clone(prefix)},
+			{"spare", append(make([]byte, 0, len(prefix)+len(want)+64), prefix...)},
+		}
+		for _, d := range dsts {
+			base := len(d.dst)
+			head := bytes.Clone(d.dst)
+
+			got, err := s.AppendSealMember(d.dst, body, hashOf(body), ref)
+			if err != nil {
+				t.Fatalf("%s/%d-byte body: AppendSealMember: %v", d.name, len(body), err)
+			}
+			if !bytes.Equal(got[:base], head) {
+				t.Errorf("%s/%d-byte body: the destination's existing bytes were disturbed", d.name, len(body))
+			}
+			if !bytes.Equal(got[base:], want) {
+				t.Errorf("%s/%d-byte body: appended %d bytes, want the %d SealMember produces",
+					d.name, len(body), len(got)-base, len(want))
+			}
+			// And the appended run must open from exactly its own range, since
+			// that is all a ranged read of the containing blob returns.
+			opened, err := s.OpenMember(got[base:], hashOf(body), ref)
+			if err != nil {
+				t.Fatalf("%s/%d-byte body: OpenMember: %v", d.name, len(body), err)
+			}
+			if !bytes.Equal(opened, body) {
+				t.Errorf("%s/%d-byte body: did not round-trip", d.name, len(body))
+			}
+		}
+	}
+}

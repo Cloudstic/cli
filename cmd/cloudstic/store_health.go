@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	cloudstic "github.com/cloudstic/cli"
+	"github.com/cloudstic/cli/internal/onboarding"
 	"github.com/cloudstic/cli/internal/ui"
 	"github.com/cloudstic/cli/pkg/profile"
 	"github.com/cloudstic/cli/pkg/store"
@@ -88,7 +89,7 @@ func checkOrInitStore(r *runner, ctx context.Context, cfg *profile.Config, store
 	}
 
 	// Check if the store has encryption config.
-	hasEncryption := storeHasExplicitEncryption(s)
+	hasEncryption := onboarding.HasExplicitEncryption(s)
 
 	if !hasEncryption {
 		// No encryption configured — init without encryption.

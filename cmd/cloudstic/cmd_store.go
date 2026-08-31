@@ -181,7 +181,7 @@ func runStoreNew(r *runner, ctx context.Context, a *storeNewArgs) int {
 	store := config.MergeStoreInto(existing, a.toProfileStore(), a.flagProvided)
 
 	if existedBefore {
-		if promptURI, askKeep := existingStoreInteractivePlan(r.canPrompt(), hasStoreNewOverrideFlags(a.globalFlags), storeHasExplicitEncryption(existing)); promptURI {
+		if promptURI, askKeep := existingStoreInteractivePlan(r.canPrompt(), hasStoreNewOverrideFlags(a.globalFlags), onboarding.HasExplicitEncryption(existing)); promptURI {
 			forcePromptURI = true
 			askKeepEncryption = askKeep
 		}
@@ -235,8 +235,8 @@ func runStoreNew(r *runner, ctx context.Context, a *storeNewArgs) int {
 			}
 			forcePromptEncryption = !keepCurrent
 		}
-		if forcePromptEncryption || !storeHasExplicitEncryption(s) {
-			promptEncryptionConfig(r, ctx, cfg, a.name, a.profilesFile, a.configDir)
+		if forcePromptEncryption || !onboarding.HasExplicitEncryption(s) {
+			onboarding.ConfigureEncryption(ctx, prompterFor(r), cfg, a.name, a.profilesFile, newSecretResolver(a.configDir), r.out, r.errOut)
 		}
 		if err := checkOrInitStoreWithRecovery(r, ctx, cfg, a.name, a.profilesFile, checkOrInitOptions{
 			configDir:            a.configDir,

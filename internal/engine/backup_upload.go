@@ -42,10 +42,18 @@ func inlineLimit() int64 {
 	return inlineThreshold
 }
 
+// inlineBufferPool holds read buffers for bodies small enough to be stored
+// whole. A buffer must be at least inlineLimit() long, not inlineThreshold:
+// the routing decision uses the limit, so sizing the buffer from the constant
+// silently truncated every body between the two whenever the two differed.
+//
+// They differ only under CLOUDSTIC_TEST_INLINE_BYTES, so production was never
+// affected — but the knob is documented as sweepable, and sweeping it upward
+// produced repositories that passed check and restored short files. A dial
+// that corrupts when turned is worse than no dial.
 var inlineBufferPool = sync.Pool{
 	New: func() interface{} {
-		// Pre-allocate a buffer large enough for inlineThreshold
-		b := make([]byte, inlineThreshold)
+		b := make([]byte, inlineLimit())
 		return &b
 	},
 }
@@ -455,6 +463,14 @@ func (bm *BackupManager) uploadContent(ctx context.Context, meta core.FileMeta, 
 // in v3. Uses a sync.Pool to minimize allocations.
 func (bm *BackupManager) uploadInline(ctx context.Context, r io.Reader, meta core.FileMeta, phase ui.Phase) (uploadedContent, error) {
 	bufPtr := inlineBufferPool.Get().(*[]byte)
+	// A pooled buffer can predate a change of limit, so its length is checked
+	// rather than assumed. io.ReadFull below stops at len(buf) and reports no
+	// error when it fills it, so a short buffer is indistinguishable from a
+	// body that ends exactly there.
+	if limit := int(inlineLimit()); len(*bufPtr) < limit {
+		b := make([]byte, limit)
+		bufPtr = &b
+	}
 	buf := *bufPtr
 	defer inlineBufferPool.Put(bufPtr)
 

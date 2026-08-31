@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -686,5 +689,51 @@ func TestV3Check_ReportsARangePastTheEndOfItsBlob(t *testing.T) {
 	}
 	if len(res.Errors) == 0 {
 		t.Fatal("a default check accepted an entry naming bytes past the end of its blob")
+	}
+}
+
+// A body between inlineThreshold and a raised CLOUDSTIC_TEST_INLINE_BYTES must
+// survive a round trip.
+//
+// The read buffer used to be sized from the constant while the routing
+// decision used the override, so io.ReadFull filled the short buffer, reported
+// no error, and stored a truncated body under the hash of what it had read.
+// The repository was self-consistent — check passed — and restore returned a
+// short file. That is the worst failure shape there is, and it is why this
+// asserts on the restored bytes rather than on any internal count.
+func TestV3Backup_InlineBodyLargerThanTheConstantSurvives(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv(envInlineThreshold, strconv.Itoa(4<<20))
+
+	dest := NewMockStore()
+	src := NewMockSource()
+	// Comfortably past inlineThreshold (512 KiB) and under the override.
+	body := bytes.Repeat([]byte("inline-body-"), 120*1024) // ~1.4 MB
+	src.AddFile("big.bin", "id-big", body)
+
+	res, err := NewBackupManager(v3Deps(dest), src).Run(ctx)
+	if err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+
+	_ = res
+	root := t.TempDir()
+	w, err := NewFSRestoreWriter(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRestoreManager(v3Deps(dest)).Run(ctx, w, "latest"); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(root, "big.bin"))
+	if err != nil {
+		t.Fatalf("read restored file: %v", err)
+	}
+	if len(got) != len(body) {
+		t.Fatalf("restored %d bytes, want %d — the body was truncated", len(got), len(body))
+	}
+	if !bytes.Equal(got, body) {
+		t.Fatal("restored body differs from the source")
 	}
 }

@@ -10,11 +10,24 @@ stored under a key derived from its hash. Objects are immutable once written.
 | `chunk/`     | Compressed file data segments (zstd, FastCDC boundaries) |
 | `content/`   | Manifest listing the chunk refs that make up a file   |
 | `filemeta/`  | File metadata (name, size, mod time, content hash)    |
+| `blob/`      | Packed run of file bodies, members sealed individually (format v3) |
 | `node/`      | HAMT tree nodes (directory structure)                 |
 | `snapshot/`  | Root object tying a tree to a point in time           |
 | `index/latest`     | Mutable pointer to the most recent snapshot            |
 | `index/snapshots`  | Snapshot catalog (lightweight summaries, self-healing) |
 | `index/packs`      | Pack catalog — offset map for objects inside packfiles  |
+
+In a format-v3 repository the shape differs: `filemeta/` and `content/` do not
+exist, because an entry's metadata rides in its HAMT leaf and its body lives in
+a `blob/` object the entry points at. There is no packfile layer, so no
+`packs/` or `index/packs` either.
+
+`blob/` objects are written **below** the compression and encryption layers,
+the position `PackStore`'s catalog and footers occupy, because each of a blob's
+members carries its own compression and its own seal. That is what lets a
+reader fetch one body's byte range and decrypt exactly it; sending a blob
+through the chain would compress and encrypt the whole object a second time and
+make a ranged read return bytes that cannot be decoded. See RFC 0026.
 
 ## Write Order During Backup
 

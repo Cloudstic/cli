@@ -80,7 +80,7 @@ func (d Deps) treeOptions(extra ...hamt.TreeOption) []hamt.TreeOption {
 // pointed at a different store or key than the one the repository was opened
 // with.
 func (d Deps) blobReader() *blobReader {
-	if !d.FormatV3 {
+	if !d.FormatV3 || d.BlobStore == nil {
 		return nil
 	}
 	return newBlobReader(d.BlobStore, d.Sealer)

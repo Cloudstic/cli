@@ -12,15 +12,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cloudstic/cli/internal/blob"
 	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/internal/hamt"
 	"github.com/cloudstic/cli/internal/ui"
+	"github.com/cloudstic/cli/pkg/store"
 )
 
 // v3Deps is the dependency set every manager in these tests is built from:
 // one store, format v3.
 func v3Deps(dest *MockStore) Deps {
-	return Deps{Store: dest, Reporter: ui.NewNoOpReporter(), FormatV3: true}
+	// BlobStore is the same store here because a MockStore has no format chain
+	// to sit below. In a real client the two differ: blobs go under
+	// compression and encryption, carrying their own of each per member.
+	return Deps{Store: dest, Reporter: ui.NewNoOpReporter(), FormatV3: true, BlobStore: dest}
 }
 
 // v3Source builds a small tree with every content shape the format stores:
@@ -281,7 +286,7 @@ func TestV3Check_ReportsBrokenLeafEntries(t *testing.T) {
 			ContentHash: core.ComputeHash([]byte("data")), ContentRef: "not-derived", Size: 4,
 		}
 		ref, data := metaFor(t, fm)
-		root := insertV3Entry(t, dest, ref, &hamt.Payload{Meta: data, Size: 4, Inline: []byte("data")})
+		root := insertV3Entry(t, dest, ref, &hamt.Payload{Meta: data, Size: 4, Body: blobFor(t, dest, []byte("data"))})
 		v3Snapshot(t, dest, root)
 		wantFinding(t, run(t, dest, hmacKey), "corrupt", "does not derive")
 	})
@@ -293,9 +298,12 @@ func TestV3Check_ReportsBrokenLeafEntries(t *testing.T) {
 			ContentHash: core.ComputeHash([]byte("original")), Size: 8,
 		}
 		ref, data := metaFor(t, fm)
-		root := insertV3Entry(t, dest, ref, &hamt.Payload{Meta: data, Size: 8, Inline: []byte("tampered")})
+		root := insertV3Entry(t, dest, ref, &hamt.Payload{Meta: data, Size: 8, Body: blobFor(t, dest, []byte("tampered"))})
 		v3Snapshot(t, dest, root)
-		wantFinding(t, run(t, dest, nil, WithReadData()), "corrupt", "reconstructed content")
+		// The mismatch is caught reading the member rather than after
+		// reconstructing it: a body's content hash is what keys its seal, so
+		// a body that is not the one the entry names fails at the read.
+		wantFinding(t, run(t, dest, nil, WithReadData()), "corrupt", "hashes to")
 	})
 
 	t.Run("leaf size disagrees with filemeta", func(t *testing.T) {
@@ -306,7 +314,7 @@ func TestV3Check_ReportsBrokenLeafEntries(t *testing.T) {
 			ContentHash: core.ComputeHash(body), Size: int64(len(body)),
 		}
 		ref, data := metaFor(t, fm)
-		root := insertV3Entry(t, dest, ref, &hamt.Payload{Meta: data, Size: 999, Inline: body})
+		root := insertV3Entry(t, dest, ref, &hamt.Payload{Meta: data, Size: 999, Body: blobFor(t, dest, body)})
 		v3Snapshot(t, dest, root)
 		wantFinding(t, run(t, dest, nil, WithReadData()), "corrupt", "records size")
 	})
@@ -357,9 +365,21 @@ func TestV3BackupCommitsIncrementally(t *testing.T) {
 	dest := NewMockStore()
 	src := NewMockSource()
 
-	// Enough inlined content to cross uploadCommitBytes several times over.
-	body := bytes.Repeat([]byte("payload"), 40*1024) // ~280 KB each
+	// A payload is metadata and a body reference now, so the natural threshold
+	// is hundreds of thousands of entries. Lowered to prove the mechanism,
+	// which is what this test is about — see envUploadCommitBytes.
+	// Both thresholds are lowered together, and they have to be: the commit
+	// bound alone would rewrite one leaf over and over, because 400 entries of
+	// metadata fit in a single leaf at the real budget. A tree with several
+	// leaves is what makes "how much garbage does committing leave" a
+	// meaningful question at all.
+	t.Setenv("CLOUDSTIC_TEST_LEAF_BYTES", "2048")
+	t.Setenv(envUploadCommitBytes, "32768")
+	// Distinct bodies, deliberately. Identical ones deduplicate to a single
+	// blob member, so the blob never fills and every entry waits on it — the
+	// case that forced the entry-count seal in flush.
 	for i := range 400 {
+		body := append(bytes.Repeat([]byte("payload"), 40*1024), fmt.Appendf(nil, "-%d", i)...)
 		src.AddFile(fmt.Sprintf("f-%d.bin", i), fmt.Sprintf("id-%d", i), body)
 	}
 
@@ -412,7 +432,11 @@ func TestV3CheckReportsEveryDamagedNode(t *testing.T) {
 	ctx := context.Background()
 	dest := NewMockStore()
 	src := NewMockSource()
-	// Enough entries to build a tree with several leaves under a spine.
+	// Enough entries to build a tree with several leaves under a spine. The
+	// leaf budget is lowered because a leaf holds metadata now: at the real
+	// budget these 200 entries fit in one leaf and there would be nothing to
+	// damage twice.
+	t.Setenv("CLOUDSTIC_TEST_LEAF_BYTES", "4096")
 	body := bytes.Repeat([]byte("content"), 40*1024)
 	for i := range 200 {
 		src.AddFile(fmt.Sprintf("f-%d.bin", i), fmt.Sprintf("id-%d", i), body)
@@ -428,7 +452,7 @@ func TestV3CheckReportsEveryDamagedNode(t *testing.T) {
 	// ref, one that is gone entirely.
 	var leaves []string
 	for key, data := range dest.Data {
-		if strings.HasPrefix(key, "node/") && len(data) > 4096 {
+		if strings.HasPrefix(key, "node/") && len(data) > 512 {
 			leaves = append(leaves, key)
 		}
 	}
@@ -530,5 +554,28 @@ func TestInlineLimitOverride(t *testing.T) {
 		if got := inlineLimit(); got != inlineThreshold {
 			t.Errorf("%q: inlineLimit() = %d, want the built-in %d", bad, got, inlineThreshold)
 		}
+	}
+}
+
+// blobFor packs one body into a blob in s and returns the reference a leaf
+// entry would carry. Unsealed, matching a MockStore with no encryption key.
+func blobFor(t *testing.T, s store.ObjectStore, body []byte) *hamt.BodyRef {
+	t.Helper()
+	w := blob.NewWriter(nil)
+	if err := w.Add(core.ComputeHash(body), body); err != nil {
+		t.Fatalf("add body to blob: %v", err)
+	}
+	ref, data, members, err := w.Seal()
+	if err != nil {
+		t.Fatalf("seal blob: %v", err)
+	}
+	if err := s.Put(context.Background(), ref, data); err != nil {
+		t.Fatalf("put %s: %v", ref, err)
+	}
+	return &hamt.BodyRef{
+		Blob:   ref,
+		Offset: members[0].Offset,
+		Length: members[0].Length,
+		Total:  int64(len(data)),
 	}
 }

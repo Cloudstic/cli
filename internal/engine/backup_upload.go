@@ -147,7 +147,7 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 	// It costs no memory: an insert hands the payload to the transaction,
 	// which holds it until commit either way, so buffering only moves when
 	// that happens rather than adding to it.
-	pending2 := make([]uploadResult, 0, insertBatch)
+	awaiting := make([]uploadResult, 0, insertBatch)
 	buf := make([]uploadResult, 0, insertBatch)
 	ready := make([]uploadResult, 0, insertBatch)
 
@@ -155,11 +155,14 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 	// encode, so it is held back rather than inserted. Holding back is the
 	// alternative to sealing the blob early, which would let the insert batch
 	// — an unrelated quantity — decide blob sizes, and produce a blob per
-	// batch of small files far below the budget. What is held back is bounded
-	// by one blob, since Add seals as soon as one fills.
+	// batch of small files far below the budget.
 	//
-	// sealAll forces the last, partial blob out; every other flush lets the
-	// budget decide.
+	// What is held back is *not* bounded by one blob's worth of content, which
+	// is the trap: a blob stores a repeated body once, so a run of identical
+	// files adds nothing to its budget and it never fills. Backing up a tree
+	// of duplicates would hold every entry to the end. So the entry count
+	// forces a seal as well, which is what keeps this bounded by the batch
+	// rather than by the run.
 	flush := func(sealAll bool) error {
 		if sealAll && bm.blobs != nil {
 			if err := bm.blobs.Flush(ctx); err != nil {
@@ -167,7 +170,7 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 			}
 		}
 		ready, buf = ready[:0], buf[:0]
-		for _, res := range pending2 {
+		for _, res := range awaiting {
 			if res.promise != nil && res.promise.ref == nil {
 				buf = append(buf, res)
 				continue
@@ -177,7 +180,7 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 			}
 			ready = append(ready, res)
 		}
-		pending2 = append(pending2[:0], buf...)
+		awaiting = append(awaiting[:0], buf...)
 		if len(ready) == 0 {
 			return nil
 		}
@@ -224,7 +227,7 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 		if res.payload != nil {
 			retained += len(res.payload.Meta)
 		}
-		pending2 = append(pending2, res)
+		awaiting = append(awaiting, res)
 
 		// Two independent triggers, because they bound different things. The
 		// entry count keeps the insert batch large enough to be worth sorting;
@@ -232,12 +235,16 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 		// on its own — a run of half-megabyte inlined files reaches the byte
 		// budget in a couple of hundred entries and would otherwise wait for a
 		// batch that is ten times further off.
-		full := len(pending2) >= insertBatch
-		heavy := retained >= uploadCommitBytes
+		full := len(awaiting) >= insertBatch
+		heavy := retained >= uploadCommitLimit()
 		if !full && !heavy {
 			continue
 		}
-		if err := flush(false); err != nil {
+		// A full entry buffer seals the pending blob: see flush. For ordinary
+		// content the blob has filled long before, so this changes nothing;
+		// for content that deduplicates it is the only thing that bounds what
+		// is held.
+		if err := flush(full); err != nil {
 			phase.Error()
 			return err
 		}
@@ -267,6 +274,24 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 // being the dominant term without adding commits frequent enough for their
 // rewrites to show.
 const uploadCommitBytes = 64 * 1024 * 1024
+
+// envUploadCommitBytes overrides uploadCommitBytes, for tests only.
+//
+// It exists because the quantity being bounded changed. While a payload
+// carried the file's content, a few hundred entries crossed the threshold and
+// a test could reach it with a realistic tree. A payload is now metadata and a
+// body reference, so the same 64 MB is a few hundred thousand entries — past
+// what a unit test should build to prove the mechanism works.
+const envUploadCommitBytes = "CLOUDSTIC_TEST_UPLOAD_COMMIT_BYTES"
+
+func uploadCommitLimit() int {
+	if v, ok := os.LookupEnv(envUploadCommitBytes); ok {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return uploadCommitBytes
+}
 
 // insertBatch is how many uploaded entries are buffered before being inserted
 // into the working tree in routing-key order. Large enough that a batch spans

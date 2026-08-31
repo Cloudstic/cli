@@ -54,7 +54,13 @@ type bodyPromise struct {
 	ref         *hamt.BodyRef
 }
 
+// newBlobWriter returns nil when there is no store to write blobs to, so a
+// misconfigured manager fails where it is built rather than panicking on the
+// first flush — which is after a backup has read the whole source.
 func newBlobWriter(s store.ObjectStore, sealer *crypto.MemberSealer) *blobWriter {
+	if s == nil {
+		return nil
+	}
 	return &blobWriter{store: s, sealer: sealer}
 }
 

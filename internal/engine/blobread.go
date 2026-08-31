@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/cloudstic/cli/internal/blob"
@@ -33,6 +34,12 @@ func newBlobReader(s store.ObjectStore, sealer *crypto.MemberSealer) *blobReader
 // member of the same blob derives the wrong key and fails to open — the AAD
 // cannot catch that, since every member of a blob shares it.
 func (r *blobReader) Body(ctx context.Context, p *hamt.Payload, contentHash string) ([]byte, error) {
+	if r == nil {
+		// A format-v3 manager built without a blob store. Reported rather than
+		// dereferenced, so the misconfiguration names itself instead of
+		// arriving as a nil-pointer panic partway through a restore.
+		return nil, errors.New("this repository's blobs are unreachable: no blob store was configured")
+	}
 	b := p.Body
 	if b == nil {
 		return nil, fmt.Errorf("entry carries no body reference")

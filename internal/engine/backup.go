@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -219,6 +220,9 @@ type RunResult struct {
 // Run executes a full backup: scan the source for changes, upload new/modified
 // files, build a new HAMT root, and persist a snapshot.
 func (bm *BackupManager) Run(ctx context.Context) (*RunResult, error) {
+	if bm.v3 && bm.blobs == nil {
+		return nil, errors.New("backup: format v3 needs a blob store; none was configured")
+	}
 	res, err := bm.run(ctx)
 	if err != nil {
 		return nil, err

@@ -983,16 +983,9 @@ func (s *PackStore) Delete(ctx context.Context, key string) error {
 }
 
 func (s *PackStore) Size(ctx context.Context, key string) (int64, error) {
-	// The catalog is loaded for the same reason Delete loads it: without it a
-	// packed key looks unpacked, and the question is forwarded to the backend
-	// where the object does not physically exist. Delete got this right and
-	// Size did not, which is how `forget <snapshot>` came to fail on every
-	// packfile repository — MeteredStore asks for a size before it deletes, so
-	// the delete that would have succeeded was never reached.
-	if err := s.ensureCatalogLoaded(ctx); err != nil {
-		return 0, err
-	}
-
+	// What this store already holds is answered without the catalog: an entry
+	// in the write buffer is known locally, and a repository whose catalog
+	// cannot be read must not lose the ability to size what it just wrote.
 	s.mu.RLock()
 	if entry, ok := s.packKeys[key]; ok {
 		s.mu.RUnlock()
@@ -1003,6 +996,22 @@ func (s *PackStore) Size(ctx context.Context, key string) (int64, error) {
 		return entry.Length, nil
 	}
 	s.mu.RUnlock()
+
+	// Only now is the catalog worth loading, and it has to be: without it a
+	// packed key looks unpacked and the question is forwarded to the backend,
+	// where the object does not physically exist. Delete loads it for exactly
+	// this reason and Size did not, which is how `forget <snapshot>` came to
+	// fail on every packfile repository — MeteredStore asks for a size before
+	// it deletes, so the delete that would have succeeded was never reached.
+	if err := s.ensureCatalogLoaded(ctx); err != nil {
+		return 0, err
+	}
+	s.mu.RLock()
+	entry, ok := s.catalog.Get(key)
+	s.mu.RUnlock()
+	if ok {
+		return entry.Length, nil
+	}
 
 	return s.ObjectStore.Size(ctx, key)
 }

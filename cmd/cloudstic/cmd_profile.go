@@ -254,7 +254,7 @@ func runProfileNew(r *runner, ctx context.Context, a *profileNewArgs) int {
 		if !exists {
 			return r.fail("Unknown auth reference %q (create it with 'cloudstic auth new')", a.authRef)
 		}
-		if auth.Provider != "" && auth.Provider != requiredProvider {
+		if !config.AuthProviderMatches(requiredProvider, auth) {
 			return r.fail("Auth reference %q has provider %q, but source requires %q", a.authRef, auth.Provider, requiredProvider)
 		}
 		if auth.Provider == "google" {

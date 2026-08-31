@@ -158,3 +158,29 @@ func TestDefaultAuthTokenRef(t *testing.T) {
 		}
 	}
 }
+
+// TestAuthProviderMatches_EmptyProviderMatchesAnything pins the permissiveness
+// the rule exists to hold: the `provider` field postdates auth entries, so a
+// hand-written or older profiles file may omit it, and refusing those would
+// reject configurations that work today.
+//
+// This is the half that was easy to drop. It was written out at four sites in
+// two packages and two directions, each with its own message and its own tests
+// (#584).
+func TestAuthProviderMatches_EmptyProviderMatchesAnything(t *testing.T) {
+	for _, required := range []string{config.ProviderGoogle, config.ProviderOneDrive} {
+		if !config.AuthProviderMatches(required, profile.Auth{}) {
+			t.Errorf("an entry naming no provider must match a %q source", required)
+		}
+	}
+}
+
+func TestAuthProviderMatches_NamedProviderMustAgree(t *testing.T) {
+	google := profile.Auth{Provider: config.ProviderGoogle}
+	if !config.AuthProviderMatches(config.ProviderGoogle, google) {
+		t.Error("a matching provider must be accepted")
+	}
+	if config.AuthProviderMatches(config.ProviderOneDrive, google) {
+		t.Error("a google entry must not satisfy a onedrive source")
+	}
+}

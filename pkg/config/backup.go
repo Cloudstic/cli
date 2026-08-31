@@ -402,7 +402,7 @@ func applyAuth(cfg *Backup, decided FieldSet, auth profile.Auth) error {
 	if required == "" {
 		return fmt.Errorf("auth refs are only valid for Google Drive and OneDrive sources")
 	}
-	if auth.Provider != "" && auth.Provider != required {
+	if !AuthProviderMatches(required, auth) {
 		return fmt.Errorf("provider mismatch: source requires %q but auth entry is %q", required, auth.Provider)
 	}
 

@@ -123,7 +123,7 @@ func profileConfigStatus(cfg *profile.Config, p profile.Profile) (status string,
 		if !ok {
 			return "error", []string{"missing auth ref"}
 		}
-		if provider != "" && auth.Provider != "" && auth.Provider != provider {
+		if provider != "" && !config.AuthProviderMatches(provider, auth) {
 			return "error", []string{"provider mismatch"}
 		}
 	}

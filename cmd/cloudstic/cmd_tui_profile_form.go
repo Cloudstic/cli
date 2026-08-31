@@ -1,8 +1,9 @@
 package main
 
 import (
-	"github.com/cloudstic/cli/pkg/config"
 	"slices"
+
+	"github.com/cloudstic/cli/pkg/config"
 
 	"github.com/cloudstic/cli/pkg/profile"
 )

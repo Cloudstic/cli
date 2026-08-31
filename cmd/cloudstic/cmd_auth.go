@@ -105,7 +105,7 @@ func runAuthNew(r *runner, ctx context.Context, a *authNewArgs) int {
 		Label:    "Auth reference name",
 		Noun:     "auth reference name",
 		Missing:  "-name is required",
-		Validate: func(v string) error { return validateRefName("auth", v) },
+		Validate: func(v string) error { return onboarding.ValidateRefName("auth", v) },
 	})
 	if err != nil {
 		return r.fail("%v", err)

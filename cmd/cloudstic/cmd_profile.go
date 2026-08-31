@@ -157,7 +157,7 @@ func runProfileNew(r *runner, ctx context.Context, a *profileNewArgs) int {
 	name, err := onboarding.Resolve(ctx, prompterFor(r), a.name, onboarding.Field{
 		Label:    "Profile name",
 		Missing:  "-name is required",
-		Validate: func(v string) error { return validateRefName("profile", v) },
+		Validate: func(v string) error { return onboarding.ValidateRefName("profile", v) },
 	})
 	if err != nil {
 		return r.fail("%v", err)
@@ -217,7 +217,7 @@ func runProfileNew(r *runner, ctx context.Context, a *profileNewArgs) int {
 	} else {
 		// No store provided — prompt or fail.
 		if r.canPrompt() {
-			ref, created, selErr := promptStoreSelection(r, ctx, cfg)
+			ref, created, selErr := onboarding.SelectStore(ctx, prompterFor(r), cfg)
 			if selErr != nil {
 				return r.fail("Failed to %v", selErr)
 			}
@@ -244,7 +244,7 @@ func runProfileNew(r *runner, ctx context.Context, a *profileNewArgs) int {
 		}
 	}
 
-	requiredProvider := profileProviderFromSource(a.source)
+	requiredProvider := config.ProviderForSourceURI(a.source)
 
 	if a.authRef != "" {
 		if requiredProvider == "" {
@@ -277,7 +277,7 @@ func runProfileNew(r *runner, ctx context.Context, a *profileNewArgs) int {
 	} else if requiredProvider != "" {
 		// Cloud source without -auth-ref — prompt or fail.
 		if r.canPrompt() {
-			ref, selErr := promptAuthSelection(r, ctx, cfg, requiredProvider, a.name)
+			ref, selErr := onboarding.SelectAuth(ctx, prompterFor(r), cfg, requiredProvider, a.name)
 			if selErr != nil {
 				return r.fail("Failed to %v", selErr)
 			}

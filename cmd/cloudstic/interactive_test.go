@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/cloudstic/cli/internal/onboarding"
 )
 
 func TestPromptValidatedLine_RetriesUntilValid(t *testing.T) {
@@ -30,7 +32,7 @@ func TestPromptValidatedLine_RetriesUntilValid(t *testing.T) {
 	}
 
 	got, err := r.promptValidatedLine(context.Background(), "Profile name", "", func(v string) error {
-		return validateRefName("profile", v)
+		return onboarding.ValidateRefName("profile", v)
 	})
 	if err != nil {
 		t.Fatalf("promptValidatedLine: %v", err)

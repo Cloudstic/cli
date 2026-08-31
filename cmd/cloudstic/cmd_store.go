@@ -157,7 +157,7 @@ func runStoreNew(r *runner, ctx context.Context, a *storeNewArgs) int {
 		Label:    "Store reference name",
 		Noun:     "store reference name",
 		Missing:  "-name is required",
-		Validate: func(v string) error { return validateRefName("store", v) },
+		Validate: func(v string) error { return onboarding.ValidateRefName("store", v) },
 	})
 	if err != nil {
 		return r.fail("%v", err)

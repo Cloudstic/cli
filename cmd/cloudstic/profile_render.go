@@ -346,26 +346,22 @@ func renderStoreShow(out io.Writer, cfg *profile.Config, name string, s profile.
 	t.Render()
 }
 
+// secretDisplayRows renders the credential references an entry names.
+//
+// Derived from config.StoreFieldSpecs rather than listed: a credential added to
+// the profiles format shows up here without an edit, which a hand-written list
+// could not promise. Only the reference is shown — the field's direct value is
+// marked sensitive on the table and must never be rendered back to a user.
 func secretDisplayRows(s profile.Store) []table.Row {
 	var rows []table.Row
-	appendRow := func(label, value string, deprecated bool) {
-		if value == "" {
-			return
+	for _, f := range config.StoreFieldSpecs() {
+		if f.SecretFlagName() == "" {
+			continue
 		}
-		if deprecated {
-			label += " (deprecated)"
+		if _, ref := f.Get(s); ref != "" {
+			rows = append(rows, table.Row{f.Label() + " Secret", ref})
 		}
-		rows = append(rows, table.Row{label, value})
 	}
-	appendRow("S3 Access Key Secret", s.S3AccessKeySecret, false)
-	appendRow("S3 Secret Key Secret", s.S3SecretKeySecret, false)
-	appendRow("B2 Key ID Secret", s.B2KeyIDSecret, false)
-	appendRow("B2 App Key Secret", s.B2AppKeySecret, false)
-	appendRow("SFTP Password Secret", s.StoreSFTPPasswordSecret, false)
-	appendRow("SFTP Key Secret", s.StoreSFTPKeySecret, false)
-	appendRow("Password Secret", s.PasswordSecret, false)
-	appendRow("Encryption Key Secret", s.EncryptionKeySecret, false)
-	appendRow("Recovery Key Secret", s.RecoveryKeySecret, false)
 	return rows
 }
 

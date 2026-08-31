@@ -33,9 +33,19 @@ const inlineThreshold = 512 * 1024 // 512 KiB (matches CDC min chunk size)
 // format can express, and the way to measure one rather than estimate it.
 const envInlineThreshold = "CLOUDSTIC_TEST_INLINE_BYTES"
 
+// maxInlineBytes caps what the override may ask for.
+//
+// The value becomes an allocation — a read buffer sized to hold a whole body —
+// so an unbounded one read from the environment is a way to make the process
+// allocate arbitrarily, or to panic in make() on a platform where int is
+// narrower than the int64 it was parsed as. 64 MB is far above any plausible
+// setting: the inline path exists for bodies small enough not to be worth
+// chunking, and the default is 512 KiB.
+const maxInlineBytes = 64 << 20
+
 func inlineLimit() int64 {
 	if v, ok := os.LookupEnv(envInlineThreshold); ok {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 && n <= maxInlineBytes {
 			return n
 		}
 	}
@@ -467,6 +477,8 @@ func (bm *BackupManager) uploadInline(ctx context.Context, r io.Reader, meta cor
 	// rather than assumed. io.ReadFull below stops at len(buf) and reports no
 	// error when it fills it, so a short buffer is indistinguishable from a
 	// body that ends exactly there.
+	// int() is safe because inlineLimit is capped at maxInlineBytes, which fits
+	// in an int on every platform this builds for.
 	if limit := int(inlineLimit()); len(*bufPtr) < limit {
 		b := make([]byte, limit)
 		bufPtr = &b

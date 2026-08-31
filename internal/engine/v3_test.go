@@ -737,3 +737,21 @@ func TestV3Backup_InlineBodyLargerThanTheConstantSurvives(t *testing.T) {
 		t.Fatal("restored body differs from the source")
 	}
 }
+
+// The override becomes an allocation, so it may not be believed without a
+// bound: an unbounded value read from the environment is a way to make the
+// process allocate arbitrarily, or to panic in make() where int is narrower
+// than the int64 it was parsed from.
+func TestInlineLimitRejectsAnImplausibleOverride(t *testing.T) {
+	for _, v := range []string{"999999999999999", "9223372036854775807", "-1", "notanumber"} {
+		t.Setenv(envInlineThreshold, v)
+		if got := inlineLimit(); got != inlineThreshold {
+			t.Errorf("CLOUDSTIC_TEST_INLINE_BYTES=%s gave %d, want the default %d", v, got, inlineThreshold)
+		}
+	}
+	// A plausible one is still honoured.
+	t.Setenv(envInlineThreshold, "1048576")
+	if got := inlineLimit(); got != 1048576 {
+		t.Errorf("a 1 MiB override gave %d", got)
+	}
+}

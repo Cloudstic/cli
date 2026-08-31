@@ -231,8 +231,8 @@ func runProfileNew(r *runner, ctx context.Context, a *profileNewArgs) int {
 
 	if createdStore && r.canPrompt() {
 		s := cfg.Stores[a.storeRef]
-		if !storeHasExplicitEncryption(s) {
-			promptEncryptionConfig(r, ctx, cfg, a.storeRef, a.profilesFile, a.configDir)
+		if !onboarding.HasExplicitEncryption(s) {
+			onboarding.ConfigureEncryption(ctx, prompterFor(r), cfg, a.storeRef, a.profilesFile, newSecretResolver(a.configDir), r.out, r.errOut)
 		}
 		if err := checkOrInitStoreWithRecovery(r, ctx, cfg, a.storeRef, a.profilesFile, checkOrInitOptions{
 			configDir:            a.configDir,

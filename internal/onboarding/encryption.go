@@ -1,15 +1,14 @@
 // Store encryption configuration: choosing a method for a store and recording
 // where its secrets live.
 //
-// Split from cmd_store.go, which declares the store subcommands. These are the
-// interactive workflows those commands call into; keeping them apart means the
-// command file shows the surface a user types and this one shows what happens
-// after they answer.
-package main
+// The selection and the secret-reference walk were already decoupled from the
+// CLI — both took their prompts as function parameters — but they sat in
+// cmd/cloudstic, so their tests still had to build a runner. Here they need
+// only a Prompter (issue #570).
+package onboarding
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -27,9 +26,9 @@ import (
 //
 // A free function taking the runner: it reads and writes a profiles file and
 // mutates cfg, which is profiles-domain work rather than a runner capability.
-func promptEncryptionConfig(r *runner, ctx context.Context, cfg *profile.Config, storeName, profilesFile, configDir string) {
-	_, _ = fmt.Fprintln(r.out)
-	_, _ = fmt.Fprintln(r.out, "No encryption is configured for this store.")
+func ConfigureEncryption(ctx context.Context, p Prompter, cfg *profile.Config, storeName, profilesFile string, resolver *secretref.Resolver, out, errOut io.Writer) {
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "No encryption is configured for this store.")
 
 	options := []string{
 		"Password (recommended for interactive use)",
@@ -37,25 +36,28 @@ func promptEncryptionConfig(r *runner, ctx context.Context, cfg *profile.Config,
 		"AWS KMS key (enterprise)",
 		"No encryption (not recommended)",
 	}
-	picked, err := r.promptSelect(ctx, "Select encryption method", options)
+	picked, err := p.PromptSelect(ctx, "Select encryption method", options)
 	if err != nil {
-		_, _ = fmt.Fprintf(r.errOut, "Failed to select encryption method: %v\n", err)
+		_, _ = fmt.Fprintf(errOut, "Failed to select encryption method: %v\n", err)
 		return
 	}
 
-	s, err := configureStoreEncryptionSelection(
+	s, err := configureSelection(
 		ctx,
 		cfg.Stores[storeName],
 		storeName,
 		picked,
 		func(ctx context.Context, storeName, secretLabel, defaultEnvName, defaultAccount string) (string, error) {
-			return promptSecretReference(r, ctx, configDir, storeName, secretLabel, defaultEnvName, defaultAccount)
+			return secretReference(ctx, storeName, secretLabel, defaultEnvName, defaultAccount,
+				p.PromptSelect, p.PromptLine,
+				func(_ context.Context, label string) (string, error) { return p.PromptSecret(ctx, label) },
+				os.LookupEnv, resolver)
 		},
-		r.promptLine,
-		r.out,
+		p.PromptLine,
+		out,
 	)
 	if err != nil {
-		_, _ = fmt.Fprintf(r.errOut, "%v\n", err)
+		_, _ = fmt.Fprintf(errOut, "%v\n", err)
 		return
 	}
 	if picked == options[3] {
@@ -65,11 +67,11 @@ func promptEncryptionConfig(r *runner, ctx context.Context, cfg *profile.Config,
 	// Save updated store config.
 	cfg.Stores[storeName] = s
 	if saveErr := profile.Save(profilesFile, cfg); saveErr != nil {
-		_, _ = fmt.Fprintf(r.errOut, "Warning: could not save encryption settings: %v\n", saveErr)
+		_, _ = fmt.Fprintf(errOut, "Warning: could not save encryption settings: %v\n", saveErr)
 	}
 }
 
-func configureStoreEncryptionSelection(
+func configureSelection(
 	ctx context.Context,
 	s profile.Store,
 	storeName, picked string,
@@ -111,24 +113,7 @@ func configureStoreEncryptionSelection(
 	return s, nil
 }
 
-// promptSecretReference asks where a store credential should be stored and
-// returns the secret reference for it.
-func promptSecretReference(r *runner, ctx context.Context, configDir, storeName, secretLabel, defaultEnvName, defaultAccount string) (string, error) {
-	return promptSecretReferenceWithFns(
-		ctx,
-		storeName,
-		secretLabel,
-		defaultEnvName,
-		defaultAccount,
-		func(_ context.Context, l string, o []string) (string, error) { return r.promptSelect(ctx, l, o) },
-		func(ctx context.Context, l, d string) (string, error) { return r.promptLine(ctx, l, d) },
-		func(_ context.Context, s string) (string, error) { return r.promptSecret(ctx, s) },
-		os.LookupEnv,
-		newSecretResolver(configDir),
-	)
-}
-
-func promptSecretReferenceWithFns(
+func secretReference(
 	ctx context.Context,
 	storeName, secretLabel, defaultEnvName, defaultAccount string,
 	promptSelect func(context.Context, string, []string) (string, error),
@@ -208,14 +193,6 @@ func promptSecretReferenceWithFns(
 	return envRef(envName), nil
 }
 
-func isSecretNotFoundError(err error) bool {
-	var refErr *secretref.Error
-	if errors.As(err, &refErr) {
-		return refErr.Kind == secretref.KindNotFound
-	}
-	return false
-}
-
 func envRef(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -224,7 +201,7 @@ func envRef(name string) string {
 	return "env://" + name
 }
 
-func storeHasExplicitEncryption(s profile.Store) bool {
+func HasExplicitEncryption(s profile.Store) bool {
 	return s.PasswordSecret != "" || s.EncryptionKeySecret != "" || s.RecoveryKeySecret != "" ||
 		s.KMSKeyARN != ""
 }

@@ -180,11 +180,11 @@ func runAuthNew(r *runner, ctx context.Context, a *authNewArgs) int {
 		auth.OneDriveTokenRef = a.onedriveTokenRef
 	}
 
-	cfg, err := loadProfilesOrInit(a.profilesFile)
+	cfg, err := profile.LoadOrEmpty(a.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
 	}
-	ensureProfilesMaps(cfg)
+	profile.EnsureMaps(cfg)
 	cfg.Auth[a.name] = auth
 
 	if err := profile.Save(a.profilesFile, cfg); err != nil {

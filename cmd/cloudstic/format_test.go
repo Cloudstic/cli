@@ -5,8 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cloudstic/cli/internal/core"
-	"github.com/cloudstic/cli/internal/engine"
+	cloudstic "github.com/cloudstic/cli"
 )
 
 func TestFormatBytes(t *testing.T) {
@@ -40,14 +39,14 @@ func TestRenderSnapshotTable_WithEntries(t *testing.T) {
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}}
 
-	entries := []engine.SnapshotEntry{
+	entries := []cloudstic.SnapshotEntry{
 		{
 			Ref: "snapshot/abc123",
-			Snap: core.Snapshot{
+			Snap: cloudstic.Snapshot{
 				Seq:     1,
 				Created: "2024-01-01T00:00:00Z",
 				Tags:    []string{"daily"},
-				Source: &core.SourceInfo{
+				Source: &cloudstic.SourceInfo{
 					Type:    "local",
 					Account: "user",
 					Path:    "/home/user",
@@ -71,8 +70,8 @@ func TestRenderSnapshotTable_WithReasons(t *testing.T) {
 	r := &runner{out: &out, errOut: &strings.Builder{}}
 
 	ref := "snapshot/def456"
-	entries := []engine.SnapshotEntry{
-		{Ref: ref, Snap: core.Snapshot{Seq: 1, Created: time.Now().Format(time.RFC3339)}},
+	entries := []cloudstic.SnapshotEntry{
+		{Ref: ref, Snap: cloudstic.Snapshot{Seq: 1, Created: time.Now().Format(time.RFC3339)}},
 	}
 	reasons := map[string]string{ref: "keep-last"}
 	renderSnapshotTable(r.out, entries, reasons)
@@ -90,13 +89,13 @@ func TestRenderSnapshotTable_DriveName(t *testing.T) {
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}}
 
-	entries := []engine.SnapshotEntry{
+	entries := []cloudstic.SnapshotEntry{
 		{
 			Ref: "snapshot/abc",
-			Snap: core.Snapshot{
+			Snap: cloudstic.Snapshot{
 				Seq:     1,
 				Created: "2024-01-01T00:00:00Z",
-				Source: &core.SourceInfo{
+				Source: &cloudstic.SourceInfo{
 					Type:      "gdrive",
 					Account:   "user@gmail.com",
 					Path:      "/",
@@ -119,23 +118,23 @@ func TestRenderSnapshotTable_DriveName(t *testing.T) {
 func TestSourceGroupKey(t *testing.T) {
 	tests := []struct {
 		name   string
-		source *core.SourceInfo
+		source *cloudstic.SourceInfo
 		want   string
 	}{
 		{"nil source", nil, ""},
 		{
 			"local with identity",
-			&core.SourceInfo{Type: "local", Account: "host", Path: ".", Identity: "UUID-1"},
+			&cloudstic.SourceInfo{Type: "local", Account: "host", Path: ".", Identity: "UUID-1"},
 			"local\x00UUID-1\x00.",
 		},
 		{
 			"gdrive no identity",
-			&core.SourceInfo{Type: "gdrive", Account: "user@gmail.com", Path: "/"},
+			&cloudstic.SourceInfo{Type: "gdrive", Account: "user@gmail.com", Path: "/"},
 			"gdrive\x00user@gmail.com\x00/",
 		},
 		{
 			"shared drive with identity",
-			&core.SourceInfo{Type: "gdrive", Account: "user@gmail.com", Path: "/", Identity: "drive-123"},
+			&cloudstic.SourceInfo{Type: "gdrive", Account: "user@gmail.com", Path: "/", Identity: "drive-123"},
 			"gdrive\x00drive-123\x00/",
 		},
 	}
@@ -152,18 +151,18 @@ func TestSourceGroupKey(t *testing.T) {
 func TestSourceGroupLabel(t *testing.T) {
 	tests := []struct {
 		name   string
-		source *core.SourceInfo
+		source *cloudstic.SourceInfo
 		want   string
 	}{
 		{"nil source", nil, "(unknown source)"},
 		{
 			"local no label",
-			&core.SourceInfo{Type: "local", Account: "macbook", Path: "/data"},
+			&cloudstic.SourceInfo{Type: "local", Account: "macbook", Path: "/data"},
 			"local · macbook · /data",
 		},
 		{
 			"gdrive with label",
-			&core.SourceInfo{Type: "gdrive", Account: "user@gmail.com", Path: "/", DriveName: "My Drive"},
+			&cloudstic.SourceInfo{Type: "gdrive", Account: "user@gmail.com", Path: "/", DriveName: "My Drive"},
 			"gdrive (My Drive) · user@gmail.com · /",
 		},
 	}
@@ -181,26 +180,26 @@ func TestRenderGroupedSnapshotTables(t *testing.T) {
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}}
 
-	entries := []engine.SnapshotEntry{
+	entries := []cloudstic.SnapshotEntry{
 		{
 			Ref: "snapshot/aaa",
-			Snap: core.Snapshot{
+			Snap: cloudstic.Snapshot{
 				Seq: 1, Created: "2024-01-01T00:00:00Z",
-				Source: &core.SourceInfo{Type: "gdrive", Account: "user@gmail.com", Path: "/", DriveName: "My Drive"},
+				Source: &cloudstic.SourceInfo{Type: "gdrive", Account: "user@gmail.com", Path: "/", DriveName: "My Drive"},
 			},
 		},
 		{
 			Ref: "snapshot/bbb",
-			Snap: core.Snapshot{
+			Snap: cloudstic.Snapshot{
 				Seq: 2, Created: "2024-01-02T00:00:00Z",
-				Source: &core.SourceInfo{Type: "local", Account: "macbook", Path: "."},
+				Source: &cloudstic.SourceInfo{Type: "local", Account: "macbook", Path: "."},
 			},
 		},
 		{
 			Ref: "snapshot/ccc",
-			Snap: core.Snapshot{
+			Snap: cloudstic.Snapshot{
 				Seq: 3, Created: "2024-01-03T00:00:00Z",
-				Source: &core.SourceInfo{Type: "gdrive", Account: "user@gmail.com", Path: "/", DriveName: "My Drive"},
+				Source: &cloudstic.SourceInfo{Type: "gdrive", Account: "user@gmail.com", Path: "/", DriveName: "My Drive"},
 			},
 		},
 	}

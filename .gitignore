@@ -14,6 +14,9 @@ restore_out/
 # Two of these (cs, cs439, ~90 MB) reached main before this rule existed.
 /cs
 /cs*[0-9]
+# `go build ./...` run from inside cmd/cloudstic writes the binary next to the
+# source. Every rule above is root-anchored, so nothing caught it.
+/cmd/cloudstic/cloudstic
 dist/
 
 # Test output

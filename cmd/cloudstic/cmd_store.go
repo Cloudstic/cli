@@ -152,11 +152,11 @@ func runStoreNew(r *runner, ctx context.Context, a *storeNewArgs) int {
 	if err := validateRefName("store", a.name); err != nil {
 		return r.fail("%v", err)
 	}
-	cfg, err := loadProfilesOrInit(a.profilesFile)
+	cfg, err := profile.LoadOrEmpty(a.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
 	}
-	ensureProfilesMaps(cfg)
+	profile.EnsureMaps(cfg)
 
 	_, existedBefore := cfg.Stores[a.name]
 	forcePromptURI := false
@@ -227,11 +227,6 @@ func runStoreNew(r *runner, ctx context.Context, a *storeNewArgs) int {
 	return 0
 }
 
-// checkOrInitStore connects to a store and checks if it is initialized.
-// If already initialized, it confirms connectivity. If not, it offers to
-// initialize it. Encryption config should already be saved in profiles.yaml
-// before calling this. Errors are printed but never cause a non-zero exit—
-// the store config has already been saved.
 type storeVerifyArgs struct {
 	*globalFlags
 	profilesFile string

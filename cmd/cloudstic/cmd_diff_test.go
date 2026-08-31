@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	cloudstic "github.com/cloudstic/cli"
-	"github.com/cloudstic/cli/internal/engine"
 )
 
 func TestRunDiff_Success(t *testing.T) {
@@ -17,7 +16,7 @@ func TestRunDiff_Success(t *testing.T) {
 		diffResult: &cloudstic.DiffResult{
 			Ref1: "snapshot/aaa",
 			Ref2: "snapshot/bbb",
-			Changes: []engine.FileChange{
+			Changes: []cloudstic.FileChange{
 				{Type: "added", Path: "docs/readme.md"},
 				{Type: "modified", Path: "src/main.go"},
 				{Type: "removed", Path: "old/file.txt"},
@@ -49,7 +48,7 @@ func TestRunDiff_JSON(t *testing.T) {
 		diffResult: &cloudstic.DiffResult{
 			Ref1: "snapshot/aaa",
 			Ref2: "snapshot/bbb",
-			Changes: []engine.FileChange{
+			Changes: []cloudstic.FileChange{
 				{Type: "A", Path: "docs/readme.md"},
 			},
 		},

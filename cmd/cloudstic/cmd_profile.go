@@ -174,11 +174,11 @@ func runProfileNew(r *runner, ctx context.Context, a *profileNewArgs) int {
 		return r.fail("%v", err)
 	}
 
-	cfg, err := loadProfilesOrInit(a.profilesFile)
+	cfg, err := profile.LoadOrEmpty(a.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
 	}
-	ensureProfilesMaps(cfg)
+	profile.EnsureMaps(cfg)
 
 	// When editing an existing profile, prefill unset fields with current values.
 	if existing, ok := cfg.Profiles[a.name]; ok {

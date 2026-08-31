@@ -7,8 +7,6 @@ import (
 	"testing"
 
 	cloudstic "github.com/cloudstic/cli"
-	"github.com/cloudstic/cli/internal/core"
-	"github.com/cloudstic/cli/internal/engine"
 )
 
 // ---------------------------------------------------------------------------
@@ -44,12 +42,12 @@ func TestBuildFindQuery_PositionalConflictsWithExplicitPattern(t *testing.T) {
 func TestBuildFindQuery_TypeAcceptsFindVocabulary(t *testing.T) {
 	for _, tc := range []struct {
 		raw  string
-		want core.FileType
+		want cloudstic.FileType
 	}{
-		{"f", core.FileTypeFile},
-		{"file", core.FileTypeFile},
-		{"d", core.FileTypeFolder},
-		{"folder", core.FileTypeFolder},
+		{"f", cloudstic.FileTypeFile},
+		{"file", cloudstic.FileTypeFile},
+		{"d", cloudstic.FileTypeFolder},
+		{"folder", cloudstic.FileTypeFolder},
 	} {
 		q := queryFromArgs(t, &findArgs{globalFlags: newTestGlobalFlags(), fileType: tc.raw})
 		if q.Type != tc.want {
@@ -97,7 +95,7 @@ func TestBuildFindQuery_SnapshotAndFileTimeSelectorsStaySeparate(t *testing.T) {
 
 // queryFromArgs builds the query a set of flags describes, failing the test if
 // they are invalid.
-func queryFromArgs(t *testing.T, a *findArgs) engine.FindQuery {
+func queryFromArgs(t *testing.T, a *findArgs) cloudstic.FindQuery {
 	t.Helper()
 	q, err := buildFindQuery(a)
 	if err != nil {
@@ -200,7 +198,7 @@ func TestPrintFindResult_ByContentGolden(t *testing.T) {
 		GroupedBy:         "content",
 		Matches: []cloudstic.FileMatch{{
 			ContentHash: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
-			Type:        core.FileTypeFile,
+			Type:        cloudstic.FileTypeFile,
 			Versions: []cloudstic.FileVersion{
 				{
 					Ref:  "filemeta/2c624232cdd221771294dfbb310aca000a0df6ac8b66b696d90ef06fdefb64a3",
@@ -237,7 +235,7 @@ func TestPrintFindResult_MultiParentPathsAreAllShown(t *testing.T) {
 	printFindResult(&buf, &cloudstic.FindResult{
 		SnapshotsSearched: 1, Elapsed: "5ms", GroupedBy: "file",
 		Matches: []cloudstic.FileMatch{{
-			FileID: "drive-1", Type: core.FileTypeFile,
+			FileID: "drive-1", Type: cloudstic.FileTypeFile,
 			Versions: []cloudstic.FileVersion{{
 				Ref: "filemeta/9f86d081", Name: "spec.md", FileID: "drive-1", Size: 1024,
 				Paths:     []string{"Work/spec.md", "Shared/spec.md"},
@@ -254,7 +252,7 @@ func TestPrintFindResult_MultiParentPathsAreAllShown(t *testing.T) {
 func sampleFindMatch() cloudstic.FileMatch {
 	return cloudstic.FileMatch{
 		FileID: "f1",
-		Type:   core.FileTypeFile,
+		Type:   cloudstic.FileTypeFile,
 		Versions: []cloudstic.FileVersion{
 			{
 				Ref:    "filemeta/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",

@@ -9,12 +9,13 @@ import (
 	"strings"
 	"time"
 
+	cloudstic "github.com/cloudstic/cli"
+
 	"github.com/cloudstic/cli/pkg/config"
 	"github.com/cloudstic/cli/pkg/open"
 
 	"github.com/cloudstic/cli/pkg/profile"
 
-	"github.com/cloudstic/cli/internal/engine"
 	"github.com/cloudstic/cli/internal/paths"
 	// Aliased to keep "sftp" free: this file also reaches SSH host-key types,
 	// and the store-side SFTP wiring lives alongside it.
@@ -235,11 +236,11 @@ func ensureDefaultAuthRef(bcfg config.Backup, profilesFile string) (config.Backu
 		return bcfg, nil
 	}
 
-	cfg, err := loadProfilesOrInit(profilesFile)
+	cfg, err := profile.LoadOrEmpty(profilesFile)
 	if err != nil {
 		return config.Backup{}, fmt.Errorf("load profiles for default auth: %w", err)
 	}
-	ensureProfilesMaps(cfg)
+	profile.EnsureMaps(cfg)
 
 	auth := cfg.Auth[authRef]
 	if auth.Provider != "" && auth.Provider != provider {
@@ -387,7 +388,7 @@ func splitCommaList(raw string) []string {
 	return out
 }
 
-func printBackupSummary(out io.Writer, res *engine.RunResult) {
+func printBackupSummary(out io.Writer, res *cloudstic.BackupResult) {
 	total := res.FilesNew + res.FilesChanged + res.FilesUnmodified +
 		res.DirsNew + res.DirsChanged + res.DirsUnmodified
 	if res.DryRun {

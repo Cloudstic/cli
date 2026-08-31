@@ -222,3 +222,29 @@ func TestGlobalFlagsHasNoConstructionMethods(t *testing.T) {
 		}
 	}
 }
+
+// TestClientConfigFromFlags_LeavesS3RegionToConstruction is the flag-path half
+// of TestClientConfigFromProfileStore_DefaultRegion (cmd_store_test.go).
+//
+// The S3 region default belongs to pkg/open, which applies it once at
+// construction so a configuration built from a profile and one built from
+// flags cannot disagree. The profile path was moved to that rule; the flag
+// path was left behind, pre-filling "us-east-1" as the flag's default, so
+// open's default never fired here and the two definitions agreed only because
+// the literal was duplicated in both packages.
+func TestClientConfigFromFlags_LeavesS3RegionToConstruction(t *testing.T) {
+	cfg := clientConfigFromFlags(newTestGlobalFlags())
+	if cfg.Store.S3.Region != "" {
+		t.Fatalf("flags with no -s3-region must leave the region unset for pkg/open to fill, got %q", cfg.Store.S3.Region)
+	}
+}
+
+// TestClientConfigFromFlags_ExplicitS3RegionSurvives guards the other half: not
+// pre-filling a default must not lose a region the user actually passed.
+func TestClientConfigFromFlags_ExplicitS3RegionSurvives(t *testing.T) {
+	g := newTestGlobalFlags("-s3-region", "eu-west-3")
+	g.s3Region = "eu-west-3"
+	if got := clientConfigFromFlags(g).Store.S3.Region; got != "eu-west-3" {
+		t.Fatalf("explicit -s3-region must survive into the config, got %q", got)
+	}
+}

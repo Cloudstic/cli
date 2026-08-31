@@ -1336,6 +1336,55 @@ becomes the split rule in fact and should be chosen deliberately rather than
 inherited, along with the node cache and `sealFlushBytes`, which are both
 expressed in terms of a leaf that will no longer exist.
 
+### What building it established
+
+The encoding above was written before any of it existed. Four things only
+became visible once it did, and three of them are properties of the format
+rather than of the code.
+
+**A repository is no longer a function of its contents.** A leaf records
+*where* a body landed, and placement depends on what else was packed alongside
+it — which depends on the order upload workers finish. Two identical backups of
+one tree therefore produce different root hashes. Measured, and isolated:
+chunking every body instead restores determinism, so the body reference is
+precisely the cause.
+
+This was free under fat leaves, where a payload held content that is identical
+whoever wrote it. Recovering it now would need one of: buffering every body
+before packing, which is unbounded memory and the regression #526 fixed;
+deriving blob membership from the content hash, which scatters a directory's
+files and destroys the locality blobs exist for; or an index, which this format
+exists to avoid. Determinism and locality are in direct conflict once a leaf
+records physical placement.
+
+It is given up deliberately. Restic, borg and kopia all produce different pack
+layouts for identical input. The price is that copying a repository into one
+that already holds the same snapshots no longer deduplicates the trees.
+
+**The mark may not deduplicate on an entry's metadata ref.** Identical metadata
+says nothing about where the body was packed — a re-upload puts the same bytes
+into whatever blob is open — so an entry reached twice can name two different
+blobs. Skipping the second marks the first blob only, and the sweep then
+deletes data a retained snapshot needs. This is a garbage collector deleting a
+live repository, reached by an optimisation that looks obviously safe, and it
+is why `EntryRefs.Objects` exists rather than a field-by-field loop.
+
+**`check` must verify a body reference outside `-read-data`.** Chunk refs are
+verified unconditionally, and a body-referencing entry has no chunks, so a
+default run otherwise checks nothing about an entry's content — a repository
+missing every blob reports healthy. Confirming the blob exists and is long
+enough for the range claimed costs no read, since its size is enough.
+`-read-data` remains the reconstruction check. Nothing obliges a user to run it
+before trusting a `check`.
+
+**The blob budget is specified in the wrong units for its own derivation.** It
+counts plaintext bytes, while the bandwidth-delay product it was sized from is
+about transferred bytes, and members are compressed. An 8 MB budget yields a
+median 2076 KB object on a `source` tree — a quarter of the size the reasoning
+called for. The plaintext choice is defensible on its own terms, since a
+stored-bytes budget makes blob size vary with how compressible a directory
+happens to be, so this is a calibration to settle rather than a unit to switch.
+
 ### Open questions and sequencing
 
 1. ~~**How fragmented do blobs actually get?**~~ Answered above: 15% waste,

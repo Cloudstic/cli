@@ -110,6 +110,38 @@ func (n *node) indexOfKey(key string) int {
 	return -1
 }
 
+// placeFor returns where key belongs in a leaf's entries: the index of the
+// entry it replaces, or — when the key is absent — the index to insert it at
+// so the entries stay ordered.
+//
+// It replaces "append then sort the whole leaf", which is how an insertion
+// used to keep that order. A leaf holds up to maxLeafEntriesV3 entries, so
+// sorting per insert made filling one quadratic in its entry count with a log
+// factor on top — and it sorted an already-ordered slice with one element out
+// of place, which is the case a general sort is worst at exploiting. On a
+// 20,000-file tree it was 55% of the rebuild a full scan performs, second only
+// to the environment lookup beside it (issue #538). Placing the entry directly
+// costs the scan the replacement search already paid, plus a memmove.
+//
+// The search itself is exhaustive rather than a binary search, and
+// deliberately so: it decides whether an entry is *replaced*, which is what
+// keeps a tree's shape a pure function of its contents, and a linear scan
+// answers that without depending on the leaf it is handed being ordered. Only
+// the insertion point assumes order, and there a leaf that somehow was not
+// ordered gets an entry placed no worse than the sort would have put it.
+func (n *node) placeFor(key string) (int, bool) {
+	pos := len(n.entries)
+	for i := range n.entries {
+		switch {
+		case n.entries[i].Key == key:
+			return i, true
+		case pos == len(n.entries) && n.entries[i].Key > key:
+			pos = i
+		}
+	}
+	return pos, false
+}
+
 // decodeNode converts the on-disk form into the in-memory form. Every child of
 // a decoded node is clean by definition.
 func decodeNode(sn *storedNode) *node {

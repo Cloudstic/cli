@@ -218,6 +218,7 @@ func WithLogger(w io.Writer) TreeOption {
 func WithFormatV3() TreeOption {
 	return func(ns *NodeStore) {
 		ns.v3 = true
+		ns.leafBytes = v3LeafSplitBytes()
 		ns.cache.Configure(nodeCacheSizeV3, v3NodeCacheBytes())
 	}
 }
@@ -803,29 +804,25 @@ func (tx *Txn) insert(ctx context.Context, c child, r routing, entry leafEntry, 
 }
 
 func (tx *Txn) insertIntoLeaf(n *node, entry leafEntry, level int) (child, bool, error) {
-	if i := n.indexOfKey(entry.Key); i >= 0 {
+	i, replaced := n.placeFor(entry.Key)
+	if replaced {
 		n.entries[i] = entry
-		// A replacement can push a leaf over the budget as easily as an
-		// append can — in v3 the new payload may be far larger than the one
-		// it displaces — so it faces the same split rule.
-		if level < tx.nodes.maxDepth() && tx.nodes.leafOverfull(n.entries) {
-			c, err := tx.buildNode(n.entries, level)
-			return c, true, err
-		}
-		return child{node: n}, true, nil
+	} else {
+		n.entries = slices.Insert(n.entries, i, entry)
 	}
-
-	n.entries = append(n.entries, entry)
-	sortEntries(n.entries)
 
 	// Split once the leaf is over its budget — entry count in v2, bytes in v3
 	// (see leafOverfull) — unless routing bits have run out, in which case the
 	// leaf may grow past it.
+	//
+	// A replacement faces the same rule as an addition: in v3 the new payload
+	// may be far larger than the one it displaces, so it can overfill a leaf
+	// that would otherwise never reconsider splitting.
 	if level < tx.nodes.maxDepth() && tx.nodes.leafOverfull(n.entries) {
 		c, err := tx.buildNode(n.entries, level)
-		return c, false, err
+		return c, replaced, err
 	}
-	return child{node: n}, false, nil
+	return child{node: n}, replaced, nil
 }
 
 // buildNode recursively partitions entries into a subtree starting at level.

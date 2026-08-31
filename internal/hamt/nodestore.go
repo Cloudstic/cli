@@ -82,6 +82,18 @@ type NodeStore struct {
 	// the bytes — so the flag governs writes, the leaf split rule, and the
 	// routing shape below.
 	v3 bool
+
+	// leafBytes is the byte budget a leaf splits at, resolved once when the
+	// store is put in v3 mode rather than read per comparison.
+	//
+	// The budget is a write-path property of the tree being built, so
+	// resolving it with the format is where it belongs — the node cache's
+	// budget beside it has always been resolved there. Consulting the
+	// environment instead put an os.LookupEnv inside leafOverfull's per-entry
+	// loop, which is O(entries) per insert and O(entries^2) per leaf: on a
+	// 20,000-file tree that was 19% of a no-change backup's CPU spent in
+	// syscall.Getenv, more than the whole source walk (issue #538).
+	leafBytes int
 }
 
 // The routing shape of the tree this store belongs to. A tree's arity decides
@@ -262,7 +274,7 @@ func (ns *NodeStore) leafOverfull(entries []leafEntry) bool {
 	var size int
 	for i := range entries {
 		size += entries[i].approxSize()
-		if size > v3LeafSplitBytes() {
+		if size > ns.leafBytes {
 			return true
 		}
 	}

@@ -397,6 +397,29 @@ func TestV3LeafBudgetOverrideChangesSplitting(t *testing.T) {
 	}
 }
 
+// The budget is resolved when a store is put in v3 mode, not consulted per
+// comparison — the split rule runs once per entry of a leaf on every insert,
+// and reading the environment there cost 19% of a no-change backup's CPU in
+// syscall.Getenv (issue #538). Pinning it as a property of the tree is what
+// makes that a constant rather than a hot loop, so this fails if the lookup
+// ever moves back down.
+func TestV3LeafBudgetIsFixedWhenTheTreeIsCreated(t *testing.T) {
+	t.Setenv(envLeafSplitBytesV3, "262144")
+	ns := NewNodeStore(newInMemoryStore())
+	WithFormatV3()(ns)
+	if ns.leafBytes != 262144 {
+		t.Fatalf("leaf budget = %d, want the environment's 262144", ns.leafBytes)
+	}
+
+	// Changing the environment afterwards must not reach a tree already built.
+	t.Setenv(envLeafSplitBytesV3, "8388608")
+	entries := []leafEntry{{Key: "a", payload: &Payload{Meta: bytes.Repeat([]byte("x"), 300*1024)}}}
+	if !ns.leafOverfull(entries) {
+		t.Error("a 300 KB leaf is not over the 256 KB budget the tree was created with; " +
+			"the split rule re-read the environment")
+	}
+}
+
 // buildChunkRefTree writes a tree whose entries alternate between inline
 // content and chunk lists, and returns it reopened through a fresh tree so
 // nothing is served from the write path's cache.

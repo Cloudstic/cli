@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/cloudstic/cli/internal/onboarding"
 	"github.com/cloudstic/cli/pkg/config"
 	"github.com/cloudstic/cli/pkg/open"
 	"github.com/cloudstic/cli/pkg/profile"
@@ -100,26 +101,16 @@ func declareAuthNewArgs(g *globalFlags) (*authNewArgs, commandInput) {
 }
 
 func runAuthNew(r *runner, ctx context.Context, a *authNewArgs) int {
-	if a.name == "" {
-		if r.canPrompt() {
-			v, err := r.promptValidatedLine(ctx, "Auth reference name", "", func(v string) error {
-				if v == "" {
-					return fmt.Errorf("auth reference name is required")
-				}
-				return validateRefName("auth", v)
-			})
-			if err != nil {
-				return r.fail("Failed to read auth reference name: %v", err)
-			}
-			a.name = v
-		}
-		if a.name == "" {
-			return r.fail("-name is required")
-		}
-	}
-	if err := validateRefName("auth", a.name); err != nil {
+	name, err := onboarding.Resolve(ctx, prompterFor(r), a.name, onboarding.Field{
+		Label:    "Auth reference name",
+		Noun:     "auth reference name",
+		Missing:  "-name is required",
+		Validate: func(v string) error { return onboarding.ValidateRefName("auth", v) },
+	})
+	if err != nil {
 		return r.fail("%v", err)
 	}
+	a.name = name
 	if a.provider != config.ProviderGoogle && a.provider != config.ProviderOneDrive {
 		if r.canPrompt() {
 			picked, err := r.promptSelect(ctx, "Select auth provider", []string{config.ProviderGoogle, config.ProviderOneDrive})
@@ -180,11 +171,11 @@ func runAuthNew(r *runner, ctx context.Context, a *authNewArgs) int {
 		auth.OneDriveTokenRef = a.onedriveTokenRef
 	}
 
-	cfg, err := loadProfilesOrInit(a.profilesFile)
+	cfg, err := profile.LoadOrEmpty(a.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
 	}
-	ensureProfilesMaps(cfg)
+	profile.EnsureMaps(cfg)
 	cfg.Auth[a.name] = auth
 
 	if err := profile.Save(a.profilesFile, cfg); err != nil {

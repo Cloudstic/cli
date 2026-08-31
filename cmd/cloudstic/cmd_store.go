@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/cloudstic/cli/internal/onboarding"
 	"github.com/cloudstic/cli/pkg/config"
 
 	"github.com/cloudstic/cli/pkg/profile"
@@ -71,108 +72,124 @@ func runStoreShow(r *runner, ctx context.Context, a *storeShowArgs) int {
 
 type storeNewArgs struct {
 	*globalFlags
-	profilesFile                                           string
-	name, uri                                              string
-	s3Region, s3Profile, s3Endpoint                        string
-	s3AccessKey, s3SecretKey                               string
-	s3AccessKeySecret, s3SecretKeySecret                   string
-	b2KeyID, b2AppKey                                      string
-	b2KeyIDSecret, b2AppKeySecret                          string
-	sftpPassword, sftpKey                                  string
-	sftpPasswordSecret, sftpKeySecret                      string
-	passwordSecret, encryptionKeySecret, recoveryKeySecret string
-	kmsKeyARN, kmsRegion, kmsEndpoint                      string
+	profilesFile string
+	name         string
+	// values holds one target per store-field flag, keyed by the flag's name.
+	//
+	// A named struct field per flag would be a second statement of the field
+	// set — which is what `storeNewFlagPtrs` was, along with the two functions
+	// that walked it. Keying by flag name lets the profile entry be assembled
+	// from config.StoreFieldSpecs() instead, so a field added to the profiles
+	// format reaches `store new` without an edit here (issue #568).
+	values map[string]*string
+}
+
+// field declares one store-field flag and registers its target under the flag's
+// own name. The usage text stays written out per flag: it is prose for a human
+// reading `-h`, and the generic label on the table ("S3 Access Key") is not a
+// substitute for "S3 static access key".
+func (a *storeNewArgs) field(name, usage string, opts ...flagOpt) flagSpec {
+	target := new(string)
+	a.values[name] = target
+	return stringFlag(target, name, "", usage, opts...)
+}
+
+// secretRefUsage is the shared wording for the flags that name where a
+// credential lives rather than carrying it.
+func secretRefUsage(what string) string {
+	return "Secret reference for " + what + " (e.g. env://..., keychain://...)"
 }
 
 func declareStoreNewArgs(g *globalFlags) (*storeNewArgs, commandInput) {
-	a := &storeNewArgs{globalFlags: g}
+	a := &storeNewArgs{globalFlags: g, values: map[string]*string{}}
 	return a, commandInput{flags: []flagSpec{
 		profilesFileFlag(&a.profilesFile, g),
 		stringFlag(&a.name, "name", "", "Store reference name", withPlaceholder("<name>")),
-		stringFlag(&a.uri, "uri", "", "Store URI (e.g. s3:bucket/path, local:/path, sftp://host/path)", withPlaceholder("<uri>"), withCompleter("_cloudstic_store_prefixes")),
-		stringFlag(&a.s3Region, "s3-region", "", "S3 region", withPlaceholder("<region>")),
-		stringFlag(&a.s3Profile, "s3-profile", "", "AWS shared config profile", withPlaceholder("<name>")),
-		stringFlag(&a.s3Endpoint, "s3-endpoint", "", "S3-compatible endpoint URL", withPlaceholder("<url>")),
-		stringFlag(&a.s3AccessKey, "s3-access-key", "", "S3 static access key", withPlaceholder("<key>"), asSecret()),
-		stringFlag(&a.s3SecretKey, "s3-secret-key", "", "S3 static secret key", withPlaceholder("<secret>"), asSecret()),
-		stringFlag(&a.s3AccessKeySecret, "s3-access-key-secret", "", "Secret reference for S3 access key (e.g. env://..., keychain://...)", withPlaceholder("<ref>")),
-		stringFlag(&a.s3SecretKeySecret, "s3-secret-key-secret", "", "Secret reference for S3 secret key (e.g. env://..., keychain://...)", withPlaceholder("<ref>")),
-		stringFlag(&a.b2KeyID, "b2-key-id", "", "Backblaze B2 application key ID", withPlaceholder("<key-id>"), asSecret()),
-		stringFlag(&a.b2AppKey, "b2-app-key", "", "Backblaze B2 application key", withPlaceholder("<key>"), asSecret()),
-		stringFlag(&a.b2KeyIDSecret, "b2-key-id-secret", "", "Secret reference for B2 key ID (e.g. env://..., keychain://...)", withPlaceholder("<ref>")),
-		stringFlag(&a.b2AppKeySecret, "b2-app-key-secret", "", "Secret reference for B2 application key (e.g. env://..., keychain://...)", withPlaceholder("<ref>")),
-		stringFlag(&a.sftpPassword, "store-sftp-password", "", "SFTP password", withPlaceholder("<pass>"), asSecret()),
-		stringFlag(&a.sftpKey, "store-sftp-key", "", "Path to SFTP private key", withPlaceholder("<path>"), withCompleter("_files")),
-		stringFlag(&a.sftpPasswordSecret, "store-sftp-password-secret", "", "Secret reference for SFTP password (e.g. env://..., keychain://...)", withPlaceholder("<ref>")),
-		stringFlag(&a.sftpKeySecret, "store-sftp-key-secret", "", "Secret reference for SFTP key path (e.g. env://..., keychain://...)", withPlaceholder("<ref>")),
-		stringFlag(&a.passwordSecret, "password-secret", "", "Secret reference for repository password (e.g. env://..., keychain://...)", withPlaceholder("<ref>")),
-		stringFlag(&a.encryptionKeySecret, "encryption-key-secret", "", "Secret reference for platform key (e.g. env://..., keychain://...)", withPlaceholder("<ref>")),
-		stringFlag(&a.recoveryKeySecret, "recovery-key-secret", "", "Secret reference for recovery key mnemonic (e.g. env://..., keychain://...)", withPlaceholder("<ref>")),
-		stringFlag(&a.kmsKeyARN, "kms-key-arn", "", "AWS KMS key ARN", withPlaceholder("<arn>")),
-		stringFlag(&a.kmsRegion, "kms-region", "", "AWS KMS region", withPlaceholder("<region>")),
-		stringFlag(&a.kmsEndpoint, "kms-endpoint", "", "Custom AWS KMS endpoint URL", withPlaceholder("<url>")),
+		a.field("uri", "Store URI (e.g. s3:bucket/path, local:/path, sftp://host/path)", withPlaceholder("<uri>"), withCompleter("_cloudstic_store_prefixes")),
+		a.field("s3-region", "S3 region", withPlaceholder("<region>")),
+		a.field("s3-profile", "AWS shared config profile", withPlaceholder("<name>")),
+		a.field("s3-endpoint", "S3-compatible endpoint URL", withPlaceholder("<url>")),
+		a.field("s3-access-key", "S3 static access key", withPlaceholder("<key>"), asSecret()),
+		a.field("s3-secret-key", "S3 static secret key", withPlaceholder("<secret>"), asSecret()),
+		a.field("s3-access-key-secret", secretRefUsage("S3 access key"), withPlaceholder("<ref>")),
+		a.field("s3-secret-key-secret", secretRefUsage("S3 secret key"), withPlaceholder("<ref>")),
+		a.field("b2-key-id", "Backblaze B2 application key ID", withPlaceholder("<key-id>"), asSecret()),
+		a.field("b2-app-key", "Backblaze B2 application key", withPlaceholder("<key>"), asSecret()),
+		a.field("b2-key-id-secret", secretRefUsage("B2 key ID"), withPlaceholder("<ref>")),
+		a.field("b2-app-key-secret", secretRefUsage("B2 application key"), withPlaceholder("<ref>")),
+		a.field("store-sftp-password", "SFTP password", withPlaceholder("<pass>"), asSecret()),
+		a.field("store-sftp-key", "Path to SFTP private key", withPlaceholder("<path>"), withCompleter("_files")),
+		a.field("store-sftp-password-secret", secretRefUsage("SFTP password"), withPlaceholder("<ref>")),
+		a.field("store-sftp-key-secret", secretRefUsage("SFTP key path"), withPlaceholder("<ref>")),
+		a.field("password-secret", secretRefUsage("repository password"), withPlaceholder("<ref>")),
+		a.field("encryption-key-secret", secretRefUsage("platform key"), withPlaceholder("<ref>")),
+		a.field("recovery-key-secret", secretRefUsage("recovery key mnemonic"), withPlaceholder("<ref>")),
+		a.field("kms-key-arn", "AWS KMS key ARN", withPlaceholder("<arn>")),
+		a.field("kms-region", "AWS KMS region", withPlaceholder("<region>")),
+		a.field("kms-endpoint", "Custom AWS KMS endpoint URL", withPlaceholder("<url>")),
 	}}
 }
 
-func (a *storeNewArgs) flagPtrs() storeNewFlagPtrs {
-	return storeNewFlagPtrs{
-		uri: &a.uri, s3Region: &a.s3Region, s3Profile: &a.s3Profile, s3Endpoint: &a.s3Endpoint,
-		s3AccessKey: &a.s3AccessKey, s3SecretKey: &a.s3SecretKey,
-		s3AccessKeySecret: &a.s3AccessKeySecret, s3SecretKeySecret: &a.s3SecretKeySecret,
-		b2KeyID: &a.b2KeyID, b2AppKey: &a.b2AppKey,
-		b2KeyIDSecret: &a.b2KeyIDSecret, b2AppKeySecret: &a.b2AppKeySecret,
-		sftpPassword: &a.sftpPassword, sftpKey: &a.sftpKey,
-		sftpPasswordSecret: &a.sftpPasswordSecret, sftpKeySecret: &a.sftpKeySecret,
-		passwordSecret: &a.passwordSecret, encryptionKeySecret: &a.encryptionKeySecret,
-		recoveryKeySecret: &a.recoveryKeySecret, kmsKeyARN: &a.kmsKeyARN,
-		kmsRegion: &a.kmsRegion, kmsEndpoint: &a.kmsEndpoint,
+// toProfileStore assembles the entry these flags describe, reading the field
+// set from pkg/config rather than restating it.
+func (a *storeNewArgs) toProfileStore() profile.Store {
+	var s profile.Store
+	for _, f := range config.StoreFieldSpecs() {
+		if name := f.FlagName(); name != "" {
+			f.SetInline(&s, a.value(name))
+		}
+		if name := f.SecretFlagName(); name != "" {
+			f.SetRef(&s, a.value(name))
+		}
 	}
+	return s
+}
+
+func (a *storeNewArgs) value(flagName string) string {
+	if p := a.values[flagName]; p != nil {
+		return *p
+	}
+	return ""
 }
 
 func runStoreNew(r *runner, ctx context.Context, a *storeNewArgs) int {
-	storeFlags := a.flagPtrs()
-
-	if a.name == "" {
-		if r.canPrompt() {
-			v, err := r.promptValidatedLine(ctx, "Store reference name", "", func(v string) error {
-				if v == "" {
-					return fmt.Errorf("store reference name is required")
-				}
-				return validateRefName("store", v)
-			})
-			if err != nil {
-				return r.fail("Failed to read store name: %v", err)
-			}
-			a.name = v
-		}
-		if a.name == "" {
-			return r.fail("-name is required")
-		}
-	}
-	if err := validateRefName("store", a.name); err != nil {
+	name, err := onboarding.Resolve(ctx, prompterFor(r), a.name, onboarding.Field{
+		Label:    "Store reference name",
+		Noun:     "store reference name",
+		Missing:  "-name is required",
+		Validate: func(v string) error { return onboarding.ValidateRefName("store", v) },
+	})
+	if err != nil {
 		return r.fail("%v", err)
 	}
-	cfg, err := loadProfilesOrInit(a.profilesFile)
+	a.name = name
+	cfg, err := profile.LoadOrEmpty(a.profilesFile)
 	if err != nil {
 		return r.fail("Failed to load profiles: %v", err)
 	}
-	ensureProfilesMaps(cfg)
+	profile.EnsureMaps(cfg)
 
-	_, existedBefore := cfg.Stores[a.name]
+	existing, existedBefore := cfg.Stores[a.name]
 	forcePromptURI := false
 	forcePromptEncryption := false
 	askKeepEncryption := false
-	if existing, ok := cfg.Stores[a.name]; ok {
-		applyExistingStoreDefaults(a.globalFlags, existing, storeFlags)
+
+	// Fold the flags over the stored entry once, here, rather than copying the
+	// entry back into the flag targets first. Every field the user did not pass
+	// keeps what the file held, which is what makes `store new <existing>` a
+	// way to change one setting.
+	store := config.MergeStoreInto(existing, a.toProfileStore(), a.flagProvided)
+
+	if existedBefore {
 		if promptURI, askKeep := existingStoreInteractivePlan(r.canPrompt(), hasStoreNewOverrideFlags(a.globalFlags), storeHasExplicitEncryption(existing)); promptURI {
 			forcePromptURI = true
 			askKeepEncryption = askKeep
 		}
 	}
 
-	if a.uri == "" || forcePromptURI {
+	if store.URI == "" || forcePromptURI {
 		if r.canPrompt() {
-			v, err := r.promptValidatedLine(ctx, "Store URI", a.uri, func(v string) error {
+			v, err := r.promptValidatedLine(ctx, "Store URI", store.URI, func(v string) error {
 				if v == "" {
 					return fmt.Errorf("store URI is required")
 				}
@@ -182,19 +199,26 @@ func runStoreNew(r *runner, ctx context.Context, a *storeNewArgs) int {
 			if err != nil {
 				return r.fail("Failed to read store URI: %v", err)
 			}
-			a.uri = v
+			store.URI = v
 		}
-		if a.uri == "" {
+		if store.URI == "" {
 			return r.fail("-uri is required")
 		}
 	}
 
 	// Validate the URI before saving.
-	if _, err := config.ParseStoreURI(a.uri); err != nil {
+	//
+	// Fields belonging to other backends are deliberately *not* cleared here.
+	// `store new` accepts credentials for a backend the URI does not name —
+	// TestRunStoreNew_WithSecretRefFlags sets SFTP references on an s3: store —
+	// and dropping them would be a behaviour change this refactor has no
+	// mandate for. The TUI's SaveStore does clear them, because a form
+	// round-trips every field and would otherwise resurrect stale ones.
+	if _, err := config.ParseStoreURI(store.URI); err != nil {
 		return r.fail("%v", err)
 	}
 
-	cfg.Stores[a.name] = buildProfileStoreFromFlags(storeFlags)
+	cfg.Stores[a.name] = store
 
 	if err := profile.Save(a.profilesFile, cfg); err != nil {
 		return r.fail("Failed to save profiles: %v", err)
@@ -227,11 +251,6 @@ func runStoreNew(r *runner, ctx context.Context, a *storeNewArgs) int {
 	return 0
 }
 
-// checkOrInitStore connects to a store and checks if it is initialized.
-// If already initialized, it confirms connectivity. If not, it offers to
-// initialize it. Encryption config should already be saved in profiles.yaml
-// before calling this. Errors are printed but never cause a non-zero exit—
-// the store config has already been saved.
 type storeVerifyArgs struct {
 	*globalFlags
 	profilesFile string

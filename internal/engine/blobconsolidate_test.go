@@ -63,6 +63,12 @@ func TestBlobConsolidator_LeavesAPackedRepositoryAlone(t *testing.T) {
 }
 
 func TestBlobConsolidator_SelectsTheEmptiestFirst(t *testing.T) {
+	// The threshold is stated rather than inherited. These fixtures are chosen
+	// to sit either side of a particular mark, so a test that read the default
+	// would be asserting what that default happens to be — and would fail when
+	// it is retuned, which is a measurement rather than a behaviour change.
+	t.Setenv(envConsolidateFill, "50")
+
 	c := newBlobConsolidator()
 	noteBlob(c, "blob/full", 10, 100, 1000) // 100% of a full blob
 	noteBlob(c, "blob/half", 5, 100, 1000)  // exactly at the mark: left alone
@@ -90,6 +96,9 @@ func TestBlobConsolidator_SelectsTheEmptiestFirst(t *testing.T) {
 }
 
 func TestBlobConsolidator_BudgetBoundsOneBackup(t *testing.T) {
+	// Stated for the same reason as the selection test above: blob/c sits at
+	// 30% and must qualify, so the fixture depends on the mark.
+	t.Setenv(envConsolidateFill, "50")
 	t.Setenv(envConsolidateRewrite, "600")
 	c := newBlobConsolidator()
 	noteBlob(c, "blob/full", 10, 100, 1000)
@@ -353,6 +362,12 @@ func restoreZip(t *testing.T, dest *MockStore, snapRef string) map[string][]byte
 // nothing — which is what makes the two runs differ in exactly the thing under
 // test and nothing else.
 func TestV3Consolidate_TakesBlobCountOffTheBackupAxis(t *testing.T) {
+	// A stated threshold, not the shipped one. This fixture's blobs sit in a
+	// narrow band, so which of them qualify is a property of the fixture rather
+	// than of the mechanism under test. The shipped default is exercised at
+	// realistic scale by the sweep recorded on consolidateFillPercent.
+	t.Setenv(envConsolidateFill, "50")
+
 	// 16 KB blobs, so 48 files of 1 KB seal three full ones.
 	t.Setenv(envBlobBudget, strconv.Itoa(16<<10))
 
@@ -482,6 +497,8 @@ func TestV3Consolidate_AbandonsABlobItCannotFullyRead(t *testing.T) {
 // design prune owns: a blob a newer snapshot has moved off is still reachable
 // from the older snapshots that name it, and is collected only once none does.
 func TestV3Consolidate_RetiredBlobsSurviveUntilForgotten(t *testing.T) {
+	t.Setenv(envConsolidateFill, "50") // see TestV3Consolidate_TakesBlobCountOffTheBackupAxis
+
 	ctx := context.Background()
 	t.Setenv(envBlobBudget, strconv.Itoa(16<<10))
 

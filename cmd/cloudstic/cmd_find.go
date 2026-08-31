@@ -8,7 +8,6 @@ import (
 	"time"
 
 	cloudstic "github.com/cloudstic/cli"
-	"github.com/cloudstic/cli/internal/core"
 )
 
 type findArgs struct {
@@ -171,12 +170,12 @@ func buildFindQuery(a *findArgs) (cloudstic.FindQuery, error) {
 
 // parseFindType accepts find(1)'s single-letter type vocabulary as well as the
 // repository's own spelling.
-func parseFindType(raw string) (core.FileType, error) {
+func parseFindType(raw string) (cloudstic.FileType, error) {
 	switch strings.ToLower(raw) {
 	case "f", "file":
-		return core.FileTypeFile, nil
+		return cloudstic.FileTypeFile, nil
 	case "d", "dir", "folder":
-		return core.FileTypeFolder, nil
+		return cloudstic.FileTypeFolder, nil
 	default:
 		return "", fmt.Errorf("-type %q: use f (file) or d (folder)", raw)
 	}

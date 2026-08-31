@@ -33,19 +33,37 @@ const inlineThreshold = 512 * 1024 // 512 KiB (matches CDC min chunk size)
 // format can express, and the way to measure one rather than estimate it.
 const envInlineThreshold = "CLOUDSTIC_TEST_INLINE_BYTES"
 
+// maxInlineBytes caps what the override may ask for.
+//
+// The value becomes an allocation — a read buffer sized to hold a whole body —
+// so an unbounded one read from the environment is a way to make the process
+// allocate arbitrarily, or to panic in make() on a platform where int is
+// narrower than the int64 it was parsed as. 64 MB is far above any plausible
+// setting: the inline path exists for bodies small enough not to be worth
+// chunking, and the default is 512 KiB.
+const maxInlineBytes = 64 << 20
+
 func inlineLimit() int64 {
 	if v, ok := os.LookupEnv(envInlineThreshold); ok {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 && n <= maxInlineBytes {
 			return n
 		}
 	}
 	return inlineThreshold
 }
 
+// inlineBufferPool holds read buffers for bodies small enough to be stored
+// whole. A buffer must be at least inlineLimit() long, not inlineThreshold:
+// the routing decision uses the limit, so sizing the buffer from the constant
+// silently truncated every body between the two whenever the two differed.
+//
+// They differ only under CLOUDSTIC_TEST_INLINE_BYTES, so production was never
+// affected — but the knob is documented as sweepable, and sweeping it upward
+// produced repositories that passed check and restored short files. A dial
+// that corrupts when turned is worse than no dial.
 var inlineBufferPool = sync.Pool{
 	New: func() interface{} {
-		// Pre-allocate a buffer large enough for inlineThreshold
-		b := make([]byte, inlineThreshold)
+		b := make([]byte, inlineLimit())
 		return &b
 	},
 }
@@ -178,6 +196,16 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 					continue
 				}
 				res.payload.Body = placed
+				// An entry that reused a placement a previous backup made
+				// keeps that blob alive exactly as an unchanged entry does, so
+				// consolidation has to count it. Without this the blob would
+				// look emptier than it is — which both biases it towards being
+				// selected and, once selected, leaves it alive after every
+				// entry consolidation knew about has moved off it: bytes
+				// rewritten for a blob that is not retired.
+				if res.promise.inherited && bm.consolidation != nil {
+					bm.consolidation.note(AffinityKey(res.parentID, res.fileID), res.fileID, placed)
+				}
 			}
 			ready = append(ready, res)
 		}
@@ -210,6 +238,10 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 	// nodes are content-addressed and the shape is a pure function of the
 	// contents; the superseded intermediate nodes are ordinary garbage that
 	// prune collects.
+	// Resolved once: the reader reaches os.Getenv and this loop runs once per
+	// file backed up (#538).
+	commitBytes := uploadCommitLimit()
+
 	var retained int
 	commitRetained := func() error {
 		if _, err := bm.txn.Commit(ctx); err != nil {
@@ -237,7 +269,7 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 		// budget in a couple of hundred entries and would otherwise wait for a
 		// batch that is ten times further off.
 		full := len(awaiting) >= insertBatch
-		heavy := retained >= uploadCommitLimit()
+		heavy := retained >= commitBytes
 		if !full && !heavy {
 			continue
 		}
@@ -308,7 +340,11 @@ type uploadedContent struct {
 	size   int64
 	ref    string   // HMAC(dedupKey, hash), or hash when unencrypted
 	chunks []string // chunk refs; nil for a blob-bound or dedup'd body
-	body   []byte   // v3 only: the body itself, bound for a blob/ object
+	// place is where a v3 body lives, once the blob holding it is sealed. It
+	// is resolved already when the placement was reused rather than written
+	// (see bodyindex.go), and nil for a folder, an empty file or a chunked
+	// body — none of which put anything in a blob.
+	place *bodyPromise
 }
 
 // processFile uploads (or deduplicates) a single file's content and persists
@@ -345,13 +381,7 @@ func (bm *BackupManager) processFile(ctx context.Context, meta core.FileMeta, ph
 				Chunks: content.chunks,
 			},
 		}
-		if content.body != nil {
-			promise, err := bm.blobs.Add(ctx, content.hash, content.body)
-			if err != nil {
-				return uploadResult{err: err}
-			}
-			res.promise = promise
-		}
+		res.promise = content.place
 		return res
 	}
 
@@ -374,20 +404,37 @@ func (bm *BackupManager) contentRefFor(hash string) string {
 }
 
 // uploadContent streams, chunks, and stores file content. Skips upload on
-// dedup, stores small files inline — as a content object in v2, in the
-// returned buffer (bound for the leaf) in v3.
+// dedup, stores small files inline — as a content object in v2, packed into a
+// blob (or pointed at one that already holds those bytes) in v3.
 func (bm *BackupManager) uploadContent(ctx context.Context, meta core.FileMeta, phase ui.Phase) (uploadedContent, error) {
-	// Whole-file dedup against a stored content object is a v2 fast path: v3
-	// has no content objects to probe. Its chunked files still deduplicate
-	// per chunk in storeChunk, which skips the upload but not the local read.
-	if meta.ContentHash != "" && !bm.v3 {
+	// Read once and used by both size gates below. inlineLimit reaches
+	// os.LookupEnv, and this runs per file backed up (#566).
+	inline := inlineLimit()
+
+	// Whole-file dedup before the file is opened, for a source that reports a
+	// content hash of its own. v2 settles it by probing the content object; v3
+	// has none to probe, and asks instead whether the repository already holds
+	// a placement for those bytes (see bodyindex.go). Chunked files
+	// deduplicate per chunk in storeChunk either way, which skips the upload
+	// but not the local read.
+	if meta.ContentHash != "" {
 		contentRef := meta.ContentRef
 		if contentRef == "" {
 			contentRef = bm.contentRefFor(meta.ContentHash)
 		}
-
-		exists, err := bm.store.Exists(ctx, "content/"+contentRef)
-		if err == nil && exists {
+		if bm.v3 {
+			// Only over the size window whose bodies live in blobs. A body
+			// outside it is chunked and has no placement to reuse, and the
+			// window is a runtime value (CLOUDSTIC_TEST_INLINE_BYTES), so a
+			// repository can hold placements this run would not have made.
+			if meta.Size > 0 && meta.Size <= inline {
+				if p := bm.reuse.lookup(meta.ContentHash, meta.Size); p != nil {
+					phase.Logf(ui.DetailVerbose, "Deduplicated: %s", meta.Name)
+					phase.Increment(meta.Size)
+					return uploadedContent{hash: meta.ContentHash, size: meta.Size, ref: contentRef, place: p}, nil
+				}
+			}
+		} else if exists, err := bm.store.Exists(ctx, "content/"+contentRef); err == nil && exists {
 			phase.Logf(ui.DetailVerbose, "Deduplicated: %s", meta.Name)
 			return uploadedContent{hash: meta.ContentHash, size: meta.Size, ref: contentRef}, nil
 		}
@@ -399,7 +446,7 @@ func (bm *BackupManager) uploadContent(ctx context.Context, meta core.FileMeta, 
 	}
 	defer func() { _ = rc.Close() }()
 
-	if meta.Size > 0 && meta.Size <= inlineLimit() {
+	if meta.Size > 0 && meta.Size <= inline {
 		return bm.uploadInline(ctx, rc, meta, phase)
 	}
 
@@ -426,6 +473,16 @@ func (bm *BackupManager) uploadContent(ctx context.Context, meta core.FileMeta, 
 // in v3. Uses a sync.Pool to minimize allocations.
 func (bm *BackupManager) uploadInline(ctx context.Context, r io.Reader, meta core.FileMeta, phase ui.Phase) (uploadedContent, error) {
 	bufPtr := inlineBufferPool.Get().(*[]byte)
+	// A pooled buffer can predate a change of limit, so its length is checked
+	// rather than assumed. io.ReadFull below stops at len(buf) and reports no
+	// error when it fills it, so a short buffer is indistinguishable from a
+	// body that ends exactly there.
+	// int() is safe because inlineLimit is capped at maxInlineBytes, which fits
+	// in an int on every platform this builds for.
+	if limit := int(inlineLimit()); len(*bufPtr) < limit {
+		b := make([]byte, limit)
+		bufPtr = &b
+	}
 	buf := *bufPtr
 	defer inlineBufferPool.Put(bufPtr)
 
@@ -441,11 +498,23 @@ func (bm *BackupManager) uploadInline(ctx context.Context, r io.Reader, meta cor
 	contentRef := bm.contentRefFor(hash)
 
 	if bm.v3 {
+		// Asked before the body is copied out of the pooled buffer, so a file
+		// the repository already holds costs neither the copy nor the pack.
+		// place re-checks under its own lock, so the miss below is a hint
+		// rather than a decision.
+		if p := bm.reuse.lookup(hash, size); p != nil {
+			phase.Logf(ui.DetailVerbose, "Deduplicated: %s", meta.Name)
+			return uploadedContent{hash: hash, size: size, ref: contentRef, place: p}, nil
+		}
 		// Copied out of the pooled buffer, which goes back to the pool on
 		// return while the body lives until its blob is sealed.
 		bodyCopy := make([]byte, n)
 		copy(bodyCopy, data)
-		return uploadedContent{hash: hash, size: size, ref: contentRef, body: bodyCopy}, nil
+		p, err := bm.reuse.place(ctx, bm.blobs, hash, bodyCopy)
+		if err != nil {
+			return uploadedContent{}, err
+		}
+		return uploadedContent{hash: hash, size: size, ref: contentRef, place: p}, nil
 	}
 
 	contentKey := "content/" + contentRef

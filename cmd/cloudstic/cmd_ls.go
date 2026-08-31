@@ -10,8 +10,6 @@ import (
 	"github.com/jedib0t/go-pretty/v6/list"
 
 	cloudstic "github.com/cloudstic/cli"
-	"github.com/cloudstic/cli/internal/core"
-	"github.com/cloudstic/cli/internal/engine"
 )
 
 type lsArgs struct {
@@ -50,13 +48,13 @@ func buildLsOpts(a *lsArgs) []cloudstic.LsSnapshotOption {
 	return lsOpts
 }
 
-func printLsResult(out io.Writer, result *engine.LsSnapshotResult, elapsed time.Duration) {
+func printLsResult(out io.Writer, result *cloudstic.LsSnapshotResult, elapsed time.Duration) {
 	_, _ = fmt.Fprintf(out, "Listing files for snapshot: %s (Created: %s)\n", result.Ref, result.Snapshot.Created)
 	renderSnapshotTree(out, result)
 	_, _ = fmt.Fprintf(out, "\n%d entries listed in %s\n", len(result.RefToMeta), elapsed.Round(time.Millisecond))
 }
 
-func renderSnapshotTree(out io.Writer, result *engine.LsSnapshotResult) {
+func renderSnapshotTree(out io.Writer, result *cloudstic.LsSnapshotResult) {
 	l := list.NewWriter()
 	l.SetOutputMirror(out)
 	for _, rootRef := range result.RootRefs {
@@ -65,11 +63,11 @@ func renderSnapshotTree(out io.Writer, result *engine.LsSnapshotResult) {
 	l.Render()
 }
 
-func appendTreeNode(l list.Writer, ref string, refToMeta map[string]core.FileMeta, children map[string][]string) {
+func appendTreeNode(l list.Writer, ref string, refToMeta map[string]cloudstic.FileMeta, children map[string][]string) {
 	meta := refToMeta[ref]
 
 	label := meta.Name
-	if meta.Type == core.FileTypeFile {
+	if meta.Type == cloudstic.FileTypeFile {
 		label += fmt.Sprintf(" (%s)", formatBytes(meta.Size))
 	}
 	l.AppendItem(label)

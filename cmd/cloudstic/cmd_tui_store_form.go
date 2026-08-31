@@ -2,8 +2,9 @@ package main
 
 import (
 	"fmt"
-	"github.com/cloudstic/cli/pkg/config"
 	"strings"
+
+	"github.com/cloudstic/cli/pkg/config"
 
 	"github.com/cloudstic/cli/pkg/profile"
 	"github.com/cloudstic/cli/pkg/secretref"

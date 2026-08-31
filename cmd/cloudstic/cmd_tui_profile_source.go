@@ -1,6 +1,10 @@
 package main
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/cloudstic/cli/pkg/config"
+)
 
 type tuiProfileSource struct {
 	Type  string
@@ -39,7 +43,7 @@ func (s tuiProfileSource) Compose() string {
 }
 
 func (s tuiProfileSource) Provider() string {
-	return profileProviderFromSource(s.Compose())
+	return config.ProviderForSourceURI(s.Compose())
 }
 
 func (s tuiProfileSource) DetailLabel() string {

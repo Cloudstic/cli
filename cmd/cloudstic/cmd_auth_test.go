@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudstic/cli/internal/onboarding"
 	"github.com/cloudstic/cli/pkg/profile"
 )
 
@@ -273,7 +274,7 @@ func TestPromptAuthSelection_DerivesTokenRef(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	name, err := promptAuthSelection(r, ctx, cfg, "google", "test-profile")
+	name, err := onboarding.SelectAuth(ctx, prompterFor(r), cfg, "google", "test-profile")
 	if err != nil {
 		t.Fatalf("promptAuthSelection: %v", err)
 	}

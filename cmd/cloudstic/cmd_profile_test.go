@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudstic/cli/pkg/config"
 	"github.com/cloudstic/cli/pkg/profile"
 )
 
@@ -392,9 +393,9 @@ func TestProfileProviderFromSource(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.source, func(t *testing.T) {
-			got := profileProviderFromSource(tt.source)
+			got := config.ProviderForSourceURI(tt.source)
 			if got != tt.want {
-				t.Fatalf("profileProviderFromSource(%q) = %q, want %q", tt.source, got, tt.want)
+				t.Fatalf("config.ProviderForSourceURI(%q) = %q, want %q", tt.source, got, tt.want)
 			}
 		})
 	}
@@ -569,7 +570,7 @@ func TestRunProfileNew_InvalidSource(t *testing.T) {
 	if code := profileCommand().execute(r.withArgs(args), context.Background(), "profile"); code == 0 {
 		t.Fatal("expected non-zero exit code")
 	}
-	if !strings.Contains(errOut.String(), "Invalid source") {
+	if !strings.Contains(errOut.String(), "invalid source") {
 		t.Fatalf("unexpected error output: %s", errOut.String())
 	}
 }

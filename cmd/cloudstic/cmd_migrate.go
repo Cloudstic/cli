@@ -6,7 +6,6 @@ import (
 	"io"
 
 	cloudstic "github.com/cloudstic/cli"
-	"github.com/cloudstic/cli/internal/core"
 	"github.com/cloudstic/cli/pkg/keychain"
 )
 
@@ -40,27 +39,21 @@ func declareMigrateArgs(g *globalFlags) (*migrateArgs, commandInput) {
 			withPlaceholder("<uri>"), withCompleter("_cloudstic_store_prefixes"),
 			withShortUsage("Destination repository URI")),
 		intFlag(&a.toFormat, "to-format", 0,
-			fmt.Sprintf("Repository format to migrate to (default: %d, the newest this build creates)", core.MaxSupportedRepoFormat),
+			fmt.Sprintf("Repository format to migrate to (default: %d, the newest this build creates)", cloudstic.MaxSupportedRepoFormat),
 			withShortUsage("Target repository format")),
 		boolFlag(&a.readData, "read-data", false,
 			"Re-hash all chunk data during the verification pass (slower, byte-level)"),
 	}}
 }
 
-func migrateCommand() command {
-	return repoLeaf("migrate",
-		"Migrate a repository to a newer format by copying it into a new one",
-		repoCommandGroups, declareMigrateArgs, runMigrate)
-}
-
 func runMigrate(r *runner, ctx context.Context, a *migrateArgs, cfg clientConfig) int {
 	target := a.toFormat
 	if target == 0 {
-		target = core.MaxSupportedRepoFormat
+		target = cloudstic.MaxSupportedRepoFormat
 	}
-	if target > core.MaxSupportedRepoFormat {
+	if target > cloudstic.MaxSupportedRepoFormat {
 		return r.fail("Error: -to-format %d is not a format this build creates (highest is %d)",
-			target, core.MaxSupportedRepoFormat)
+			target, cloudstic.MaxSupportedRepoFormat)
 	}
 	if a.to == "" {
 		return r.fail("Error: specify the destination repository with -to")
@@ -280,4 +273,11 @@ func printMigrateNextSteps(errOut io.Writer, sourceURI, destURI, profileName str
 	}
 	_, _ = fmt.Fprintf(errOut, "  2. Back up and restore against it until you are satisfied.\n")
 	_, _ = fmt.Fprintf(errOut, "  3. Only then delete %s. Until you do, it is your rollback.\n", sourceURI)
+}
+
+// migrateCommand declares the `migrate` command.
+func migrateCommand() command {
+	return repoLeaf("migrate",
+		"Migrate a repository to a newer format by copying it into a new one",
+		repoCommandGroups, declareMigrateArgs, runMigrate)
 }

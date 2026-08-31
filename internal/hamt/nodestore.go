@@ -57,9 +57,25 @@ const (
 	// memory than the packfile format while keeping the request wins.
 	nodeCacheSizeV3 = 8192
 
-	// nodeCacheLeaves is that budget expressed in leaves, which is the unit it
-	// means something in: the working set is counted in leaves, so the cache has
-	// to move when the leaf size does. See nodeCacheBytes().
+	// nodeCacheLeaves expresses that budget as a multiple of the leaf budget.
+	//
+	// It was chosen when a leaf could actually reach 4 MB, so 16 of them was a
+	// 64 MB cache and the unit meant something: the working set was counted in
+	// leaves and the cache moved with them. Bodies now live in blob/ objects,
+	// so a leaf is a few hundred KB and the *budget* it multiplies no longer
+	// binds (see leafSplitBytesV3).
+	//
+	// The product is still 64 MB and 64 MB is still right — a 20,000-file
+	// tree's metadata is a few MB, so the cache holds it many times over, which
+	// is why the cliff #535 reported no longer reproduces. But it lands there
+	// by multiplying a number that stopped describing anything, so read this as
+	// "64 MB, expressed awkwardly" rather than as a live relationship.
+	//
+	// Left as a multiple rather than rewritten to a byte constant for one
+	// reason: CLOUDSTIC_TEST_LEAF_BYTES sweeps the leaf size, and sweeping it
+	// should move the cache with it, or a sweep of small leaves would measure a
+	// cache that holds proportionally far more of the tree than the default
+	// does. The awkwardness is what keeps a sweep honest.
 	nodeCacheLeaves = 16
 )
 
@@ -82,6 +98,18 @@ type NodeStore struct {
 	// the bytes — so the flag governs writes, the leaf split rule, and the
 	// routing shape below.
 	v3 bool
+
+	// leafBytes is the byte budget a leaf splits at, resolved once when the
+	// store is put in v3 mode rather than read per comparison.
+	//
+	// The budget is a write-path property of the tree being built, so
+	// resolving it with the format is where it belongs — the node cache's
+	// budget beside it has always been resolved there. Consulting the
+	// environment instead put an os.LookupEnv inside leafOverfull's per-entry
+	// loop, which is O(entries) per insert and O(entries^2) per leaf: on a
+	// 20,000-file tree that was 19% of a no-change backup's CPU spent in
+	// syscall.Getenv, more than the whole source walk (issue #538).
+	leafBytes int
 }
 
 // The routing shape of the tree this store belongs to. A tree's arity decides
@@ -262,7 +290,7 @@ func (ns *NodeStore) leafOverfull(entries []leafEntry) bool {
 	var size int
 	for i := range entries {
 		size += entries[i].approxSize()
-		if size > v3LeafSplitBytes() {
+		if size > ns.leafBytes {
 			return true
 		}
 	}

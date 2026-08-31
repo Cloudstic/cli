@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudstic/cli/pkg/config"
 	"github.com/cloudstic/cli/pkg/profile"
 
 	cloudstic "github.com/cloudstic/cli"
@@ -1326,22 +1327,6 @@ func setInteractiveStdinLines(t *testing.T, lines ...string) {
 	})
 }
 
-func TestValidRefName(t *testing.T) {
-	valid := []string{"abc", "a-b", "a.b", "a_b", "A1", "test-store.v2"}
-	for _, name := range valid {
-		if !validRefName.MatchString(name) {
-			t.Errorf("expected %q to be valid", name)
-		}
-	}
-
-	invalid := []string{"", "-abc", ".abc", "_abc", "a b", "a!b", "a@b"}
-	for _, name := range invalid {
-		if validRefName.MatchString(name) {
-			t.Errorf("expected %q to be invalid", name)
-		}
-	}
-}
-
 func TestRunStoreList_MultipleStores(t *testing.T) {
 	tmpDir := t.TempDir()
 	profilesPath := filepath.Join(tmpDir, "profiles.yaml")
@@ -1455,5 +1440,71 @@ func TestClientConfigFromProfileStore_SFTPFields(t *testing.T) {
 	}
 	if sc.Store.SFTP.Key != "/path/to/key" {
 		t.Fatalf("expected storeSFTPKey=/path/to/key, got %q", sc.Store.SFTP.Key)
+	}
+}
+
+// TestStoreNewFlagsMatchConfigFieldTable pins `store new`'s flag list against
+// pkg/config's store-field table, in both directions.
+//
+// The declarations stay written out because each carries prose a reader of `-h`
+// needs — "S3 static access key" rather than the table's generic "S3 Access
+// Key". That makes them the one remaining restatement of the field set, so this
+// test is what stops them drifting: a field added to the profiles format now
+// fails here instead of being silently unsettable by `store new`, which is how
+// the four hand-written copies diverged in the first place (issue #568).
+func TestStoreNewFlagsMatchConfigFieldTable(t *testing.T) {
+	newCmd, ok := storeCommand().lookupChild("new")
+	if !ok {
+		t.Fatal("store has no `new` subcommand")
+	}
+
+	declared := map[string]bool{}
+	for _, s := range ownSpecsOf(newCmd) {
+		switch s.name {
+		case "name", "profiles-file": // not store fields
+			continue
+		}
+		declared[s.name] = true
+	}
+
+	expected := map[string]bool{}
+	for _, f := range config.StoreFieldSpecs() {
+		if n := f.FlagName(); n != "" {
+			expected[n] = true
+		}
+		if n := f.SecretFlagName(); n != "" {
+			expected[n] = true
+		}
+	}
+
+	for name := range expected {
+		if !declared[name] {
+			t.Errorf("pkg/config describes store field flag -%s but `store new` does not declare it; "+
+				"add it to declareStoreNewArgs", name)
+		}
+	}
+	for name := range declared {
+		if !expected[name] {
+			t.Errorf("`store new` declares -%s, which pkg/config's store-field table does not describe; "+
+				"add it to fieldSpecs() or the value will be parsed and dropped", name)
+		}
+	}
+}
+
+// TestStoreNewFlagTargetsAreAllRegistered guards the map the flags bind into:
+// a flag declared without going through (*storeNewArgs).field would parse into
+// a target toProfileStore never reads, and its value would vanish silently.
+func TestStoreNewFlagTargetsAreAllRegistered(t *testing.T) {
+	g := &globalFlags{}
+	a, input := declareStoreNewArgs(g)
+	for _, s := range input.flags {
+		switch s.name {
+		case "name", "profiles-file":
+			continue
+		}
+		if _, ok := a.values[s.name]; !ok {
+			t.Errorf("-%s is declared but not registered in values; declare it with a.field so "+
+				"toProfileStore can read it", s.name)
+		}
 	}
 }

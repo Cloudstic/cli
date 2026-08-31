@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cloudstic/cli/internal/engine"
+	cloudstic "github.com/cloudstic/cli"
 )
 
 func TestSplitCommaList(t *testing.T) {
@@ -32,7 +32,7 @@ func TestRunBackup_JSON(t *testing.T) {
 	tmpDir := t.TempDir()
 	var out strings.Builder
 	r := &runner{out: &out, errOut: &strings.Builder{}, client: &stubClient{
-		backupResult: &engine.RunResult{
+		backupResult: &cloudstic.BackupResult{
 			SnapshotHash: "abc123",
 			SnapshotRef:  "snapshot/abc123",
 			FilesNew:     3,
@@ -57,7 +57,7 @@ func TestPrintBackupSummary_EmptySnapshotIgnored(t *testing.T) {
 	var out strings.Builder
 	r := &runner{out: &out}
 
-	printBackupSummary(r.out, &engine.RunResult{
+	printBackupSummary(r.out, &cloudstic.BackupResult{
 		Root:                 "node/abc",
 		FilesUnmodified:      1,
 		Duration:             2,

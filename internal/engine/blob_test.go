@@ -36,8 +36,8 @@ func TestBlobWriterDoesNotPlaceABodyItCouldNotStore(t *testing.T) {
 	if err := w.Flush(ctx); !errors.Is(err, boom) {
 		t.Fatalf("Flush hid the store failure: %v", err)
 	}
-	if p.ref != nil {
-		t.Fatalf("the body was placed at %+v despite its blob never being stored", p.ref)
+	if placed := p.placed(); placed != nil {
+		t.Fatalf("the body was placed at %+v despite its blob never being stored", placed)
 	}
 }
 
@@ -93,7 +93,7 @@ func TestBlobReaderChecksTheHashWhenNothingIsSealed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	payload := &hamt.Payload{Body: p.ref, Size: int64(len(body))}
+	payload := &hamt.Payload{Body: p.placed(), Size: int64(len(body))}
 	r := newBlobReader(dest, nil)
 
 	got, err := r.Body(ctx, payload, core.ComputeHash(body))

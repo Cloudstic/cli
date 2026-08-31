@@ -171,12 +171,13 @@ func (bm *BackupManager) upload(ctx context.Context, pending []core.FileMeta, to
 		}
 		ready, buf = ready[:0], buf[:0]
 		for _, res := range awaiting {
-			if res.promise != nil && res.promise.ref == nil {
-				buf = append(buf, res)
-				continue
-			}
 			if res.promise != nil {
-				res.payload.Body = res.promise.ref
+				placed := res.promise.placed()
+				if placed == nil {
+					buf = append(buf, res)
+					continue
+				}
+				res.payload.Body = placed
 			}
 			ready = append(ready, res)
 		}

@@ -579,3 +579,112 @@ func blobFor(t *testing.T, s store.ObjectStore, body []byte) *hamt.BodyRef {
 		Total:  int64(len(data)),
 	}
 }
+
+// Two snapshots can hold entries with the same metadata ref pointing at
+// different blobs: identical metadata says nothing about where the body was
+// packed, and a re-upload puts the same bytes into whatever blob is open.
+//
+// The mark used to deduplicate on that ref and skip the second entry's
+// objects, so the sweep deleted a blob a retained snapshot still needed. This
+// is the shape of that bug, built directly rather than through a backup,
+// because reproducing it through the upload path depends on packing timing.
+func TestV3Prune_MarksEveryPayloadEvenWhenTheMetadataRefRepeats(t *testing.T) {
+	ctx := context.Background()
+	dest := NewMockStore()
+
+	body := []byte("one body, packed twice into different blobs")
+	fm := core.FileMeta{
+		FileID: "id-x", Name: "x", Type: core.FileTypeFile,
+		ContentHash: core.ComputeHash(body), Size: int64(len(body)),
+	}
+	ref, data := metaFor(t, fm)
+
+	// The same entry value in two snapshots, each naming its own blob.
+	firstBlob := blobFor(t, dest, body)
+	rootA := insertV3Entry(t, dest, ref, &hamt.Payload{Meta: data, Size: fm.Size, Body: firstBlob})
+	snapA := v3Snapshot(t, dest, rootA)
+
+	// A second blob holding the body alongside other content, as a re-upload
+	// into a different run of the walk would produce.
+	secondBlob := blobFor(t, dest, append([]byte("padding"), body...))
+	if secondBlob.Blob == firstBlob.Blob {
+		t.Fatal("fixture produced one blob, not two")
+	}
+	rootB := insertV3Entry(t, dest, ref, &hamt.Payload{Meta: data, Size: fm.Size, Body: secondBlob})
+	snapB := v3Snapshot(t, dest, rootB)
+
+	if snapA == snapB {
+		t.Fatal("fixture produced one snapshot, not two")
+	}
+
+	if _, err := NewPruneManager(v3Deps(dest)).Run(ctx); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+
+	for _, b := range []string{firstBlob.Blob, secondBlob.Blob} {
+		if exists, _ := dest.Exists(ctx, b); !exists {
+			t.Errorf("prune deleted %s, which a retained snapshot still references", b)
+		}
+	}
+}
+
+// A default check must notice a missing blob. The per-entry chunk loop is the
+// only existence check a default run makes over an entry's content, and a
+// body-referencing entry has no chunks — so without an equivalent for blob/, a
+// repository missing every body reports healthy. -read-data is not a
+// substitute: nothing requires a user to run it before trusting a check.
+func TestV3Check_ReportsAMissingBlobWithoutReadData(t *testing.T) {
+	ctx := context.Background()
+	dest := NewMockStore()
+
+	body := []byte("a body that will go missing")
+	fm := core.FileMeta{
+		FileID: "id-x", Name: "x", Type: core.FileTypeFile,
+		ContentHash: core.ComputeHash(body), Size: int64(len(body)),
+	}
+	ref, data := metaFor(t, fm)
+	b := blobFor(t, dest, body)
+	root := insertV3Entry(t, dest, ref, &hamt.Payload{Meta: data, Size: fm.Size, Body: b})
+	v3Snapshot(t, dest, root)
+
+	// Healthy first, so the finding below is the deletion and not the fixture.
+	if res, err := NewCheckManager(v3Deps(dest)).Run(ctx); err != nil || len(res.Errors) != 0 {
+		t.Fatalf("baseline check: err=%v errors=%v", err, res.Errors)
+	}
+
+	delete(dest.Data, b.Blob)
+
+	res, err := NewCheckManager(v3Deps(dest)).Run(ctx)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if len(res.Errors) == 0 {
+		t.Fatal("a default check reported a repository healthy after its only blob was deleted")
+	}
+}
+
+// An entry naming bytes past the end of its blob is corruption a default run
+// must catch, and catching it costs no read: the blob's size is enough.
+func TestV3Check_ReportsARangePastTheEndOfItsBlob(t *testing.T) {
+	ctx := context.Background()
+	dest := NewMockStore()
+
+	body := []byte("a body whose entry will overreach")
+	fm := core.FileMeta{
+		FileID: "id-x", Name: "x", Type: core.FileTypeFile,
+		ContentHash: core.ComputeHash(body), Size: int64(len(body)),
+	}
+	ref, data := metaFor(t, fm)
+	b := blobFor(t, dest, body)
+	b.Length += 4096
+	root := insertV3Entry(t, dest, ref, &hamt.Payload{Meta: data, Size: fm.Size, Body: b})
+	v3Snapshot(t, dest, root)
+
+	res, err := NewCheckManager(v3Deps(dest)).Run(ctx)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if len(res.Errors) == 0 {
+		t.Fatal("a default check accepted an entry naming bytes past the end of its blob")
+	}
+}

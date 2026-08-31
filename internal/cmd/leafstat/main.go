@@ -40,18 +40,25 @@ import (
 )
 
 // leaf is one node's contribution, split the way the leaf-budget question
-// needs it: metadata is what a changed entry actually changes, inline content
-// is what a rewrite drags along with it.
+// needs it. Metadata is what a changed entry actually changes; chunk refs ride
+// along with it.
+//
+// Body bytes are counted but deliberately excluded from size(): a body
+// reference names a range in a blob/ object, and those bytes are not in the
+// node. Adding them would report external storage as encoded leaf size, which
+// is the confusion this tool exists to prevent. They are reported separately
+// and deduplicated by blob, since many entries share one.
 type leaf struct {
-	ref     string
-	entries int
-	meta    int
-	inline  int
-	chunks  int
-	nchunks int
+	ref       string
+	entries   int
+	meta      int
+	chunks    int
+	nchunks   int
+	bodies    int
+	bodyBytes int
 }
 
-func (l leaf) size() int { return l.meta + l.inline + l.chunks }
+func (l leaf) size() int { return l.meta + l.chunks }
 
 func main() {
 	repo := flag.String("repo", "", "path to a local, unencrypted v3 repository")
@@ -76,7 +83,7 @@ func main() {
 	root, err := rootOf(ctx, s, *snap)
 	check(err)
 
-	nodes, err := collect(ctx, s, root)
+	nodes, blobs, err := collect(ctx, s, root)
 	check(err)
 
 	if *refsOnly {
@@ -89,15 +96,18 @@ func main() {
 		check(printEntries(ctx, s, root))
 		return
 	}
-	report(root, nodes, *perLeaf)
+	report(root, nodes, blobs, *perLeaf)
 }
 
 // collect walks the tree once, attributing each entry to the node that
 // delivered it. WalkTree is depth-first and sequential, so every entry between
 // two onNode calls belongs to the first of them.
-func collect(ctx context.Context, s store.ObjectStore, root string) ([]leaf, error) {
+func collect(ctx context.Context, s store.ObjectStore, root string) ([]leaf, map[string]int64, error) {
 	var nodes []leaf
 	var cur *leaf
+	// blob ref -> its whole stored size, so bodies are reported per object
+	// rather than summed per entry that names one.
+	blobs := map[string]int64{}
 	err := hamt.NewTree(s, hamt.WithFormatV3()).WalkTree(ctx, root,
 		func(ref string) error {
 			nodes = append(nodes, leaf{ref: ref})
@@ -110,8 +120,14 @@ func collect(ctx context.Context, s store.ObjectStore, root string) ([]leaf, err
 				return nil
 			}
 			cur.meta += len(p.Meta)
+			// Deliberately not counted as leaf bytes. A body reference names
+			// a range in a blob/ object; those bytes are not in the node, and
+			// adding them here would report external storage as encoded leaf
+			// size — the exact confusion this tool exists to prevent.
 			if p.Body != nil {
-				cur.inline += int(p.Body.Length)
+				cur.bodies++
+				cur.bodyBytes += int(p.Body.Length)
+				blobs[p.Body.Blob] = p.Body.Total
 			}
 			cur.nchunks += len(p.Chunks)
 			for _, c := range p.Chunks {
@@ -119,10 +135,10 @@ func collect(ctx context.Context, s store.ObjectStore, root string) ([]leaf, err
 			}
 			return nil
 		})
-	return nodes, err
+	return nodes, blobs, err
 }
 
-func report(root string, nodes []leaf, perLeaf bool) {
+func report(root string, nodes []leaf, blobs map[string]int64, perLeaf bool) {
 	var leaves []leaf
 	var internal int
 	for _, n := range nodes {
@@ -134,35 +150,47 @@ func report(root string, nodes []leaf, perLeaf bool) {
 	}
 	sort.Slice(leaves, func(i, j int) bool { return leaves[i].size() < leaves[j].size() })
 
-	var meta, inline, chunks, entries, metaOnly, metaOnlyBytes int
+	var meta, chunks, entries, bodies, bodyBytes, metaOnly, metaOnlyBytes int
 	for _, l := range leaves {
-		meta, inline, chunks, entries = meta+l.meta, inline+l.inline, chunks+l.chunks, entries+l.entries
-		if l.inline == 0 {
+		meta, chunks, entries = meta+l.meta, chunks+l.chunks, entries+l.entries
+		bodies, bodyBytes = bodies+l.bodies, bodyBytes+l.bodyBytes
+		if l.bodies == 0 {
 			metaOnly++
 			metaOnlyBytes += l.size()
 		}
 	}
-	total := meta + inline + chunks
+	total := meta + chunks
 
 	fmt.Printf("root %s\n", root)
 	fmt.Printf("nodes: %d internal, %d leaves, %d entries\n", internal, len(leaves), entries)
-	fmt.Printf("encoded: %s total  meta %s (%.0f%%)  inline %s (%.0f%%)  chunk refs %s (%.0f%%)\n",
-		size(total), size(meta), pct(meta, total), size(inline), pct(inline, total), size(chunks), pct(chunks, total))
+	fmt.Printf("encoded: %s total  meta %s (%.0f%%)  chunk refs %s (%.0f%%)\n",
+		size(total), size(meta), pct(meta, total), size(chunks), pct(chunks, total))
 	if len(leaves) > 0 {
 		fmt.Printf("leaf size: min %s  p50 %s  p90 %s  max %s  mean %s\n",
 			size(leaves[0].size()), size(leaves[len(leaves)/2].size()),
 			size(leaves[(len(leaves)*9)/10].size()), size(leaves[len(leaves)-1].size()),
 			size(total/len(leaves)))
 	}
-	fmt.Printf("metadata-only leaves (no inline content): %d of %d, %s\n",
+	fmt.Printf("leaves referencing no body: %d of %d, %s\n",
 		metaOnly, len(leaves), size(metaOnlyBytes))
+
+	// Bodies live outside the tree, so they are reported outside the encoded
+	// total. Deduplicated by blob, because a blob holds many members and
+	// summing per entry would count one object once per entry that names it.
+	var blobBytes int
+	for _, total := range blobs {
+		blobBytes += int(total)
+	}
+	fmt.Printf("bodies: %d entries reference %s across %d blobs totalling %s\n",
+		bodies, size(bodyBytes), len(blobs), size(blobBytes))
 
 	if !perLeaf {
 		return
 	}
 	for _, l := range leaves {
-		fmt.Printf("  %s entries=%d size=%s meta=%s inline=%s chunkrefs=%s(%d)\n",
-			short(l.ref), l.entries, size(l.size()), size(l.meta), size(l.inline), size(l.chunks), l.nchunks)
+		fmt.Printf("  %s entries=%d size=%s meta=%s chunkrefs=%s(%d) bodies=%d(%s external)\n",
+			short(l.ref), l.entries, size(l.size()), size(l.meta), size(l.chunks), l.nchunks,
+			l.bodies, size(l.bodyBytes))
 	}
 }
 

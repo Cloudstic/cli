@@ -101,10 +101,10 @@ func TestCopyEntry_CachedEntryKeepsItsBodyReference(t *testing.T) {
 	if err := cm.dstBlobs.Flush(ctx); err != nil {
 		t.Fatalf("flush: %v", err)
 	}
-	if first.promise.ref == nil {
+	if first.promise.placed() == nil {
 		t.Fatal("the body was never placed in a blob")
 	}
-	if second.promise == nil || *second.promise.ref != *first.promise.ref {
+	if second.promise == nil || *second.promise.placed() != *first.promise.placed() {
 		t.Fatalf("the cache hit points at a different body: %+v vs %+v", second.promise, first.promise)
 	}
 

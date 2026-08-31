@@ -281,12 +281,24 @@ func (pm *PruneManager) markSnapshot(ctx context.Context, ref string, reachable 
 				return nil
 			},
 			func(key, ref string, refs hamt.EntryRefs) error {
-				if !reachable.Add(ref) {
-					return nil
-				}
+				reachable.Add(ref)
 				if !refs.HasPayload {
 					return fmt.Errorf("v3 leaf entry %s (%s) carries no payload; refusing to prune", key, ref)
 				}
+				// Marked for *every* entry, never skipped because this ref has
+				// been seen before.
+				//
+				// An entry's ref addresses its metadata, and identical
+				// metadata can be reached again in a later snapshot while
+				// pointing at a different body: a re-upload packs the same
+				// bytes into whatever blob is open at the time. Deduplicating
+				// on the ref would then mark the first entry's blob and skip
+				// the second's, and the sweep would delete data a retained
+				// snapshot still needs.
+				//
+				// The saving that dedup bought is not worth it anyway: what it
+				// skipped was a handful of idempotent inserts into a set that
+				// already deduplicates.
 				buf = refs.Objects(buf[:0])
 				for _, o := range buf {
 					reachable.Add(o)

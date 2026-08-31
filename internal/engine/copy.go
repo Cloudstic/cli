@@ -318,6 +318,12 @@ func NewCopyManager(d Deps, src CopySide, dstRepoID string) *CopyManager {
 
 // Run performs the copy.
 func (cm *CopyManager) Run(ctx context.Context, opts ...CopyOption) (*CopyResult, error) {
+	if cm.dstV3 && cm.dstBlobs == nil {
+		return nil, errors.New("copy: format v3 needs a blob store for the destination; none was configured")
+	}
+	if cm.srcV3 && cm.srcBlobs == nil {
+		return nil, errors.New("copy: format v3 needs a blob store for the source; none was configured")
+	}
 	started := time.Now()
 	var cfg copyConfig
 	for _, opt := range opts {
@@ -729,10 +735,11 @@ func (cm *CopyManager) flushInserts(ctx context.Context, txn *hamt.Txn) error {
 		return err
 	}
 	for _, pi := range cm.pendingInserts {
-		if pi.promise.ref == nil {
+		placed := pi.promise.placed()
+		if placed == nil {
 			return fmt.Errorf("entry %s: its body was never placed in a blob", shortRef(pi.ref))
 		}
-		pi.payload.Body = pi.promise.ref
+		pi.payload.Body = placed
 		if err := txn.InsertWithPayload(ctx, pi.affinityKey, pi.key, pi.ref, pi.payload); err != nil {
 			return err
 		}
@@ -979,7 +986,7 @@ func (cm *CopyManager) copyContent(
 		}
 	}
 
-	body, err := cm.readSourceContent(ctx, srcKey, p)
+	body, err := cm.readSourceContent(ctx, srcKey, meta.ContentHash, p)
 	if err != nil {
 		return "", contentBody{}, err
 	}
@@ -1021,19 +1028,20 @@ func (cm *CopyManager) copyContent(
 // filemeta names (v2). The chunk refs are still the source's; the caller
 // remaps them.
 func (cm *CopyManager) readSourceContent(
-	ctx context.Context, srcKey string, p *hamt.Payload,
+	ctx context.Context, srcKey, contentHash string, p *hamt.Payload,
 ) (contentBody, error) {
 	if p != nil {
 		body := contentBody{size: p.Size, chunks: p.Chunks}
 		if p.Body != nil {
-			meta, err := cm.readSourceMeta(ctx, srcKey, p)
-			if err != nil {
-				return contentBody{}, err
-			}
+			// contentHash comes from the caller, which already decoded this
+			// payload's metadata. Re-reading it here parsed the same bytes a
+			// second time and counted them against BytesRead again, inflating
+			// the reported figure by one metadata blob per file.
+			//
 			// Read whole: the destination repacks bodies into its own blobs,
 			// so there is nothing to be gained by keeping the source's layout,
 			// and the content hash is what keys the member's seal.
-			raw, err := cm.srcBlobs.Body(ctx, p, meta.ContentHash)
+			raw, err := cm.srcBlobs.Body(ctx, p, contentHash)
 			if err != nil {
 				return contentBody{}, err
 			}

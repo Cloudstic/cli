@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	"github.com/cloudstic/cli/internal/blob"
 	"github.com/cloudstic/cli/internal/hamt"
@@ -69,10 +70,19 @@ type blobWriter struct {
 
 // bodyPromise is one entry's claim on a body that has been handed to a blob
 // but not yet placed in one. Resolved when that blob is sealed.
+//
+// The placement is an atomic pointer because the two sides run on different
+// goroutines: upload workers call Add, which may seal and resolve promises,
+// while the insert loop reads them to decide whether an entry can be filed.
+// Holding the writer's mutex to read would serialise the insert loop behind
+// every upload; a pointer publish is the whole synchronisation this needs.
 type bodyPromise struct {
 	contentHash string
-	ref         *hamt.BodyRef
+	ref         atomic.Pointer[hamt.BodyRef]
 }
+
+// placed returns where the body landed, or nil while its blob is unsealed.
+func (p *bodyPromise) placed() *hamt.BodyRef { return p.ref.Load() }
 
 // newBlobWriter returns nil when there is no store to write blobs to, so a
 // misconfigured manager fails where it is built rather than panicking on the
@@ -147,7 +157,7 @@ func (w *blobWriter) sealLocked(ctx context.Context) error {
 			// reaching the encoder as "this entry has no body".
 			return fmt.Errorf("blob %s does not contain %s, which was added to it", ref, p.contentHash)
 		}
-		p.ref = &hamt.BodyRef{Blob: ref, Offset: m.Offset, Length: m.Length, Total: total}
+		p.ref.Store(&hamt.BodyRef{Blob: ref, Offset: m.Offset, Length: m.Length, Total: total})
 	}
 
 	w.pending, w.promises = nil, nil

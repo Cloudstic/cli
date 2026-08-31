@@ -46,6 +46,23 @@ A backup writes objects bottom-up, from raw data to the root pointer:
 The commit point is step 6: until `index/latest` is updated, the previous
 backup state is fully intact.
 
+A format-v3 backup writes a different set, because metadata and small bodies
+are no longer standalone objects:
+
+```
+1. chunk/*        – segments of files above the inline threshold
+2. blob/*         – packed runs of file bodies, sealed when a budget fills
+3. node/*         – HAMT nodes, whose leaves carry metadata and body references
+4. snapshot/*     – snapshot object referencing the HAMT root
+5. index/latest   – mutable pointer updated to the new snapshot
+```
+
+The ordering constraint is the same one step 6 expresses above, applied a level
+down: **a blob is stored before any entry naming it is written**. An entry
+referencing a blob that was never stored is a dangling reference, and a
+snapshot carrying one is worse than a failed backup — so a body is not
+considered placed until its blob has been put.
+
 ## Crash Safety
 
 Because all data objects are content-addressed and append-only, an interrupted
@@ -103,7 +120,19 @@ Prune performs a mark-and-sweep to reclaim space from orphaned objects:
 
 1. **Mark** — walk every `snapshot/*` key, then follow the chain
    snapshot → HAMT nodes → filemeta → content → chunks, collecting all
-   reachable keys.
+   reachable keys. In format v3 the chain is
+   snapshot → HAMT nodes → the leaf entry's own references, which are its
+   chunk refs and its `blob/` reference; there are no `filemeta/` or
+   `content/` objects to follow.
+
+   Two properties of the v3 mark are load-bearing. An entry whose references
+   cannot be read fails the prune rather than counting as reaching nothing,
+   since `docs/compatibility.md` forbids collecting garbage over data that
+   could not be fully read. And an entry's references are marked *every* time
+   it is walked, never skipped because its metadata ref has been seen before:
+   identical metadata can be reached again in a later snapshot while pointing
+   at a different blob, and skipping the second would sweep data a retained
+   snapshot still needs.
 2. **Sweep** — list all keys under each object prefix and delete any key
    not in the reachable set.
 3. **Repack** — when packfiles are enabled, fragmented packs (more than 30%

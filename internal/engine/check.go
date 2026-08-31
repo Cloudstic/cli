@@ -324,10 +324,58 @@ func (cm *CheckManager) checkLeafEntry(ctx context.Context, ref string, p *hamt.
 		}
 	}
 
+	// Checked unconditionally, like the chunk refs above and for the same
+	// reason: it is the only existence check a default run makes over an
+	// entry's content. A body-referencing entry has no chunks, so without this
+	// a v3 repository missing every blob would be reported healthy — and
+	// -read-data is not a substitute, because nothing requires a user to run
+	// it before trusting a check.
+	cm.checkBodyExists(ctx, ref, p, result, phase)
+
 	if cfg.readData {
 		cm.checkLeafContent(ctx, ref, p, meta, result, phase)
 	}
 	return nil
+}
+
+// checkBodyExists confirms the blob an entry names is present and long enough
+// to hold the range the entry claims.
+//
+// It deliberately does not read the member: that costs a ranged GET per entry
+// and proves only what -read-data proves properly by reconstructing the file.
+// What it catches is the failure a default check must never miss — a blob that
+// prune deleted, or that never arrived.
+func (cm *CheckManager) checkBodyExists(
+	ctx context.Context, ref string, p *hamt.Payload, result *CheckResult, phase ui.Phase,
+) {
+	if p.Body == nil {
+		return
+	}
+	b := p.Body
+	if cm.verified.Has(b.Blob) {
+		return
+	}
+	size, err := cm.store.Size(ctx, b.Blob)
+	if err != nil {
+		result.Errors = append(result.Errors, CheckError{
+			Key:     b.Blob,
+			Type:    "missing",
+			Message: fmt.Sprintf("entry %s references a blob that cannot be read: %v", ref, err),
+		})
+		return
+	}
+	if b.Offset+b.Length > size {
+		result.Errors = append(result.Errors, CheckError{
+			Key:  b.Blob,
+			Type: "corrupt",
+			Message: fmt.Sprintf("entry %s names bytes [%d,%d) of a blob that is %d bytes long",
+				ref, b.Offset, b.Offset+b.Length, size),
+		})
+		return
+	}
+	cm.verified.Add(b.Blob)
+	result.ObjectsVerified++
+	phase.Logf(ui.DetailVerbose, "OK: %s", b.Blob)
 }
 
 // checkLeafContent is checkManifest for a v3 entry: reconstruct the content

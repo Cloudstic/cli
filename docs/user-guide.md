@@ -2184,11 +2184,18 @@ is a request. Cached, they are one request and a local read.
 
 Things worth knowing before turning it on:
 
-- **The cache trades bytes for requests.** An object is fetched whole the
-  second time a byte range of it is read, so a run that would have made many
-  small ranged requests makes one large one instead. That is the right trade
-  for a store priced per request and against a run that reads a lot of one
-  object; it is the wrong one if you touch each object once.
+- **It usually moves fewer bytes, not more.** An object is fetched whole the
+  second time a byte range of it is read. That sounds like trading bytes for
+  requests, and for a run that touches each object once it would be — but such
+  a run never reaches the second read, so nothing is fetched whole and nothing
+  changes. A partial restore of one subtree was measured as byte-identical with
+  the cache and without it.
+
+  What the cache actually replaces is re-reading. Reading a whole repository
+  transfers each aggregate object many times over, because reads are coalesced
+  within a batch and not across them: a full restore moves about 4x its
+  repository without the cache and 8x on a format-v3 repository, against
+  roughly 1.0x with it. Fewer requests *and* fewer bytes.
 - **It is safe to delete at any time**, while Cloudstic is not running. Nothing
   in it is authoritative — every entry is a copy of an object the repository
   still holds — and a missing entry is simply a fetch.

@@ -101,6 +101,57 @@ against 121 and 169 when the working set fits. What removes both the re-reads an
 the round trips is read *order* — the thing that worked for restore's write phase
 in #455, and that `check` and `prune` do not yet do. Tracked in #478.
 
+### What a disk tier changes about the trade above (2026-09)
+
+The dilemma stated above — hold less and pay transfers, hold more and pay
+residency — is a dilemma about *memory*, and it was framed that way because a
+cache tier was assumed to be a cache tier in RAM. It has a third answer, added
+after this RFC was written: hold more, somewhere that is not resident.
+
+`internal/storelayer/diskcache.go` puts whole object bodies in a local
+directory, bounded at 2 GiB by default, directly above the backend. The +347 MB
+and +580 MB figures that made a 384 MB budget unacceptable are the cost of
+residency, and they do not follow the data to disk. Disk is roughly three
+orders of magnitude cheaper per byte than the resident memory this RFC is
+rationing, which is why a budget that was extravagant in RAM is unremarkable
+there.
+
+What it does to the numbers this RFC is about, measured on a 20,000-file
+repository:
+
+| | ranged reads only | with the disk tier |
+|---|---:|---:|
+| `restore`, requests | 6,776 | **47** cold, 14 warm |
+| `restore`, bytes moved | 466 MB | **118 MB** (repository is 119 MB) |
+| whole-pack transfers, streaming traversal | 206 | **12** (one per pack) |
+
+The third row is the one that reaches furthest. §"What the cache size can and
+cannot fix" closes by saying the cure for both the re-reads and the round trips
+is read *order*, tracked in #478, and that a streaming traversal cannot have it.
+That is now false in the form stated: a disk tier removes the re-reads without
+ordering anything, because an evicted body is on local disk rather than gone.
+The streaming restore prototype (PR #501, closed) was re-measured against it and
+its transfer regression disappears entirely.
+
+Two things this does **not** change, and they are why the rest of this RFC
+stands:
+
+- **It is not a bound on resident memory**, which is what this RFC exists to
+  provide. The catalog, `verified`, and the reachable set are untouched; every
+  argument in "Where the problem actually went" holds exactly as written.
+- **It does not rescue streaming.** With transfers fixed, the streaming
+  prototype still loses on memory — its slope is 10% better and its constant
+  174 MB worse, breaking even somewhere near 640,000 files. RFC 0025 §8's
+  conclusion survives; only its stated cause does not.
+
+`packAdmission` (#474), the floor this RFC settles for, is measurably inert
+whenever the disk tier is on: sweeping `packPromoteAfter` across 2, 8 and 32
+changes a cached restore not at all, because the tier promotes first and serves
+every subsequent read locally. It still earns its keep with the cache disabled,
+where the shipped value of 8 is about 16% better than 2. Its own doc comment
+already anticipates its removal; this is a third condition for that, alongside
+the two it names.
+
 ### Where the problem actually went
 
 Every structure this RFC and its issues tried to bound is O(objects): the

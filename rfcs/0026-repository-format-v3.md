@@ -1225,6 +1225,92 @@ bodies from metadata is not the storage.** It is the 21x on every
 metadata-only read, and the fact that write amplification then acts on 14.9 MB
 instead of 311 MB.
 
+### Side by side with the packfile format, under a retention policy
+
+The section above measures what a *retained* snapshot costs while snapshots
+accumulate. That is the right measurement for the write amplification the
+format causes, and the wrong one for what a repository weighs, because nobody
+keeps every backup forever. Expiry is the normal case and it changes the sign
+of the result.
+
+Both formats were aged in lockstep on one 20,000-file tree — same churn
+sequence from `gentree -churn`, renames suppressed so the comparison is about
+content change rather than about path identity — with `forget -keep-last 5
+-prune` on every round past the fifth, which is what a scheduled backup with a
+retention policy actually does.
+
+| round | 5 | 10 | 15 | 20 | 25 | 30 |
+|---|---:|---:|---:|---:|---:|---:|
+| packfile format | 102 MB | 110 | 115 | 116 | 116 | **119** |
+| format v3 | 94 MB | 99 | 100 | 105 | 101 | **102** |
+
+v3 reaches a flat steady state around 101 MB; the packfile format drifts upward
+by 17% over the same 30 rounds. Unpruned over 25 backups the ordering is the
+opposite and dramatic — 223 MB against 148 MB — which is the figure the section
+above predicts, and it is measuring a repository nobody operates. **v3's
+retention cost is high and reclaimable; the packfile format's is lower and
+partly is not.**
+
+The rest of the comparison, at that steady state, with no local object cache so
+that the numbers are properties of the formats:
+
+| operation | packfile time | v3 time | packfile requests | v3 requests |
+|---|---:|---:|---:|---:|
+| `list` | 0.15 s | **0.07 s** | 8 | 5 |
+| `ls` | 0.60 s | **0.22 s** | 189 | **34** |
+| `find` | 0.97 s | **0.28 s** | 9,050 | **124** |
+| `diff` | 0.64 s | **0.28 s** | 167 | **61** |
+| `check` | 2.11 s | **0.36 s** | 7 | 4 |
+| `restore` | 2.13 s | 2.18 s | 6,746 | **2,125** |
+| `forget --prune` | 3.22 s | **0.62 s** | 1,143 | 1,380 |
+
+Peak resident memory runs 136–325 MB for the packfile format against 89–174 MB
+for v3, and the packfile figures grow with snapshot count where v3's do not.
+
+Two results in that table are worth more than the ratios. `find` at 9,050
+requests against 124 is the metadata-read case the format was built for,
+arriving at 73x rather than the 21x the targets asked for. And a *partial*
+restore — one subtree, three files, 20 KB — moves **115 MB in the packfile
+format against 4.2 MB in v3**, because a packed repository has no locality
+between a subtree and the packs its metadata landed in, so a scattered read
+touches most of them. Restoring one folder is a more common operation than
+restoring everything, and it is the widest gap measured anywhere in this work.
+
+### What the local object cache changes about all of this
+
+The disk cache (`internal/storelayer/diskcache.go`) was added after these
+measurements and it moves both formats, unequally, so the comparison above is
+the uncached one on purpose: with a cache warm enough, the winner is whichever
+format has fewer distinct objects to fetch, which is a different question.
+
+It also corrects a claim this RFC's read path is built on. Ranged reads were
+taken to be strictly cheaper than whole-object fetches, and for a full restore
+they are not: coalescing merges spans within one batch but never across
+batches, so each of a repository's blobs is re-read about ninety times, and the
+restore moves **854 MB to read 74 MB of blobs — 8.4x**. The packfile format is
+not exempt, at 3.9x. A cache that holds whole objects brings both to about
+1.0x. The `restoreIOGap` reasoning still holds for a partial restore, which was
+measured to be byte-identical with the cache and without it, because an object
+read once never reaches the threshold that promotes it.
+
+So the honest summary of the read path is narrower than §5 states it: ranged,
+coalesced reads are right for reading *part* of a repository and wrong for
+reading all of it, and nothing in the format tells the reader which it is
+doing. Stating demand — the mechanism RFC 0025 §2 describes — is what would
+close that, and it is not implemented for blobs.
+
+### What is not measured here
+
+- Everything above is a local store. Request counts and bytes transferred are
+  properties of the work and carry over; wall time does not, and no figure here
+  is evidence about latency against object storage.
+- One churn pattern on one tree, at 20,000 files. The retention steady state in
+  particular is a property of the churn's breadth, which §"What retention
+  costs" shows is the variable v3 is most sensitive to.
+- Peak resident memory is transient-dominated: under an aggressive collector
+  the same operations retain 24–32% less, so the figures above overstate what
+  is held rather than allocated.
+
 ## Alternatives considered, and what they rule out
 
 Each of these was reached for and put down again, and the reasons are

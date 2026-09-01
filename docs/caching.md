@@ -28,7 +28,7 @@ holds, and deleting the directory costs requests and nothing else.
 | `KeyCacheStore.knownDigests` / `knownKeys` | `internal/storelayer/keycache.go` | raw digest (fallback: object key) → exists | one `backup` run | every key under the preloaded prefixes |
 | `PackStore.catalog` / `packKeys` | `internal/storelayer/pack.go` | object key → pack ref + offset | `Client` | one entry per packed object |
 | `PackStore.packCache` | `internal/storelayer/packbodycache.go` | pack ref → raw packfile bytes | `Client` | LRU bounded by bytes, `packBodyCacheBudget` (64 MB) |
-| `NodeStore.cache` | `internal/hamt/nodestore.go` | node ref → decoded `*node` | `hamt.Tree` | LRU, 4096 nodes |
+| `NodeStore.cache` | `internal/hamt/nodestore.go` | node ref → decoded `*node` | `hamt.Tree` | LRU. v2: 4096 nodes (`nodeCacheSize`). v3: bytes, `nodeCacheLeaves` x the leaf budget (16 x 4 MB = 64 MB), overridable with `CLOUDSTIC_TEST_NODE_CACHE_BYTES` |
 | `metaLoader.cache` | `internal/engine/metaloader.go` | filemeta ref → decoded `core.FileMeta` | `diff`: manager. `backup`: the scan phase only — released before the upload | unbounded while enabled; enabled only for `backup` and `diff` |
 | `bodyIndex.placed` | `internal/engine/bodyindex.go` | content hash → body placement (`hamt.BodyRef`, or a promise for one) | one `backup` run, format v3 only — released when the upload ends | bounded by bytes, `bodyIndexBytes` (32 MB) |
 | `findScanner.evaluated` | `internal/engine/find_scan.go` | 16-byte ref digest → match verdict | one `find` run | one small entry per distinct filemeta ref |
@@ -55,7 +55,7 @@ CompressedStore → EncryptedStore → MeteredStore → [PackStore] → [DiskCac
 duration of a single run:
 
 ```text
-KeyCacheStore → CompressedStore → EncryptedStore → MeteredStore → [PackStore] → <backend>
+KeyCacheStore → CompressedStore → EncryptedStore → MeteredStore → [PackStore] → [DiskCacheStore] → <backend>
 ```
 
 That position is the point. A `Put` of a content-addressed key the cache already

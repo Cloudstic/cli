@@ -67,9 +67,11 @@ The engine's own caches sit above the chain entirely, holding decoded objects:
 `NodeStore` for `node/`, `metaLoader` for `filemeta/`.
 
 `DiskCacheStore` sits at the other end, directly above the backend, and is the
-one layer that is opt-in: `NewClient` builds it only when a caller passes
-`WithObjectCache`, which for the CLI means `-object-cache-dir` or
-`CLOUDSTIC_OBJECT_CACHE_DIR` resolved into a `pkg/config.Client`. The root
+one layer a caller chooses: `NewClient` builds it only when passed
+`WithObjectCache`. The CLI passes it for every command, defaulting the
+directory to `os.UserCacheDir()/cloudstic/objects`, so the cache is on unless
+`-no-object-cache` says otherwise; an embedding program gets none unless it
+asks. The root
 package reads no environment variable for it — where a cache directory comes
 from is a question for whoever builds the client, since it is a property of the
 machine rather than of the repository. Its position is what lets one

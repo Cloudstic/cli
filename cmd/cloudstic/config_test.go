@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -320,5 +321,65 @@ func TestGlobalFlags_MalformedObjectCacheBytesIsRejected(t *testing.T) {
 		t.Fatal("a malformed budget was accepted")
 	} else if !strings.Contains(err.Error(), "CLOUDSTIC_OBJECT_CACHE_BYTES") {
 		t.Errorf("error does not name the variable: %v", err)
+	}
+}
+
+// The cache is on by default, and the default directory is the platform's
+// cache location rather than the config directory. The distinction matters:
+// configuration is precious and may be backed up, this is disposable, and on
+// macOS the OS may purge it — which is right for a cache and wrong for a
+// profiles file.
+func TestResolveClientConfig_ObjectCacheDefaultsOnUnderTheOSCacheDir(t *testing.T) {
+	// XDG_CACHE_HOME is what os.UserCacheDir consults on Linux; on macOS it
+	// uses $HOME/Library/Caches. Set both so the assertion holds either way.
+	cacheHome := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cacheHome)
+	t.Setenv("HOME", home)
+
+	want, err := defaultObjectCachePath()
+	if err != nil {
+		t.Fatalf("defaultObjectCachePath: %v", err)
+	}
+	if want == "" {
+		t.Skip("no OS cache directory on this platform")
+	}
+	if !strings.HasPrefix(want, cacheHome) && !strings.HasPrefix(want, home) {
+		t.Fatalf("default %q is under neither %q nor %q", want, cacheHome, home)
+	}
+	if filepath.Base(want) != "objects" || filepath.Base(filepath.Dir(want)) != "cloudstic" {
+		t.Errorf("default %q does not end in cloudstic/objects", want)
+	}
+
+	g := newTestGlobalFlags()
+	cfg, err := resolveClientConfig(g)
+	if err != nil {
+		t.Fatalf("resolveClientConfig: %v", err)
+	}
+	if cfg.ObjectCacheDir != want {
+		t.Errorf("ObjectCacheDir=%q want %q (the cache should be on by default)", cfg.ObjectCacheDir, want)
+	}
+	if cfg.DisableObjectCache {
+		t.Error("the cache is disabled by default")
+	}
+}
+
+// Resolving the default must not create the directory. Help and shell
+// completion resolve flags too, and creating a directory as a side effect of
+// asking for help is the bug -profiles-file's late default exists to avoid.
+func TestDefaultObjectCachePath_CreatesNothing(t *testing.T) {
+	cacheHome := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cacheHome)
+	t.Setenv("HOME", t.TempDir())
+
+	path, err := defaultObjectCachePath()
+	if err != nil {
+		t.Fatalf("defaultObjectCachePath: %v", err)
+	}
+	if path == "" {
+		t.Skip("no OS cache directory on this platform")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("resolving the default created %s (stat err = %v)", path, err)
 	}
 }

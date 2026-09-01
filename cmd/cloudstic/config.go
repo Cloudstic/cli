@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/cloudstic/cli/pkg/config"
 	"github.com/cloudstic/cli/pkg/profile"
@@ -197,4 +199,33 @@ func flagDecidedFields(provided func(string) bool) config.FieldSet {
 		}
 	}
 	return decided
+}
+
+// defaultObjectCachePath is where the local object cache lives when no
+// directory is given.
+//
+// os.UserCacheDir rather than paths.ConfigDir, and the distinction is not
+// cosmetic. Configuration is precious — profiles, tokens, the things a user
+// would be upset to lose and may back up — while this directory is disposable
+// by construction: every entry is an immutable object that can be fetched
+// again, and deleting the lot costs one slow operation. The platforms already
+// separate the two (~/Library/Caches, $XDG_CACHE_HOME, %LocalAppData%), and on
+// macOS the OS may purge that directory on its own, which is exactly the
+// semantics wanted here and exactly the wrong semantics for a profiles file.
+//
+// A resolution failure yields no directory rather than an error. Not knowing
+// where a cache could live is a reason to run without one, never a reason to
+// fail the command the user actually asked for.
+//
+// Resolved as a late default (see applyLateDefaults) so the absolute path is
+// computed only when a command is really being run, and never while merely
+// describing one: it would otherwise be rendered into `-h` output and the
+// golden files that pin it, which would make them a property of whoever ran
+// the test.
+func defaultObjectCachePath() (string, error) {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return "", nil
+	}
+	return filepath.Join(dir, "cloudstic", "objects"), nil
 }

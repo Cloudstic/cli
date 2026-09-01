@@ -2152,24 +2152,26 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 
 ## Local object cache
 
-Cloudstic can keep a copy of the immutable objects it reads on local disk, so
-that a repeated read is served from there instead of from the store. It is off
-unless you name a directory, as a flag:
+Cloudstic keeps a copy of the immutable objects it reads on local disk, so that
+a repeated read is served from there instead of from the store. **This is on by
+default.** The directory is inside your platform's cache location — on macOS
+`~/Library/Caches/cloudstic/objects`, on Linux `$XDG_CACHE_HOME/cloudstic/objects`
+(usually `~/.cache`), on Windows the equivalent under `%LocalAppData%` — and it
+holds at most 2 GiB.
+
+It is a cache in the strict sense: every entry is an immutable object that can
+be fetched again, so deleting the directory costs nothing but the next read.
+Nothing in it is needed to restore a backup.
+
+To put it somewhere else, or to make it larger:
 
 ```bash
-cloudstic restore -object-cache-dir ~/.cache/cloudstic/objects
+cloudstic restore -object-cache-dir /mnt/fast/cloudstic-cache
+export CLOUDSTIC_OBJECT_CACHE_BYTES=$((8 * 1024 * 1024 * 1024))
 ```
 
-or as an environment variable, which every flag here also accepts:
-
-```bash
-export CLOUDSTIC_OBJECT_CACHE_DIR=~/.cache/cloudstic/objects
-export CLOUDSTIC_OBJECT_CACHE_BYTES=$((4 * 1024 * 1024 * 1024))   # optional, default 2 GiB
-```
-
-`-no-object-cache` turns it off for one command whatever the environment says,
-which is how you skip the cache without unsetting a variable you may not
-control:
+`-no-object-cache` turns it off, for one command or, exported as part of your
+shell, for all of them:
 
 ```bash
 cloudstic check -read-data -no-object-cache
@@ -2242,7 +2244,7 @@ Things worth knowing before turning it on:
 | `GOOGLE_TOKEN_FILE` | `-google-token-file` | Override Google OAuth token path |
 | `ONEDRIVE_CLIENT_ID` | `-onedrive-client-id` | Microsoft app client ID (optional, overrides built-in) |
 | `ONEDRIVE_TOKEN_FILE` | `-onedrive-token-file` | Override OneDrive token path |
-| `CLOUDSTIC_OBJECT_CACHE_DIR` | *(none)* | Directory for the local object cache; `-object-cache-dir`. Unset, the default, disables it entirely. See [Local object cache](#local-object-cache) |
+| `CLOUDSTIC_OBJECT_CACHE_DIR` | *(OS cache dir)* | Directory for the local object cache; `-object-cache-dir`. Defaults to `<os cache dir>/cloudstic/objects`; `-no-object-cache` disables the cache. See [Local object cache](#local-object-cache) |
 | `CLOUDSTIC_OBJECT_CACHE_BYTES` | *(none)* | Bytes the object cache directory may hold; `-object-cache-bytes`. Defaults to 2 GiB. A malformed value is an error, as for any other flag read from the environment; a non-positive one falls back to the default, since no value of it removes the bound |
 
 This table is kept complete by an automated test: any flag declared with an

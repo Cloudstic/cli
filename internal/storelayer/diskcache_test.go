@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -890,9 +891,7 @@ func TestDiskCacheStore_BypassReadsPastTheCacheAndDoesNotPopulateIt(t *testing.T
 	}
 	before := backendReads(base, key)
 
-	if prev := c.SetBypass(true); prev {
-		t.Error("a fresh cache reported bypass already on")
-	}
+	restore := c.BypassReads()
 
 	got, err := c.Get(ctx, key)
 	if err != nil {
@@ -925,10 +924,8 @@ func TestDiskCacheStore_BypassReadsPastTheCacheAndDoesNotPopulateIt(t *testing.T
 		t.Error("bypass evicted an entry that was already cached")
 	}
 
-	// Restoring the previous setting brings the cache back.
-	if prev := c.SetBypass(false); !prev {
-		t.Error("SetBypass did not report the previous setting")
-	}
+	// Releasing brings the cache back.
+	restore()
 	before = backendReads(base, key)
 	if _, err := c.Get(ctx, key); err != nil {
 		t.Fatal(err)
@@ -940,7 +937,84 @@ func TestDiskCacheStore_BypassReadsPastTheCacheAndDoesNotPopulateIt(t *testing.T
 
 func TestDiskCacheStore_NilBypassIsSafe(t *testing.T) {
 	var c *DiskCacheStore
-	if c.SetBypass(true) {
-		t.Error("nil cache reported bypass on")
+	c.BypassReads()()
+}
+
+// Bypass nests. A boolean restored to its previous value does not: two checks
+// overlapping on one client would have the first to finish turn the cache back
+// on underneath the second, which would then verify a local copy of the
+// repository — the one thing the bypass exists to prevent.
+func TestDiskCacheStore_BypassNestsAcrossOverlappingCallers(t *testing.T) {
+	ctx := context.Background()
+	base := newRangeCounter(newLocal(t))
+	body := bytes.Repeat([]byte("nested "), 128)
+	key := blobKey(1600)
+	mustPut(t, ctx, base, key, body)
+
+	c, _ := newDiskCache(t, base, DiskCacheBudget)
+	if _, err := c.Get(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+
+	outer := c.BypassReads()
+	inner := c.BypassReads()
+	inner() // the second caller finishes first
+
+	before := backendReads(base, key)
+	if _, err := c.Get(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	if backendReads(base, key) == before {
+		t.Error("the cache came back while a caller still held the bypass")
+	}
+
+	outer()
+	before = backendReads(base, key)
+	if _, err := c.Get(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	if backendReads(base, key) != before {
+		t.Error("the cache did not resume once every caller had released")
+	}
+
+	// Releasing twice must not credit the count twice, or an unbalanced caller
+	// would leave the cache bypassed for the life of the client.
+	outer()
+	before = backendReads(base, key)
+	if _, err := c.Get(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	if backendReads(base, key) != before {
+		t.Error("a repeated release disabled the cache")
+	}
+}
+
+// A range whose offset and length sum past MaxInt64 must be rejected, not
+// wrapped into a negative that passes the bounds test and then sizes an
+// allocation. Both paths are covered: the cached one slices a verified entry,
+// the promoted one slices a body just fetched.
+func TestDiskCacheStore_RejectsAnOverflowingRange(t *testing.T) {
+	ctx := context.Background()
+	base := newRangeCounter(newLocal(t))
+	body := bytes.Repeat([]byte("w"), 4096)
+	key := blobKey(1601)
+	mustPut(t, ctx, base, key, body)
+
+	c, _ := newDiskCache(t, base, DiskCacheBudget)
+
+	// Uncached: the first ranged read is served remotely, the second promotes
+	// and slices the fetched body.
+	for range 2 {
+		if _, err := c.GetRange(ctx, key, math.MaxInt64, 1); err == nil {
+			t.Error("an overflowing range on an uncached object returned no error")
+		}
+	}
+	if _, err := c.Get(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range [][2]int64{{math.MaxInt64, 1}, {1, math.MaxInt64}, {math.MaxInt64, math.MaxInt64}} {
+		if _, err := c.GetRange(ctx, key, r[0], r[1]); err == nil {
+			t.Errorf("GetRange(%d, %d) on a cached %d-byte object returned no error", r[0], r[1], len(body))
+		}
 	}
 }

@@ -31,12 +31,18 @@ package storelayer
 //
 // # Why it is safe to keep on disk
 //
-// These objects hold ciphertext. PackStore and the blob writer both sit below
-// EncryptedStore and seal their members individually, so what lands in the
-// cache directory was already sealed before it was aggregated. A cache
-// directory discloses object sizes and count, not content. Verified rather
-// than assumed: a distinctive plaintext string from a source tree appears in
-// no repository file, and a pack measures 8.00 bits of entropy per byte.
+// In an encrypted repository these objects hold ciphertext. PackStore and the
+// blob writer both sit below EncryptedStore and seal their members
+// individually, so what lands in the cache directory was already sealed before
+// it was aggregated: the directory discloses object sizes and count, not
+// content. Verified rather than assumed — a distinctive plaintext string from
+// a source tree appears in no repository file, and a pack measures 8.00 bits
+// of entropy per byte.
+//
+// In a repository with no encryption the cache holds exactly what the store
+// holds, which is plaintext. That is not a new exposure — the store has the
+// same bytes — but it does mean the directory is as sensitive as the
+// repository, which is why it is created 0700 whatever the repository is.
 //
 // These objects are also immutable, so a cached entry can never be stale and
 // needs no invalidation — the hard half of most caches, free here.
@@ -203,7 +209,7 @@ func diskCacheable(key string) bool {
 // caching reports whether this key should be served from, and written to, the
 // cache right now.
 func (c *DiskCacheStore) caching(key string) bool {
-	return !c.bypass.Load() && diskCacheable(key)
+	return c.bypass.Load() == 0 && diskCacheable(key)
 }
 
 // DiskCacheStore serves whole-object reads and byte ranges from a local
@@ -226,9 +232,15 @@ type DiskCacheStore struct {
 	// A toggle rather than a second chain because the chain's composition
 	// order is itself a correctness invariant (see the package doc): building
 	// a second one to vary a caching decision is a far larger risk than a flag.
-	// It is client-wide for as long as it is set, so an operation that sets it
-	// must not overlap with one that depends on the cache.
-	bypass atomic.Bool
+	//
+	// A count rather than a boolean, because a boolean restored to its previous
+	// value is wrong under overlap: two checks on one client would have the
+	// first to finish restore "off" while the second was still running, and the
+	// second would then verify a local copy of the repository — the exact
+	// failure the bypass exists to prevent. It is still client-wide, so an
+	// operation that sets it slows any concurrent operation that wanted the
+	// cache; it can never disable one that wanted the store.
+	bypass atomic.Int64
 
 	mu sync.Mutex
 	// used is what the cache directory is believed to hold. It is an estimate
@@ -263,20 +275,25 @@ type cacheEntry struct {
 	size int64
 }
 
-// SetBypass makes every read go to the store beneath, and stops reads
-// populating the cache. It returns the previous setting so a caller can
-// restore it.
+// BypassReads makes every read go to the store beneath, and stops reads
+// populating the cache, until the returned function is called. It nests: the
+// cache comes back when the last caller releases, not the first.
 //
 // `check` is what this exists for. Its whole purpose is to notice that the
 // repository's own bytes have gone bad, and an entry served from local disk is
 // a verified copy of what *was* fetched, not evidence about what the store
 // holds now. Reading a repository through a cache while verifying it would
 // report the cache healthy.
-func (c *DiskCacheStore) SetBypass(on bool) bool {
+//
+// Safe on a nil receiver, which is what a client with no cache configured
+// holds, so a caller needs no branch.
+func (c *DiskCacheStore) BypassReads() func() {
 	if c == nil {
-		return false
+		return func() {}
 	}
-	return c.bypass.Swap(on)
+	c.bypass.Add(1)
+	var once sync.Once
+	return func() { once.Do(func() { c.bypass.Add(-1) }) }
 }
 
 // NewDiskCacheStore opens (creating if needed) a cache under dir.
@@ -500,7 +517,11 @@ func (c *DiskCacheStore) readVerified(key string, offset, length int64, whole bo
 	if whole {
 		offset, length = 0, h.bodyLen
 	}
-	if offset < 0 || length < 0 || offset+length > h.bodyLen {
+	// Compared against the bytes remaining rather than as offset+length, which
+	// overflows: MaxInt64 plus one wraps negative and passes a `> bodyLen`
+	// test, after which the block arithmetic below sizes an allocation from a
+	// wrapped value.
+	if offset < 0 || length < 0 || offset > h.bodyLen || length > h.bodyLen-offset {
 		return nil, true, fmt.Errorf("range %d+%d is outside %s (%d bytes)", offset, length, key, h.bodyLen)
 	}
 	if length == 0 {
@@ -731,7 +752,10 @@ func (c *DiskCacheStore) GetRange(ctx context.Context, key string, offset, lengt
 }
 
 func sliceBody(key string, body []byte, offset, length int64) ([]byte, error) {
-	if offset < 0 || length < 0 || offset+length > int64(len(body)) {
+	// Bounds stated as remaining bytes, for the overflow reason in
+	// readVerified: offset+length wraps, and this one slices on the result.
+	size := int64(len(body))
+	if offset < 0 || length < 0 || offset > size || length > size-offset {
 		return nil, fmt.Errorf("range %d+%d is outside %s (%d bytes)", offset, length, key, len(body))
 	}
 	out := make([]byte, length)

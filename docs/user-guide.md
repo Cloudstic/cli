@@ -2175,10 +2175,13 @@ Things worth knowing before turning it on:
 - **It is safe to delete at any time**, while Cloudstic is not running. Nothing
   in it is authoritative — every entry is a copy of an object the repository
   still holds — and a missing entry is simply a fetch.
-- **It holds encrypted bytes.** Objects are sealed before they reach the layer
-  that caches them, so the directory reveals object sizes and count, not
-  content. It is still worth putting somewhere only you can read; Cloudstic
-  creates it `0700`.
+- **It is as sensitive as the repository it caches.** For an encrypted
+  repository the objects are sealed before they reach the layer that caches
+  them, so the directory reveals object sizes and count, not content. For a
+  repository created without encryption it holds the same plaintext the store
+  does. Cloudstic creates the directory `0700` either way; put it somewhere
+  only you can read, and treat it like the repository if the repository is
+  unencrypted.
 - **`check` ignores it entirely.** Verifying a repository through a local copy
   of it would verify the copy, so `check` always reads the store.
 - **The budget bounds the directory, not one run.** Several Cloudstic processes

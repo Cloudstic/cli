@@ -28,9 +28,10 @@ func (c *Client) Check(ctx context.Context, opts ...CheckOption) (*CheckResult, 
 	// verified copy of what was fetched at some earlier point, which is
 	// evidence about the cache and none at all about what the store holds
 	// now — so a check reading through one would report a rotted repository
-	// healthy. See storelayer.DiskCacheStore.SetBypass.
-	prev := c.objectCache.SetBypass(true)
-	defer c.objectCache.SetBypass(prev)
+	// healthy. See storelayer.DiskCacheStore.BypassReads, which nests, so two
+	// checks overlapping on one client cannot end each other's bypass.
+	restore := c.objectCache.BypassReads()
+	defer restore()
 
 	mgr := engine.NewCheckManager(c.engineDeps())
 	return mgr.Run(ctx, opts...)

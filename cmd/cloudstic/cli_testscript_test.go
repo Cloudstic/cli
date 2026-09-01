@@ -21,6 +21,11 @@ func TestCLI(t *testing.T) {
 		Setup: func(env *testscript.Env) error {
 			env.Vars = append(env.Vars,
 				"CLOUDSTIC_CONFIG_DIR="+filepath.Join(env.WorkDir, "config"),
+				// The object cache defaults to os.UserCacheDir(), so without
+				// this a script would write into the developer's own cache
+				// directory and, since entries outlive the run, could be
+				// served an object from a previous script's repository.
+				"CLOUDSTIC_OBJECT_CACHE_DIR="+filepath.Join(env.WorkDir, "objectcache"),
 				"CLOUDSTIC_PASSWORD=",
 				"CLOUDSTIC_ENCRYPTION_KEY=",
 				"CLOUDSTIC_RECOVERY_KEY=",

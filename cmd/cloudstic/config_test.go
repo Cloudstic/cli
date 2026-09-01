@@ -1,9 +1,12 @@
 package main
 
 import (
+	"flag"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -246,5 +249,139 @@ func TestClientConfigFromFlags_ExplicitS3RegionSurvives(t *testing.T) {
 	g.s3Region = "eu-west-3"
 	if got := clientConfigFromFlags(g).Store.S3.Region; got != "eu-west-3" {
 		t.Fatalf("explicit -s3-region must survive into the config, got %q", got)
+	}
+}
+
+// The object cache reaches the client the way every other knob does: a flag
+// with an environment binding, resolved here into a pkg/config.Client that
+// pkg/open turns into a cloudstic.WithObjectCache. The root package reads no
+// environment variable of its own, so this is the only place the wiring can be
+// checked.
+func TestResolveClientConfig_ObjectCacheFromEnvironment(t *testing.T) {
+	cacheDir := t.TempDir()
+	t.Setenv("CLOUDSTIC_OBJECT_CACHE_DIR", cacheDir)
+	t.Setenv("CLOUDSTIC_OBJECT_CACHE_BYTES", "1048576")
+
+	g := newTestGlobalFlags()
+	cfg, err := resolveClientConfig(g)
+	if err != nil {
+		t.Fatalf("resolveClientConfig: %v", err)
+	}
+	if cfg.ObjectCacheDir != cacheDir {
+		t.Errorf("ObjectCacheDir=%q want %q", cfg.ObjectCacheDir, cacheDir)
+	}
+	if cfg.ObjectCacheBytes != 1<<20 {
+		t.Errorf("ObjectCacheBytes=%d want %d", cfg.ObjectCacheBytes, 1<<20)
+	}
+	if cfg.DisableObjectCache {
+		t.Error("DisableObjectCache set without -no-object-cache")
+	}
+}
+
+// -no-object-cache exists so an explicit "off" can beat a directory inherited
+// from the environment. Without it the only way to disable the cache would be
+// to unset a variable the user may not control.
+func TestResolveClientConfig_NoObjectCacheOverridesAnInheritedDirectory(t *testing.T) {
+	t.Setenv("CLOUDSTIC_OBJECT_CACHE_DIR", t.TempDir())
+
+	g := newTestGlobalFlags()
+	g.noObjectCache = true
+	cfg, err := resolveClientConfig(g)
+	if err != nil {
+		t.Fatalf("resolveClientConfig: %v", err)
+	}
+	if !cfg.DisableObjectCache {
+		t.Fatal("DisableObjectCache not set despite -no-object-cache")
+	}
+	// The directory still resolves; it is open's job to ignore it. Asserting
+	// that here keeps the two halves of the decision visible in one place.
+	if cfg.ObjectCacheDir == "" {
+		t.Error("the inherited directory was cleared rather than overridden")
+	}
+}
+
+// A malformed budget fails the command rather than being silently ignored.
+// Every other environment-bound flag behaves this way, and a typo in a limit
+// is the case where quietly carrying on is worst: the user believes they have
+// set a bound and has not.
+func TestGlobalFlags_MalformedObjectCacheBytesIsRejected(t *testing.T) {
+	t.Setenv("CLOUDSTIC_OBJECT_CACHE_BYTES", "512MB")
+
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	g := &globalFlags{}
+	specs := repoFlagSpecs(g)
+	for _, s := range specs {
+		s.bind(fs, s.name, s.bindUsage())
+	}
+	if err := fs.Parse(nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := applyEnvDefaults(fs, specs); err == nil {
+		t.Fatal("a malformed budget was accepted")
+	} else if !strings.Contains(err.Error(), "CLOUDSTIC_OBJECT_CACHE_BYTES") {
+		t.Errorf("error does not name the variable: %v", err)
+	}
+}
+
+// The cache is on by default, and the default directory is the platform's
+// cache location rather than the config directory. The distinction matters:
+// configuration is precious and may be backed up, this is disposable, and on
+// macOS the OS may purge it — which is right for a cache and wrong for a
+// profiles file.
+func TestResolveClientConfig_ObjectCacheDefaultsOnUnderTheOSCacheDir(t *testing.T) {
+	// Asserted against os.UserCacheDir itself rather than against the variables
+	// that feed it. Those differ per platform — XDG_CACHE_HOME on Linux,
+	// $HOME/Library/Caches on macOS, %LocalAppData% on Windows — so naming any
+	// of them here would fail on the platforms it does not describe, for a
+	// default that is correct.
+	base, err := os.UserCacheDir()
+	if err != nil {
+		t.Skip("no OS cache directory on this platform")
+	}
+
+	want, err := defaultObjectCachePath()
+	if err != nil {
+		t.Fatalf("defaultObjectCachePath: %v", err)
+	}
+	if got := filepath.Join(base, "cloudstic", "objects"); want != got {
+		t.Fatalf("default = %q, want %q", want, got)
+	}
+
+	g := newTestGlobalFlags()
+	cfg, err := resolveClientConfig(g)
+	if err != nil {
+		t.Fatalf("resolveClientConfig: %v", err)
+	}
+	if cfg.ObjectCacheDir != want {
+		t.Errorf("ObjectCacheDir=%q want %q (the cache should be on by default)", cfg.ObjectCacheDir, want)
+	}
+	if cfg.DisableObjectCache {
+		t.Error("the cache is disabled by default")
+	}
+}
+
+// Resolving the default must not create the directory. Help and shell
+// completion resolve flags too, and creating a directory as a side effect of
+// asking for help is the bug -profiles-file's late default exists to avoid.
+func TestDefaultObjectCachePath_CreatesNothing(t *testing.T) {
+	// Redirected into a temp directory so the assertion is about this test's
+	// path and not about whether the developer has ever run the CLI. Windows
+	// derives the cache directory from %LocalAppData% and will not follow
+	// these, so the test says so rather than asserting against a real one.
+	tmp := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", tmp)
+	t.Setenv("HOME", tmp)
+	base, err := os.UserCacheDir()
+	if err != nil || !strings.HasPrefix(base, tmp) {
+		t.Skip("os.UserCacheDir does not follow the environment on this platform")
+	}
+
+	path, err := defaultObjectCachePath()
+	if err != nil {
+		t.Fatalf("defaultObjectCachePath: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("resolving the default created %s (stat err = %v)", path, err)
 	}
 }

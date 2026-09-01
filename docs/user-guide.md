@@ -49,6 +49,7 @@ Cloudstic is a content-addressable backup tool that creates encrypted, deduplica
   - [SFTP](#sftp-storage)
 - [Encryption](#encryption)
 - [Retention Policies](#retention-policies)
+- [Local object cache](#local-object-cache)
 - [Environment Variables](#environment-variables)
 
 ---
@@ -2149,6 +2150,64 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 
 ---
 
+## Local object cache
+
+Cloudstic keeps a copy of the immutable objects it reads on local disk, so that
+a repeated read is served from there instead of from the store. **This is on by
+default.** The directory is inside your platform's cache location — on macOS
+`~/Library/Caches/cloudstic/objects`, on Linux `$XDG_CACHE_HOME/cloudstic/objects`
+(usually `~/.cache`), on Windows the equivalent under `%LocalAppData%` — and it
+holds at most 2 GiB.
+
+It is a cache in the strict sense: every entry is an immutable object that can
+be fetched again, so deleting the directory costs nothing but the next read.
+Nothing in it is needed to restore a backup.
+
+To put it somewhere else, or to make it larger:
+
+```bash
+cloudstic restore -object-cache-dir /mnt/fast/cloudstic-cache
+export CLOUDSTIC_OBJECT_CACHE_BYTES=$((8 * 1024 * 1024 * 1024))
+```
+
+`-no-object-cache` turns it off for one command, and
+`CLOUDSTIC_NO_OBJECT_CACHE=1` for every command in a shell:
+
+```bash
+cloudstic check -read-data -no-object-cache
+export CLOUDSTIC_NO_OBJECT_CACHE=1
+```
+
+What it is for: a restore, an `ls` or a `diff` reads the same packfile or blob
+many times over, once per file inside it. Against a remote store each of those
+is a request. Cached, they are one request and a local read.
+
+Things worth knowing before turning it on:
+
+- **The cache trades bytes for requests.** An object is fetched whole the
+  second time a byte range of it is read, so a run that would have made many
+  small ranged requests makes one large one instead. That is the right trade
+  for a store priced per request and against a run that reads a lot of one
+  object; it is the wrong one if you touch each object once.
+- **It is safe to delete at any time**, while Cloudstic is not running. Nothing
+  in it is authoritative — every entry is a copy of an object the repository
+  still holds — and a missing entry is simply a fetch.
+- **It is as sensitive as the repository it caches.** For an encrypted
+  repository the objects are sealed before they reach the layer that caches
+  them, so the directory reveals object sizes and count, not content. For a
+  repository created without encryption it holds the same plaintext the store
+  does. Cloudstic creates the directory `0700` either way; put it somewhere
+  only you can read, and treat it like the repository if the repository is
+  unencrypted.
+- **`check` ignores it entirely.** Verifying a repository through a local copy
+  of it would verify the copy, so `check` always reads the store.
+- **The budget bounds the directory, not one run.** Several Cloudstic processes
+  may share one cache directory, and the limit still applies to what is in it.
+  The directory may briefly exceed the limit while more than one process is
+  writing, and settles back as soon as either of them next evicts.
+
+---
+
 ## Environment Variables
 
 | Variable | Flag equivalent | Description |
@@ -2186,6 +2245,9 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 | `GOOGLE_TOKEN_FILE` | `-google-token-file` | Override Google OAuth token path |
 | `ONEDRIVE_CLIENT_ID` | `-onedrive-client-id` | Microsoft app client ID (optional, overrides built-in) |
 | `ONEDRIVE_TOKEN_FILE` | `-onedrive-token-file` | Override OneDrive token path |
+| `CLOUDSTIC_OBJECT_CACHE_DIR` | `-object-cache-dir` | Directory for the local object cache. Defaults to `<os cache dir>/cloudstic/objects`. See [Local object cache](#local-object-cache) |
+| `CLOUDSTIC_OBJECT_CACHE_BYTES` | `-object-cache-bytes` | Bytes the object cache directory may hold; defaults to 2 GiB. A malformed value is an error, as for any flag read from the environment; a non-positive one falls back to the default, since no value of it removes the bound |
+| `CLOUDSTIC_NO_OBJECT_CACHE` | `-no-object-cache` | Disable the local object cache, whatever directory is configured |
 
 This table is kept complete by an automated test: any flag declared with an
 environment binding must have a row here, or `go test ./cmd/cloudstic` fails.

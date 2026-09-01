@@ -351,6 +351,10 @@ func openClient(ctx context.Context, cfg config.Client, o *options) (*cloudstic.
 		cloudstic.WithKeychain(kc),
 		cloudstic.WithPackfile(!cfg.DisablePackfile),
 	}
+	if !cfg.DisableObjectCache && cfg.ObjectCacheDir != "" {
+		clientOpts = append(clientOpts,
+			cloudstic.WithObjectCache(cfg.ObjectCacheDir, cfg.ObjectCacheBytes))
+	}
 	if o.logWriter != nil {
 		clientOpts = append(clientOpts, cloudstic.WithLogger(o.logWriter))
 	}

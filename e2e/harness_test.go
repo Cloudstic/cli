@@ -47,6 +47,11 @@ func TestMain(m *testing.M) {
 	if ownsDir {
 		_ = os.RemoveAll(coverDir)
 	}
+	// The object cache is bounded, not small: a full suite left 176 MB across
+	// 274 entries, and it would accumulate a fresh copy per run.
+	if dir := objectCacheDir(); dir != "" {
+		_ = os.RemoveAll(dir)
+	}
 
 	os.Exit(code)
 }
@@ -122,6 +127,24 @@ var (
 // with the pid and never collided, and every process writes identical meta
 // content, so one winner was always enough. Measured before and after, the
 // suite reports the same 38.4%.
+// objectCacheDir is where the binary under test keeps its local object cache.
+//
+// It has to be set. The cache defaults to os.UserCacheDir(), so a run that
+// said nothing would write into the developer's own ~/Library/Caches — and,
+// worse, would carry entries between runs, so a test could be served an object
+// that the repository it is testing never contained.
+//
+// One directory for the whole run rather than one per command, on purpose:
+// e2e commands run in parallel, so this exercises the case the budget is
+// derived from the directory for — several processes sharing a cache.
+var objectCacheDir = sync.OnceValue(func() string {
+	dir, err := os.MkdirTemp("", "cloudstic-e2e-objcache-")
+	if err != nil {
+		return ""
+	}
+	return dir
+})
+
 func cleanEnv() []string {
 	var env []string
 	for _, e := range os.Environ() {
@@ -129,6 +152,9 @@ func cleanEnv() []string {
 			continue
 		}
 		env = append(env, e)
+	}
+	if dir := objectCacheDir(); dir != "" {
+		env = append(env, "CLOUDSTIC_OBJECT_CACHE_DIR="+dir)
 	}
 	if coverBase == "" {
 		return env

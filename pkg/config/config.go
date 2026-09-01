@@ -89,6 +89,25 @@ type Client struct {
 	Quiet           bool
 	JSON            bool
 
+	// ObjectCacheDir is where repeated object reads are cached on local disk.
+	// Empty disables the cache.
+	//
+	// Deliberately not a profile field, unlike everything in Store: a cache
+	// directory is a property of the machine running the backup, not of the
+	// repository being backed up, so it has no business travelling in a
+	// profiles file that may be shared or committed.
+	ObjectCacheDir string
+
+	// ObjectCacheBytes bounds that directory. Zero takes the built-in default;
+	// there is no value meaning "no limit".
+	ObjectCacheBytes int64
+
+	// DisableObjectCache turns the cache off whatever ObjectCacheDir says, so
+	// an explicit flag can override a directory inherited from the
+	// environment. Expressed as the negative for the reason given above: the
+	// zero value is the default behaviour.
+	DisableObjectCache bool
+
 	// Verbose asks the reporter for per-item detail. It is a presentation
 	// choice, which is why it lives here and on the reporter rather than as an
 	// option on each operation.

@@ -12,10 +12,14 @@ removed. The lesson is in how it was found — by counting hits rather than
 reading the code, which is why the benchmarks in
 `internal/engine/metaloader_bench_test.go` now exist.
 
-None of these caches is persistent. Every one lives in process memory and dies
-with the `Client` or the operation that created it. Nothing here is part of the
-repository format, so changing or removing a cache is never a compatibility
-event (`docs/compatibility.md`).
+One of these caches is persistent, and it is the exception worth stating first:
+`DiskCacheStore` lives in a directory on local disk, outlives the process, and
+may be shared with other Cloudstic processes. Everything else lives in process
+memory and dies with the `Client` or the operation that created it. Nothing
+here is part of the repository format, so changing or removing a cache — the
+disk one included — is never a compatibility event
+(`docs/compatibility.md`): every entry is a copy of an object the store still
+holds, and deleting the directory costs requests and nothing else.
 
 ## The inventory
 
@@ -30,6 +34,7 @@ event (`docs/compatibility.md`).
 | `findScanner.evaluated` | `internal/engine/find_scan.go` | 16-byte ref digest → match verdict | one `find` run | one small entry per distinct filemeta ref |
 | `Resolver.cache` | `pkg/secretref/secretref.go` | `scheme://path` → secret | `Resolver` | only `keychain`, `wincred`, `secret-service` |
 | `Client.repoIDCache`, `openCfg` | `client.go` | — → repository marker fields | `Client` | one value each |
+| `DiskCacheStore` | `internal/storelayer/diskcache.go` | object key → object body, on local disk | the directory: across runs and across processes | bytes in the directory, `DiskCacheBudget` (2 GiB) or `CLOUDSTIC_OBJECT_CACHE_BYTES` |
 
 Three things in the engine look like caches in a listing but are not, and are
 covered below so nobody unifies them with one: `BackupManager.newMetas`,
@@ -40,9 +45,9 @@ covered below so nobody unifies them with one: `BackupManager.newMetas`,
 The store chain assembled by `NewClient` is:
 
 ```text
-CompressedStore → EncryptedStore → MeteredStore → [PackStore] → <backend>
-                                                       │
-                                          catalog + packCache
+CompressedStore → EncryptedStore → MeteredStore → [PackStore] → [DiskCacheStore] → <backend>
+                                                       │                │
+                                          catalog + packCache      the cache directory
 ```
 
 `KeyCacheStore` is **not** in that chain. `NewClient` never builds one.
@@ -60,6 +65,63 @@ would mean paying for the work before discovering it was unnecessary.
 
 The engine's own caches sit above the chain entirely, holding decoded objects:
 `NodeStore` for `node/`, `metaLoader` for `filemeta/`.
+
+`DiskCacheStore` sits at the other end, directly above the backend, and is the
+one layer that is opt-in: `NewClient` builds it only when
+`CLOUDSTIC_OBJECT_CACHE_DIR` names a directory. Its position is what lets one
+mechanism serve both repository formats — everything the repository stores
+passes it in the form it is stored in, so it caches every immutable namespace
+and declines the three mutable ones (`index/`, `keys/`, `config`) without
+knowing which format wrote them. A v2 repository's packfiles and a v3
+repository's blobs are simply the largest things it sees.
+
+## The one that is on disk
+
+`DiskCacheStore` is different from everything else here in three ways, and each
+one is a job the in-memory caches do not have.
+
+**It outlives the process.** A cached object is available to the next run,
+which is the point: the amplification it removes is per operation, and a
+restore that pays it once should not pay it again tomorrow. Nothing has to be
+invalidated for this to be safe — every namespace it caches is
+content-addressed or otherwise immutable, so an entry cannot go stale.
+
+**Its bytes are verified on every read.** An in-memory cache holds bytes this
+process put there; a directory holds bytes anyone could have put there, and
+half a file if the machine lost power mid-write. Each entry therefore carries a
+SHA-256 per 64 KiB block of its body, and a read hashes the blocks it actually
+touches. Per block, not per body: verifying a whole 8 MB object to return a
+4 KB member cost more than the request being avoided (a restore at 4.55 s
+against 2.06 s), so the check is proportional to the bytes wanted. A block that
+does not match is a miss — the entry is dropped and the object refetched —
+rather than an error, because the alternative is a decryption failure reported
+against a perfectly healthy repository.
+
+**Its bound is a property of the directory, not of the process.** This is the
+part that is easy to get wrong, and was: an in-memory byte counter seeded once
+at startup is a belief about the directory, and a belief cannot see another
+process's writes, a temp file left behind by a killed save, or an entry this
+process forgot. All three were measured — one orphaned 8 MB temp file under a
+1 MiB budget left nine times the budget on disk, and two processes sharing a
+directory reached 1.8x — so a save that would exceed the budget re-derives
+usage with a `readdir` before it evicts anything, and sweeps temp files old
+enough that nothing can still be writing them. Eviction then frees a fixed
+slice of the budget rather than exactly the bytes in hand, so that the scan is
+paid once per slice written rather than once per save.
+
+Two consequences follow from the bound being shared. A process may write at
+most a slice of the budget between two looks at the directory, which is what
+keeps several processes from each enforcing the limit alone; and when nothing
+evictable is left because the rest is another process's in-flight writes, a
+save is declined rather than allowed to exceed the limit.
+
+**`check` turns it off.** `Client.Check` sets `SetBypass(true)` for the
+duration of the run. An entry served from disk is a verified copy of what was
+fetched at some earlier point, which is evidence about the cache and none at
+all about what the store holds now — so a check reading through one would
+report a rotted repository healthy. Bypass also stops the run *populating* the
+cache, since a full-repository sweep would otherwise evict everything the cache
+exists to hold.
 
 ## Which ones overlap
 
@@ -105,6 +167,26 @@ may be proportional to the repository. Reaching the cap costs deduplication and
 nothing else: the index stops recording, keeps serving what it has, and the
 bodies it can no longer answer for are packed exactly as they were before it
 existed.
+
+### `DiskCacheStore` vs `PackStore.packCache`
+
+The same objects, at different costs, with different lifetimes — which is why
+the disk tier did not replace the memory one.
+
+`packCache` holds decompressed pack bodies in memory, bounded at 64 MB, and a
+hit costs nothing at all. `DiskCacheStore` holds sealed object bodies on disk,
+bounded at 2 GiB by default, and a hit costs a read and a hash of the blocks
+touched. The memory tier is the faster of the two and cannot be made larger:
+residency must not track repository size, which is exactly why it evicts a pack
+before that pack has paid for itself and why the amplification the disk tier
+removes exists in the first place. Disk is three orders of magnitude cheaper
+per byte than resident memory, so the disk tier can be sized to the working set
+where the memory tier cannot.
+
+They also see different bytes. `packCache` sits inside `PackStore` and holds
+what a pack decompresses to; `DiskCacheStore` sits below it and holds objects
+exactly as the backend stores them, which is what lets it serve a v3 repository
+that has no `PackStore` at all.
 
 ### `NodeStore.cache` vs `PackStore.packCache`
 
@@ -280,3 +362,10 @@ The exceptions are the mutable keys, and they are handled explicitly:
   cost is an OS re-prompt. `env://`, file-backed and `config-token` refs are
   re-read every time, since they are cheap and may legitimately change within a
   process.
+- `DiskCacheStore` never stores a mutable key, which is the whole of its
+  invalidation policy. It states the rule as the exclusion — `index/`, `keys/`
+  and `config` — rather than as a list of what may be cached, so a namespace
+  added to the format is cached rather than silently skipped. `Delete` and
+  `DeleteAll` still evict, not because a deleted object's bytes could be wrong
+  but because an entry for an object the repository no longer has spends the
+  budget on data nothing will read again.

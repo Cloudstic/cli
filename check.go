@@ -24,6 +24,14 @@ var (
 // and checking that every referenced object can be read.
 // With WithReadData(), chunk data is re-hashed for byte-level verification.
 func (c *Client) Check(ctx context.Context, opts ...CheckOption) (*CheckResult, error) {
+	// Verify the repository, not a local copy of it. A cached object is a
+	// verified copy of what was fetched at some earlier point, which is
+	// evidence about the cache and none at all about what the store holds
+	// now — so a check reading through one would report a rotted repository
+	// healthy. See storelayer.DiskCacheStore.SetBypass.
+	prev := c.objectCache.SetBypass(true)
+	defer c.objectCache.SetBypass(prev)
+
 	mgr := engine.NewCheckManager(c.engineDeps())
 	return mgr.Run(ctx, opts...)
 }

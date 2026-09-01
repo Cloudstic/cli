@@ -81,6 +81,21 @@ and declines the three mutable ones (`index/`, `keys/`, `config`) without
 knowing which format wrote them. A v2 repository's packfiles and a v3
 repository's blobs are simply the largest things it sees.
 
+## What the budget guarantees
+
+The budget is checked at each save, not held as a reservation across processes.
+A save that would exceed it re-derives the directory's size with a `readdir`
+before evicting, so it sees another process's writes, its own orphaned temp
+files, and entries it has forgotten.
+
+What that does *not* give is a hard ceiling under concurrency. Two writers that
+scan the same directory before either renames can both admit a large entry, so
+the directory can transiently exceed the budget by about one entry per
+concurrent writer; the next save that scans brings it back. An inter-process
+lock would close the gap and is deliberately not taken: a stale lock file would
+block a cache entirely, which is a worse and far longer-lived failure than a
+transient overshoot on data that can always be fetched again.
+
 ## The one that is on disk
 
 `DiskCacheStore` is different from everything else here in three ways, and each

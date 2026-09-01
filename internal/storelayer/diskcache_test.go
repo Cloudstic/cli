@@ -1018,3 +1018,63 @@ func TestDiskCacheStore_RejectsAnOverflowingRange(t *testing.T) {
 		}
 	}
 }
+
+// blockingStore lets a test hold a Get open, so a Delete can be landed in the
+// window between the backend read and the save that follows it.
+type blockingStore struct {
+	store.ObjectStore
+	release chan struct{}
+	entered chan struct{}
+	once    sync.Once
+}
+
+func (s *blockingStore) Get(ctx context.Context, key string) ([]byte, error) {
+	body, err := s.ObjectStore.Get(ctx, key)
+	s.once.Do(func() {
+		close(s.entered)
+		<-s.release
+	})
+	return body, err
+}
+
+// A read that began before a deletion must not write its result afterwards.
+//
+// Without the guard the sequence is: the read misses and fetches from the
+// store; Delete drops the entry and removes the object; the read completes and
+// saves. The cache then holds an object the repository does not, and serves it.
+func TestDiskCacheStore_ReadInFlightDuringADeleteDoesNotRepopulate(t *testing.T) {
+	ctx := context.Background()
+	inner := newLocal(t)
+	blocking := &blockingStore{
+		ObjectStore: inner,
+		release:     make(chan struct{}),
+		entered:     make(chan struct{}),
+	}
+	c, dir := newDiskCache(t, blocking, DiskCacheBudget)
+
+	key := blobKey(1100)
+	mustPut(t, ctx, inner, key, bytes.Repeat([]byte("doomed "), 256))
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.Get(ctx, key)
+		done <- err
+	}()
+
+	<-blocking.entered // the backend read has returned, the save has not run
+	if err := c.Delete(ctx, key); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	close(blocking.release)
+	if err := <-done; err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if n := len(mustReadDir(t, dir)); n != 0 {
+		t.Errorf("cache holds %d entries for a deleted object; a read that began "+
+			"before the delete wrote its result afterwards", n)
+	}
+	if _, err := c.Get(ctx, key); err == nil {
+		t.Error("a deleted object was served from the cache")
+	}
+}

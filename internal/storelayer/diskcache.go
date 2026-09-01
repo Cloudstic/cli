@@ -242,6 +242,23 @@ type DiskCacheStore struct {
 	// cache; it can never disable one that wanted the store.
 	bypass atomic.Int64
 
+	// deletes counts removals, so a read that began before one can decline to
+	// write its result afterwards.
+	//
+	// A cache miss fetches from the store and then saves, and a Delete landing
+	// between those two steps would otherwise be undone: the entry is dropped,
+	// the object is removed from the backend, and the in-flight read puts it
+	// back. A later read would then be served an object the repository no
+	// longer has.
+	//
+	// One counter for the whole cache rather than a generation per key. Per
+	// key is what this wants in the abstract, but such a map grows with the
+	// number of keys ever deleted — the residency failure this layer's budget
+	// exists to avoid, reintroduced beside it. Being coarse costs nothing that
+	// matters: deletions come from prune and arrive in batches, so the reads it
+	// invalidates are few and simply repopulate.
+	deletes atomic.Uint64
+
 	mu sync.Mutex
 	// used is what the cache directory is believed to hold. It is an estimate
 	// between scans and the directory's own answer immediately after one —
@@ -553,12 +570,17 @@ func (c *DiskCacheStore) readVerified(key string, offset, length int64, whole bo
 	return out, true, nil
 }
 
-// save stores a body under key, evicting oldest-first until it fits.
+// Beyond that, it evicts oldest-first until the body fits.
 //
 // Failures are swallowed deliberately: a full or read-only disk must slow an
 // operation down, not stop one. The only thing that would make this unsafe is
 // a partially written file being read back, which the rename prevents.
-func (c *DiskCacheStore) save(key string, body []byte) {
+// save stores body under key, unless a deletion has landed since the read that
+// produced it began — see the deletes counter.
+func (c *DiskCacheStore) save(key string, body []byte, since uint64) {
+	if c.deletes.Load() != since {
+		return
+	}
 	encoded := encodeEntry(body)
 	total := int64(len(encoded))
 	if total > c.budget {
@@ -702,11 +724,12 @@ func (c *DiskCacheStore) Get(ctx context.Context, key string) ([]byte, error) {
 	if body, hit, err := c.readVerified(key, 0, 0, true); hit {
 		return body, err
 	}
+	since := c.deletes.Load()
 	body, err := c.ObjectStore.Get(ctx, key)
 	if err != nil {
 		return nil, err
 	}
-	c.save(key, body)
+	c.save(key, body, since)
 	return body, nil
 }
 
@@ -738,13 +761,14 @@ func (c *DiskCacheStore) GetRange(ctx context.Context, key string, offset, lengt
 		return store.GetRange(ctx, c.ObjectStore, key, offset, length)
 	}
 
+	since := c.deletes.Load()
 	body, err := c.ObjectStore.Get(ctx, key)
 	if err != nil {
 		// A whole fetch that fails must not fail the read the caller asked
 		// for: the range may well still be servable.
 		return store.GetRange(ctx, c.ObjectStore, key, offset, length)
 	}
-	c.save(key, body)
+	c.save(key, body, since)
 	c.mu.Lock()
 	delete(c.ranged, key)
 	c.mu.Unlock()
@@ -787,6 +811,9 @@ func (c *DiskCacheStore) DeleteAll(ctx context.Context, keys []string) error {
 }
 
 func (c *DiskCacheStore) forget(key string) {
+	// Bumped before the entry is dropped, so a save racing this cannot observe
+	// the old value and then write after the drop.
+	c.deletes.Add(1)
 	c.dropEntry(entryName(key))
 	c.mu.Lock()
 	delete(c.ranged, key)

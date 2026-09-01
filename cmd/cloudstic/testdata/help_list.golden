@@ -23,7 +23,7 @@ GLOBAL OPTIONS (also settable via environment variables)
     -disable-packfile              Disable bundling small objects into 8MB packs  [env: CLOUDSTIC_DISABLE_PACKFILE]
     -object-cache-dir <path>       Directory for the local object cache (defaults to the OS cache directory)  [env: CLOUDSTIC_OBJECT_CACHE_DIR]
     -object-cache-bytes <n>        Bound the object cache directory in bytes (default 2GiB)  [env: CLOUDSTIC_OBJECT_CACHE_BYTES]
-    -no-object-cache               Disable the local object cache, overriding -object-cache-dir
+    -no-object-cache               Disable the local object cache, overriding -object-cache-dir  [env: CLOUDSTIC_NO_OBJECT_CACHE]
     -store-sftp-password <pw>      SFTP store password  [env: CLOUDSTIC_STORE_SFTP_PASSWORD]
     -store-sftp-key <path>         Path to SSH private key for SFTP store  [env: CLOUDSTIC_STORE_SFTP_KEY]
     -store-sftp-insecure           Skip host key validation for SFTP store (INSECURE)  [env: CLOUDSTIC_STORE_SFTP_INSECURE]

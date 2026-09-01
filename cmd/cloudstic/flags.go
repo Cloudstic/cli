@@ -86,6 +86,7 @@ func repoFlagSpecs(g *globalFlags) []flagSpec {
 			withShortUsage("Object cache size limit in bytes")),
 		boolFlag(&g.noObjectCache, "no-object-cache", false,
 			"Disable the local object cache, overriding -object-cache-dir",
+			withEnv("CLOUDSTIC_NO_OBJECT_CACHE"),
 			withShortUsage("Disable the local object cache")),
 	}
 }

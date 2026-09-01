@@ -2170,11 +2170,12 @@ cloudstic restore -object-cache-dir /mnt/fast/cloudstic-cache
 export CLOUDSTIC_OBJECT_CACHE_BYTES=$((8 * 1024 * 1024 * 1024))
 ```
 
-`-no-object-cache` turns it off, for one command or, exported as part of your
-shell, for all of them:
+`-no-object-cache` turns it off for one command, and
+`CLOUDSTIC_NO_OBJECT_CACHE=1` for every command in a shell:
 
 ```bash
 cloudstic check -read-data -no-object-cache
+export CLOUDSTIC_NO_OBJECT_CACHE=1
 ```
 
 What it is for: a restore, an `ls` or a `diff` reads the same packfile or blob
@@ -2244,11 +2245,9 @@ Things worth knowing before turning it on:
 | `GOOGLE_TOKEN_FILE` | `-google-token-file` | Override Google OAuth token path |
 | `ONEDRIVE_CLIENT_ID` | `-onedrive-client-id` | Microsoft app client ID (optional, overrides built-in) |
 | `ONEDRIVE_TOKEN_FILE` | `-onedrive-token-file` | Override OneDrive token path |
-| `CLOUDSTIC_OBJECT_CACHE_DIR` | *(OS cache dir)* | Directory for the local object cache; `-object-cache-dir`. Defaults to `<os cache dir>/cloudstic/objects`; `-no-object-cache` disables the cache. See [Local object cache](#local-object-cache) |
-| `CLOUDSTIC_OBJECT_CACHE_BYTES` | *(none)* | Bytes the object cache directory may hold; `-object-cache-bytes`. Defaults to 2 GiB. A malformed value is an error, as for any other flag read from the environment; a non-positive one falls back to the default, since no value of it removes the bound |
+| `CLOUDSTIC_OBJECT_CACHE_DIR` | `-object-cache-dir` | Directory for the local object cache. Defaults to `<os cache dir>/cloudstic/objects`. See [Local object cache](#local-object-cache) |
+| `CLOUDSTIC_OBJECT_CACHE_BYTES` | `-object-cache-bytes` | Bytes the object cache directory may hold; defaults to 2 GiB. A malformed value is an error, as for any flag read from the environment; a non-positive one falls back to the default, since no value of it removes the bound |
+| `CLOUDSTIC_NO_OBJECT_CACHE` | `-no-object-cache` | Disable the local object cache, whatever directory is configured |
 
 This table is kept complete by an automated test: any flag declared with an
 environment binding must have a row here, or `go test ./cmd/cloudstic` fails.
-The last two rows have no flag to declare, so nothing checks them
-automatically — they are read directly from the environment when a client is
-opened.

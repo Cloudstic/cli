@@ -330,25 +330,22 @@ func TestGlobalFlags_MalformedObjectCacheBytesIsRejected(t *testing.T) {
 // macOS the OS may purge it — which is right for a cache and wrong for a
 // profiles file.
 func TestResolveClientConfig_ObjectCacheDefaultsOnUnderTheOSCacheDir(t *testing.T) {
-	// XDG_CACHE_HOME is what os.UserCacheDir consults on Linux; on macOS it
-	// uses $HOME/Library/Caches. Set both so the assertion holds either way.
-	cacheHome := t.TempDir()
-	home := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", cacheHome)
-	t.Setenv("HOME", home)
+	// Asserted against os.UserCacheDir itself rather than against the variables
+	// that feed it. Those differ per platform — XDG_CACHE_HOME on Linux,
+	// $HOME/Library/Caches on macOS, %LocalAppData% on Windows — so naming any
+	// of them here would fail on the platforms it does not describe, for a
+	// default that is correct.
+	base, err := os.UserCacheDir()
+	if err != nil {
+		t.Skip("no OS cache directory on this platform")
+	}
 
 	want, err := defaultObjectCachePath()
 	if err != nil {
 		t.Fatalf("defaultObjectCachePath: %v", err)
 	}
-	if want == "" {
-		t.Skip("no OS cache directory on this platform")
-	}
-	if !strings.HasPrefix(want, cacheHome) && !strings.HasPrefix(want, home) {
-		t.Fatalf("default %q is under neither %q nor %q", want, cacheHome, home)
-	}
-	if filepath.Base(want) != "objects" || filepath.Base(filepath.Dir(want)) != "cloudstic" {
-		t.Errorf("default %q does not end in cloudstic/objects", want)
+	if got := filepath.Join(base, "cloudstic", "objects"); want != got {
+		t.Fatalf("default = %q, want %q", want, got)
 	}
 
 	g := newTestGlobalFlags()
@@ -368,16 +365,21 @@ func TestResolveClientConfig_ObjectCacheDefaultsOnUnderTheOSCacheDir(t *testing.
 // completion resolve flags too, and creating a directory as a side effect of
 // asking for help is the bug -profiles-file's late default exists to avoid.
 func TestDefaultObjectCachePath_CreatesNothing(t *testing.T) {
-	cacheHome := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", cacheHome)
-	t.Setenv("HOME", t.TempDir())
+	// Redirected into a temp directory so the assertion is about this test's
+	// path and not about whether the developer has ever run the CLI. Windows
+	// derives the cache directory from %LocalAppData% and will not follow
+	// these, so the test says so rather than asserting against a real one.
+	tmp := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", tmp)
+	t.Setenv("HOME", tmp)
+	base, err := os.UserCacheDir()
+	if err != nil || !strings.HasPrefix(base, tmp) {
+		t.Skip("os.UserCacheDir does not follow the environment on this platform")
+	}
 
 	path, err := defaultObjectCachePath()
 	if err != nil {
 		t.Fatalf("defaultObjectCachePath: %v", err)
-	}
-	if path == "" {
-		t.Skip("no OS cache directory on this platform")
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Errorf("resolving the default created %s (stat err = %v)", path, err)

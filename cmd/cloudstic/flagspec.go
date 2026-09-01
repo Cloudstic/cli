@@ -178,6 +178,28 @@ func intFlag(target *int, name string, def int, usage string, opts ...flagOpt) f
 	return spec
 }
 
+// int64Flag describes a 64-bit integer flag bound to target.
+//
+// Separate from intFlag because `int` is 32 bits on a 32-bit build, and the
+// one value this exists for — a byte budget — does not fit: the 2 GiB default
+// is one larger than math.MaxInt32.
+func int64Flag(target *int64, name string, def int64, usage string, opts ...flagOpt) flagSpec {
+	s := applyOpts(&flagSpec{name: name, usage: usage}, opts)
+	spec := *s
+	spec.bind = func(fs *flag.FlagSet, name, usage string) {
+		fs.Int64Var(target, name, def, usage)
+	}
+	spec.setValue = func(raw string) error {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid integer value %q", raw)
+		}
+		*target = parsed
+		return nil
+	}
+	return spec
+}
+
 // valueFlag describes a flag backed by a custom flag.Value, such as the
 // repeatable stringArrayFlags used by -tag and -exclude.
 func valueFlag(target flag.Value, name, usage string, opts ...flagOpt) flagSpec {

@@ -26,6 +26,9 @@ type globalFlags struct {
 	recoveryKey                       string
 	kmsKeyARN, kmsRegion, kmsEndpoint string
 	disablePackfile                   bool
+	objectCacheDir                    string
+	objectCacheBytes                  int64
+	noObjectCache                     bool
 	prompt, noPrompt                  bool
 	verbose, quiet, debug             bool
 	json                              bool
@@ -72,6 +75,17 @@ func repoFlagSpecs(g *globalFlags) []flagSpec {
 			withEnv("B2_APP_KEY"), withPlaceholder("<key>"), asSecret()),
 		boolFlag(&g.disablePackfile, "disable-packfile", false, "Disable bundling small objects into 8MB packs",
 			withEnv("CLOUDSTIC_DISABLE_PACKFILE"), withShortUsage("Disable bundling small objects into packs")),
+		stringFlag(&g.objectCacheDir, "object-cache-dir", "",
+			"Cache repeated object reads in this directory (empty disables)",
+			withEnv("CLOUDSTIC_OBJECT_CACHE_DIR"), withPlaceholder("<path>"),
+			withShortUsage("Cache object reads on local disk")),
+		int64Flag(&g.objectCacheBytes, "object-cache-bytes", 0,
+			"Bound the object cache directory in bytes (default 2GiB)",
+			withEnv("CLOUDSTIC_OBJECT_CACHE_BYTES"), withPlaceholder("<n>"),
+			withShortUsage("Object cache size limit in bytes")),
+		boolFlag(&g.noObjectCache, "no-object-cache", false,
+			"Disable the local object cache, overriding -object-cache-dir",
+			withShortUsage("Disable the local object cache")),
 	}
 }
 

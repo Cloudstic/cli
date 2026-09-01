@@ -2154,11 +2154,25 @@ cloudstic forget -keep-daily 7 -keep-monthly 12 -dry-run
 
 Cloudstic can keep a copy of the immutable objects it reads on local disk, so
 that a repeated read is served from there instead of from the store. It is off
-unless you name a directory:
+unless you name a directory, as a flag:
+
+```bash
+cloudstic restore -object-cache-dir ~/.cache/cloudstic/objects
+```
+
+or as an environment variable, which every flag here also accepts:
 
 ```bash
 export CLOUDSTIC_OBJECT_CACHE_DIR=~/.cache/cloudstic/objects
 export CLOUDSTIC_OBJECT_CACHE_BYTES=$((4 * 1024 * 1024 * 1024))   # optional, default 2 GiB
+```
+
+`-no-object-cache` turns it off for one command whatever the environment says,
+which is how you skip the cache without unsetting a variable you may not
+control:
+
+```bash
+cloudstic check -read-data -no-object-cache
 ```
 
 What it is for: a restore, an `ls` or a `diff` reads the same packfile or blob
@@ -2228,8 +2242,8 @@ Things worth knowing before turning it on:
 | `GOOGLE_TOKEN_FILE` | `-google-token-file` | Override Google OAuth token path |
 | `ONEDRIVE_CLIENT_ID` | `-onedrive-client-id` | Microsoft app client ID (optional, overrides built-in) |
 | `ONEDRIVE_TOKEN_FILE` | `-onedrive-token-file` | Override OneDrive token path |
-| `CLOUDSTIC_OBJECT_CACHE_DIR` | *(none)* | Directory for the local object cache. Unset, the default, disables it entirely. See [Local object cache](#local-object-cache) |
-| `CLOUDSTIC_OBJECT_CACHE_BYTES` | *(none)* | Bytes the object cache directory may hold. Defaults to 2 GiB; a malformed or non-positive value falls back to that default rather than removing the limit |
+| `CLOUDSTIC_OBJECT_CACHE_DIR` | *(none)* | Directory for the local object cache; `-object-cache-dir`. Unset, the default, disables it entirely. See [Local object cache](#local-object-cache) |
+| `CLOUDSTIC_OBJECT_CACHE_BYTES` | *(none)* | Bytes the object cache directory may hold; `-object-cache-bytes`. Defaults to 2 GiB. A malformed value is an error, as for any other flag read from the environment; a non-positive one falls back to the default, since no value of it removes the bound |
 
 This table is kept complete by an automated test: any flag declared with an
 environment binding must have a row here, or `go test ./cmd/cloudstic` fails.

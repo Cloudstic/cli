@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
-	"strconv"
 	"sync/atomic"
 
 	"github.com/cloudstic/cli/internal/core"
@@ -96,9 +94,19 @@ type Client struct {
 	// nothing to do.
 	repoIDCache atomic.Pointer[string]
 	storedMeter *storelayer.MeteredStore
-	// objectCache is the local disk tier, nil unless one was configured. Held
-	// so Check can read past it: see DiskCacheStore.SetBypass.
-	objectCache *storelayer.DiskCacheStore
+	// objectCache is how Check reads past the local disk tier, nil unless one
+	// was configured.
+	//
+	// An interface rather than *storelayer.DiskCacheStore because the only
+	// thing the client wants from that layer is the guarantee below, and
+	// naming the concrete decorator would couple the client to one member of
+	// a chain it otherwise only assembles. If a second layer ever caches
+	// reads, this becomes a store capability forwarded by every wrapper, the
+	// way BatchDeleter is — one caller does not justify that yet.
+	objectCache readBypasser
+
+	objectCacheDir    string
+	objectCacheBudget int64
 	// memberSealer seals format-v3 blob members. Derived once at open, since
 	// deriving it costs an HKDF expansion and a backup seals many thousands.
 	// Nil in a repository with no encryption.
@@ -137,42 +145,36 @@ func (c *Client) formatV3() bool {
 	return c.repoFormat.Load() >= core.RepoFormatV3
 }
 
-// envObjectCacheDir points the local object cache at a directory. Empty, which
-// is the default, disables it.
+// WithObjectCache serves repeated object reads from a directory on local disk.
 //
-// An environment variable rather than a flag or a profile field while the
-// thing is being measured: it is a caching choice about one machine, not a
-// property of a repository, and nothing about it should reach a profiles file
-// until it has earned a place there.
-const envObjectCacheDir = "CLOUDSTIC_OBJECT_CACHE_DIR"
+// An empty dir disables the cache, which is the default; a non-positive budget
+// takes storelayer.DiskCacheBudget. There is no value meaning "no limit": a
+// cache directory that may grow without end is the failure the budget exists
+// to prevent.
+//
+// The caller decides. Where the directory and budget come from — a flag, an
+// environment variable, a configuration file — is a question for whoever is
+// building the client, which for this repository is cmd/cloudstic resolving
+// them into a pkg/config.Client and pkg/open applying them here. A caching
+// choice is a property of one machine rather than of a repository, so it
+// reaches this package as an argument and never as an os.Getenv.
+// readBypasser is a store layer that can be told to stop serving reads from
+// anything but the store beneath it, until the returned function is called.
+//
+// Satisfied by *storelayer.DiskCacheStore. Declared here, at the consumer,
+// because that is the only place the capability is needed.
+type readBypasser interface {
+	// BypassReads returns the function that ends the bypass. It must nest, so
+	// that two overlapping callers cannot end each other's, and be safe to
+	// call on a nil receiver so a client with no cache needs no branch.
+	BypassReads() func()
+}
 
-// envObjectCacheBytes bounds what that directory may hold, defaulting to
-// storelayer.DiskCacheBudget.
-//
-// How much disk a machine may spend on a cache is a property of the machine —
-// a laptop and a backup server disagree, and neither is wrong — so it is not
-// something a compiled-in constant can decide for both. Bytes rather than
-// megabytes because this module has already been caught by a budget whose unit
-// had to be inferred (#551).
-const envObjectCacheBytes = "CLOUDSTIC_OBJECT_CACHE_BYTES"
-
-// objectCacheBudget resolves the disk cache's byte budget, once, at open.
-//
-// A malformed or non-positive value falls back to the default rather than
-// disabling the bound. The variable exists to move a limit, and there is no
-// value of it that should mean "no limit": a cache directory that may grow
-// without end is the failure this budget exists to prevent, and a typo is not
-// consent to it.
-func objectCacheBudget() int64 {
-	v, ok := os.LookupEnv(envObjectCacheBytes)
-	if !ok || v == "" {
-		return storelayer.DiskCacheBudget
+func WithObjectCache(dir string, budget int64) ClientOption {
+	return func(c *Client) {
+		c.objectCacheDir = dir
+		c.objectCacheBudget = budget
 	}
-	n, err := strconv.ParseInt(v, 10, 64)
-	if err != nil || n <= 0 {
-		return storelayer.DiskCacheBudget
-	}
-	return n
 }
 
 func NewClient(ctx context.Context, base store.ObjectStore, opts ...ClientOption) (*Client, error) {
@@ -214,8 +216,8 @@ func NewClient(ctx context.Context, base store.ObjectStore, opts ...ClientOption
 	// `blob/` are both read by range and re-read many times, and both sit below
 	// compression and encryption. Layered above PackStore it would see one and
 	// not the other. See internal/storelayer/diskcache.go.
-	if dir := os.Getenv(envObjectCacheDir); dir != "" {
-		dc, err := storelayer.NewDiskCacheStore(inner, dir, objectCacheBudget())
+	if c.objectCacheDir != "" {
+		dc, err := storelayer.NewDiskCacheStore(inner, c.objectCacheDir, c.objectCacheBudget)
 		if err != nil {
 			// Reported, not returned: no operation should fail because a cache
 			// directory is unusable.

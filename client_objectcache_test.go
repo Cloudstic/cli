@@ -10,70 +10,45 @@ import (
 
 	localstore "github.com/cloudstic/cli/pkg/store/local"
 
-	"github.com/cloudstic/cli/internal/storelayer"
 	"github.com/cloudstic/cli/pkg/source/local"
 )
 
-// The disk cache is off unless a directory is named, and its budget comes from
-// the environment. Both are read here, at construction, and nowhere else — a
-// value consulted per operation would be a syscall on a path that runs once
-// per object (see internal/hamt/tuning.go on how that was learned).
+// The disk cache is off unless a directory is named, and both the directory
+// and the budget arrive as arguments. Nothing in this package reads the
+// environment for them: where they come from is cmd/cloudstic's question,
+// resolved into a pkg/config.Client and applied by pkg/open, which is what
+// every other knob here does.
 
-// unsetEnv removes name for the duration of the test. There is no t.Unsetenv,
-// so t.Setenv goes first purely to register the restore the harness does at
-// cleanup — the value it sets is discarded a line later.
-func unsetEnv(t *testing.T, name string) {
+// cacheClient builds a client whose object cache is dir, bounded at budget.
+func cacheClient(t *testing.T, storeDir, dir string, budget int64, opts ...ClientOption) *Client {
 	t.Helper()
-	t.Setenv(name, "")
-	if err := os.Unsetenv(name); err != nil {
-		t.Fatalf("unset %s: %v", name, err)
+	base, err := localstore.New(storeDir)
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestObjectCacheBudget_DefaultsAndRejectsNonsense(t *testing.T) {
-	cases := []struct {
-		name  string
-		value string
-		set   bool
-		want  int64
-	}{
-		{name: "unset", want: storelayer.DiskCacheBudget},
-		{name: "empty", value: "", set: true, want: storelayer.DiskCacheBudget},
-		{name: "a size", value: "1048576", set: true, want: 1 << 20},
-		// A typo, a unit suffix and a negative number are all the same thing:
-		// no statement about how much disk may be spent. They fall back to the
-		// default rather than to "no bound", because an unbounded cache
-		// directory is the failure the budget exists to prevent and a typo is
-		// not consent to it.
-		{name: "malformed", value: "512MB", set: true, want: storelayer.DiskCacheBudget},
-		{name: "zero", value: "0", set: true, want: storelayer.DiskCacheBudget},
-		{name: "negative", value: "-1", set: true, want: storelayer.DiskCacheBudget},
+	opts = append([]ClientOption{
+		WithEncryptionKey(packfileTestKey()),
+		WithObjectCache(dir, budget),
+	}, opts...)
+	client, err := NewClient(context.Background(), base, opts...)
+	if err != nil {
+		t.Fatalf("new client: %v", err)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			unsetEnv(t, envObjectCacheBytes)
-			if tc.set {
-				t.Setenv(envObjectCacheBytes, tc.value)
-			}
-			if got := objectCacheBudget(); got != tc.want {
-				t.Errorf("objectCacheBudget() = %d, want %d", got, tc.want)
-			}
-		})
-	}
+	return client
 }
 
 func TestNewClient_ObjectCacheIsOptIn(t *testing.T) {
 	storeDir := t.TempDir()
 	writeRepoConfig(t, storeDir)
 
-	unsetEnv(t, envObjectCacheDir)
 	if c := newPackfileClient(t, storeDir); c.objectCache != nil {
-		t.Error("a client built with no cache directory got one anyway")
+		t.Error("a client built without WithObjectCache got one anyway")
 	}
-
-	t.Setenv(envObjectCacheDir, t.TempDir())
-	if c := newPackfileClient(t, storeDir); c.objectCache == nil {
-		t.Error("a client built with a cache directory got no cache")
+	if c := cacheClient(t, storeDir, "", 0); c.objectCache != nil {
+		t.Error("an empty cache directory produced a cache")
+	}
+	if c := cacheClient(t, storeDir, t.TempDir(), 0); c.objectCache == nil {
+		t.Error("a client given a cache directory got no cache")
 	}
 }
 
@@ -104,22 +79,12 @@ func TestClient_ObjectCacheStaysWithinItsConfiguredBudget(t *testing.T) {
 	writeRepoConfig(t, storeDir)
 
 	const budget = 32 << 10
-	t.Setenv(envObjectCacheDir, cacheDir)
-	t.Setenv(envObjectCacheBytes, "32768")
-
-	base, err := localstore.New(storeDir)
-	if err != nil {
-		t.Fatal(err)
-	}
 	// Packfiles off, so the cache sees the individual objects rather than one
 	// bundle larger than the whole budget — which it would decline outright
 	// and cache nothing, proving nothing.
-	client, err := NewClient(ctx, base, WithEncryptionKey(packfileTestKey()), WithPackfile(false))
-	if err != nil {
-		t.Fatal(err)
-	}
+	client := cacheClient(t, storeDir, cacheDir, budget, WithPackfile(false))
 	if client.objectCache == nil {
-		t.Fatal("no object cache was wired despite a directory being set")
+		t.Fatal("no object cache was wired despite a directory being given")
 	}
 	if _, err := client.Backup(ctx, local.New(sourceDir)); err != nil {
 		t.Fatalf("backup: %v", err)
@@ -173,10 +138,9 @@ func TestClient_CheckDoesNotReadThroughTheObjectCache(t *testing.T) {
 	// A cache directory that has never held anything, opened after the
 	// repository was written: anything in it afterwards came from the check.
 	cacheDir := t.TempDir()
-	t.Setenv(envObjectCacheDir, cacheDir)
-	client := newPackfileClient(t, storeDir)
+	client := cacheClient(t, storeDir, cacheDir, 0)
 	if client.objectCache == nil {
-		t.Fatal("no object cache was wired despite a directory being set")
+		t.Fatal("no object cache was wired despite a directory being given")
 	}
 	res, err := client.Check(ctx)
 	if err != nil {

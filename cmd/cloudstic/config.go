@@ -76,10 +76,13 @@ func clientConfigFromFlags(g *globalFlags) clientConfig {
 			Prompt:   g.prompt,
 			NoPrompt: g.noPrompt,
 		},
-		DisablePackfile: g.disablePackfile,
-		Quiet:           g.quiet,
-		Verbose:         g.verbose,
-		JSON:            g.json,
+		DisablePackfile:    g.disablePackfile,
+		ObjectCacheDir:     g.objectCacheDir,
+		ObjectCacheBytes:   g.objectCacheBytes,
+		DisableObjectCache: g.noObjectCache,
+		Quiet:              g.quiet,
+		Verbose:            g.verbose,
+		JSON:               g.json,
 	}
 }
 

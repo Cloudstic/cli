@@ -34,7 +34,7 @@ holds, and deleting the directory costs requests and nothing else.
 | `findScanner.evaluated` | `internal/engine/find_scan.go` | 16-byte ref digest → match verdict | one `find` run | one small entry per distinct filemeta ref |
 | `Resolver.cache` | `pkg/secretref/secretref.go` | `scheme://path` → secret | `Resolver` | only `keychain`, `wincred`, `secret-service` |
 | `Client.repoIDCache`, `openCfg` | `client.go` | — → repository marker fields | `Client` | one value each |
-| `DiskCacheStore` | `internal/storelayer/diskcache.go` | object key → object body, on local disk | the directory: across runs and across processes | bytes in the directory, `DiskCacheBudget` (2 GiB) or `CLOUDSTIC_OBJECT_CACHE_BYTES` |
+| `DiskCacheStore` | `internal/storelayer/diskcache.go` | object key → object body, on local disk | the directory: across runs and across processes | bytes in the directory, `DiskCacheBudget` (2 GiB) or `-object-cache-bytes` |
 
 Three things in the engine look like caches in a listing but are not, and are
 covered below so nobody unifies them with one: `BackupManager.newMetas`,
@@ -67,8 +67,12 @@ The engine's own caches sit above the chain entirely, holding decoded objects:
 `NodeStore` for `node/`, `metaLoader` for `filemeta/`.
 
 `DiskCacheStore` sits at the other end, directly above the backend, and is the
-one layer that is opt-in: `NewClient` builds it only when
-`CLOUDSTIC_OBJECT_CACHE_DIR` names a directory. Its position is what lets one
+one layer that is opt-in: `NewClient` builds it only when a caller passes
+`WithObjectCache`, which for the CLI means `-object-cache-dir` or
+`CLOUDSTIC_OBJECT_CACHE_DIR` resolved into a `pkg/config.Client`. The root
+package reads no environment variable for it — where a cache directory comes
+from is a question for whoever builds the client, since it is a property of the
+machine rather than of the repository. Its position is what lets one
 mechanism serve both repository formats — everything the repository stores
 passes it in the form it is stored in, so it caches every immutable namespace
 and declines the three mutable ones (`index/`, `keys/`, `config`) without

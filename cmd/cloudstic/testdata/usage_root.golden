@@ -50,6 +50,9 @@ GLOBAL OPTIONS (also settable via environment variables)
     -b2-key-id <key-id>             Backblaze B2 application key ID  [env: B2_KEY_ID]
     -b2-app-key <key>               Backblaze B2 application key  [env: B2_APP_KEY]
     -disable-packfile               Disable bundling small objects into 8MB packs  [env: CLOUDSTIC_DISABLE_PACKFILE]
+    -object-cache-dir <path>        Cache repeated object reads in this directory (empty disables)  [env: CLOUDSTIC_OBJECT_CACHE_DIR]
+    -object-cache-bytes <n>         Bound the object cache directory in bytes (default 2GiB)  [env: CLOUDSTIC_OBJECT_CACHE_BYTES]
+    -no-object-cache                Disable the local object cache, overriding -object-cache-dir
     -store-sftp-password <pw>       SFTP store password  [env: CLOUDSTIC_STORE_SFTP_PASSWORD]
     -store-sftp-key <path>          Path to SSH private key for SFTP store  [env: CLOUDSTIC_STORE_SFTP_KEY]
     -store-sftp-insecure            Skip host key validation for SFTP store (INSECURE)  [env: CLOUDSTIC_STORE_SFTP_INSECURE]

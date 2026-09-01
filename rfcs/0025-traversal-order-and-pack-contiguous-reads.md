@@ -1284,6 +1284,42 @@ and 6x the whole-pack transfers, to save 23 MB of plan at 50,000 files. The thin
 the change is for is an order of magnitude smaller than what it costs, and the
 cost lands on exactly the repositories restore matters for.
 
+### Re-measured against a disk tier (2026-09), and it still does not pay
+
+This section's title names residency as the reason streaming fails, which reads
+as "revisit when residency is solved". Residency *was* solved, by a mechanism
+this RFC did not consider — a local disk tier below the pack layer
+(`internal/storelayer/diskcache.go`) — so the prototype was rebuilt on its
+original base with that tier backported and measured again.
+
+**The I/O objection is entirely gone.** The streaming build's whole-pack
+transfers fall from 206 to 12 — one per pack, byte-identical to the
+materialised build. Interleaving `filemeta/` and `content/` reads still evicts
+pack bodies mid-group, exactly as described above; it no longer costs anything,
+because an evicted body is on local disk rather than gone.
+
+**Streaming still loses, on the axis it was for.** With the tier on, at 20,000
+and 80,000 files:
+
+| build | 20k | 80k | slope |
+|---|---:|---:|---:|
+| materialised | 287 MB | 461 MB | 2.90 MB / 1000 files |
+| streaming | 461 MB | 618 MB | 2.62 MB / 1000 files |
+
+A 10% better slope against a 174 MB worse constant breaks even near 640,000
+files, where both builds are using about 2 GB and neither is acceptable.
+
+So the conclusion above stands and its reason changes, which matters because
+the two point at different work. The plan was never the dominant term in
+restore's memory: removing six O(files) structures moved the slope by a tenth.
+**The question worth asking is not "can restore stream" but "what costs 2.9 MB
+per thousand files in both designs".** A heap profile at peak would name it;
+nothing in this RFC does.
+
+Measured on the packfile format only — the prototype predates format v3 by 165
+commits — and slopes come from two tree sizes, so the break-even is an
+extrapolation.
+
 ### What this does and does not close
 
 - **§1 stands.** Derived order is available a directory at a time and enumerates

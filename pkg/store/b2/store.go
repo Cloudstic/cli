@@ -264,12 +264,36 @@ func (s *Store) DeletePrefix(ctx context.Context, prefix string) error {
 }
 
 func (s *Store) List(ctx context.Context, prefix string) ([]string, error) {
+	var keys []string
+	err := s.listObjects(ctx, prefix, func(_ context.Context, key string, _ *b2.Object) error {
+		keys = append(keys, key)
+		return nil
+	})
+	return keys, err
+}
+
+// ListSized implements store.SizedLister. b2_list_file_names returns each
+// file's size with its name, and blazer keeps that on the listed object, so
+// Attrs here answers from the listing rather than with a request per key.
+func (s *Store) ListSized(ctx context.Context, prefix string, fn func(key string, size int64) error) error {
+	return s.listObjects(ctx, prefix, func(ctx context.Context, key string, obj *b2.Object) error {
+		attrs, err := obj.Attrs(ctx)
+		if err != nil {
+			return err
+		}
+		return fn(key, attrs.Size)
+	})
+}
+
+// listObjects iterates the bucket under prefix, calling fn with each object's
+// key (base prefix stripped) and the listed object, under the listing's own
+// context.
+func (s *Store) listObjects(ctx context.Context, prefix string, fn func(ctx context.Context, key string, obj *b2.Object) error) error {
 	ctx, cancel := s.opCtx(ctx)
 	defer cancel()
 
 	fullPrefix := s.key(prefix)
 
-	var keys []string
 	var opts []b2.ListOption
 	if fullPrefix != "" {
 		opts = append(opts, b2.ListPrefix(fullPrefix))
@@ -277,15 +301,13 @@ func (s *Store) List(ctx context.Context, prefix string) ([]string, error) {
 
 	cursor := s.bucket.List(ctx, opts...)
 	for cursor.Next() {
-		name := cursor.Object().Name()
-		keys = append(keys, strings.TrimPrefix(name, s.prefix))
+		obj := cursor.Object()
+		if err := fn(ctx, strings.TrimPrefix(obj.Name(), s.prefix), obj); err != nil {
+			return err
+		}
 	}
 
-	if err := cursor.Err(); err != nil {
-		return nil, err
-	}
-
-	return keys, nil
+	return cursor.Err()
 }
 
 // DeleteAll implements store.BatchDeleter as a loop. Backblaze's native B2 API

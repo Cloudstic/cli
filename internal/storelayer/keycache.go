@@ -205,8 +205,27 @@ func (s *KeyCacheStore) DeleteAll(ctx context.Context, keys []string) error {
 	return store.DeleteAll(ctx, s.inner, keys)
 }
 
+// DeleteAllSized implements store.SizedBatchDeleter with the ordering
+// DeleteAll uses — every key leaves the cache before the batch goes down — and
+// forwards the sizes so the meters beneath need not ask for them.
+func (s *KeyCacheStore) DeleteAllSized(ctx context.Context, objects []store.SizedKey) error {
+	s.mu.Lock()
+	for _, o := range objects {
+		if prefix, ok := s.contentAddressedPrefix(o.Key); ok {
+			s.forgetLocked(prefix, o.Key)
+		}
+	}
+	s.mu.Unlock()
+	return store.DeleteAllSized(ctx, s.inner, objects)
+}
+
 func (s *KeyCacheStore) List(ctx context.Context, prefix string) ([]string, error) {
 	return s.inner.List(ctx, prefix)
+}
+
+// ListSized implements store.SizedLister by forwarding, as List does.
+func (s *KeyCacheStore) ListSized(ctx context.Context, prefix string, fn func(key string, size int64) error) error {
+	return store.ListSized(ctx, s.inner, prefix, fn)
 }
 
 func (s *KeyCacheStore) Size(ctx context.Context, key string) (int64, error) {

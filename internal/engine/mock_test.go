@@ -25,6 +25,8 @@ type MockStore struct {
 	// written twice — which is exactly what a test asserting the tree is
 	// committed more than once needs to see.
 	puts map[string]int
+	// sizes counts Size calls, for SizeCount.
+	sizes int
 }
 
 // PutCount reports how many Put calls have targeted keys under prefix,
@@ -112,13 +114,41 @@ func (s *MockStore) List(_ context.Context, prefix string) ([]string, error) {
 }
 
 func (s *MockStore) Size(_ context.Context, key string) (int64, error) {
-	s.mu.RLock()
+	s.mu.Lock()
+	s.sizes++
 	data, ok := s.Data[key]
-	s.mu.RUnlock()
+	s.mu.Unlock()
 	if !ok {
 		return 0, fmt.Errorf("%s: %w", key, store.ErrNotFound)
 	}
 	return int64(len(data)), nil
+}
+
+// SizeCount reports how many Size calls the store has answered, so a test
+// can tell a caller that took sizes from a listing from one that asked for
+// each — a sweep pays one request per object for the difference.
+func (s *MockStore) SizeCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.sizes
+}
+
+// ListSized implements store.SizedLister, as every real backend does.
+func (s *MockStore) ListSized(_ context.Context, prefix string, fn func(key string, size int64) error) error {
+	s.mu.RLock()
+	var listed []store.SizedKey
+	for k, d := range s.Data {
+		if strings.HasPrefix(k, prefix) {
+			listed = append(listed, store.SizedKey{Key: k, Size: int64(len(d))})
+		}
+	}
+	s.mu.RUnlock()
+	for _, o := range listed {
+		if err := fn(o.Key, o.Size); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *MockStore) TotalSize(_ context.Context) (int64, error) {

@@ -317,8 +317,37 @@ func (s *Store) Flush(ctx context.Context) error {
 }
 
 func (s *Store) List(ctx context.Context, prefix string) ([]string, error) {
-	fullPrefix := s.key(prefix)
 	var keys []string
+	err := s.listObjects(ctx, prefix, func(key string, _ types.Object) error {
+		keys = append(keys, key)
+		return nil
+	})
+	return keys, err
+}
+
+// ListSized implements store.SizedLister. ListObjectsV2 returns every
+// object's size in the same response as its key, so this is the listing
+// prune already makes, read in full.
+func (s *Store) ListSized(ctx context.Context, prefix string, fn func(key string, size int64) error) error {
+	return s.listObjects(ctx, prefix, func(key string, obj types.Object) error {
+		if obj.Size == nil {
+			// Not seen from any S3-compatible service, but the contract is
+			// that the size is the one Size reports, and a HEAD is how to
+			// keep that true rather than guess.
+			size, err := s.Size(ctx, key)
+			if err != nil {
+				return err
+			}
+			return fn(key, size)
+		}
+		return fn(key, *obj.Size)
+	})
+}
+
+// listObjects pages through ListObjectsV2 under prefix, calling fn with each
+// object's key (base prefix stripped) and the listing entry it came from.
+func (s *Store) listObjects(ctx context.Context, prefix string, fn func(key string, obj types.Object) error) error {
+	fullPrefix := s.key(prefix)
 	var continuationToken *string
 
 	var prefixPtr *string
@@ -333,13 +362,15 @@ func (s *Store) List(ctx context.Context, prefix string) ([]string, error) {
 			ContinuationToken: continuationToken,
 		})
 		if err != nil {
-			return nil, err
+			return err
 		}
 
 		for _, obj := range out.Contents {
 			if obj.Key != nil {
 				// Strip the base prefix before returning the key
-				keys = append(keys, strings.TrimPrefix(*obj.Key, s.prefix))
+				if err := fn(strings.TrimPrefix(*obj.Key, s.prefix), obj); err != nil {
+					return err
+				}
 			}
 		}
 
@@ -350,7 +381,7 @@ func (s *Store) List(ctx context.Context, prefix string) ([]string, error) {
 		}
 	}
 
-	return keys, nil
+	return nil
 }
 
 // s3DeleteBatchSize is the hard limit S3 places on DeleteObjects: at most

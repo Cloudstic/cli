@@ -63,6 +63,17 @@ func TestPruneManager_Run(t *testing.T) {
 	if result.ObjectsDeleted != 3 {
 		t.Errorf("Expected 3 deleted, got %d", result.ObjectsDeleted)
 	}
+	// The garbage is "trash" and two "{}": credited from the listing's sizes,
+	// through both the sweep's meter and the one it was handed.
+	if result.BytesReclaimed != 9 {
+		t.Errorf("BytesReclaimed = %d, want 9", result.BytesReclaimed)
+	}
+	// The sweep lists with sizes and deletes from that listing, so the store
+	// answers no Size call at all — a prune of 20,000 objects used to make one
+	// per object, twice, for the reclaimed-bytes figure alone.
+	if n := mockStore.SizeCount(); n != 0 {
+		t.Errorf("prune made %d Size calls, want 0: the listing already carried the sizes", n)
+	}
 
 	assertExists(t, ctx, mockStore, chunkRef)
 	assertExists(t, ctx, mockStore, contentRef)

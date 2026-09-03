@@ -157,6 +157,25 @@ func (s *Store) Flush(ctx context.Context) error {
 // List returns all keys matching the given prefix. When a prefix is provided
 // the walk is scoped to just that subdirectory for efficiency.
 func (s *Store) List(_ context.Context, prefix string) ([]string, error) {
+	var keys []string
+	err := s.walk(prefix, func(key string, _ os.FileInfo) error {
+		keys = append(keys, key)
+		return nil
+	})
+	return keys, err
+}
+
+// ListSized implements store.SizedLister. The walk stats every file to tell
+// it from a directory, so the size is already in hand.
+func (s *Store) ListSized(_ context.Context, prefix string, fn func(key string, size int64) error) error {
+	return s.walk(prefix, func(key string, info os.FileInfo) error {
+		return fn(key, info.Size())
+	})
+}
+
+// walk visits every object under prefix with the FileInfo the walk stat'd it
+// with.
+func (s *Store) walk(prefix string, fn func(key string, info os.FileInfo) error) error {
 	startPath := s.BasePath
 	if prefix != "" {
 		candidate := filepath.Join(s.BasePath, filepath.FromSlash(prefix))
@@ -170,8 +189,7 @@ func (s *Store) List(_ context.Context, prefix string) ([]string, error) {
 		}
 	}
 
-	var keys []string
-	err := filepath.Walk(startPath, func(path string, info os.FileInfo, err error) error {
+	return filepath.Walk(startPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil
@@ -194,11 +212,10 @@ func (s *Store) List(_ context.Context, prefix string) ([]string, error) {
 
 		key := filepath.ToSlash(relPath)
 		if strings.HasPrefix(key, prefix) {
-			keys = append(keys, key)
+			return fn(key, info)
 		}
 		return nil
 	})
-	return keys, err
 }
 
 // DeleteAll implements store.BatchDeleter as a loop, because a filesystem has

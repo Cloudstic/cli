@@ -714,6 +714,54 @@ func (s *PackStore) List(ctx context.Context, prefix string) ([]string, error) {
 	return result, nil
 }
 
+// ListSized implements store.SizedLister the way List and Size together
+// answer: a packed key's size is its catalog length, an unpacked key's is what
+// the backend reports, and the catalog wins for a key both know, as Size has
+// it. Declared rather than left to the helper's fallback because the fallback
+// would ask this store's Size for every listed key — answered from memory for
+// a packed key, but a request for every object too large to pack, which on a
+// v2 repository is every chunk of every large file.
+//
+// The catalog is loaded first, and an unreadable one fails the listing, for
+// the reason List gives: a short listing reads as "unreachable" to prune.
+func (s *PackStore) ListSized(ctx context.Context, prefix string, fn func(key string, size int64) error) error {
+	if err := s.ensureCatalogLoaded(ctx); err != nil {
+		return err
+	}
+
+	sizes := make(map[string]int64)
+	err := store.ListSized(ctx, s.ObjectStore, prefix, func(key string, size int64) error {
+		if strings.HasPrefix(key, packPrefix) || key == indexPacksKey {
+			return nil
+		}
+		sizes[key] = size
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	s.mu.RLock()
+	s.catalog.Each(func(key string, entry PackEntry) {
+		if strings.HasPrefix(key, prefix) {
+			sizes[key] = entry.Length
+		}
+	})
+	for key, entry := range s.packKeys {
+		if strings.HasPrefix(key, prefix) {
+			sizes[key] = entry.Length
+		}
+	}
+	s.mu.RUnlock()
+
+	for key, size := range sizes {
+		if err := fn(key, size); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Flush ensures any pending small objects are written to a packfile,
 // and uploads the latest JSON catalog.
 func (s *PackStore) Flush(ctx context.Context) error {

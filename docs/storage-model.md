@@ -196,9 +196,25 @@ PUT — so on an S3-family backend the sweep costs one request per thousand
 objects instead of one per object. A backend without the capability keeps
 working unchanged: `store.DeleteAll` loops for it.
 
+The listing the sweep takes carries each object's size, through the optional
+`store.SizedLister` capability. Every backend returns the size in the same
+response as the key — S3's `ListObjectsV2`, B2's `b2_list_file_names`, the
+stat a directory walk makes anyway — and the reclaimed-bytes figure used to be
+produced by asking again for each key about to be deleted: on a 20,000-file
+format-v3 repository, 1,124 of the 1,428 requests a `forget --prune` made were
+`Size` calls on objects it had just listed, two per object because the sweep's
+meter and the client's each asked. Sizes now travel with the keys, down the
+chain through `store.SizedBatchDeleter`, so every meter credits from the one
+listing and no object costs a request of its own. A backend without either
+capability keeps working: the helpers fall back to `List` plus `Size`, and to
+`DeleteAll` with the keys alone.
+
 Batching does not loosen what prune may claim. `DeleteObjects` reports success
 and failure per key in one response, and only the keys a store confirms gone
-are counted as deleted or credited as space reclaimed. A key the backend
+are counted as deleted or credited as space reclaimed. Where the size came from
+changes nothing about that: a listing reads it *before* the deletion, which is
+the order the rule needs, and the per-key verdict from the delete still gates
+what is credited. A key the backend
 refused, and a key its response did not mention at all, both count as still
 there. A sweep that could not delete every object it classified as garbage
 deletes as many as it can and then **fails**, rather than reporting a success

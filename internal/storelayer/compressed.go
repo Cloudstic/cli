@@ -271,3 +271,17 @@ func maybeDecompress(data []byte) ([]byte, error) {
 func (s *CompressedStore) DeleteAll(ctx context.Context, keys []string) error {
 	return store.DeleteAll(ctx, s.inner, keys)
 }
+
+// DeleteAllSized implements store.SizedBatchDeleter by forwarding, so the
+// sizes a listing supplied reach the meter beneath this layer instead of
+// being asked for again, key by key.
+func (s *CompressedStore) DeleteAllSized(ctx context.Context, objects []store.SizedKey) error {
+	return store.DeleteAllSized(ctx, s.inner, objects)
+}
+
+// ListSized implements store.SizedLister by forwarding. Compression changes
+// what an object holds, not what the store reports it as: List and Size are
+// both the inner store's answers, so a listing that carries both is too.
+func (s *CompressedStore) ListSized(ctx context.Context, prefix string, fn func(key string, size int64) error) error {
+	return store.ListSized(ctx, s.inner, prefix, fn)
+}

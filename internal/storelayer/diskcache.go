@@ -810,6 +810,24 @@ func (c *DiskCacheStore) DeleteAll(ctx context.Context, keys []string) error {
 	return store.DeleteAll(ctx, c.ObjectStore, keys)
 }
 
+// DeleteAllSized is DeleteAll with the listing's sizes kept for the layers
+// below, which is safe here for the same reason forwarding DeleteAll is.
+func (c *DiskCacheStore) DeleteAllSized(ctx context.Context, objects []store.SizedKey) error {
+	for _, o := range objects {
+		if diskCacheable(o.Key) {
+			c.forget(o.Key)
+		}
+	}
+	return store.DeleteAllSized(ctx, c.ObjectStore, objects)
+}
+
+// ListSized implements store.SizedLister by forwarding. The cache holds copies
+// of objects, never the set of them, so a listing is the backend's to answer
+// — with or without sizes.
+func (c *DiskCacheStore) ListSized(ctx context.Context, prefix string, fn func(key string, size int64) error) error {
+	return store.ListSized(ctx, c.ObjectStore, prefix, fn)
+}
+
 func (c *DiskCacheStore) forget(key string) {
 	// Bumped before the entry is dropped, so a save racing this cannot observe
 	// the old value and then write after the drop.

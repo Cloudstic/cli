@@ -137,3 +137,13 @@ func TestLocalStoreRangeGetterConformance(t *testing.T) {
 	}
 	storetest.AssertRangeGetterConformance(t, st)
 }
+
+// The shared SizedLister contract: the walk stats every file, so the size
+// comes with the key and prune's sweep needs no request per object.
+func TestLocalStoreSizedListerConformance(t *testing.T) {
+	st, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	storetest.AssertSizedListerConformance(t, st)
+}

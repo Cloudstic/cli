@@ -86,6 +86,31 @@ func (s *DebugStore) List(ctx context.Context, prefix string) ([]string, error) 
 	return keys, err
 }
 
+// ListSized implements SizedLister by forwarding, and has to: without it a
+// sweep run under --debug would fall back to a Size per listed key, and the
+// request count being debugged would be the wrapper's rather than the
+// backend's. It is logged as the LIST it is.
+func (s *DebugStore) ListSized(ctx context.Context, prefix string, fn func(key string, size int64) error) error {
+	start := time.Now()
+	n := 0
+	err := ListSized(ctx, s.inner, prefix, func(key string, size int64) error {
+		n++
+		return fn(key, size)
+	})
+	s.log("LIST", prefix, 0, n, time.Since(start), err)
+	return err
+}
+
+// DeleteAllSized implements SizedBatchDeleter by forwarding, for the same
+// reason DeleteAll does: sizes a listing supplied must reach the meters
+// beneath this layer, or they ask for them again.
+func (s *DebugStore) DeleteAllSized(ctx context.Context, objects []SizedKey) error {
+	start := time.Now()
+	err := DeleteAllSized(ctx, s.inner, objects)
+	s.log("DELETE_ALL", "", 0, len(objects), time.Since(start), err)
+	return err
+}
+
 func (s *DebugStore) Size(ctx context.Context, key string) (int64, error) {
 	start := time.Now()
 	size, err := s.inner.Size(ctx, key)

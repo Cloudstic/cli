@@ -92,3 +92,29 @@ func (m *MemStore) Len() int {
 	defer m.mu.RUnlock()
 	return len(m.data)
 }
+
+// ListSized implements the SizedLister contract, so the wrappers' forwarding
+// of it can be tested against a backend that has it. The callback runs outside
+// the lock, so it may call back into the store.
+func (m *MemStore) ListSized(_ context.Context, prefix string, fn func(key string, size int64) error) error {
+	m.mu.RLock()
+	var listed []struct {
+		key  string
+		size int64
+	}
+	for k, d := range m.data {
+		if strings.HasPrefix(k, prefix) {
+			listed = append(listed, struct {
+				key  string
+				size int64
+			}{k, int64(len(d))})
+		}
+	}
+	m.mu.RUnlock()
+	for _, o := range listed {
+		if err := fn(o.key, o.size); err != nil {
+			return err
+		}
+	}
+	return nil
+}

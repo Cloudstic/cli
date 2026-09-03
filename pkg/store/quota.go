@@ -44,3 +44,16 @@ func (q *QuotaStore) Written() int64 { return q.written.Load() }
 func (q *QuotaStore) DeleteAll(ctx context.Context, keys []string) error {
 	return DeleteAll(ctx, q.ObjectStore, keys)
 }
+
+// DeleteAllSized implements SizedBatchDeleter by forwarding, so the sizes a
+// listing supplied reach the meters beneath the budget.
+func (q *QuotaStore) DeleteAllSized(ctx context.Context, objects []SizedKey) error {
+	return DeleteAllSized(ctx, q.ObjectStore, objects)
+}
+
+// ListSized implements SizedLister by forwarding, for the reason DeleteAll
+// gives: an embedded ObjectStore promotes only the methods ObjectStore
+// declares, so a capability not restated here stops here.
+func (q *QuotaStore) ListSized(ctx context.Context, prefix string, fn func(key string, size int64) error) error {
+	return ListSized(ctx, q.ObjectStore, prefix, fn)
+}

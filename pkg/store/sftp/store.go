@@ -247,6 +247,25 @@ func (s *Store) Flush(ctx context.Context) error {
 }
 
 func (s *Store) List(_ context.Context, prefix string) ([]string, error) {
+	var keys []string
+	err := s.walk(prefix, func(key string, _ os.FileInfo) error {
+		keys = append(keys, key)
+		return nil
+	})
+	return keys, err
+}
+
+// ListSized implements store.SizedLister. The walk stats every entry to tell
+// a file from a directory, so the size comes with the key.
+func (s *Store) ListSized(_ context.Context, prefix string, fn func(key string, size int64) error) error {
+	return s.walk(prefix, func(key string, info os.FileInfo) error {
+		return fn(key, info.Size())
+	})
+}
+
+// walk visits every object under prefix with the FileInfo the walk stat'd it
+// with.
+func (s *Store) walk(prefix string, fn func(key string, info os.FileInfo) error) error {
 	startPath := s.basePath
 	if prefix != "" {
 		candidate := path.Join(s.basePath, prefix)
@@ -260,24 +279,25 @@ func (s *Store) List(_ context.Context, prefix string) ([]string, error) {
 		}
 	}
 
-	var keys []string
 	walker := s.client.Walk(startPath)
 	for walker.Step() {
 		if err := walker.Err(); err != nil {
-			return nil, err
+			return err
 		}
 		if walker.Stat().IsDir() {
 			continue
 		}
 		rel, err := relPath(s.basePath, walker.Path())
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if strings.HasPrefix(rel, prefix) {
-			keys = append(keys, rel)
+			if err := fn(rel, walker.Stat()); err != nil {
+				return err
+			}
 		}
 	}
-	return keys, nil
+	return nil
 }
 
 // mkdirAllSFTP creates dir and all parents, tolerating "permission denied" on

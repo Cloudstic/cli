@@ -276,12 +276,25 @@ Two things are load-bearing:
   its response did not mention at all. `store.FailedDeletes` distinguishes that
   from an error with no per-key detail, where nothing may be assumed and a
   caller doing accounting must credit none of the batch.
-  `MeteredStore.DeleteAllReturnSizes` is where that accounting lives: it
-  reports the size of each key it confirmed deleted, and prune counts objects
-  and reclaimed bytes from that map alone. A sweep that could not delete
-  everything it classified as garbage deletes what it can and then fails, since
+  `MeteredStore.DeleteListed` is where that accounting lives: it reports the
+  size of each key it confirmed deleted, and prune counts objects and reclaimed
+  bytes from that map alone. A sweep that could not delete everything it
+  classified as garbage deletes what it can and then fails, since
   `docs/compatibility.md` forbids a garbage collector reporting a success over
   data it could not fully act on.
+- **The sizes come from the listing, not from a request per key.** The sweep
+  lists through `store.ListSized`, whose `SizedLister` capability every backend
+  implements because every backend's listing already returns each object's
+  size beside its key. `DeleteAllReturnSizes`, which asks the store for each
+  key's size before deleting it, is the shape that cost a `forget --prune` of
+  a 20,000-file repository 1,124 of its 1,428 requests — two `Size` per
+  object, because the sweep's meter and the client's `storedMeter` beneath the
+  encryption layer each asked. So the sizes travel *down* the chain with the
+  keys, through `store.SizedBatchDeleter`, and every wrapper that forwards
+  `DeleteAll` forwards `DeleteAllSized` too; a wrapper that forgot would make
+  the meter beneath it ask again. `PackStore` implements `ListSized` (catalog
+  lengths for packed keys, the backend's listing for the rest) and, like
+  `DeleteAll`, deliberately not the sized delete.
 
 ### Encryption Model
 

@@ -1078,3 +1078,55 @@ func TestDiskCacheStore_ReadInFlightDuringADeleteDoesNotRepopulate(t *testing.T)
 		t.Error("a deleted object was served from the cache")
 	}
 }
+
+// The sized twin of DeleteAll evicts the same entries and keeps the sizes for
+// the layers below, so a sweep through the cache costs no Size per key.
+func TestDiskCacheStore_DeleteAllSizedEvicts(t *testing.T) {
+	ctx := context.Background()
+	base := newRangeCounter(newLocal(t))
+	c, dir := newDiskCache(t, base, DiskCacheBudget)
+
+	keys := []string{blobKey(410), blobKey(411)}
+	var objects []store.SizedKey
+	for _, k := range keys {
+		mustPut(t, ctx, base, k, bytes.Repeat([]byte("e"), 256))
+		if _, err := c.Get(ctx, k); err != nil {
+			t.Fatal(err)
+		}
+		objects = append(objects, store.SizedKey{Key: k, Size: 256})
+	}
+	if err := c.DeleteAllSized(ctx, objects); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(mustReadDir(t, dir)); n != 0 {
+		t.Errorf("cache holds %d entries after DeleteAllSized, want 0", n)
+	}
+	for _, k := range keys {
+		if exists, _ := base.Exists(ctx, k); exists {
+			t.Errorf("%s survived", k)
+		}
+	}
+}
+
+// A listing is the backend's to answer; the cache forwards it, sizes and all.
+func TestDiskCacheStore_ForwardsSizedListing(t *testing.T) {
+	ctx := context.Background()
+	base := newLocal(t)
+	c, _ := newDiskCache(t, base, DiskCacheBudget)
+	mustPut(t, ctx, base, blobKey(420), bytes.Repeat([]byte("s"), 300))
+
+	got := map[string]int64{}
+	err := store.ListSized(ctx, c, "blob/", func(key string, size int64) error {
+		got[key] = size
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[blobKey(420)] != 300 || len(got) != 1 {
+		t.Errorf("ListSized through the cache = %v, want the one 300-byte blob", got)
+	}
+	if _, ok := any(c).(store.SizedLister); !ok {
+		t.Error("DiskCacheStore must declare store.SizedLister, or the capability stops at the cache")
+	}
+}

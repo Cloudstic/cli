@@ -77,6 +77,21 @@ func (m *MeteredStore) DeleteAll(ctx context.Context, keys []string) error {
 	return err
 }
 
+// DeleteAllSized implements store.SizedBatchDeleter, metering what it deletes
+// from the sizes it was handed. See DeleteListed.
+func (m *MeteredStore) DeleteAllSized(ctx context.Context, objects []store.SizedKey) error {
+	_, err := m.DeleteListed(ctx, objects)
+	return err
+}
+
+// ListSized implements store.SizedLister by forwarding. Metering counts bytes
+// written and has nothing to say about a listing — but the method has to be
+// declared, or the capability stops at this layer and a sweep above it pays a
+// Size per listed key (the GetRange trap, again).
+func (m *MeteredStore) ListSized(ctx context.Context, prefix string, fn func(key string, size int64) error) error {
+	return store.ListSized(ctx, m.ObjectStore, prefix, fn)
+}
+
 // DeleteAllReturnSizes deletes keys in as few backend requests as the wrapped
 // store allows and returns the stored size of every key it could confirm gone.
 //
@@ -94,9 +109,14 @@ func (m *MeteredStore) DeleteAll(ctx context.Context, keys []string) error {
 // credit a thousand objects because most of them worked, or credit none because
 // one did not, and a garbage collector that reports space it did not reclaim is
 // the more dangerous of those two (docs/compatibility.md).
+//
+// It reads each key's size from the store, one request per key on most
+// backends. A caller that has just listed the keys already holds their sizes
+// and should hand them to DeleteListed instead, which applies the same rule
+// without the round trips.
 func (m *MeteredStore) DeleteAllReturnSizes(ctx context.Context, keys []string) (map[string]int64, error) {
 	sizes := make(map[string]int64, len(keys))
-	sized := make([]string, 0, len(keys))
+	sized := make([]store.SizedKey, 0, len(keys))
 	var failures store.DeleteErrors
 
 	// A key whose size cannot be read is not deleted at all, matching
@@ -109,16 +129,43 @@ func (m *MeteredStore) DeleteAllReturnSizes(ctx context.Context, keys []string) 
 			continue
 		}
 		sizes[key] = size
-		sized = append(sized, key)
+		sized = append(sized, store.SizedKey{Key: key, Size: size})
 	}
+	return m.deleteSized(ctx, sized, sizes, failures)
+}
 
-	if err := store.DeleteAll(ctx, m.ObjectStore, sized); err != nil {
+// DeleteListed deletes objects a sized listing produced and returns the size of
+// every one it could confirm gone, under exactly the rule DeleteAllReturnSizes
+// states: a key is credited only when its size is known and the store
+// confirmed the deletion. The listing is where the size was read — before the
+// deletion, as the rule requires, since a meter must know what it will credit
+// while the store can still say — and so no key costs a request of its own.
+// That is the whole point: a sweep sized every object it had just listed, at
+// one round trip each, for the reclaimed-bytes figure alone.
+//
+// The sizes are also passed down the chain (store.DeleteAllSized), so a
+// second meter beneath this one credits from the same listing instead of
+// asking the store again.
+func (m *MeteredStore) DeleteListed(ctx context.Context, objects []store.SizedKey) (map[string]int64, error) {
+	sizes := make(map[string]int64, len(objects))
+	for _, o := range objects {
+		sizes[o.Key] = m.creditable(o.Key, o.Size)
+	}
+	return m.deleteSized(ctx, objects, sizes, nil)
+}
+
+// deleteSized is the accounting DeleteAllReturnSizes and DeleteListed share.
+// objects are the keys to delete with their sizes; sizes is the credit each
+// would earn if confirmed gone (which differs from the stored size under
+// "index/", see creditable); failures is what the caller has already ruled out.
+func (m *MeteredStore) deleteSized(ctx context.Context, objects []store.SizedKey, sizes map[string]int64, failures store.DeleteErrors) (map[string]int64, error) {
+	if err := store.DeleteAllSized(ctx, m.ObjectStore, objects); err != nil {
 		unconfirmed, ok := store.FailedDeletes(err)
 		if !ok {
 			// No per-key detail, so nothing in the batch is confirmed gone.
 			// Crediting none of it understates the space reclaimed, which is
 			// the safe direction; crediting all of it is the unsafe one.
-			unconfirmed = store.UnconfirmedDeletes(sized, err)
+			unconfirmed = store.UnconfirmedDeletes(store.KeysOf(objects), err)
 		}
 		failures = append(failures, unconfirmed...)
 		for _, key := range unconfirmed.Keys() {
@@ -138,9 +185,18 @@ func (m *MeteredStore) DeleteAllReturnSizes(ctx context.Context, keys []string) 
 	return sizes, nil
 }
 
-// storedSize is the size the meter credits back for a key. Objects under
-// "index/" are not metered on the way in (see Put), so they must not be
-// credited on the way out either.
+// creditable is what the meter credits back for a key of a known stored size.
+// Objects under "index/" are not metered on the way in (see Put), so they must
+// not be credited on the way out either.
+func (m *MeteredStore) creditable(key string, size int64) int64 {
+	if strings.HasPrefix(key, "index/") {
+		return 0
+	}
+	return size
+}
+
+// storedSize is creditable for a key whose size has to be asked for, skipping
+// the request where the answer would not be credited anyway.
 func (m *MeteredStore) storedSize(ctx context.Context, key string) (int64, error) {
 	if strings.HasPrefix(key, "index/") {
 		return 0, nil

@@ -95,3 +95,15 @@ func (s *EncryptedStore) Get(ctx context.Context, key string) ([]byte, error) {
 func (s *EncryptedStore) DeleteAll(ctx context.Context, keys []string) error {
 	return store.DeleteAll(ctx, s.ObjectStore, keys)
 }
+
+// DeleteAllSized implements store.SizedBatchDeleter by forwarding, so the
+// sizes a listing supplied reach the meter beneath this layer.
+func (s *EncryptedStore) DeleteAllSized(ctx context.Context, objects []store.SizedKey) error {
+	return store.DeleteAllSized(ctx, s.ObjectStore, objects)
+}
+
+// ListSized implements store.SizedLister by forwarding: the listing and the
+// sizes are both the inner store's, as List and Size already are here.
+func (s *EncryptedStore) ListSized(ctx context.Context, prefix string, fn func(key string, size int64) error) error {
+	return store.ListSized(ctx, s.ObjectStore, prefix, fn)
+}

@@ -225,4 +225,10 @@ func TestStore(t *testing.T) {
 	t.Run("BatchDeleter", func(t *testing.T) {
 		storetest.AssertBatchDeleterConformance(t, st)
 	})
+
+	// The listing carries every object's size, which is what lets prune's
+	// sweep account for what it deletes without a request per object.
+	t.Run("SizedLister", func(t *testing.T) {
+		storetest.AssertSizedListerConformance(t, st)
+	})
 }

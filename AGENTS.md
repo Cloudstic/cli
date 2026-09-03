@@ -363,7 +363,12 @@ much metadata a backup holds before committing the working tree; and
 `CLOUDSTIC_TEST_BODY_INDEX_BYTES` (`internal/engine/bodyindex.go`) how much
 whole-file dedup state a backup holds, whose floor is the interesting end —
 setting it to 1 turns deduplication off, which is how a measurement separates
-what reuse saves from what the rest of the run does. Blob
+what reuse saves from what the rest of the run does;
+`CLOUDSTIC_TEST_RESTORE_BATCH_BYTES` (`internal/engine/restore.go`) how much a
+v3 restore holds in files it has met and not yet written before it plans and
+issues their blob reads — a blob is read once per batch its members are spread
+over, and on an aged repository that is every batch, so this is the one dial
+the request count of a full restore is a function of. Blob
 consolidation adds three (`internal/engine/blobconsolidate.go`):
 `CLOUDSTIC_TEST_BLOB_FILL` is the percentage of a full blob's live bytes below
 which a blob is rewritten forward, and is the one meant to be swept;

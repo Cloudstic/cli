@@ -504,3 +504,184 @@ func assertRestoredTree(t *testing.T, root string, want map[string][]byte) {
 		}
 	}
 }
+
+// distinctUnder reports how many distinct keys under prefix were read by range.
+func (s *rangeCountingStore) distinctUnder(prefix string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var n int
+	for key := range s.ranges {
+		if strings.HasPrefix(key, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+// churnedV3Repository builds a repository whose leaf order interleaves blobs
+// the way an aged one does: every file is backed up once, then every other
+// file is rewritten and backed up again, so consecutive entries in leaf order
+// alternate between the first backup's blobs and the second's. Blobs are kept
+// small so there are many of them, and consolidation is off so the first
+// backup's blobs stay exactly where they were written rather than being
+// repacked forward into a layout that happens to be tidier.
+func churnedV3Repository(t *testing.T, n int) (*MockStore, map[string][]byte) {
+	t.Helper()
+	t.Setenv(envBlobBudget, "4096")
+	t.Setenv(envConsolidateRewrite, "1")
+	ctx := context.Background()
+
+	dest := NewMockStore()
+	src, want := v3ManyFileSource(n)
+	if _, err := NewBackupManager(v3Deps(dest), src).Run(ctx); err != nil {
+		t.Fatalf("first backup: %v", err)
+	}
+	for i := 0; i < n; i += 2 {
+		name, id := fmt.Sprintf("f%04d.txt", i), fmt.Sprintf("id-%04d", i)
+		body := []byte(strings.Repeat(fmt.Sprintf("%d+", i), 41))
+		src.AddFile(name, id, body)
+		f := src.Files[id]
+		f.Meta.Mtime += 60 // a rewrite the scan cannot mistake for the original
+		src.Files[id] = f
+		want[name] = body
+	}
+	if _, err := NewBackupManager(v3Deps(dest), src).Run(ctx); err != nil {
+		t.Fatalf("second backup: %v", err)
+	}
+	return dest, want
+}
+
+// An aged repository's leaf order interleaves blobs: churn scatters rewritten
+// bodies into new blobs across the whole walk, so every stretch of leaf order
+// touches most of them, and any batch narrower than the snapshot reads each
+// blob once per batch. That is how a restore came to read every blob about
+// ninety times when the batch closed at 2,048 entries or 32 MB of blob reached
+// into. The floor is one read per blob, and reaching it must not depend on
+// how the entries happen to be interleaved — only on the batch holding them
+// all, which is what it is sized to do.
+func TestRestoreReadsEachBlobOnceHoweverTheLeavesInterleave(t *testing.T) {
+	ctx := context.Background()
+	// More files than a batch used to hold, so a count-bounded batch would
+	// split every blob's members and read each blob more than once.
+	dest, want := churnedV3Repository(t, 3000)
+	if blobs := dest.CountPrefix("blob/"); blobs < 50 {
+		t.Fatalf("the churned repository holds %d blobs, want many for the leaves to interleave", blobs)
+	}
+
+	counting := newRangeCountingStore(dest)
+	deps := v3Deps(dest)
+	deps.BlobStore = counting
+
+	root := t.TempDir()
+	w, err := NewFSRestoreWriter(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := NewRestoreManager(deps).Run(ctx, w, "latest")
+	if err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if res.Errors != 0 {
+		t.Fatalf("restore reported %d errors", res.Errors)
+	}
+	assertRestoredTree(t, root, want)
+
+	blobs := counting.distinctUnder("blob/")
+	if got := counting.countUnder("blob/"); got != blobs {
+		t.Errorf("restore issued %d ranged reads into %d blobs, want one per blob however the leaves interleave",
+			got, blobs)
+	}
+}
+
+// The sequential writer reaches the same floor over the same layout. Its spans
+// are written in planned order as they land rather than parked for the batch,
+// which is what lets its batch be as wide as the directory writer's without
+// holding every span of it at once — and what makes the archive's entry order
+// a function of the plan, so two restores of one snapshot produce one archive.
+func TestZipRestoreReadsEachBlobOnceHoweverTheLeavesInterleave(t *testing.T) {
+	ctx := context.Background()
+	dest, want := churnedV3Repository(t, 3000)
+
+	restoreZip := func() ([]byte, *rangeCountingStore) {
+		counting := newRangeCountingStore(dest)
+		deps := v3Deps(dest)
+		deps.BlobStore = counting
+		var buf bytes.Buffer
+		if _, err := NewRestoreManager(deps).Run(ctx, NewZipRestoreWriter(&buf), "latest"); err != nil {
+			t.Fatalf("restore: %v", err)
+		}
+		return buf.Bytes(), counting
+	}
+	first, counting := restoreZip()
+
+	zr, err := zip.NewReader(bytes.NewReader(first), int64(len(first)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	for _, f := range zr.File {
+		body, ok := want[f.Name]
+		if !ok {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != string(body) {
+			t.Fatalf("restored %s = %q, want %q", f.Name, got, body)
+		}
+		seen++
+	}
+	if seen != len(want) {
+		t.Fatalf("zip holds %d of %d files", seen, len(want))
+	}
+
+	blobs := counting.distinctUnder("blob/")
+	if got := counting.countUnder("blob/"); got != blobs {
+		t.Errorf("zip restore issued %d ranged reads into %d blobs, want one per blob", got, blobs)
+	}
+
+	if second, _ := restoreZip(); !bytes.Equal(first, second) {
+		t.Error("two zip restores of one snapshot differ: the sequential writer's entry order is not the plan's")
+	}
+}
+
+// The batch closes on what it holds, and CLOUDSTIC_TEST_RESTORE_BATCH_BYTES is
+// the dial. At one byte every entry is a batch of its own, so every file costs
+// a read of its own — the count restore paid before its reads were coalesced,
+// and the ceiling any batch cut is measured against.
+func TestRestoreBatchClosesOnTheBytesItHolds(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv(envRestoreBatchBytes, "1")
+
+	dest := NewMockStore()
+	src, want := v3ManyFileSource(200)
+	if _, err := NewBackupManager(v3Deps(dest), src).Run(ctx); err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+
+	counting := newRangeCountingStore(dest)
+	deps := v3Deps(dest)
+	deps.BlobStore = counting
+
+	root := t.TempDir()
+	w, err := NewFSRestoreWriter(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRestoreManager(deps).Run(ctx, w, "latest"); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	assertRestoredTree(t, root, want)
+
+	if got := counting.countUnder("blob/"); got != len(want) {
+		t.Errorf("with a one-byte batch budget restore issued %d ranged reads for %d files, want one per file",
+			got, len(want))
+	}
+}

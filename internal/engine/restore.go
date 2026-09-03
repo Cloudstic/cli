@@ -13,6 +13,8 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -150,34 +152,134 @@ const restoreMemoryBudget = 128 * 1024 * 1024
 // A span cannot exceed restoreSpanBytes, so the bytes are bounded regardless.
 const restoreSpansInFlight = 2
 
-// restoreBatchEntries is how many files a v3 restore plans its reads over
-// before writing any of them.
+// restoreBatchBytes is how much a v3 restore may hold in files it has met and
+// not yet written, and so what closes a batch.
 //
-// A batch is the window a coalescing planner can see, so it wants to be large;
-// it is also what the phase holds, so it wants to be small. 2048 is the same
-// figure the metadata pass buffers at (metaDecodeBatch) and for the same
-// reason: an entry in the batch is a pointer into a leaf that is live anyway,
-// so a batch costs a few slice headers each rather than a copy of anything.
-const restoreBatchEntries = 2048
+// A batch is the window the coalescing planner sees. Within one, every member
+// of a blob is served by one read; across two, the blob is read again. The
+// request count is therefore the blob count times the number of batches each
+// blob's members are split over, and the floor — every blob read once — needs
+// a batch holding every file a blob serves. How far apart in the walk those
+// files sit is not a constant. Bodies written by one backup land in roughly
+// walk order, so a fresh repository's blobs are localised and a small batch
+// reaches the floor; churn scatters rewritten bodies into new blobs across the
+// whole walk, and after enough backups every stretch of leaf order touches
+// every blob. On a 20,000-file repository aged with 25 backups of 400-file
+// churn (20,570 bodies in 14 blobs) each blob is met in about 700 separate
+// runs of leaf order, and the planner, replayed over that order with the batch
+// cut at fixed entry counts, issues:
+//
+//	batch (entries)   2,048   4,096   8,192   16,384   32,768   whole
+//	blob reads          118      62      37       28       14      14
+//
+// The batch used to close on two other things: an entry count of 2,048, and
+// 32 MB of blob reached into — the sizes of the distinct blobs a batch had
+// touched, summed. Both were sized on a fresh repository of 32 small blobs,
+// where they cost 61 reads, and neither tracked age or blob size. The byte
+// window was the worse of the two: four distinct blobs of today's 8 MB stored
+// size fill it, and on the aged repository those are met within a few dozen
+// entries, so it closed batches at a handful of files each and cost 1,762
+// reads — 126x the floor — while holding none of the bytes it was counting.
+// A fresh 20,000-file repository of 10 such blobs cost 1,368 reads the same
+// way, so the failure was not age alone: blobs had outgrown the window.
+//
+// So the batch is bounded by what it actually costs instead. An entry is a
+// decoded core.FileMeta, its path and a copy of its body reference — a few
+// hundred bytes, and nothing else, since it no longer keeps its leaf alive
+// (see pendingWrite) — and the batch closes when those add up to this. What
+// that buys is derivable rather than measured: a snapshot whose entries fit
+// is one batch and reads each blob once whatever its age, and a larger one
+// reads each blob about (held bytes / budget) times, with the memory bounded
+// here rather than the requests. 64 MB is roughly 100,000 entries — holding
+// the aged repository's 20,617 raised peak RSS by 13 MB — and half of what
+// restoreMemoryBudget already lets the chunked path hold.
+//
+// Blob residency is a separate bound and does not move with this: however
+// large the batch, restoreSpansInFlight coalesced reads are in memory at once
+// — the directory writer releases a span as soon as its files are written,
+// and the sequential writer takes spans in planned order, one at a time, as
+// they land.
+//
+// CLOUDSTIC_TEST_RESTORE_BATCH_BYTES overrides it, for sweeps and tests only.
+// It is the dial to turn to see what a batch cut costs on a given repository,
+// which a constant nothing outside the process can move cannot show.
+const restoreBatchBytes = 64 << 20
 
-// restoreSpanWindowBytes is roughly how much blob one batch reaches into, and
-// so the second thing that closes a batch.
+const envRestoreBatchBytes = "CLOUDSTIC_TEST_RESTORE_BATCH_BYTES"
+
+// restoreBatchLimit is restoreBatchBytes unless the environment overrides it.
+func restoreBatchLimit() int64 {
+	if v, ok := os.LookupEnv(envRestoreBatchBytes); ok {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			return n
+		}
+	}
+	return restoreBatchBytes
+}
+
+// pendingWrite is one file a v3 restore's walk has met and the batch has not
+// yet written.
 //
-// An entry count alone is the wrong cut, because what a batch has to contain
-// is not files but *blobs*: the walk does not arrive strictly blob by blob —
-// upload concurrency shuffles bodies into blobs, so a stretch of walk order
-// interleaves several — and a batch narrower than that interleaving splits a
-// blob's members across batches and reads the blob once per batch. Measured on
-// a 20,000-file repository of 32 blobs, restoring everything: a 4 MB window
-// costs 3,656 blob reads, 8 MB costs 78, 16 MB and 32 MB both cost 61. The
-// curve flattens once a batch spans more blobs than the walk interleaves, and
-// 61 against 32 blobs is that floor.
-//
-// It does not bound memory. How much blob is resident is restoreSpansInFlight,
-// which is why this can be set for the request count alone; widening it past
-// the flat region buys nothing, and narrowing it below costs requests without
-// saving anything.
-const restoreSpanWindowBytes = 32 * 1024 * 1024
+// It carries what writing the file needs and nothing that keeps a leaf alive.
+// The body reference and chunk list are copied out of the payload rather than
+// pointed at: a payload pointer pins the decoded leaf holding it, and a batch
+// is sized by what it holds (restoreBatchBytes), so an entry that pinned a 4 MB
+// leaf would make the batch the whole tree while accounting for a few hundred
+// bytes of it.
+type pendingWrite struct {
+	meta   core.FileMeta
+	rel    string
+	size   int64
+	body   *hamt.BodyRef
+	chunks []string
+}
+
+// newPendingWrite copies what the write needs out of p, which is shared with
+// the node cache and must not be retained past the walk callback.
+func newPendingWrite(meta core.FileMeta, rel string, p *hamt.Payload) pendingWrite {
+	w := pendingWrite{meta: meta, rel: rel, size: p.Size}
+	if p.Body != nil {
+		body := *p.Body
+		w.body = &body
+	}
+	if len(p.Chunks) > 0 {
+		// The strings are already their own allocations; the slice header is
+		// what would alias the leaf.
+		w.chunks = slices.Clone(p.Chunks)
+	}
+	return w
+}
+
+// payload is the entry's content payload as writeContentFromPayload takes it,
+// rebuilt from the copies rather than from the leaf.
+func (w *pendingWrite) payload() *hamt.Payload {
+	return &hamt.Payload{Size: w.size, Body: w.body, Chunks: w.chunks}
+}
+
+// approxBytes is what holding this entry costs, for the batch budget. It
+// overcounts slightly — fixed per-field overhead instead of exact headers, and
+// strings a plan's byID already shares are counted again — because the budget
+// is a target rather than a contract, and erring high closes a batch early
+// rather than late.
+func (w *pendingWrite) approxBytes() int64 {
+	// The struct, its FileMeta, and the map and slice headers inside them.
+	n := 320 + len(w.rel) + len(w.meta.FileID) + len(w.meta.Name) +
+		len(w.meta.ContentHash) + len(w.meta.ContentRef) + len(w.meta.Owner)
+	for _, s := range w.meta.Parents {
+		n += len(s) + 16
+	}
+	for _, s := range w.meta.Paths {
+		n += len(s) + 16
+	}
+	n += 64 * (len(w.meta.Extra) + len(w.meta.Xattrs))
+	if w.body != nil {
+		n += 48 + len(w.body.Blob)
+	}
+	for _, c := range w.chunks {
+		n += len(c) + 16
+	}
+	return int64(n)
+}
 
 // RestoreManager recreates a snapshot's file tree using a RestoreWriter output format.
 type RestoreManager struct {
@@ -456,25 +558,15 @@ func (rm *RestoreManager) runWithWriterV3(ctx context.Context, plan restorePlan,
 	cw, ok := writer.(concurrentRestoreWriter)
 	concurrent := ok && cw.SupportsConcurrentWrites()
 
-	// pendingWrite is one file the walk has met and the batch has not yet
-	// written. The payload is carried rather than copied: a decoded node is
-	// immutable and shared with the cache, so holding a pointer into one is
-	// free and races with nothing.
-	type pendingWrite struct {
-		meta core.FileMeta
-		rel  string
-		p    *hamt.Payload
-	}
-
-	batch := make([]pendingWrite, 0, restoreBatchEntries)
-	batchSpanBytes := int64(0)
-	batchBlobs := make(map[string]bool)
+	var batch []pendingWrite
+	batchBytes := int64(0)
+	batchLimit := restoreBatchLimit()
 
 	// sealed, when non-nil, is w's member already in hand from a coalesced
 	// read, so writing the file costs no request of its own.
 	writeOne := func(ctx context.Context, w pendingWrite, sealed []byte) error {
 		err := writer.WriteFile(w.rel, w.meta, func(out io.Writer) error {
-			return rm.writeContentFromPayload(ctx, out, w.meta, w.p, sealed, !plan.cfg.noVerify)
+			return rm.writeContentFromPayload(ctx, out, w.meta, w.payload(), sealed, !plan.cfg.noVerify)
 		})
 		defer phase.Increment(1)
 		switch {
@@ -518,23 +610,21 @@ func (rm *RestoreManager) runWithWriterV3(ctx context.Context, plan restorePlan,
 		}
 		defer func() {
 			batch = batch[:0]
-			batchSpanBytes = 0
-			clear(batchBlobs)
+			batchBytes = 0
 		}()
 
 		reads := make([]blobRead, 0, len(batch))
 		for i := range batch {
-			if b := batch[i].p.Body; b != nil {
+			if b := batch[i].body; b != nil {
 				reads = append(reads, blobRead{index: i, ref: b})
 			}
 		}
 		spans := planBlobSpans(reads, restoreIOGap, restoreSpanBytes())
 
-		sealed := make([][]byte, len(batch))
-		// dispatched marks the entries a span handed to the write pool as soon
-		// as its bytes landed, so the pass below writes only what is left.
-		// Each index belongs to exactly one span, and fg.Wait orders these
-		// writes before that pass reads them.
+		// dispatched marks the entries a span wrote, or handed to the write
+		// pool, as soon as its bytes landed, so the pass below writes only
+		// what is left. Each index belongs to exactly one span, and fg.Wait
+		// orders these writes before that pass reads them.
 		dispatched := make([]bool, len(batch))
 
 		wg, wgCtx := errgroup.WithContext(ctx)
@@ -549,8 +639,23 @@ func (rm *RestoreManager) runWithWriterV3(ctx context.Context, plan restorePlan,
 		// see restoreSpansInFlight.
 		fg, fgCtx := errgroup.WithContext(ctx)
 		fg.SetLimit(restoreSpansInFlight)
+
+		// turn is the sequential writer's ordering. Each span writes only
+		// after the one planned before it has, so a zip's entries come out in
+		// span order — deterministic, since the plan is — and a span is
+		// resident for its own files rather than for the batch. Spans are
+		// still fetched restoreSpansInFlight at a time: the next one's read is
+		// in flight while this one's files are being written. It cannot
+		// deadlock, because slots are granted in submission order and a span
+		// waits only on its predecessor, which was submitted first and waits
+		// on nothing this span holds.
+		turn := make(chan struct{})
+		close(turn)
 		for _, s := range spans {
+			prev, next := turn, make(chan struct{})
+			turn = next
 			fg.Go(func() error {
+				defer close(next)
 				data, err := rm.blobs.span(fgCtx, s)
 				if err != nil {
 					// Not fatal, and deliberately not reported here. The
@@ -561,27 +666,36 @@ func (rm *RestoreManager) runWithWriterV3(ctx context.Context, plan restorePlan,
 					// what coalescing must not quietly take away.
 					return nil
 				}
+				if !concurrent {
+					select {
+					case <-prev:
+					case <-fgCtx.Done():
+						return fgCtx.Err()
+					}
+					for _, idx := range s.members {
+						m, err := s.slice(data, batch[idx].body)
+						if err != nil {
+							continue // falls back below, as in the concurrent path
+						}
+						dispatched[idx] = true
+						if err := writeOne(fgCtx, batch[idx], m); err != nil {
+							return err
+						}
+					}
+					return nil
+				}
 				// pending is what keeps this slot occupied until the span's
 				// own files are written.
 				var pending sync.WaitGroup
 				defer pending.Wait()
 				for _, idx := range s.members {
-					m, err := s.slice(data, batch[idx].p.Body)
+					m, err := s.slice(data, batch[idx].body)
 					if err != nil {
 						// A member the span does not cover means the plan and
 						// the entry disagree, which should be unreachable. It
 						// falls back rather than failing the restore, for the
 						// same reason a failed span read does — the file is
 						// then read on its own and either works or is counted.
-						continue
-					}
-					if !concurrent {
-						// The sequential writer takes its bytes from here
-						// instead, below, in batch order — so its spans stay
-						// resident for the batch rather than for their own
-						// files. A zip restore holds one batch's worth, which
-						// restoreSpanWindowBytes is what bounds.
-						sealed[idx] = m
 						continue
 					}
 					// Handed over the moment it is readable rather than after
@@ -592,9 +706,9 @@ func (rm *RestoreManager) runWithWriterV3(ctx context.Context, plan restorePlan,
 					//
 					// m is the only reference to the span's buffer once this
 					// closure holds it, which is why a dispatched member is
-					// never also parked in sealed: keeping it there would pin
-					// every span the batch read until the batch ended, and
-					// cost 15 MB of peak RSS on a 20,000-file tree.
+					// never parked anywhere else: keeping it would pin every
+					// span the batch read until the batch ended, and cost
+					// 15 MB of peak RSS on a 20,000-file tree.
 					//
 					// Submitting from here cannot deadlock against the slot
 					// this goroutine holds. The only writes running while a
@@ -641,17 +755,17 @@ func (rm *RestoreManager) runWithWriterV3(ctx context.Context, plan restorePlan,
 			if dispatched[i] {
 				continue
 			}
-			w, m := batch[i], sealed[i]
+			w := batch[i]
 			if !concurrent {
 				// A zip is one sequential stream with one open entry at a
-				// time, so its files are written here, in batch order, rather
-				// than as their spans arrive.
-				if err := writeOne(rgCtx, w, m); err != nil {
+				// time, so what its spans did not serve is written here, in
+				// batch order, after them.
+				if err := writeOne(rgCtx, w, nil); err != nil {
 					return err
 				}
 				continue
 			}
-			rg.Go(func() error { return writeOne(rgCtx, w, m) })
+			rg.Go(func() error { return writeOne(rgCtx, w, nil) })
 		}
 		if err := rg.Wait(); err != nil {
 			return err
@@ -717,19 +831,16 @@ func (rm *RestoreManager) runWithWriterV3(ctx context.Context, plan restorePlan,
 		// small enough to inline, and that is what made a v3 restore slower
 		// in wall time than v2 while making fewer requests and moving a third
 		// of the bytes.
-		batch = append(batch, pendingWrite{meta: meta, rel: rel, p: p})
+		w := newPendingWrite(meta, rel, p)
+		batch = append(batch, w)
 
-		// The batch closes on whichever comes first: enough entries to plan
-		// over, or enough distinct blobs reached into that a wider window
-		// would buy no further coalescing. The byte figure is counted once per
-		// blob and is deliberately an upper bound, because it decides only how
-		// coarsely the walk is cut — what is resident at any moment is
-		// restoreSpansInFlight spans, not a batch's worth.
-		if b := p.Body; b != nil && !batchBlobs[b.Blob] {
-			batchBlobs[b.Blob] = true
-			batchSpanBytes += min(max(b.Total, b.Offset+b.Length), restoreSpanBytes())
-		}
-		if len(batch) < restoreBatchEntries && batchSpanBytes < restoreSpanWindowBytes {
+		// The batch closes on what it holds and on nothing else: not on an
+		// entry count, and not on how much blob it has reached into, since
+		// neither is a cost — what is resident at any moment is
+		// restoreSpansInFlight spans, not a batch's worth of blob. See
+		// restoreBatchBytes for why the cut has to be this wide.
+		batchBytes += w.approxBytes()
+		if batchBytes < batchLimit {
 			return nil
 		}
 		return flush()

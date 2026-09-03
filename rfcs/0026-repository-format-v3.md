@@ -1293,11 +1293,25 @@ not exempt, at 3.9x. A cache that holds whole objects brings both to about
 measured to be byte-identical with the cache and without it, because an object
 read once never reaches the threshold that promotes it.
 
-So the honest summary of the read path is narrower than §5 states it: ranged,
-coalesced reads are right for reading *part* of a repository and wrong for
-reading all of it, and nothing in the format tells the reader which it is
-doing. Stating demand — the mechanism RFC 0025 §2 describes — is what would
-close that, and it is not implemented for blobs.
+That re-reading has since been removed, and the paragraph above stays as the
+record of what the cache was answering when it was added. The batch was closing
+on how much blob it had *reached into* — 32 MB, four blobs' worth — rather than
+on what it held, so on an aged repository, where every stretch of leaf order
+touches every blob, it closed after a few dozen files. Sized by the entries it
+holds instead (`restoreBatchBytes`, `internal/engine/restore.go`), a full
+restore of a 20,000-file repository aged with 25 backups of 400-file churn
+reads each of its 14 blobs exactly once — 14 ranged reads and 58 MB, against
+1,762 and 802 MB — and is byte-identical with the cache and without it, since
+no blob is read twice. The packfile format is unchanged at 3.9x.
+
+So the honest summary of the read path was narrower than §5 states it: ranged,
+coalesced reads are right for reading *part* of a repository and were wrong for
+reading all of it while nothing told the reader which it was doing. What
+closed that is a form of stating demand — the mechanism RFC 0025 §2 describes
+— arrived at from the other side: rather than the store being told what will be
+read, the reader holds every reference the snapshot carries and plans all of
+its reads before issuing any, so the whole demand is known to the one party
+that needs it.
 
 ### What is not measured here
 

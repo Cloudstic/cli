@@ -2191,11 +2191,14 @@ Things worth knowing before turning it on:
   changes. A partial restore of one subtree was measured as byte-identical with
   the cache and without it.
 
-  What the cache actually replaces is re-reading. Reading a whole repository
-  transfers each aggregate object many times over, because reads are coalesced
+  What the cache actually replaces is re-reading. Reading a whole packfile
+  repository transfers each pack many times over, because reads are coalesced
   within a batch and not across them: a full restore moves about 4x its
-  repository without the cache and 8x on a format-v3 repository, against
-  roughly 1.0x with it. Fewer requests *and* fewer bytes.
+  repository without the cache, against roughly 1.0x with it. Fewer requests
+  *and* fewer bytes. A format-v3 restore used to re-read the same way, at 8x,
+  and no longer does: it plans every blob read before issuing any, so each
+  blob is read once and a full restore is byte-identical with the cache and
+  without it.
 - **It is safe to delete at any time**, while Cloudstic is not running. Nothing
   in it is authoritative — every entry is a copy of an object the repository
   still holds — and a missing entry is simply a fetch.

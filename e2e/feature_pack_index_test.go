@@ -80,7 +80,7 @@ func TestCLI_Feature_PackIndexIsSealedOnDisk(t *testing.T) {
 			r := h.
 				WithFile("invoice.txt", "classified invoice data").
 				WithFile("subdir/nested.txt", "nested content").
-				MustInitEncrypted()
+				MustInitEncrypted("-format", "2")
 			r.Backup()
 
 			index, packs := readPackArtefacts(t, dir)
@@ -125,7 +125,7 @@ func TestCLI_Feature_PackIndexUnsealedWithoutEncryption(t *testing.T) {
 		test: func(t *testing.T, h *harness, entry matrixEntry) {
 			dir := storeDir(t, h)
 
-			r := h.WithFile("plain.txt", "not secret").MustInitUnencrypted()
+			r := h.WithFile("plain.txt", "not secret").MustInitUnencrypted("-format", "2")
 			r.Backup()
 
 			index, _ := readPackArtefacts(t, dir)

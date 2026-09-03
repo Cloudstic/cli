@@ -332,16 +332,20 @@ func (h *harness) MustInitEncrypted(extraArgs ...string) *repo {
 }
 
 // InitUnencrypted initializes the repo without encryption and returns an active repo handle and output.
-func (h *harness) InitUnencrypted() (*repo, string) {
+// InitUnencrypted takes extra arguments for the same reason InitEncrypted
+// does: a test that needs a specific repository format has to name it, now
+// that init defaults to v3.
+func (h *harness) InitUnencrypted(extraArgs ...string) (*repo, string) {
 	h.t.Helper()
-	args := append([]string{"init", "--no-encryption"}, h.storeArgs...)
+	args := append([]string{"init", "--no-encryption"}, extraArgs...)
+	args = append(args, h.storeArgs...)
 	out := run(h.t, h.bin, args...)
 	return &repo{h: h, authArgs: append([]string{}, h.storeArgs...)}, out
 }
 
-func (h *harness) MustInitUnencrypted() *repo {
+func (h *harness) MustInitUnencrypted(extraArgs ...string) *repo {
 	h.t.Helper()
-	r, _ := h.InitUnencrypted()
+	r, _ := h.InitUnencrypted(extraArgs...)
 	return r
 }
 

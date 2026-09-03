@@ -458,11 +458,19 @@ short version, which applies to any change touching what is written to a store:
     delete a live repository.
   - Never let `prune`, `forget`, or repacking proceed on data that could not be
     fully read.
-- **The version gate.** `core.RepoFormatVersion` and
-  `core.MaxSupportedRepoFormat` (`internal/core/models.go`) gate every repository
-  open through `LoadRepoConfig`. Raise both when a change would make a
-  repository unreadable or misreadable by earlier builds; leave them alone when
-  earlier builds cope, since a needless bump locks users out of their own data.
+- **The version gate.** Three constants in `internal/core/models.go`, and they
+  are not interchangeable. `RepoFormatVersion` is what `init` **creates** (3
+  since #517). `MaxInPlaceUpgradeFormat` is the highest an **existing**
+  repository is raised to by a write, and stays 2 — stamping 3 onto a packfile
+  repository would claim a layout that is not there, locking out builds that
+  could read it and making this build open it without `PackStore`. Only a
+  format whose structures an older era already holds may be stamped in place;
+  v2 to v3 is a rewrite, which is what `migrate` is for.
+  `MaxSupportedRepoFormat` is the highest this build will open, and
+  `LoadRepoConfig` is the single gate every open funnels through. Raise the
+  read gate when a change would make a repository unreadable or misreadable by
+  earlier builds; leave it alone when earlier builds cope, since a needless
+  bump locks users out of their own data.
 - **Upgrades are in place, opportunistic, and permanently partial.** New
   structures are written in the current format; older ones are read as they are
   and rewritten only when a write happens to pass over them. A repository stays

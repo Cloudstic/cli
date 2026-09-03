@@ -292,14 +292,31 @@ cloudstic init -encryption-key <hex> -prompt
 | `-add-recovery-key` | Generate a 24-word recovery key during init |
 | `-no-encryption` | Create an unencrypted repository (not recommended) |
 | `-adopt-slots` | Adopt existing key slots (and add new credentials to them) |
-| `-format <version>` | Repository format version to create; `3` selects the packless fat-leaf format (RFC 0026, experimental) |
+| `-format <version>` | Repository format to create. Defaults to `3`, the packless fat-leaf format (RFC 0026). Pass `2` for a packfile repository that builds older than v3 support can read |
 
 When `-add-recovery-key` is used, a 24-word seed phrase is displayed **once**. Write it down and store it safely — it's your last resort if you lose your password.
 
-Format 3 stores file metadata and small file content inside the snapshot tree
-itself, eliminating the packfile layer entirely. It is opt-in and experimental:
-older Cloudstic builds refuse to open a format-3 repository, an existing
-repository cannot be converted in place, and `copy` does not support it yet.
+#### Repository format
+
+New repositories are **format 3**, which stores file metadata and small file
+content inside the snapshot tree itself and has no packfile layer. It is faster
+on every read command, uses about half the memory, and settles smaller under a
+retention policy.
+
+The one thing to know before creating one: **Cloudstic builds older than format-3
+support cannot open it.** They refuse it cleanly, with a message telling you to
+upgrade, rather than misreading it — but if you back up from a laptop and
+restore from a server, both need a build new enough. If that is a problem,
+create the repository as a packfile one:
+
+```bash
+cloudstic init -store local:/srv/backup -format 2
+```
+
+Existing repositories are untouched. A packfile repository stays packfile no
+matter how many times you back up to it; nothing converts it silently. To move
+one to format 3, copy it into a new repository with `cloudstic migrate`, which
+only ever reads the original.
 
 ---
 

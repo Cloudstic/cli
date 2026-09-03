@@ -19,12 +19,25 @@ import (
 // cannot name the range this build accepts cannot validate an argument before
 // passing it. The CLI's `migrate -format` is exactly such a caller.
 const (
-	// RepoFormatVersion is stamped into every repository this build creates.
+	// RepoFormatVersion is stamped into every repository this build creates by
+	// default, which since #517 is v3.
 	RepoFormatVersion = core.RepoFormatVersion
 	// MaxSupportedRepoFormat is the highest version this build can read, and
-	// the highest WithInitFormat accepts. It is above RepoFormatVersion while a
-	// newer format is opt-in rather than the default.
+	// the highest WithInitFormat accepts. It equals RepoFormatVersion now that
+	// v3 is the default; the two diverge only while a newer format is opt-in.
 	MaxSupportedRepoFormat = core.MaxSupportedRepoFormat
+	// RepoFormatV2 is the packfile format, still created on request for a
+	// repository an older build can read. Named here because WithInitFormat
+	// takes an int and a caller outside this module cannot otherwise say
+	// which format it means.
+	RepoFormatV2 = core.RepoFormatV2
+	// RepoFormatV3 is the fat-leaf, packless format (RFC 0026), and the
+	// default.
+	RepoFormatV3 = core.RepoFormatV3
+	// MaxInPlaceUpgradeFormat is the highest format an existing repository is
+	// raised to by an ordinary write. Below RepoFormatVersion because v2 to v3
+	// is a rewrite, not an in-place stamp: see core.MaxInPlaceUpgradeFormat.
+	MaxInPlaceUpgradeFormat = core.MaxInPlaceUpgradeFormat
 )
 
 // ---------------------------------------------------------------------------

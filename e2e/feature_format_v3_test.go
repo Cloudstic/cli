@@ -139,16 +139,49 @@ func TestCLI_Feature_FormatV3RoundTrip(t *testing.T) {
 	}
 }
 
-// A repository created without -format keeps the packfile format, so the flag
-// is genuinely opt-in and the default path is unchanged.
-func TestCLI_Feature_DefaultFormatStillPacks(t *testing.T) {
+// A repository created without -format is v3, and one created with -format 2
+// is still a packfile repository. Both halves matter: the first is the change
+// #517 made, the second is the escape hatch for anyone who needs a repository
+// an older build can read.
+func TestCLI_Feature_DefaultFormatIsV3(t *testing.T) {
 	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
-		name:         "default_format_packs",
+		name:         "default_format_is_v3",
 		sourceFilter: localOnlySource,
 		storeFilter:  localOnlyStore,
 		test: func(t *testing.T, h *harness, _ matrixEntry) {
 			r := h.WithFile("a.txt", "alpha").MustInitEncrypted()
+			r.Backup()
+
+			var packed, blobbed bool
+			for _, key := range storeObjectKeys(t, localStoreDir(t, h)) {
+				switch {
+				case strings.HasPrefix(key, "packs/"):
+					packed = true
+				case strings.HasPrefix(key, "blob/"):
+					blobbed = true
+				}
+			}
+			if packed {
+				t.Error("a default-format repository wrote packfiles; the default is v3")
+			}
+			if !blobbed {
+				t.Error("a default-format repository wrote no blobs")
+			}
+		},
+	})
+}
+
+// The escape hatch, asserted separately so a regression in either half is
+// attributable.
+func TestCLI_Feature_FormatTwoStillPacks(t *testing.T) {
+	t.Parallel()
+	runFeatureMatrix(t, featureSpec{
+		name:         "format_two_still_packs",
+		sourceFilter: localOnlySource,
+		storeFilter:  localOnlyStore,
+		test: func(t *testing.T, h *harness, _ matrixEntry) {
+			r := h.WithFile("a.txt", "alpha").MustInitEncrypted("-format", "2")
 			r.Backup()
 
 			var packed bool
@@ -159,14 +192,12 @@ func TestCLI_Feature_DefaultFormatStillPacks(t *testing.T) {
 				}
 			}
 			if !packed {
-				t.Error("a default-format repository wrote no packfiles")
+				t.Error("init -format 2 wrote no packfiles")
 			}
 		},
 	})
 }
 
-// Re-initializing a packfile-era repository as v3 must be refused: rewriting
-// the marker cannot convert the structures it describes (RFC 0026).
 func TestCLI_Feature_FormatV3RefusesReinit(t *testing.T) {
 	t.Parallel()
 	runFeatureMatrix(t, featureSpec{
@@ -174,7 +205,7 @@ func TestCLI_Feature_FormatV3RefusesReinit(t *testing.T) {
 		sourceFilter: localOnlySource,
 		storeFilter:  localOnlyStore,
 		test: func(t *testing.T, h *harness, _ matrixEntry) {
-			r := h.WithFile("a.txt", "alpha").MustInitEncrypted()
+			r := h.WithFile("a.txt", "alpha").MustInitEncrypted("-format", "2")
 			r.Backup()
 
 			args := append([]string{"init", "-format", "3", "-adopt-slots"}, h.storeArgs...)

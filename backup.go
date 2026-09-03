@@ -59,16 +59,16 @@ func (c *Client) raiseRepoFormat(ctx context.Context) error {
 	// in-process belief would leave a repository unstamped after a real
 	// mutation — see TestDryRunsDoNotStampTheFormat.
 	if cfg := c.openCfg.Swap(&noRepoConfig); cfg != nil && cfg != &noRepoConfig {
-		if cfg.Version >= core.RepoFormatVersion {
+		if cfg.Version >= core.MaxInPlaceUpgradeFormat {
 			c.noteRepoFormat(int64(cfg.Version))
 			return nil
 		}
 	}
 
-	if err := UpgradeRepoFormat(ctx, c.base, core.RepoFormatVersion, c.encryptionKey); err != nil {
+	if err := UpgradeRepoFormat(ctx, c.base, core.MaxInPlaceUpgradeFormat, c.encryptionKey); err != nil {
 		return err
 	}
-	c.noteRepoFormat(int64(core.RepoFormatVersion))
+	c.noteRepoFormat(int64(core.MaxInPlaceUpgradeFormat))
 	return nil
 }
 

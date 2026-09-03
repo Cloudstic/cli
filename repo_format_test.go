@@ -271,8 +271,8 @@ func TestBackupThatSealsStampsTheFormat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if before.Version != core.RepoFormatVersion {
-		t.Fatalf("precondition: repository starts at %d, want %d", before.Version, core.RepoFormatVersion)
+	if before.Version != core.RepoFormatV2 {
+		t.Fatalf("precondition: repository starts at %d, want %d", before.Version, core.RepoFormatV2)
 	}
 
 	client := newPackfileClient(t, storeDir)
@@ -284,8 +284,8 @@ func TestBackupThatSealsStampsTheFormat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.Version != core.RepoFormatVersion {
-		t.Errorf("after sealing the format is %d, want %d", after.Version, core.RepoFormatVersion)
+	if after.Version != core.MaxInPlaceUpgradeFormat {
+		t.Errorf("after sealing the format is %d, want %d", after.Version, core.MaxInPlaceUpgradeFormat)
 	}
 
 	// And the repository it just stamped must still be one it can open.
@@ -374,8 +374,8 @@ func TestWritesStampTheFormatButReadsDoNot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Version != core.RepoFormatVersion {
-		t.Errorf("after a write the format is %d, want %d", cfg.Version, core.RepoFormatVersion)
+	if cfg.Version != core.MaxInPlaceUpgradeFormat {
+		t.Errorf("after a write the format is %d, want %d", cfg.Version, core.MaxInPlaceUpgradeFormat)
 	}
 }
 
@@ -511,7 +511,7 @@ func TestDryRunsDoNotStampTheFormat(t *testing.T) {
 		if _, err := client.Prune(ctx); err != nil {
 			t.Fatalf("prune: %v", err)
 		}
-		assertFormatVersion(t, base, core.RepoFormatVersion)
+		assertFormatVersion(t, base, core.MaxInPlaceUpgradeFormat)
 	})
 }
 
@@ -542,7 +542,7 @@ func TestForgetPolicyStampsTheFormat(t *testing.T) {
 	if _, err := client.ForgetPolicy(ctx, WithKeepLast(1)); err != nil {
 		t.Fatalf("forget policy: %v", err)
 	}
-	assertFormatVersion(t, base, core.RepoFormatVersion)
+	assertFormatVersion(t, base, core.MaxInPlaceUpgradeFormat)
 }
 
 func assertFormatVersion(t *testing.T, s store.ObjectStore, want int) {

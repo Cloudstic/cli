@@ -69,7 +69,7 @@ func TestCLI_Feature_ForgetNamedSnapshotOnPackedRepo(t *testing.T) {
 		sourceFilter: localOnlySource,
 		storeFilter:  localOnlyStore,
 		test: func(t *testing.T, h *harness, _ matrixEntry) {
-			r := h.WithFile("keep.txt", "kept across both snapshots").MustInitEncrypted()
+			r := h.WithFile("keep.txt", "kept across both snapshots").MustInitEncrypted("-format", "2")
 			r.Backup()
 
 			// Captured while it is the only snapshot. Both backups land in the

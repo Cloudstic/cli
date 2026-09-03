@@ -106,3 +106,50 @@ func assertJSONError(t *testing.T, data []byte, want string) {
 		t.Fatalf("JSON error = %q, want %q", got.Error, want)
 	}
 }
+
+// The migration note is the one thing a person running against a packfile
+// repository is told that the library has no opinion about, so its conditions
+// are worth pinning: which formats get it, and who can silence it.
+func TestPrintLegacyFormatNote(t *testing.T) {
+	base := clientConfig{}
+	base.Store.URI = "local:/srv/backup"
+
+	quiet := base
+	quiet.Quiet = true
+
+	for _, tc := range []struct {
+		name   string
+		cfg    clientConfig
+		format int
+		want   bool
+	}{
+		{"packfile repository is told", base, cloudstic.RepoFormatV2, true},
+		{"v3 repository is not", base, cloudstic.RepoFormatV3, false},
+		{"a format above v3 is not", base, cloudstic.RepoFormatV3 + 1, false},
+		// 0 is "not known yet", which happens for a client that never opened a
+		// marker. Saying a repository is on format 0 would be worse than
+		// saying nothing.
+		{"unknown format is not", base, 0, false},
+		{"quiet silences it", quiet, cloudstic.RepoFormatV2, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			printLegacyFormatNote(&buf, tc.cfg, tc.format)
+			got := buf.String() != ""
+			if got != tc.want {
+				t.Fatalf("printed = %v, want %v (output %q)", got, tc.want, buf.String())
+			}
+			if !tc.want {
+				return
+			}
+			// The note has to be actionable, which means naming the store the
+			// user would have to pass to migrate.
+			if !strings.Contains(buf.String(), "local:/srv/backup") {
+				t.Errorf("note does not name the store: %q", buf.String())
+			}
+			if !strings.Contains(buf.String(), "cloudstic migrate") {
+				t.Errorf("note does not give the command: %q", buf.String())
+			}
+		})
+	}
+}

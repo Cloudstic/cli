@@ -142,7 +142,31 @@ func (r *runner) openClient(ctx context.Context, cfg clientConfig) error {
 		return err
 	}
 	r.client = client
+	printLegacyFormatNote(r.errOut, cfg, client.RepoFormat())
 	return nil
+}
+
+// printLegacyFormatNote tells the user, once per command, that this repository
+// is still on the packfile format and what to do about it.
+//
+// Here rather than in the library: a repository staying on format 2 is not an
+// error and the client has nothing to say about it, but a person running the
+// CLI is the one who can act. It goes to stderr so it never contaminates
+// stdout that another program is parsing, and -quiet silences it for anyone
+// who has decided to stay on format 2 — which is a supported choice, since a
+// packfile repository is what a build older than v3 support can read.
+// A free function taking the writer first, like every other print* helper:
+// deciding what to say about a format is presentation, not one of the I/O
+// primitives the runner is allowed to hold (TestRunnerMethodsAreIOPrimitivesOnly).
+func printLegacyFormatNote(out io.Writer, cfg clientConfig, format int) {
+	if cfg.Quiet || format == 0 || format >= cloudstic.RepoFormatV3 {
+		return
+	}
+	_, _ = fmt.Fprintf(out,
+		"Note: this repository uses format %d (packfiles). Format %d is faster to read, "+
+			"uses less memory, and is smaller under a retention policy.\n"+
+			"      Migrate with: cloudstic migrate -store %s -to <new-store>\n",
+		format, cloudstic.RepoFormatV3, cfg.Store.URI)
 }
 
 func defaultRunInteractiveCmd(ctx context.Context, stdin *os.File, stdout, stderr io.Writer, name string, args ...string) error {

@@ -62,7 +62,9 @@ func writeRepoConfig(t *testing.T, dir string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := core.RepoConfig{Version: core.RepoFormatVersion, Created: "2026-01-01T00:00:00Z", Encrypted: true}
+	// Explicitly v2: this helper backs the packfile tests, which must keep
+	// exercising packs now that init defaults to v3.
+	cfg := core.RepoConfig{Version: core.RepoFormatV2, Created: "2026-01-01T00:00:00Z", Encrypted: true}
 	data, err := json.Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)

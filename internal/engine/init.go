@@ -75,19 +75,18 @@ func (m *InitManager) Run(ctx context.Context, opts ...InitOption) (*InitResult,
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	if cfg.format == 0 {
-		cfg.format = core.RepoFormatVersion
-	}
-	// The only formats an init may mint: the default, and v3 by explicit
-	// request. Anything below the default would create a repository claiming
-	// to predate this build's own writes.
-	if cfg.format != core.RepoFormatVersion && cfg.format != core.RepoFormatV3 {
-		return nil, fmt.Errorf("unsupported repository format %d: this build creates format %d (default) or %d",
-			cfg.format, core.RepoFormatVersion, core.RepoFormatV3)
-	}
-	m.log.Debugf("InitRepo: encrypted=%v, noEncryption=%v, adoptSlots=%v, hasChain=%v, recovery=%v, format=%d",
-		!cfg.noEncryption && len(cfg.chain) > 0, cfg.noEncryption, cfg.adoptSlots, len(cfg.chain) > 0, cfg.recovery, cfg.format)
+	// Whether the caller named a format. cfg.format stops being able to say so
+	// once the default is resolved, and one of the two adopt paths — the
+	// sealed marker, whose version cannot be read until the key exists — runs
+	// after that point.
+	formatRequested := cfg.format != 0
 
+	// The only formats an init may mint. Validated before the default is
+	// resolved, so that an explicit value is rejected on its own terms.
+	if cfg.format != 0 && cfg.format != core.RepoFormatV2 && cfg.format != core.RepoFormatV3 {
+		return nil, fmt.Errorf("unsupported repository format %d: this build creates format %d or %d (default)",
+			cfg.format, core.RepoFormatV2, core.RepoFormatV3)
+	}
 	// Check if already initialized. A read failure that is not "no config yet"
 	// must abort rather than fall through as if this were a fresh repository —
 	// otherwise a transient store error could make init overwrite an existing
@@ -115,6 +114,16 @@ func (m *InitManager) Run(ctx context.Context, opts ...InitOption) (*InitResult,
 			if err := checkAdoptedRepoFormat(existing.Version); err != nil {
 				return nil, err
 			}
+			// Adopting keeps the repository's own format. The build default
+			// is what a *new* repository gets; applying it here would try to
+			// re-initialize an existing packfile repository as v3, which the
+			// format check below refuses outright — correctly, since the
+			// stored structures do not change with the marker. An explicit
+			// -format is still honoured, and still refused if it disagrees
+			// with what is there.
+			if !formatRequested {
+				cfg.format = existing.Version
+			}
 			if err := m.checkEncryptionInPlace(ctx, existing, cfg); err != nil {
 				return nil, err
 			}
@@ -127,6 +136,12 @@ func (m *InitManager) Run(ctx context.Context, opts ...InitOption) (*InitResult,
 	default:
 		return nil, fmt.Errorf("check for existing repository: %w", err)
 	}
+
+	if cfg.format == 0 {
+		cfg.format = core.RepoFormatVersion
+	}
+	m.log.Debugf("InitRepo: encrypted=%v, noEncryption=%v, adoptSlots=%v, hasChain=%v, recovery=%v, format=%d",
+		!cfg.noEncryption && len(cfg.chain) > 0, cfg.noEncryption, cfg.adoptSlots, len(cfg.chain) > 0, cfg.recovery, cfg.format)
 
 	hasCreds := len(cfg.chain) > 0
 	encrypted := hasCreds && !cfg.noEncryption
@@ -150,6 +165,16 @@ func (m *InitManager) Run(ctx context.Context, opts ...InitOption) (*InitResult,
 			}
 			if err := checkAdoptedRepoFormat(existing.Version); err != nil {
 				return nil, err
+			}
+			// Adopting keeps the repository's own format. The build default
+			// is what a *new* repository gets; applying it here would try to
+			// re-initialize an existing packfile repository as v3, which the
+			// format check below refuses outright — correctly, since the
+			// stored structures do not change with the marker. An explicit
+			// -format is still honoured, and still refused if it disagrees
+			// with what is there.
+			if !formatRequested {
+				cfg.format = existing.Version
 			}
 		}
 

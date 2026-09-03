@@ -332,14 +332,16 @@ func TestClientV3_ChainHasNoPackStore(t *testing.T) {
 	}
 	t.Logf("v3 chain: %v", layers)
 
-	// And the same client on a default-format repository still packs, so the
+	// And the same client on a *packfile* repository still packs, so the
 	// absence above is the format's doing and not a broken chain builder.
+	// Asked for explicitly: v3 is the default since #517, so "the other
+	// format" has to be named rather than assumed.
 	v2Dir := t.TempDir()
 	v2Base, err := localstore.New(v2Dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := InitRepo(ctx, v2Base); err != nil {
+	if _, err := InitRepo(ctx, v2Base, WithInitFormat(core.RepoFormatV2)); err != nil {
 		t.Fatalf("init v2: %v", err)
 	}
 	v2Client, err := NewClient(ctx, v2Base, WithPackfile(true))
@@ -359,7 +361,7 @@ func TestClientV3_ChainHasNoPackStore(t *testing.T) {
 		s = un.Unwrap()
 	}
 	if !foundPack {
-		t.Fatal("a default-format client with packfiles enabled has no PackStore")
+		t.Fatal("a v2 client with packfiles enabled has no PackStore")
 	}
 }
 
@@ -372,7 +374,7 @@ func TestClientV3_RefusesReinitFromV2(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := InitRepo(ctx, base); err != nil {
+	if _, err := InitRepo(ctx, base, WithInitFormat(core.RepoFormatV2)); err != nil {
 		t.Fatalf("init v2: %v", err)
 	}
 	if _, err := InitRepo(ctx, base, WithInitFormat(core.RepoFormatV3), WithInitAdoptSlots()); err == nil {

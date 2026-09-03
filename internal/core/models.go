@@ -104,10 +104,45 @@ const (
 	// a repository touched by a build that can seal says so, and older builds
 	// are told to catch up rather than left writing alongside it.
 	//
-	// It deliberately stays below MaxSupportedRepoFormat while format v3 is
-	// opt-in (RFC 0026): a repository becomes v3 only when init is asked for
-	// it, never as a side effect of this build touching it.
-	RepoFormatVersion = 2
+	// It equals MaxSupportedRepoFormat: `init` creates the newest format this
+	// build understands, which is what makes v3 the default (RFC 0026, #517).
+	// It stayed at 2 while v3 was opt-in, so that a repository became v3 only
+	// when asked for; that gate is now lifted.
+	//
+	// Raising this does not touch an existing repository. A packfile
+	// repository stays packfile, is read and written as one forever, and is
+	// converted only by an explicit `cloudstic migrate`. What changes is what
+	// `init` creates when it is not told otherwise, and `init -format 2` still
+	// creates a packfile repository for anyone who needs one an older build
+	// can read.
+	RepoFormatVersion = 3
+
+	// RepoFormatV2 is the packfile format: small objects bundled into packs,
+	// with a sealed, sharded index. Still created on request by
+	// `init -format 2`, for a repository a build older than v3 support can
+	// read, and still read and written forever wherever it already exists.
+	RepoFormatV2 = 2
+
+	// MaxInPlaceUpgradeFormat is the highest format an *existing* repository
+	// is raised to by an ordinary write.
+	//
+	// It is not RepoFormatVersion, and the difference is the whole reason this
+	// constant exists. Format upgrades are in place and opportunistic
+	// (docs/compatibility.md): a mutation stamps the marker so other machines
+	// know to catch up. That works for a change earlier builds merely need to
+	// be warned about, and v1 to v2 was one.
+	//
+	// v2 to v3 is not. A v3 repository holds fat leaves and blobs where a v2
+	// one holds packs, so the version cannot be raised without rewriting every
+	// object — which is what `cloudstic migrate` does, explicitly and under
+	// the user's control. Stamping 3 onto a packfile repository would claim a
+	// layout that is not there: older builds would refuse a repository they
+	// can in fact read, and this build would open it as v3, build its chain
+	// without PackStore, and fail to read the packs it is made of.
+	//
+	// So a backup onto a packfile repository leaves it at 2 forever, and the
+	// only route to v3 is init or migrate.
+	MaxInPlaceUpgradeFormat = 2
 
 	// RepoFormatV3 is the fat-leaf, packless repository format (RFC 0026).
 	// Created only by an explicit init; a v3 repository contains only v3

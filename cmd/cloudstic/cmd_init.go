@@ -28,7 +28,7 @@ func declareInitArgs(g *globalFlags) (*initArgs, commandInput) {
 			withShortUsage("Generate a 24-word recovery key")),
 		boolFlag(&a.noEncryption, "no-encryption", false, "Create an unencrypted repository (NOT recommended)"),
 		boolFlag(&a.adoptSlots, "adopt-slots", false, "Initialize by adopting existing key slots if found (prevents error if already has slots)"),
-		intFlag(&a.format, "format", 0, "Repository format version to create (default: the build's default format; 3 selects the packless fat-leaf format, RFC 0026)",
+		intFlag(&a.format, "format", 0, "Repository format to create: 3 (default, packless fat leaves) or 2 (packfile, readable by older builds)",
 			withShortUsage("Repository format version")),
 	}}
 }

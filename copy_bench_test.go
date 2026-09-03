@@ -153,7 +153,7 @@ func TestCopyScalesWithRepositoryNotSnapshotCount(t *testing.T) {
 	// operation counts are the wrong probe here: PackStore bundles small
 	// objects, so its cache would absorb repeated reads and make a missing
 	// table look free.
-	measure := func(snapshots int) (plaintextRead int64, dstPuts int64) {
+	measure := func(snapshots int) (plaintextRead, plaintextWritten int64) {
 		srcDir, dstDir, dataDir := t.TempDir(), t.TempDir(), t.TempDir()
 		writeCorpus(t, dataDir, files, 4096)
 
@@ -183,11 +183,11 @@ func TestCopyScalesWithRepositoryNotSnapshotCount(t *testing.T) {
 		t.Logf("%2d snapshots: plaintext read %d B, written %d B", snapshots, res.BytesRead, res.BytesWritten)
 		t.Logf("%2d snapshots: source backend %s", snapshots, srcCount)
 		t.Logf("%2d snapshots: dest   backend %s", snapshots, dstCounted)
-		return res.BytesRead, dstCounted.puts.Load()
+		return res.BytesRead, res.BytesWritten
 	}
 
-	oneRead, onePuts := measure(1)
-	manyRead, manyPuts := measure(8)
+	oneRead, oneWritten := measure(1)
+	manyRead, manyWritten := measure(8)
 
 	// Eight snapshots differing by one file each must not cost eight times one
 	// snapshot. Allow generous headroom for per-snapshot overhead (the snapshot
@@ -198,10 +198,18 @@ func TestCopyScalesWithRepositoryNotSnapshotCount(t *testing.T) {
 			" (expected well under %d; the remap table is not spanning the run)",
 			oneRead, manyRead, oneRead*3)
 	}
-	if manyPuts > onePuts*3 {
-		t.Errorf("destination writes scaled with snapshot count: %d for 1 snapshot, %d for 8"+
+	// Bytes written, not objects written, for the reason the comment on
+	// `measure` already gives: an operation count is the wrong probe. It was
+	// doubly wrong here, because it is format-dependent — the packfile format
+	// bundles eight snapshots' small objects into a couple of packs, while v3
+	// writes each leaf as its own object, so the same degree of sharing shows
+	// up as 6 puts in one format and 28 in the other. Bytes measure the
+	// sharing directly and mean the same thing in both: at eight snapshots v3
+	// writes 1.3x what one snapshot does.
+	if manyWritten > oneWritten*3 {
+		t.Errorf("bytes written scaled with snapshot count: %d B for 1 snapshot, %d B for 8"+
 			" (expected well under %d; unchanged subtrees are not being shared)",
-			onePuts, manyPuts, onePuts*3)
+			oneWritten, manyWritten, oneWritten*3)
 	}
 }
 

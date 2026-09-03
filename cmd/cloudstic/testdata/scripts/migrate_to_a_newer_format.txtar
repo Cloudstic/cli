@@ -6,7 +6,9 @@
 # script checks not only that the history arrives but that nothing at the
 # source moved, and that a second run continues instead of duplicating.
 
-exec cloudstic init -store local:$WORK/old -password repo-pw
+# Explicitly the packfile format: v3 is the default since #517, and a
+# migration needs a source that is genuinely older than the target.
+exec cloudstic init -store local:$WORK/old -format 2 -password repo-pw
 exec cloudstic backup -store local:$WORK/old -password repo-pw -source local:$WORK/data -tag nightly
 stdout 'saved'
 

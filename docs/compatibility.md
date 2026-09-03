@@ -52,7 +52,8 @@ govern it:
 
 | Constant | Meaning |
 |----------|---------|
-| `RepoFormatVersion` | The version stamped into repositories this build creates and writes to |
+| `RepoFormatVersion` | The version stamped into repositories this build **creates** |
+| `MaxInPlaceUpgradeFormat` | The highest version an **existing** repository is raised to by a write |
 | `MaxSupportedRepoFormat` | The highest version this build will open |
 
 `LoadRepoConfig` refuses any repository whose version exceeds
@@ -72,12 +73,19 @@ Do **not** raise it for a change earlier builds can still read correctly. A
 needless bump locks users out of their own data for no benefit, which is the
 same harm the gate exists to prevent, arriving from the other direction.
 
-`RepoFormatVersion` tracks it within the packfile-era family. Every repository
-this build creates by default is stamped at the current default format, and
-every such repository this build **writes to** is raised to it. Format 3 is the
-exception — see "Format 3 is opt-in" below — which is why the two constants
-diverge while it is: `MaxSupportedRepoFormat` is 3 (this build reads v3), while
-`RepoFormatVersion` stays 2 (this build does not create v3 unasked).
+Every repository this build creates is stamped at `RepoFormatVersion`, and every
+existing repository it **writes to** is raised to `MaxInPlaceUpgradeFormat`.
+
+Those are two different numbers, and the difference is load-bearing. Creating is
+free to pick the newest layout; raising an existing repository is not, because a
+stamp changes the marker and nothing else. That works only for a change whose
+structures an older era can already hold — v1 to v2 was one. v2 to v3 is not: a
+v3 repository holds fat leaves and blobs where a v2 one holds packs, so stamping
+3 onto a packfile repository would claim a layout that is not there. Older
+builds would refuse a repository they can in fact read, and this build would
+open it as v3, build its chain without `PackStore`, and fail to read the packs
+it is made of. So `MaxInPlaceUpgradeFormat` stays 2 and a backup onto a packfile
+repository leaves it packfile forever.
 
 That is a deliberate choice, and a stronger one than "record only what the bytes
 require". The version is not purely a claim about the data present — it is the
@@ -91,26 +99,41 @@ build could not read may still refuse to open on one, because a newer build
 wrote to it. That is a lockout the user can fix by upgrading, traded against a
 silent divergence they cannot see.
 
-### Format 3 is opt-in
+### Format 3 is the default, and the only crossing is explicit
 
 Format 3 (RFC 0026) is different in kind from the version bumps before it: it
 is not a new era inside a mixed repository but a distinct layout — file
 metadata and small content live inside binary HAMT leaves, and the packfile
 layer (`packs/*`, `index/packs`, `index/packmap/*`), the `filemeta/` namespace,
-and standalone `content/` manifests do not exist. The rules while it is opt-in:
+and standalone `content/` manifests do not exist.
 
-- A v3 repository is created only by an explicit `init -format 3`, never by
-  this build touching an existing repository. `UpgradeRepoFormat` stamps at
-  most the default format, and the in-process format view only ever rises, so
+`init` creates v3 since #517. `init -format 2` still creates a packfile
+repository, for anyone who needs one a build older than v3 support can read.
+The rules:
+
+- **An existing repository never changes format on its own.** A v3 repository
+  is created by `init`, or reached from a packfile one by an explicit
+  `cloudstic migrate`, and by nothing else. `UpgradeRepoFormat` stamps at most
+  `MaxInPlaceUpgradeFormat`, and the in-process format view only ever rises, so
   no mutation can move a repository into or out of v3.
+- **Adopting keeps the format it finds.** `init -adopt-slots` on an existing
+  repository defaults to that repository's own version rather than to this
+  build's default, so adopting a packfile repository does not attempt — and
+  fail — to re-initialize it as v3.
 - A v3 repository contains only v3 structures. There is no mixed era and no
   opportunistic conversion; `init -adopt-slots -format 3` on a lower-format
   repository is refused, because rewriting the marker cannot change the stored
   structures. Migration is the only crossing, and it is a separate tool
   (RFC 0026).
-- Older builds fail safely: every released build enforces
-  `MaxSupportedRepoFormat = 2` at open, so a v3 repository is refused with the
-  upgrade message, exactly as the gate is designed to do.
+- **Older builds fail safely, and this now matters to everyone.** Every build
+  released so far enforces `MaxSupportedRepoFormat = 2`, so it refuses a v3
+  repository with the upgrade message rather than misreading it. Verified by
+  running one: v1.18.0 against a v3 repository prints "repository format
+  version 3 is newer than this build supports (up to 2): upgrade cloudstic to
+  work with this repository" and stops. Because v3 is now what `init` creates,
+  a user whose machines are on different versions will meet this; the answer is
+  to upgrade the older machine, or to create the repository with
+  `init -format 2`.
 - `copy` crosses the two formats in either direction. It reads whichever form
   the source stores its entries in and writes whichever the destination
   records, so the destination never ends up holding a mixture, and the source
